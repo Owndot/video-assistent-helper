@@ -20,20 +20,8 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * Lokaler Empfänger für das Userscript "Video-Assistent".
@@ -47,6 +35,9 @@ import java.util.concurrent.Executors;
  *   GET /vol?v=0..1      Medienlautstärke setzen (ohne v: nur abfragen)
  *   GET /beat            "Player ist noch offen" (sonst wird die Helligkeit nach 30 s zurückgegeben)
  *   GET /end             Player zu: Helligkeit sofort zurück wie vorher
+ *   GET /download        Video speichern (Datei, HLS, DASH – direkt oder über den Browser)
+ *   GET /pull, POST /push  Laden über den Browser: Anfragen abholen / Daten liefern
+ *   GET /dlstate         Zustand eines Downloads
  */
 public class HelferService extends Service {
     static final int PORT = 47811;
@@ -55,9 +46,7 @@ public class HelferService extends Service {
     static volatile boolean running = false;
 
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final ExecutorService pool = Executors.newFixedThreadPool(3);
-    private ServerSocket server;
-    private Thread acceptThread;
+    private MiniServer server;
     private WindowManager wm;
     private AudioManager am;
 
@@ -103,8 +92,7 @@ public class HelferService extends Service {
     public void onDestroy() {
         running = false;
         main.removeCallbacks(watchdog);
-        try { if (server != null) server.close(); } catch (Exception ignored) {}
-        pool.shutdownNow();
+        if (server != null) server.stop();
         clearBright();
         super.onDestroy();
     }
@@ -132,44 +120,11 @@ public class HelferService extends Service {
 
     // ---------- lokaler Mini-Server ----------
     private void startServer() {
-        acceptThread = new Thread(() -> {
-            try {
-                server = new ServerSocket();
-                server.setReuseAddress(true);
-                server.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), PORT), 16);
-                while (!server.isClosed()) {
-                    final Socket s = server.accept();
-                    pool.execute(() -> handle(s));
-                }
-            } catch (Exception ignored) {
-            }
-        }, "evp-helfer");
-        acceptThread.start();
-    }
-
-    private void handle(Socket s) {
-        try {
-            s.setSoTimeout(3000);
-            BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream(), StandardCharsets.ISO_8859_1));
-            String first = in.readLine();
-            if (first == null) { s.close(); return; }
-            String key = null, line;
-            while ((line = in.readLine()) != null && !line.isEmpty()) {
-                int c = line.indexOf(':');
-                if (c > 0 && line.substring(0, c).trim().equalsIgnoreCase("x-evp-key")) key = line.substring(c + 1).trim();
-            }
-            String[] parts = first.split(" ");
-            String method = parts.length > 0 ? parts[0] : "";
-            String target = parts.length > 1 ? parts[1] : "/";
-            if (!"GET".equals(method) || !KEY.equals(key)) { reply(s, 403, "{\"ok\":false}"); return; }
-            String path = target, query = "";
-            int q = target.indexOf('?');
-            if (q >= 0) { path = target.substring(0, q); query = target.substring(q + 1); }
-            Map<String, String> p = parseQuery(query);
-            reply(s, 200, route(path, p));
-        } catch (Exception e) {
-            try { s.close(); } catch (Exception ignored) {}
-        }
+        server = new MiniServer(PORT, KEY, new MiniServer.Handler() {
+            @Override public String get(String path, Map<String, String> p) { return route(path, p); }
+            @Override public String push(Map<String, String> p, byte[] body) { return MiniServer.push(Downloads.proxies, p, body); }
+        });
+        server.start();
     }
 
     private String route(String path, Map<String, String> p) {
@@ -196,16 +151,17 @@ public class HelferService extends Service {
                 String u = p.get("u");
                 if (u == null || !(u.startsWith("http://") || u.startsWith("https://"))) return "{\"ok\":false,\"error\":\"keine Adresse\"}";
                 try {
-                    int id = Downloads.start(this, u, p.get("ref"), p.get("ua"), p.get("t"), p.get("k"));
+                    int id = Downloads.start(this, u, p.get("ref"), p.get("ua"), p.get("c"), p.get("t"), p.get("k"), "1".equals(p.get("p")));
                     return "{\"ok\":true,\"id\":" + id + "}";
                 } catch (Exception e) {
                     return "{\"ok\":false,\"error\":\"" + String.valueOf(e.getMessage()).replace("\"", "'") + "\"}";
                 }
             }
+            case "/pull":
+                return MiniServer.pull(Downloads.proxies, Downloads.state, p);
             case "/dlstate": {
-                int id = (int) parse(p.get("id"), -1);
-                String st = Downloads.state.get(id);
-                return "{\"ok\":true,\"state\":\"" + (st == null ? "" : st.replace("\"", "'")) + "\"}";
+                String st = Downloads.state.get((int) MiniServer.num(p.get("id"), -1));
+                return "{\"ok\":true,\"state\":" + MiniServer.js(st) + "}";
             }
             case "/end":
                 main.post(this::clearBright);
@@ -222,39 +178,12 @@ public class HelferService extends Service {
         boolean writeOk = Settings.System.canWrite(this);
         float b = curBright >= 0 ? curBright : systemBright();
         return String.format(Locale.US,
-                "{\"ok\":true,\"v\":2,\"dl\":true,\"app\":\"%s\",\"overlay\":%b,\"write\":%b,\"vol\":%.4f,\"volStep\":%d,\"volMax\":%d,\"bright\":%.4f}",
+                "{\"ok\":true,\"v\":3,\"dl\":true,\"dash\":true,\"proxy\":true,\"app\":\"%s\",\"overlay\":%b,\"write\":%b,\"vol\":%.4f,\"volStep\":%d,\"volMax\":%d,\"bright\":%.4f}",
                 appVersion(), overlayOk, writeOk, max > 0 ? (float) cur / max : 0f, cur, max, b);
     }
 
     private String appVersion() {
         try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception e) { return "?"; }
-    }
-
-    private static void reply(Socket s, int code, String body) throws Exception {
-        byte[] b = body.getBytes(StandardCharsets.UTF_8);
-        String head = "HTTP/1.1 " + code + (code == 200 ? " OK" : " Forbidden") + "\r\n"
-                + "Content-Type: application/json; charset=utf-8\r\n"
-                + "Cache-Control: no-store\r\n"
-                + "Content-Length: " + b.length + "\r\n"
-                + "Connection: close\r\n\r\n";
-        OutputStream out = s.getOutputStream();
-        out.write(head.getBytes(StandardCharsets.ISO_8859_1));
-        out.write(b);
-        out.flush();
-        s.close();
-    }
-
-    private static Map<String, String> parseQuery(String q) {
-        Map<String, String> m = new HashMap<>();
-        if (q == null || q.isEmpty()) return m;
-        for (String kv : q.split("&")) {
-            int e = kv.indexOf('=');
-            try {
-                if (e < 0) m.put(URLDecoder.decode(kv, "UTF-8"), "");
-                else m.put(URLDecoder.decode(kv.substring(0, e), "UTF-8"), URLDecoder.decode(kv.substring(e + 1), "UTF-8"));
-            } catch (Exception ignored) {}
-        }
-        return m;
     }
 
     private static float parse(String s, float def) {

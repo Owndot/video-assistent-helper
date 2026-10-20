@@ -1,14 +1,11 @@
 package de.evp.helfer;
 
-import java.io.BufferedInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -51,59 +48,19 @@ public class HlsCore {
     static class Seg { String url; long off = -1, len = -1; Key key; long seq; boolean init; }
     static class Media { List<Seg> segs = new ArrayList<>(); Seg init; boolean ended; boolean fmp4; }
 
-    private final String referer, userAgent;
+    private final Fetcher net;
     private final File work;
     private final Map<String, byte[]> keys = new HashMap<>();
     private final int threads;
 
-    public HlsCore(String referer, String userAgent, File workDir, int threads) {
-        this.referer = referer;
-        this.userAgent = userAgent;
+    public HlsCore(Fetcher net, File workDir, int threads) {
+        this.net = net;
         this.work = workDir;
         this.threads = Math.max(1, threads);
     }
 
-    // ---------- Netz ----------
     byte[] fetch(String url, long off, long len) throws IOException {
-        IOException last = null;
-        for (int attempt = 0; attempt < 4; attempt++) {
-            HttpURLConnection c = null;
-            try {
-                c = (HttpURLConnection) new URL(url).openConnection();
-                c.setConnectTimeout(15000);
-                c.setReadTimeout(30000);
-                c.setInstanceFollowRedirects(true);
-                if (userAgent != null && !userAgent.isEmpty()) c.setRequestProperty("User-Agent", userAgent);
-                if (referer != null && !referer.isEmpty()) {
-                    c.setRequestProperty("Referer", referer);
-                    try { URL r = new URL(referer); c.setRequestProperty("Origin", r.getProtocol() + "://" + r.getAuthority()); } catch (Exception ignored) {}
-                }
-                c.setRequestProperty("Accept", "*/*");
-                if (off >= 0 && len > 0) c.setRequestProperty("Range", "bytes=" + off + "-" + (off + len - 1));
-                int code = c.getResponseCode();
-                if (code >= 400) throw new IOException("HTTP " + code);
-                try (InputStream in = new BufferedInputStream(c.getInputStream())) {
-                    ByteArrayOutputStream bo = new ByteArrayOutputStream(len > 0 ? (int) Math.min(len, 64 << 20) : 1 << 16);
-                    byte[] buf = new byte[64 << 10];
-                    int n;
-                    while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
-                    byte[] data = bo.toByteArray();
-                    // Server ignoriert den Bereich (200 statt 206)? Dann selbst ausschneiden
-                    if (off >= 0 && len > 0 && code == 200 && data.length > len && data.length >= off + len) {
-                        byte[] cut = new byte[(int) len];
-                        System.arraycopy(data, (int) off, cut, 0, (int) len);
-                        return cut;
-                    }
-                    return data;
-                }
-            } catch (IOException e) {
-                last = e;
-                try { Thread.sleep(600L * (attempt + 1)); } catch (InterruptedException ie) { throw new IOException("abgebrochen"); }
-            } finally {
-                if (c != null) c.disconnect();
-            }
-        }
-        throw last != null ? last : new IOException("Download fehlgeschlagen");
+        return net.fetch(url, off, len);
     }
 
     String text(String url) throws IOException {
@@ -256,7 +213,7 @@ public class HlsCore {
         return c.doFinal(data);
     }
 
-    private void downloadMedia(Media m, File out, String tag, Listener l, AtomicInteger done, int total) throws Exception {
+    void downloadMedia(Media m, File out, String tag, Listener l, AtomicInteger done, int total) throws Exception {
         List<Seg> all = new ArrayList<>();
         if (m.init != null) all.add(m.init);
         all.addAll(m.segs);

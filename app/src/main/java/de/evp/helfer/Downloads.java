@@ -46,6 +46,7 @@ public class Downloads {
     private static final AtomicInteger ids = new AtomicInteger(100);
     static final Map<Integer, Boolean> cancel = new ConcurrentHashMap<>();
     static final Map<Integer, String> state = new ConcurrentHashMap<>();
+    static final Map<Integer, Fetcher.Proxy> proxies = new ConcurrentHashMap<>();
 
     static void channel(Context c) {
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -68,48 +69,87 @@ public class Downloads {
         return def;
     }
 
-    /** Startet einen Download; Rückgabe: Kennung (für Fortschritt) */
-    static int start(Context ctx, String url, String referer, String ua, String title, String kind) {
+    /**
+     * Startet einen Download; Rückgabe: Kennung (für Fortschritt / Abholen).
+     * kind: file | hls | dash | auto · proxy: über den Browser laden (das Skript holt die Daten mit seiner Sitzung)
+     */
+    static int start(Context ctx, String url, String referer, String ua, String cookie, String title, String kind, boolean proxy) {
         final Context c = ctx.getApplicationContext();
         channel(c);
         final int id = ids.incrementAndGet();
-        boolean hls = "hls".equals(kind) || (!"file".equals(kind) && url.split("[?#]")[0].toLowerCase(Locale.ROOT).endsWith(".m3u8"));
-        if (!hls) {
+        String path = url.split("[?#]")[0].toLowerCase(Locale.ROOT);
+        if (kind == null || kind.isEmpty() || "auto".equals(kind)) kind = path.endsWith(".m3u8") ? "hls" : path.endsWith(".mpd") ? "dash" : "file";
+        final Fetcher net;
+        if (proxy) {
+            Fetcher.Proxy px = new Fetcher.Proxy();
+            proxies.put(id, px);
+            net = px;
+        } else net = new Fetcher.Http(referer, ua, cookie);
+        if ("file".equals(kind) && !proxy) {
             state.put(id, "Download-Manager");
-            fileDownload(c, url, referer, ua, title);
+            long dmId = fileDownload(c, url, referer, ua, cookie, title);
+            watch(c, id, dmId);
             return id;
         }
         state.put(id, "startet");
-        jobs.execute(() -> hlsJob(c, id, url, referer, ua, title));
+        final String k = kind;
+        jobs.execute(() -> streamJob(c, id, url, title, k, net));
         return id;
     }
 
     // ---------- Videodatei: Androids Download-Manager ----------
-    private static void fileDownload(Context c, String url, String referer, String ua, String title) {
+    private static long fileDownload(Context c, String url, String referer, String ua, String cookie, String title) {
         DownloadManager dm = (DownloadManager) c.getSystemService(Context.DOWNLOAD_SERVICE);
         String name = safeName(title, extOf(url, "mp4"));
         DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
         if (referer != null && !referer.isEmpty()) r.addRequestHeader("Referer", referer);
         if (ua != null && !ua.isEmpty()) r.addRequestHeader("User-Agent", ua);
+        if (cookie != null && !cookie.isEmpty()) r.addRequestHeader("Cookie", cookie);
         r.setTitle(name);
         r.setDescription("Video-Assistent");
         r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
         r.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, FOLDER + "/" + name);
         r.setAllowedOverMetered(true);
         r.setAllowedOverRoaming(true);
-        dm.enqueue(r);
+        return dm.enqueue(r);
     }
 
-    // ---------- Stream: Teile laden, zusammensetzen, speichern ----------
-    private static void hlsJob(Context c, int id, String url, String referer, String ua, String title) {
+    /** Download-Manager beobachten: lehnt der Server ab (z. B. 403), meldet der Zustand das – das Skript lädt dann über den Browser */
+    private static void watch(Context c, int id, long dmId) {
+        jobs.execute(() -> {
+            DownloadManager dm = (DownloadManager) c.getSystemService(Context.DOWNLOAD_SERVICE);
+            long until = System.currentTimeMillis() + 25000;
+            while (System.currentTimeMillis() < until) {
+                try { Thread.sleep(1200); } catch (InterruptedException e) { return; }
+                try (android.database.Cursor q = dm.query(new DownloadManager.Query().setFilterById(dmId))) {
+                    if (q == null || !q.moveToFirst()) { state.put(id, "Fehler: abgebrochen"); return; }
+                    int st = q.getInt(q.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                    int reason = q.getInt(q.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON));
+                    if (st == DownloadManager.STATUS_FAILED) {
+                        state.put(id, reason >= 400 && reason < 600 ? "Fehler: HTTP " + reason : "Fehler: " + reason);
+                        dm.remove(dmId);
+                        return;
+                    }
+                    if (st == DownloadManager.STATUS_SUCCESSFUL) { state.put(id, "fertig"); return; }
+                    long got = q.getLong(q.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
+                    if (st == DownloadManager.STATUS_RUNNING && got > 0) state.put(id, "läuft");
+                } catch (Exception e) {
+                    return;
+                }
+            }
+        });
+    }
+
+    // ---------- Stream (HLS/DASH) oder Datei über den Browser: laden, zusammensetzen, speichern ----------
+    private static void streamJob(Context c, int id, String url, String title, String kind, Fetcher net) {
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
         File work = new File(c.getCacheDir(), "dl" + id);
         final long[] lastShown = {0};
         String shortTitle = title == null || title.isEmpty() ? "Video" : (title.length() > 60 ? title.substring(0, 60) + "…" : title);
         try {
-            progressNote(c, nm, id, shortTitle, 0, 0, "Wird vorbereitet …");
-            HlsCore core = new HlsCore(referer, ua, work, 4);
-            HlsCore.Result r = core.run(url, new HlsCore.Listener() {
+            if (!work.exists() && !work.mkdirs()) throw new Exception("Kein Arbeitsordner");
+            progressNote(c, nm, id, shortTitle, 0, 0, net instanceof Fetcher.Proxy ? "Lädt über den Browser – Seite offen lassen" : "Wird vorbereitet …");
+            HlsCore.Listener l = new HlsCore.Listener() {
                 @Override public void progress(int done, int total) {
                     long now = System.currentTimeMillis();
                     state.put(id, done + "/" + total);
@@ -118,7 +158,16 @@ public class Downloads {
                     progressNote(c, nm, id, shortTitle, done, total, null);
                 }
                 @Override public boolean cancelled() { return Boolean.TRUE.equals(cancel.get(id)); }
-            });
+            };
+            if ("file".equals(kind)) {
+                File f = Fetcher.toFile(net, url, new File(work, "datei." + extOf(url, "mp4")), l);
+                String ext = extOf(url, "mp4");
+                Uri saved = save(c, f, safeName(title, ext), "video/" + ("mov".equals(ext) ? "quicktime" : "mkv".equals(ext) ? "x-matroska" : ext));
+                state.put(id, "fertig");
+                doneNote(c, nm, id, shortTitle, saved, "video/*", null);
+                return;
+            }
+            HlsCore.Result r = "dash".equals(kind) ? new DashCore(net, work, 4).run(url, l) : new HlsCore(net, work, 4).run(url, l);
             progressNote(c, nm, id, shortTitle, 0, 0, "Wird zu MP4 zusammengesetzt …");
             state.put(id, "zusammensetzen");
             File mp4 = new File(work, "fertig.mp4");
@@ -141,6 +190,8 @@ public class Downloads {
             else doneNote(c, nm, id, shortTitle, null, null, e.getMessage());
         } finally {
             cancel.remove(id);
+            Fetcher.Proxy px = proxies.remove(id);
+            if (px != null) px.close();
             deleteTree(work);
         }
     }
