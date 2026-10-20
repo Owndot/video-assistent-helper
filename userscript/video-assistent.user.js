@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      13.0
+// @version      13.1
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -1530,9 +1530,10 @@
     (() => { try { return window.CSS.supports('backdrop-filter', 'url(#a) blur(1px)'); } catch (e) { return false; } })();   // ("CSS" ist hier unser Stil-Text)
   const lensCache = new Map(), lensPre = 'l' + Math.random().toString(36).slice(2, 8);
   let lensSvg = null, lensDefs = null;
-  // zoom = Vergrößerung in der Mitte (1,4 = 40 % größer), edgePx = wie stark der Rand das Bild zusätzlich nach innen biegt,
-  // half = größte Verschiebung in Pixeln (die Karte speichert -1…1 davon)
-  function lensMap(w, h, r, bezel, zoom, edgePx, half) {
+  // Wellen-Glas: die Mitte bleibt fast ruhig (zoom = nur ganz leichte Vergrößerung), zum Rand hin läuft das Bild in
+  // sanften Wellen (waveA) und biegt sich am Rand stark nach innen (rimA). half = größte Verschiebung in Pixeln.
+  function lensMap(w, h, r, rimA, waveA, zoom, half) {
+    const R0 = Math.min(w, h) / 2;
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const ctx = c.getContext('2d');
@@ -1550,11 +1551,12 @@
           vx = m === dl ? -1 : m === dr ? 1 : 0;
           vy = vx ? 0 : (m === dt ? -1 : 1);
         }
-        let k = 0;
-        if (edge >= 0 && edge < bezel) { const t = 1 - edge / bezel; k = t * t * (3 - 2 * t); }
-        // Lupe: jeder Punkt zeigt, was näher an der Mitte liegt → das Bild dahinter erscheint größer
-        const ox = (-(px - w / 2) * (1 - 1 / zoom) - vx * k * edgePx) / half;
-        const oy = (-(py - h / 2) * (1 - 1 / zoom) - vy * k * edgePx) / half;
+        // u: 0 am Rand … 1 in der Mitte; Verschiebung nach innen = das Bild wird an dieser Stelle "herausgezogen"
+        const u = Math.max(0, Math.min(1, edge / R0)), q = 1 - u;
+        // (Steigung bleibt überall unter 1 – sonst überschlägt sich das Bild und Text erscheint gespiegelt)
+        const off = rimA * q * q + waveA * Math.sin(2 * Math.PI * 1.25 * u) * q;
+        const ox = (-(px - w / 2) * (1 - 1 / zoom) - vx * off) / half;
+        const oy = (-(py - h / 2) * (1 - 1 / zoom) - vy * off) / half;
         const i = (y * w + x) * 4;
         d[i] = Math.round(128 + 127 * Math.max(-1, Math.min(1, ox)));
         d[i + 1] = Math.round(128 + 127 * Math.max(-1, Math.min(1, oy)));
@@ -1579,17 +1581,16 @@
     }
     if (root && lensSvg.parentNode !== root) root.appendChild(lensSvg);
     const m = Math.min(w, h), big = Math.max(w, h);
-    // kleine runde Knöpfe: kräftige Lupe · lange Leisten und Menüs: sanfter (sonst wirkt es wie ein Zerrspiegel)
-    const zoom = big <= 90 ? 1.45 : big <= 200 ? 1.3 : big <= 340 ? 1.2 : 1.1;
-    const bezel = Math.max(7, Math.min(22, m * 0.3)), edgePx = Math.max(4, Math.min(12, m * 0.16));
-    const half = Math.ceil(big / 2 * (1 - 1 / zoom) + edgePx + 1), scale = half * 2;
+    const zoom = 1.04, R0 = m / 2;
+    const rimA = Math.min(14, R0 * 0.27), waveA = Math.min(4.5, R0 * 0.048);
+    const half = Math.ceil(big / 2 * (1 - 1 / zoom) + rimA + waveA + 1), scale = half * 2;
     const id = lensPre + lensCache.size;
     const f = document.createElementNS(NS, 'filter');
     f.setAttribute('id', id);
     f.setAttribute('x', '0%'); f.setAttribute('y', '0%'); f.setAttribute('width', '100%'); f.setAttribute('height', '100%');
     f.setAttribute('color-interpolation-filters', 'sRGB');
     const fi = document.createElementNS(NS, 'feImage');
-    const url = lensMap(w, h, r, bezel, zoom, edgePx, half);
+    const url = lensMap(w, h, r, rimA, waveA, zoom, half);
     fi.setAttribute('href', url);
     fi.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', url);   // ältere Chromium-Versionen kennen nur diese Form
     fi.setAttribute('x', '0'); fi.setAttribute('y', '0'); fi.setAttribute('width', String(w)); fi.setAttribute('height', String(h));
@@ -1610,7 +1611,7 @@
     try { r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; } catch (e) {}
     const id = lensFor(w, h, r), val = 'url(#' + id + ')';
     el.style.setProperty('--lens', val);
-    el.style.setProperty('--gb', '1.6px');   // mit Lupe nur ein Hauch Weichzeichner – sonst sieht man die Vergrößerung nicht
+    el.style.setProperty('--gb', '1.2px');   // mit Wellen-Glas nur ein wenig Weichzeichner – sonst sieht man die Wellen nicht
     // Chrome lädt das Kartenbild erst beim ersten Zeichnen und rechnet ruhige Flächen danach nicht neu →
     // kurz danach einmal ab- und wieder anschalten (bei laufendem Video passiert das ohnehin ständig)
     if (!el.__lensSeen) el.__lensSeen = {};
@@ -3962,7 +3963,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 13.0',
+      'Video-Assistent 13.1',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
