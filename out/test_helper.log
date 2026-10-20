@@ -1,0 +1,9 @@
+OK   Beim Öffnen beim Helfer nachgefragt  – [('/ping', None)]
+FAIL Lautstärke geht ans Handy (ab dem aktuellen Wert)  – []
+OK   Video zwischen den Stufen etwas leiser (fein)  – 1
+OK   Nicht jede Bewegung gesendet (gedrosselt)  – 0
+Traceback (most recent call last):
+  File "/home/runner/work/video-assistent-helper/video-assistent-helper/tests/browser/test_helper.py", line 50, in <module>
+    check('Anzeige in 1-%-Schritten (nicht nur Handy-Stufen)', side.endswith('%') and int(side[:-1]) % 7 != 0 or int(side[:-1]) not in (0,7,13,20,27,33,40,47,53,60,67,73,80,87,93,100), side)
+                                                                                                                 ^^^^^^^^^^^^^^
+ValueError: invalid literal for int() with base 10: ''

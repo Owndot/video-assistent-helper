@@ -1,0 +1,8 @@
+FAIL Doppeltipp rechts: +10 s, Anzeige "10 s" rechts  – [25, 26, [False, '10']]
+FAIL noch ein schneller Tipp: +20 s insgesamt, "20 s"  – [26, [False, '10']]
+OK   danach blendet die Anzeige aus
+OK   Leisten bleiben dabei unverändert
+FAIL Doppeltipp links: −10 s, Anzeige "10 s" links  – [27, [False, '10']]
+FAIL einzelner Tipp später: keine Serie mehr, Leisten erscheinen
+Fehler: []
+ERGEBNIS: 2 von 6

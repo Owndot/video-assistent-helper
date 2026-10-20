@@ -1,0 +1,16 @@
+OK   Datei: Vorschau erscheint mit Bild  – {'on': True, 'img': True, 't': 42.5, 'want': 4.20056, 'cx': 289, 'bottom': 840, 'barTop': 846, 'label': '0:42', 'main': 4.42756, 'w': 164}
+FAIL Datei: Bild zeigt die Fingerstelle  – [42.5, 4.2, '0:42']
+OK   Datei: sitzt über dem Punkt  – [289, 287]
+FAIL Datei: Hauptvideo springt erst beim Loslassen  – 4.4
+FAIL Datei: Loslassen: Vorschau weg, Video an der Stelle  – [False, 42.7]
+OK   Stream: Vorschau erscheint mit Bild  – {'on': True, 'img': True, 't': 42.5, 'want': 4.081428000000001, 'cx': 289, 'bottom': 840, 'barTop': 846, 'label': '0:42', 'main': 4.321173, 'w': 164}
+FAIL Stream: Bild zeigt die Fingerstelle  – [42.5, 4.1, '0:42']
+OK   Stream: sitzt über dem Punkt  – [289, 287]
+FAIL Stream: Hauptvideo springt erst beim Loslassen  – 4.3
+FAIL Stream: Loslassen: Vorschau weg, Video an der Stelle  – [False, 42.8]
+OK   Datei quer: Vorschau erscheint mit Bild  – {'on': True, 'img': True, 't': 42.2, 'want': 4.440592, 'cx': 576, 'bottom': 440, 'barTop': 446, 'label': '0:42', 'main': 4.58392, 'w': 184}
+FAIL Datei quer: Bild zeigt die Fingerstelle  – [42.2, 4.4, '0:42']
+OK   Datei quer: sitzt über dem Punkt  – [576, 574]
+FAIL Datei quer: Hauptvideo springt erst beim Loslassen  – 4.6
+FAIL Datei quer: Loslassen: Vorschau weg, Video an der Stelle  – [False, 42.4]
+ERGEBNIS: 6 von 15

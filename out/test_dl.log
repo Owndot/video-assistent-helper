@@ -1,0 +1,8 @@
+OK   Webseite: nur der Player-Knopf  – ['Im Videoplayer öffnen']
+FAIL Unten rechts: Bild-in-Bild zuerst, Drehen ganz außen  – ['Bildformat', 'Drehen']
+OK   Echte Videodatei: Download-Knopf sichtbar
+OK   Direkter Download speichert die ganze Datei  – ['Testvideo direkt.webm', 2297026, 2297026]
+OK   Hinweis "im Browser"
+OK   Stream ohne Datei: kein Download-Knopf
+Fehler: []
+ERGEBNIS: 5 von 6

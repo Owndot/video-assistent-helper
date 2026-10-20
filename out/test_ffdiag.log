@@ -1,0 +1,8 @@
+UA Mozilla/5.0 (X11; Linux x86_64; rv:142.0) Gecko/20100101 Firefox/142.0
+Vollbild ['', 450, 886]
+Element an 110,560: X-OVJ1WWG
+Halten: [1, '']
+Ereignisse: ["mousedown#:@110,560", "mouseup#:@110,560", "click#0:mouse@110,560", "mousedown#:@330,650", "mouseup#:@330,400", "click#0:mouse@330,400"]
+Tippen (Touch): ["WIN pointerdown -> vgest", "pointerdown#0:touch@200,400", "touchstart#:@NaN,NaN", "gotpointercapture#0:touch@200,400", "pointerup#0:touch@200,400", "lostpointercapture#0:touch@200,400", "mousedown#:@200,400", "mouseup#:@200,400", "click#0:touch@200,400"] vp amb
+Fehler: []
+ERGEBNIS: Untersuchung fertig

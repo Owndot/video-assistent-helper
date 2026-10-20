@@ -1,0 +1,6 @@
+FAIL gesperrt, Schloss erscheint nach Tippen  – [0, 0, 0]
+OK   ein Tipp: bleibt gesperrt, kein Hinweis
+OK   kurz gedrückt (0,35 s): bleibt gesperrt
+FAIL zweimal schnell getippt: entsperrt
+FAIL 1 s gedrückt halten: entsperrt (noch während des Haltens)
+ERGEBNIS: 2 von 5
