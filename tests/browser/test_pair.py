@@ -1,3 +1,4 @@
+import pwshim  # BROWSER=firefox → Tests in Firefox
 exec(open('test_v8.py').read().split("results = []")[0])
 KEY = '0123456789abcdef0123456789abcdef'
 import subprocess, os, filecmp, glob, shutil

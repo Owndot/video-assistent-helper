@@ -1,3 +1,4 @@
+import pwshim  # BROWSER=firefox → Tests in Firefox
 import time, json, sys
 exec(open('test_v8.py').read().split("results = []")[0])
 class Q2(Q):

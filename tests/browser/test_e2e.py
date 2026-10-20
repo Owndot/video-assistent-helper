@@ -1,3 +1,4 @@
+import pwshim  # BROWSER=firefox → Tests in Firefox
 exec(open('test_v8.py').read().split("results = []")[0])
 import subprocess, os, filecmp, glob, shutil
 H = '../java'

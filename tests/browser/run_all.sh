@@ -9,6 +9,7 @@ if ls test_e2e.py >/dev/null 2>&1; then
 fi
 mkdir -p out
 for t in test_*.py; do
-  r=$(timeout 300 python3 "$t" 2>&1 | grep -E 'ERGEBNIS|FAIL|bestanden|symmetrisch|Bilder/s|pausiert' | tr '\n' ' ' | cut -c1-160)
+  timeout 300 python3 "$t" > "out/${t%.py}.log" 2>&1
+  r=$(grep -E 'ERGEBNIS|FAIL|bestanden|symmetrisch|Bilder/s|pausiert' "out/${t%.py}.log" | tr '\n' ' ' | cut -c1-160)
   printf '%-22s %s\n' "$t" "${r:-(keine Ausgabe)}"
 done

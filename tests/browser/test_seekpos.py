@@ -1,3 +1,4 @@
+import pwshim  # BROWSER=firefox → Tests in Firefox
 import time, json, sys, re
 exec(open('test_v8.py').read().split("results = []")[0])
 SCRIPT2 = re.sub(r'downloadEverywhere:\s*false', 'downloadEverywhere: true', SCRIPT)

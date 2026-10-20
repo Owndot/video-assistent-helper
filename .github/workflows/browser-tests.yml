@@ -8,6 +8,9 @@ on:
     paths: ['userscript/**', 'tests/**', '.github/workflows/browser-tests.yml']
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -44,6 +47,15 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cat ergebnis-${{ matrix.browser }}.txt >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Ergebnisse in Zweig ergebnisse-${{ matrix.browser }}
+        if: always()
+        run: |
+          d=$(mktemp -d); cp tests/browser/ergebnis-*.txt "$d"/ 2>/dev/null; cp -r tests/browser/out "$d"/ 2>/dev/null
+          cp tests/browser/*.png "$d"/ 2>/dev/null || true
+          cd "$d" && git init -q && git checkout -q -b e
+          git add -A && git -c user.name=ci -c user.email=ci@local commit -qm "Ergebnis ${{ matrix.browser }} ${{ github.sha }}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" e:ergebnisse-${{ matrix.browser }}
 
       - uses: actions/upload-artifact@v4
         if: always()

@@ -1,3 +1,4 @@
+import pwshim  # BROWSER=firefox → Tests in Firefox
 import time, json, sys, base64
 exec(open('test_v8.py').read().split("results = []")[0])
 CLIP = open(WEB + '/clip.webm', 'rb').read()

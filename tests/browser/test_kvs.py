@@ -1,3 +1,4 @@
+import pwshim  # BROWSER=firefox → Tests in Firefox
 import time, json, sys
 src = open('test_v8.py').read().split("results = []")[0]
 src = src.replace("srv = http.server.ThreadingHTTPServer(('127.0.0.1', 8775), functools.partial(Q, directory=WEB))", """class K(Q):
