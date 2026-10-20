@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      12.6
+// @version      12.7
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -1966,15 +1966,6 @@
 .vside svg{position:relative;z-index:1;width:23px;height:23px;fill:#fff;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));transition:fill .12s}
 .vside.lit svg{fill:#d5d2c9;filter:invert(1)}
 .vside.top b{color:#d5d2c9;filter:invert(1);text-shadow:none}
-/* "Auto" unter der Helligkeitsanzeige (nur mit Helfer-App): zurück zur automatischen Helligkeit des Handys */
-.vauto{position:absolute;top:calc(50% + min(22vh,120px) + 12px);left:calc(20px + var(--evp-sl,env(safe-area-inset-left,0px)) - 7px);width:64px;height:30px;border-radius:15px;border:0;padding:0;
- font:700 11.5px var(--font);letter-spacing:.04em;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4);opacity:0;transform:scale(.9);pointer-events:none;z-index:6;
- transition:opacity .16s ease,transform .24s cubic-bezier(.34,1.56,.64,1),color .15s}
-.vauto.ok.on{opacity:1;transform:none;pointer-events:auto}
-.vauto b{position:relative;z-index:3;font:inherit}
-.vauto i{position:absolute;inset:3px;border-radius:12px;background:rgba(0,0,0,.92);filter:invert(1);opacity:0;transition:opacity .15s;z-index:2}
-.vauto.sel i{opacity:1}
-.vauto.sel b{color:#d5d2c9;filter:invert(1);text-shadow:none}
 .vmenu{position:absolute;left:12px;right:12px;bottom:calc(12px + var(--evp-sb,env(safe-area-inset-bottom,0px)));max-height:62%;display:flex;flex-direction:column;overflow:hidden;border-radius:28px;padding:8px;opacity:0;transform:translateY(18px) scale(.98);transition:opacity .2s ease,transform .2s ease;pointer-events:none;z-index:4}
 /* nur der Inhalt scrollt – Glaskante und Glanz bleiben am Rahmen */
 .vmlist{position:relative;z-index:1;flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;border-radius:20px}
@@ -2205,6 +2196,26 @@
       st.level = lv;
       return lv;
     }
+    // Helligkeit wie Androids Regler (BrightnessUtils): Reglerstellung 0–1 ↔ lineare Helligkeit 0–1
+    function gammaToLin(g) {
+      const R = 0.5, A = 0.17883277, B = 0.28466892, C = 0.55991073;
+      const r = g <= R ? Math.pow(g / R, 2) : Math.exp((g - C) / A) + B;
+      return clamp(r / 12, 0, 1);
+    }
+    function linToGamma(l) {
+      const R = 0.5, A = 0.17883277, B = 0.28466892, C = 0.55991073;
+      const v = clamp(l, 0, 1) * 12;
+      return clamp(v <= 1 ? Math.sqrt(v) * R : A * Math.log(v - B) + C, 0, 1);
+    }
+    // Ganz nach unten und dann noch weiter wischen = automatische Helligkeit des Handys
+    function setAutoBright() {
+      if (st.autoB) return;
+      st.autoB = true;
+      st.sysBright = false;
+      if (helperQ.bright) helperQ.bright.want = null;
+      helper('/end');
+      try { if (navigator.vibrate) navigator.vibrate(12); } catch (e) {}
+    }
     // Androids Standardkurve für Medien (Stufe in % → dB): 1 % −58 dB, 20 % −40 dB, 60 % −17 dB, 100 % 0 dB
     function volDb(i, mx) {
       const x = clamp(i / mx * 100, 1, 100), pts = [[1, -58], [20, -40], [60, -17], [100, 0]];
@@ -2215,14 +2226,15 @@
     }
     function applyBright(b) {
       if (st.sys && st.sys.bright) {
-        // Helfer-App: echte Bildschirmhelligkeit (gilt nur, solange der Player offen ist)
-        st.bright = clamp(b, 0.01, 1);
+        // Helfer-App: echte Bildschirmhelligkeit (gilt nur, solange der Player offen ist). Der Wert ist – wie
+        // Androids eigener Regler – "gefühlt gleichmäßig"; ans Handy geht die passende lineare Helligkeit.
+        st.bright = clamp(b, 0, 1);
         dimEl.style.opacity = '0';
         vid.style.filter = '';
         st.dim = 0;
         st.sysBright = true;
-        autoChip.classList.remove('sel');
-        helperSend('bright', st.bright);
+        st.autoB = false;
+        helperSend('bright', Math.max(0.004, gammaToLin(st.bright)));
         return;
       }
       st.bright = clamp(b, 0.15, 1);   // höchstens 100 % (nur abdunkeln)
@@ -2240,9 +2252,9 @@
         st.sysK = typeof d.volStep === 'number' ? d.volStep : Math.round(st.level * st.sys.max);
         try { const m = M(); m.volume = 1; } catch (e) {}
       }
-      if (st.sys.bright) autoChip.classList.add('ok', 'sel');   // zu Beginn: Helligkeit wie im System (automatisch)
+      st.autoB = !!st.sys.bright;   // zu Beginn: Helligkeit wie im System (auch automatisch) – bis du wischst
       if (st.sys.bright) {
-        if (typeof d.bright === 'number') st.bright = clamp(d.bright, 0.01, 1);
+        if (typeof d.bright === 'number') st.bright = linToGamma(d.bright);
         dimEl.style.opacity = '0';
         st.dim = 0;
       }
@@ -2344,31 +2356,7 @@
       side.setAttribute('aria-label', (kind === 'vol' ? 'Lautstärke ' : 'Helligkeit ') + Math.round(lvl * 100) + ' %');
       clearTimeout(sideTimer);
       sideTimer = setTimeout(() => side.classList.remove('on'), 900);
-      // Helligkeit über die Helfer-App: darunter "Auto" zum Zurückschalten auf die automatische Helligkeit
-      if (kind === 'bright' && st.sys && st.sys.bright) {
-        autoChip.classList.add('on');
-        clearTimeout(autoTimer);
-        autoTimer = setTimeout(() => autoChip.classList.remove('on'), 2600);
-      }
     };
-    let autoTimer = 0;
-    const autoChip = h('button', { class: 'vauto g', 'aria-label': 'Automatische Helligkeit' }, h('i'), h('b', null, 'Auto'));
-    wrap.append(autoChip);
-    autoChip.addEventListener('pointerdown', (e) => e.stopPropagation());
-    autoChip.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (!st.sys || !st.sys.bright) return;
-      if (st.sysBright) {
-        // zurück zur Helligkeit des Systems (auch die automatische) – das unsichtbare Fenster verschwindet
-        st.sysBright = false;
-        helper('/end').then(() => helper('/ping')).then((d) => { if (d && typeof d.bright === 'number' && !st.sysBright) st.bright = clamp(d.bright, 0.01, 1); });
-        autoChip.classList.add('sel');
-        showSide('bright', st.bright, 1, 'Auto');
-      } else {
-        applyBright(st.bright);
-        showSide('bright', st.bright, 1);
-      }
-    });
     const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 
     // Video im Player anordnen: Bildformat (Original/Füllen/Strecken/16:9 …), Zoom und Verschieben
@@ -2660,6 +2648,7 @@
       updateUI();
     }
     const SPEEDS = [1, 1.25, 1.5, 2, 0.5, 0.75];
+    const AUTO_OVER = 0.14;   // so weit unter 0 % weiterwischen = Auto (dazwischen bleibt es ganz dunkel)
     // Nur wenn ausdrücklich gewünscht (Einstellung autoRotate): Querformat-Videos automatisch drehen
     function autoOrient(w, hgt) {
       if (!CONFIG.autoRotate || !w || !hgt || !isFs()) return;
@@ -3233,19 +3222,36 @@
         clearTimeout(g.holdTimer);
         if (g.edge) { g.mode = 'none'; return; }
         g.mode = Math.abs(dx) > Math.abs(dy) ? 'seek' : (g.x > W / 2 ? 'vol' : 'bright');
+        // ab hier zählt jede Bewegung gleich (kein Sprung um die Anfangsstrecke); an den Enden sofort umkehrbar
+        g.ly = e.clientY;
+        g.v = g.mode === 'vol' ? st.level : st.bright;   // aus "Auto" heraus: von der aktuellen Helligkeit weiter
       }
       const m = M();
       if (g.mode === 'seek') {
         g.delta = dx / W * 90;   // ganze Bildschirmbreite = 90 Sekunden
         const to = clamp(g.time + g.delta, 0, isFinite(m.duration) ? m.duration : g.time + g.delta);
         showSeek(to, m.duration, g.delta);
-      } else if (g.mode === 'vol') {
-        // gut halbe Bildschirmhöhe = 0 → 100 %
-        const got = applyLevel(clamp(g.vol - dy / (H * 0.6), 0, 1));
-        showSide('vol', got, 1);
-      } else if (g.mode === 'bright') {
-        applyBright(g.bright - dy / (H * 0.6));
-        showSide('bright', st.bright, 1);
+      } else if (g.mode === 'vol' || g.mode === 'bright') {
+        // knapp die halbe Bildschirmhöhe = 0 → 100 % (im Querformat mindestens 200 Pixel)
+        const range = Math.max(H * 0.42, 200);
+        const step = -(e.clientY - g.ly) / range;
+        g.ly = e.clientY;
+        if (g.mode === 'vol') {
+          g.v = clamp(g.v + step, 0, 1);
+          showSide('vol', applyLevel(g.v), 1);
+        } else {
+          const canAuto = !!(st.sys && st.sys.bright);
+          g.v = clamp(g.v + step, canAuto ? -AUTO_OVER - 0.04 : 0.15, 1);   // ohne Helfer: höchstens auf 15 % abdunkeln
+          if (canAuto && g.v < -AUTO_OVER) {
+            setAutoBright();
+            showSide('bright', 0, 1, 'Auto');
+          } else if (canAuto && st.autoB && g.v < 0) {
+            showSide('bright', 0, 1, 'Auto');   // aus Auto wieder hoch: erst ab 0 % wird es wieder fest
+          } else {
+            applyBright(Math.max(0, g.v));
+            showSide('bright', st.bright, 1);
+          }
+        }
       }
     });
     const endGest = (e) => {
@@ -3832,7 +3838,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 12.6',
+      'Video-Assistent 12.7',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
