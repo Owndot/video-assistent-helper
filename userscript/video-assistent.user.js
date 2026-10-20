@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      12.8
+// @version      12.9
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -1530,7 +1530,9 @@
     (() => { try { return window.CSS.supports('backdrop-filter', 'url(#a) blur(1px)'); } catch (e) { return false; } })();   // ("CSS" ist hier unser Stil-Text)
   const lensCache = new Map(), lensPre = 'l' + Math.random().toString(36).slice(2, 8);
   let lensSvg = null, lensDefs = null;
-  function lensMap(w, h, r, bezel, mag) {
+  // zoom = Vergrößerung in der Mitte (1,4 = 40 % größer), edgePx = wie stark der Rand das Bild zusätzlich nach innen biegt,
+  // half = größte Verschiebung in Pixeln (die Karte speichert -1…1 davon)
+  function lensMap(w, h, r, bezel, zoom, edgePx, half) {
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const ctx = c.getContext('2d');
@@ -1550,7 +1552,9 @@
         }
         let k = 0;
         if (edge >= 0 && edge < bezel) { const t = 1 - edge / bezel; k = t * t * (3 - 2 * t); }
-        const ox = -vx * k - (px - w / 2) / (w / 2) * mag, oy = -vy * k - (py - h / 2) / (h / 2) * mag;
+        // Lupe: jeder Punkt zeigt, was näher an der Mitte liegt → das Bild dahinter erscheint größer
+        const ox = (-(px - w / 2) * (1 - 1 / zoom) - vx * k * edgePx) / half;
+        const oy = (-(py - h / 2) * (1 - 1 / zoom) - vy * k * edgePx) / half;
         const i = (y * w + x) * 4;
         d[i] = Math.round(128 + 127 * Math.max(-1, Math.min(1, ox)));
         d[i + 1] = Math.round(128 + 127 * Math.max(-1, Math.min(1, oy)));
@@ -1565,7 +1569,7 @@
     r = Math.max(0, Math.min(r, w / 2, h / 2));
     const key = w + 'x' + h + 'r' + Math.round(r);
     if (lensCache.has(key)) return lensCache.get(key);
-    // Filter liegen am (unsichtbaren) Wirt-Element: im Shadow-DOM selbst findet Chrome sie für backdrop-filter nicht
+    // Filter liegen im selben Shadow-DOM wie die Glasflächen – nur dort findet Chrome sie (url(#…) gilt je Baum)
     if (!lensSvg) {
       lensSvg = document.createElementNS(NS, 'svg');
       lensSvg.setAttribute('width', '0'); lensSvg.setAttribute('height', '0'); lensSvg.setAttribute('aria-hidden', 'true');
@@ -1573,16 +1577,21 @@
       lensDefs = document.createElementNS(NS, 'defs');
       lensSvg.appendChild(lensDefs);
     }
-    if (hostEl && lensSvg.parentNode !== hostEl) hostEl.appendChild(lensSvg);
-    const m = Math.min(w, h);
-    const bezel = Math.max(7, Math.min(24, m * 0.3)), scale = Math.max(12, Math.min(44, m * 0.55));
+    if (root && lensSvg.parentNode !== root) root.appendChild(lensSvg);
+    const m = Math.min(w, h), big = Math.max(w, h);
+    // kleine runde Knöpfe: kräftige Lupe · lange Leisten und Menüs: sanfter (sonst wirkt es wie ein Zerrspiegel)
+    const zoom = big <= 90 ? 1.45 : big <= 200 ? 1.3 : big <= 340 ? 1.2 : 1.1;
+    const bezel = Math.max(7, Math.min(22, m * 0.3)), edgePx = Math.max(4, Math.min(12, m * 0.16));
+    const half = Math.ceil(big / 2 * (1 - 1 / zoom) + edgePx + 1), scale = half * 2;
     const id = lensPre + lensCache.size;
     const f = document.createElementNS(NS, 'filter');
     f.setAttribute('id', id);
     f.setAttribute('x', '0%'); f.setAttribute('y', '0%'); f.setAttribute('width', '100%'); f.setAttribute('height', '100%');
     f.setAttribute('color-interpolation-filters', 'sRGB');
     const fi = document.createElementNS(NS, 'feImage');
-    fi.setAttribute('href', lensMap(w, h, r, bezel, 0.09));
+    const url = lensMap(w, h, r, bezel, zoom, edgePx, half);
+    fi.setAttribute('href', url);
+    fi.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', url);   // ältere Chromium-Versionen kennen nur diese Form
     fi.setAttribute('x', '0'); fi.setAttribute('y', '0'); fi.setAttribute('width', String(w)); fi.setAttribute('height', String(h));
     fi.setAttribute('preserveAspectRatio', 'none'); fi.setAttribute('result', 'm');
     const dm = document.createElementNS(NS, 'feDisplacementMap');
@@ -1599,8 +1608,22 @@
     if (w < 16 || h < 16 || w * h > 420000) { el.style.removeProperty('--lens'); el.style.removeProperty('--gb'); return; }
     let r = 0;
     try { r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; } catch (e) {}
-    el.style.setProperty('--lens', 'url(#' + lensFor(w, h, r) + ')');
-    el.style.setProperty('--gb', '5px');   // mit Linse weniger Weichzeichner – sonst sieht man die Brechung nicht
+    const id = lensFor(w, h, r), val = 'url(#' + id + ')';
+    el.style.setProperty('--lens', val);
+    el.style.setProperty('--gb', '1.6px');   // mit Lupe nur ein Hauch Weichzeichner – sonst sieht man die Vergrößerung nicht
+    // Chrome lädt das Kartenbild erst beim ersten Zeichnen und rechnet ruhige Flächen danach nicht neu →
+    // kurz danach einmal ab- und wieder anschalten (bei laufendem Video passiert das ohnehin ständig)
+    if (!el.__lensSeen) el.__lensSeen = {};
+    if (!el.__lensSeen[id]) {
+      el.__lensSeen[id] = true;
+      const again = () => {
+        if (el.style.getPropertyValue('--lens') !== val) return;
+        el.style.setProperty('--lens', 'blur(0px)');
+        requestAnimationFrame(() => requestAnimationFrame(() => { if (el.style.getPropertyValue('--lens') === 'blur(0px)') el.style.setProperty('--lens', val); }));
+      };
+      setTimeout(again, 180);
+      setTimeout(again, 900);
+    }
   }
   const lensRO = LENS_OK && window.ResizeObserver ? new ResizeObserver((es) => es.forEach((e) => applyLens(e.target))) : null;
   function lensWatch(el) {
@@ -1762,9 +1785,9 @@
     return area > 15000 ? best : null;
   }
   function showPill(v) {
-    if (pill && !pill.__lens) { pill.__lens = true; lensWatch(pill); }
     ui();
     attachHost();
+    if (pill && !pill.__lens) { pill.__lens = true; lensWatch(pill); }
     if (v !== active) { collapse(); watchSize(v); }   // neues Video: wieder klein anfangen
     active = v;
     pill.classList.add('on');
@@ -2047,17 +2070,17 @@
 @keyframes vsfxring{0%{opacity:.7;transform:scale(1)}100%{opacity:0;transform:scale(1.38)}}
 .vp.seeking .vind{opacity:0}
 /* Regler wie im iOS-Kontrollzentrum: große Glaskapsel, von unten weiß gefüllt, farbiges Symbol in der Füllung */
-.vside{position:absolute;top:50%;width:60px;height:min(46vh,252px);border-radius:30px;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:15px 0 17px;opacity:0;transform:translateY(-50%) scale(.88);transition:opacity .18s ease,transform .34s cubic-bezier(.34,1.56,.64,1);pointer-events:none;z-index:3;box-shadow:0 10px 30px rgba(0,0,0,.28)}
+.vside{position:absolute;top:50%;width:48px;height:min(36vh,200px);border-radius:24px;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:12px 0 13px;opacity:0;transform:translateY(-50%) scale(.88);transition:opacity .18s ease,transform .34s cubic-bezier(.34,1.56,.64,1);pointer-events:none;z-index:3;box-shadow:0 10px 30px rgba(0,0,0,.28)}
 .vside.r{right:calc(20px + var(--evp-sr,env(safe-area-inset-right,0px)))}
 .vside.l{left:calc(20px + var(--evp-sl,env(safe-area-inset-left,0px)))}
 .vside.on{opacity:1;transform:translateY(-50%) scale(1)}
 .vside::before{z-index:2}
-.vside i{position:absolute;left:0;right:0;bottom:0;height:0;filter:invert(1);background:linear-gradient(180deg,rgba(0,0,0,.93),rgba(0,0,0,.97) 60%,rgba(0,0,0,.90));box-shadow:inset 0 1px 0 rgba(0,0,0,.06),0 -1px 8px rgba(0,0,0,.30);transition:height .06s linear}
+.vside i{position:absolute;left:0;right:0;bottom:0;height:0;filter:invert(1);background:linear-gradient(180deg,rgba(0,0,0,.97),rgba(0,0,0,.99) 60%,rgba(0,0,0,.95));box-shadow:inset 0 1px 0 rgba(0,0,0,.06),0 -1px 8px rgba(0,0,0,.30);transition:height .06s linear}
 
 .vside u{position:absolute;left:9px;right:9px;height:1.5px;border-radius:1px;background:rgba(255,255,255,.7);box-shadow:0 0 0 .5px rgba(0,0,0,.18);display:none;z-index:1}
 .vside.ext u{display:block}
-.vside b{position:relative;z-index:3;font:600 12px var(--font);letter-spacing:.01em;font-variant-numeric:tabular-nums;color:#fff;opacity:.92;text-shadow:0 1px 2px rgba(0,0,0,.45);transition:color .12s}
-.vside svg{position:relative;z-index:3;width:26px;height:26px;fill:#fff;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));transition:fill .15s}
+.vside b{position:relative;z-index:3;font:600 11px var(--font);letter-spacing:.01em;font-variant-numeric:tabular-nums;color:#fff;opacity:.92;text-shadow:0 1px 2px rgba(0,0,0,.45);transition:color .12s}
+.vside svg{position:relative;z-index:3;width:22px;height:22px;fill:#fff;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));transition:fill .15s}
 /* in der weißen Füllung farbig wie bei iOS: Sonne gelb, Lautsprecher blau (als Gegenfarbe gezeichnet + invert, s. o.) */
 .vside.lit svg{fill:#0029f5;filter:invert(1)}
 .vside.lit.r svg{fill:#f57b00}
@@ -2446,7 +2469,7 @@
     const showSide = (kind, lvl, max, txt) => {
       hideInd();
       const f = Math.min(1, Math.max(0, lvl / max));
-      side.className = 'vside g on ' + (kind === 'vol' ? 'r' : 'l') + (max > 1.001 ? ' ext' : '') + (f > 0.15 ? ' lit' : '') + (f > 0.87 ? ' top' : '');
+      side.className = 'vside g on ' + (kind === 'vol' ? 'r' : 'l') + (max > 1.001 ? ' ext' : '') + (f > 0.18 ? ' lit' : '') + (f > 0.87 ? ' top' : '');
       indFill.style.height = (f * 100).toFixed(1) + '%';
       indFill.classList.toggle('over', lvl > 1.001);
       sideMark.style.bottom = (100 / max).toFixed(1) + '%';
@@ -3937,7 +3960,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 12.8',
+      'Video-Assistent 12.9',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
