@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      12.4
+// @version      12.5
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -10,6 +10,8 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM.registerMenuCommand
 // @connect      *
+// @connect      127.0.0.1
+// @connect      localhost
 // @require      https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js
 // @inject-into  content
 // ==/UserScript==
@@ -50,6 +52,9 @@
     autoRotate: false,  // true = Querformat-Videos im Vollbild automatisch drehen
     resumeAfterClose: true,   // nach dem Schließen des Players läuft das Video auf der Seite weiter
     holdSpeed: 2,             // lange ins Video drücken = so viel schneller, solange du hältst
+    // Helfer-App "Video-Assistent Helfer" (eigene APK): Läuft sie, steuern die Wischgesten die ECHTE Helligkeit und
+    // Medienlautstärke des Handys. Läuft sie nicht, regelt der Player wie bisher nur das Video. false = nie fragen.
+    systemHelper: true,
     // Wo der Button sitzt: 'below' = direkt unter dem Video, 'video' = am Rand im Video, 'top' = oben am Bildschirmrand
     buttonAt: 'below',
     // Button nur zeigen, wenn das Video mit Ton läuft (stumme Feed-Videos lösen ihn nicht aus) – wie Samsung Internet
@@ -1148,6 +1153,42 @@
     try { if (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function') return GM.xmlHttpRequest; } catch (e) {}
     return null;
   }
+  // ---------- Helfer-App: echte Helligkeit und Lautstärke des Handys ----------
+  // Die App lauscht nur auf dem Handy selbst (127.0.0.1). Ohne App kommt schlicht keine Antwort – dann bleibt alles wie bisher.
+  const HELPER = 'http://127.0.0.1:47811', HELPER_KEY = 'evp-1';
+  function helper(path) {
+    return new Promise((res) => {
+      const x = CONFIG.systemHelper === false ? null : gmXhr();
+      if (!x) { res(null); return; }
+      let done = false;
+      const fin = (v) => { if (!done) { done = true; res(v); } };
+      try {
+        x({
+          method: 'GET', url: HELPER + path, headers: { 'X-EVP-Key': HELPER_KEY }, timeout: 1200, anonymous: true,
+          onload: (r) => { try { fin(r.status === 200 ? JSON.parse(r.responseText) : null); } catch (e) { fin(null); } },
+          onerror: () => fin(null), ontimeout: () => fin(null), onabort: () => fin(null),
+        });
+      } catch (e) { fin(null); }
+      setTimeout(() => fin(null), 1600);
+    });
+  }
+  // Beim Wischen nicht jede Bewegung schicken: immer nur den neuesten Wert, sobald die vorige Antwort da ist
+  const helperQ = {};
+  function helperSend(kind, v) {
+    const q = helperQ[kind] || (helperQ[kind] = { busy: false, want: null });
+    q.want = v;
+    if (!q.busy) helperPump(kind);
+  }
+  function helperPump(kind) {
+    const q = helperQ[kind];
+    if (q.want === null) { q.busy = false; return; }
+    const v = q.want;
+    q.want = null;
+    q.busy = true;
+    helper('/' + kind + '?v=' + v.toFixed(3)).then(() => setTimeout(() => helperPump(kind), 25));
+  }
+  const helperBusy = (kind) => !!(helperQ[kind] && helperQ[kind].busy);
+
   function finalUrlGM(u, xhr) {
     return new Promise((resolve) => {
       let done = false, req = null;
@@ -2123,6 +2164,15 @@
     function applyLevel(level) {
       const m = M();
       let lv = clamp(level, 0, 1);   // höchstens 100 %
+      if (st.sys && st.sys.vol) {
+        // Helfer-App: echte Medienlautstärke des Handys (in dessen Stufen); das Video selbst bleibt auf voll
+        try { m.volume = 1; m.muted = false; if (st.mode === 'capture') vid.muted = true; } catch (e) {}
+        if (st.gain) st.gain.gain.value = 1;
+        st.level = lv;
+        helperSend('vol', lv);
+        const mx = st.sys.max || 15;
+        return Math.round(lv * mx) / mx;
+      }
       if (lv > 1 && !canBoost()) lv = 1;
       if (lv > 1 && !st.srcNode) {
         try {
@@ -2141,11 +2191,52 @@
       return lv;
     }
     function applyBright(b) {
+      if (st.sys && st.sys.bright) {
+        // Helfer-App: echte Bildschirmhelligkeit (gilt nur, solange der Player offen ist)
+        st.bright = clamp(b, 0.01, 1);
+        dimEl.style.opacity = '0';
+        vid.style.filter = '';
+        st.dim = 0;
+        st.sysBright = true;
+        helperSend('bright', st.bright);
+        return;
+      }
       st.bright = clamp(b, 0.15, 1);   // höchstens 100 % (nur abdunkeln)
       dimEl.style.opacity = st.bright < 1 ? String(Math.min(0.85, 1 - st.bright)) : '0';
       vid.style.filter = st.bright > 1 ? 'brightness(' + st.bright.toFixed(2) + ')' : '';
       st.dim = parseFloat(dimEl.style.opacity) || 0;
     }
+    // Läuft die Helfer-App? Dann gelten die Gesten fürs Handy selbst – Startwerte sind die aktuellen des Handys.
+    st.sys = null;
+    helper('/ping').then((d) => {
+      if (!d || !d.ok || vp !== st) return;
+      st.sys = { vol: true, bright: !!(d.overlay || d.write), max: d.volMax || 15 };
+      if (typeof d.vol === 'number') {
+        st.level = clamp(d.vol, 0, 1);
+        try { const m = M(); m.volume = 1; } catch (e) {}
+      }
+      if (st.sys.bright) {
+        if (typeof d.bright === 'number') st.bright = clamp(d.bright, 0.01, 1);
+        dimEl.style.opacity = '0';
+        st.dim = 0;
+      }
+      // Lebenszeichen (sonst gibt die App die Helligkeit nach 30 s zurück) – und Lautstärketasten mitbekommen
+      const beat = setInterval(() => {
+        if (vp !== st || document.hidden) return;
+        helper('/beat').then((r) => {
+          if (r && r.ok && vp === st && !helperBusy('vol') && typeof r.vol === 'number') st.level = clamp(r.vol, 0, 1);
+        });
+      }, 5000);
+      // App verlassen (Startbildschirm, anderes Fenster): Helligkeit sofort zurückgeben, beim Zurückkommen wieder setzen
+      const onVis = () => {
+        if (vp !== st) return;
+        if (document.hidden) helper('/end');
+        else if (st.sysBright) helperSend('bright', st.bright);
+      };
+      document.addEventListener('visibilitychange', onVis);
+      st.cleanup.push(() => { clearInterval(beat); document.removeEventListener('visibilitychange', onVis); });
+    });
+    st.cleanup.push(() => { if (st.sys) helper('/end'); });
     let indTimer = 0;
     // Anzeige: Text, optional Füllstand (0–1, über 1 = verstärkt/aufgehellt); "stay" = bleibt stehen (langes Drücken)
     // Hochformat: Anzeige direkt über der Oberkante des Videobilds (nicht ganz oben im Schwarzen).
@@ -3688,7 +3779,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 12.4',
+      'Video-Assistent 12.5',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
