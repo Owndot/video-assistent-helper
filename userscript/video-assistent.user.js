@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      12.7
+// @version      12.8
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -47,6 +47,9 @@
     // Facebook: Bild direkt von Facebooks eigenem Player spiegeln (immer das richtige Video, gleiche Qualität wie im
     // Browser). false = wie früher selbst nach der Videodatei suchen.
     fbMirror: true,
+    // Lupen-Glas wie bei iOS 26 / macOS: das Bild hinter Knöpfen und Reglern wird am Rand gebogen und leicht vergrößert.
+    // false = einfaches Milchglas (spart etwas Rechenleistung)
+    lensGlass: true,
     progressLine: true,   // dünne Fortschrittslinie ganz unten, wenn die Leisten ausgeblendet sind (im Format-Menü umschaltbar)
     ambient: true,   // Ambient-Modus: Farben des Bildes leuchten weich in die schwarzen Ränder (im Format-Menü umschaltbar)
     autoRotate: false,  // true = Querformat-Videos im Vollbild automatisch drehen
@@ -1386,7 +1389,7 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 .pill{position:fixed;top:0;left:0;display:flex;align-items:center;gap:2px;height:48px;padding:0 3px;border-radius:24px;
  background:rgba(28,30,40,.36);
- -webkit-backdrop-filter:blur(12px) saturate(1.4) brightness(1.1);backdrop-filter:blur(12px) saturate(1.4) brightness(1.1);
+ -webkit-backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.4) brightness(1.1);backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.4) brightness(1.1);
  color:#fff;box-shadow:0 6px 20px rgba(0,0,0,.28),0 1px 3px rgba(0,0,0,.18);
  opacity:0;transform:translateY(-4px) scale(.96);transform-origin:top right;transition:opacity .22s ease,transform .32s cubic-bezier(.34,1.56,.64,1);
  pointer-events:none;z-index:2147483647;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
@@ -1402,7 +1405,7 @@
 .pill.drag{opacity:1 !important;transform:scale(1.06);box-shadow:0 16px 36px rgba(0,0,0,.40);transition:none}
 .pill .pb{all:unset;position:relative;z-index:1;display:flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:21px;cursor:pointer;color:#fff;-webkit-touch-callout:none;transition:transform .28s cubic-bezier(.34,1.56,.64,1),background .15s ease}
 .pill .pb:active{transform:scale(.86)}
-.pill:active{-webkit-backdrop-filter:blur(12px) saturate(1.6) brightness(1.45);backdrop-filter:blur(12px) saturate(1.6) brightness(1.45)}
+.pill:active{-webkit-backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.6) brightness(1.45);backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.6) brightness(1.45)}
 .pill .pb:focus-visible{outline:2px solid #9BE7FF;outline-offset:1px}
 .pill svg{width:23px;height:23px;fill:currentColor;flex:none;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.55)) drop-shadow(0 0 3px rgba(0,0,0,.25))}
 /* feine Trennlinie zwischen den zwei Symbolen */
@@ -1518,6 +1521,93 @@
   // (früher: kleiner Button, der sich aufklappt – jetzt immer gleich groß)
   function expand() {}
   function collapse() { clearTimeout(collapseTimer); }
+
+  // ---------- Lupen-Glas (wie iOS 26 / macOS) ----------
+  // Zu jeder Glasfläche (Größe + Rundung) eine Verschiebungskarte: am Rand wird das Bild dahinter nach innen
+  // gebogen (wie dickes Glas), in der Mitte leicht vergrößert (Lupe). Läuft als SVG-Filter im Hintergrund-Filter
+  // (backdrop-filter) – das kann nur Chrome/Chromium; sonst bleibt es beim Milchglas.
+  const LENS_OK = CONFIG.lensGlass !== false && /Chrome\//.test(navigator.userAgent) &&
+    (() => { try { return window.CSS.supports('backdrop-filter', 'url(#a) blur(1px)'); } catch (e) { return false; } })();   // ("CSS" ist hier unser Stil-Text)
+  const lensCache = new Map(), lensPre = 'l' + Math.random().toString(36).slice(2, 8);
+  let lensSvg = null, lensDefs = null;
+  function lensMap(w, h, r, bezel, mag) {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    const img = ctx.createImageData(w, h), d = img.data;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const px = x + 0.5, py = y + 0.5;
+        const cx = Math.min(Math.max(px, r), w - r), cy = Math.min(Math.max(py, r), h - r);
+        let vx = px - cx, vy = py - cy, edge;
+        const len = Math.hypot(vx, vy);
+        if (len > 0) { edge = r - len; vx /= len; vy /= len; }
+        else {
+          const dl = px - r, dr = w - r - px, dt = py - r, db = h - r - py, m = Math.min(dl, dr, dt, db);
+          edge = r + m;
+          vx = m === dl ? -1 : m === dr ? 1 : 0;
+          vy = vx ? 0 : (m === dt ? -1 : 1);
+        }
+        let k = 0;
+        if (edge >= 0 && edge < bezel) { const t = 1 - edge / bezel; k = t * t * (3 - 2 * t); }
+        const ox = -vx * k - (px - w / 2) / (w / 2) * mag, oy = -vy * k - (py - h / 2) / (h / 2) * mag;
+        const i = (y * w + x) * 4;
+        d[i] = Math.round(128 + 127 * Math.max(-1, Math.min(1, ox)));
+        d[i + 1] = Math.round(128 + 127 * Math.max(-1, Math.min(1, oy)));
+        d[i + 2] = 128;
+        d[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return c.toDataURL();
+  }
+  function lensFor(w, h, r) {
+    r = Math.max(0, Math.min(r, w / 2, h / 2));
+    const key = w + 'x' + h + 'r' + Math.round(r);
+    if (lensCache.has(key)) return lensCache.get(key);
+    // Filter liegen am (unsichtbaren) Wirt-Element: im Shadow-DOM selbst findet Chrome sie für backdrop-filter nicht
+    if (!lensSvg) {
+      lensSvg = document.createElementNS(NS, 'svg');
+      lensSvg.setAttribute('width', '0'); lensSvg.setAttribute('height', '0'); lensSvg.setAttribute('aria-hidden', 'true');
+      lensSvg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden';
+      lensDefs = document.createElementNS(NS, 'defs');
+      lensSvg.appendChild(lensDefs);
+    }
+    if (hostEl && lensSvg.parentNode !== hostEl) hostEl.appendChild(lensSvg);
+    const m = Math.min(w, h);
+    const bezel = Math.max(7, Math.min(24, m * 0.3)), scale = Math.max(12, Math.min(44, m * 0.55));
+    const id = lensPre + lensCache.size;
+    const f = document.createElementNS(NS, 'filter');
+    f.setAttribute('id', id);
+    f.setAttribute('x', '0%'); f.setAttribute('y', '0%'); f.setAttribute('width', '100%'); f.setAttribute('height', '100%');
+    f.setAttribute('color-interpolation-filters', 'sRGB');
+    const fi = document.createElementNS(NS, 'feImage');
+    fi.setAttribute('href', lensMap(w, h, r, bezel, 0.09));
+    fi.setAttribute('x', '0'); fi.setAttribute('y', '0'); fi.setAttribute('width', String(w)); fi.setAttribute('height', String(h));
+    fi.setAttribute('preserveAspectRatio', 'none'); fi.setAttribute('result', 'm');
+    const dm = document.createElementNS(NS, 'feDisplacementMap');
+    dm.setAttribute('in', 'SourceGraphic'); dm.setAttribute('in2', 'm'); dm.setAttribute('scale', String(Math.round(scale)));
+    dm.setAttribute('xChannelSelector', 'R'); dm.setAttribute('yChannelSelector', 'G');
+    f.append(fi, dm);
+    lensDefs.appendChild(f);
+    lensCache.set(key, id);
+    return id;
+  }
+  function applyLens(el) {
+    if (!LENS_OK || !el || !el.isConnected) return;
+    const w = Math.round(el.offsetWidth), h = Math.round(el.offsetHeight);
+    if (w < 16 || h < 16 || w * h > 420000) { el.style.removeProperty('--lens'); el.style.removeProperty('--gb'); return; }
+    let r = 0;
+    try { r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; } catch (e) {}
+    el.style.setProperty('--lens', 'url(#' + lensFor(w, h, r) + ')');
+    el.style.setProperty('--gb', '5px');   // mit Linse weniger Weichzeichner – sonst sieht man die Brechung nicht
+  }
+  const lensRO = LENS_OK && window.ResizeObserver ? new ResizeObserver((es) => es.forEach((e) => applyLens(e.target))) : null;
+  function lensWatch(el) {
+    if (!LENS_OK || !el) return;
+    applyLens(el);
+    if (lensRO) lensRO.observe(el);
+  }
 
   function ui() {
     if (root) return;
@@ -1672,6 +1762,7 @@
     return area > 15000 ? best : null;
   }
   function showPill(v) {
+    if (pill && !pill.__lens) { pill.__lens = true; lensWatch(pill); }
     ui();
     attachHost();
     if (v !== active) { collapse(); watchSize(v); }   // neues Video: wieder klein anfangen
@@ -1839,11 +1930,11 @@
    bewusst hell, damit es auch auf dunklen Videos und dunklen Seiten wie Glas wirkt */
 /* Helle Glasteile werden dunkel gezeichnet und per invert(1) umgedreht: so bleiben sie weiß, auch wenn der Browser
    Webseiten zwangsweise abdunkelt (Vivaldi/Chrome "Dunkle Webseiten" dunkelt nur helle Farben ab, dunkle lässt er stehen) */
-.g{position:relative;background:rgba(26,28,38,.14);-webkit-backdrop-filter:blur(12px) saturate(1.4) brightness(1.1);backdrop-filter:blur(12px) saturate(1.4) brightness(1.1);box-shadow:0 6px 22px rgba(0,0,0,.24);transition:transform .32s cubic-bezier(.34,1.56,.64,1),-webkit-backdrop-filter .2s ease,backdrop-filter .2s ease}
+.g{position:relative;background:rgba(26,28,38,.14);-webkit-backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.4) brightness(1.1);backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.4) brightness(1.1);box-shadow:0 6px 22px rgba(0,0,0,.24);transition:transform .32s cubic-bezier(.34,1.56,.64,1),-webkit-backdrop-filter .2s ease,backdrop-filter .2s ease}
 .g::before{content:"";position:absolute;inset:0;z-index:1;border-radius:inherit;padding:.8px;filter:invert(1);background:linear-gradient(135deg,rgba(0,0,0,.62) 0%,rgba(0,0,0,.24) 12%,rgba(0,0,0,0) 30%,rgba(0,0,0,0) 68%,rgba(50,27,0,.10) 82%,rgba(0,0,0,.30) 100%);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
 .g::after{content:"";position:absolute;inset:0;border-radius:inherit;filter:invert(1);background:radial-gradient(85% 55% at 24% 0%,rgba(0,0,0,.13),rgba(0,0,0,0) 60%),radial-gradient(55% 45% at 80% 108%,rgba(0,0,0,.07),rgba(0,0,0,0) 65%),linear-gradient(180deg,rgba(0,0,0,.06),rgba(0,0,0,.015) 50%,rgba(0,0,0,.04));box-shadow:inset 0 1px 0 rgba(0,0,0,.20),inset 0 -1px 0 rgba(0,0,0,.05),inset 0 0 12px rgba(0,0,0,.05);pointer-events:none;transition:opacity .2s ease}
 /* Antippen: das Glas leuchtet kurz auf und federt (wie bei Apple) */
-.vb.g:active{transform:scale(.92);-webkit-backdrop-filter:blur(12px) saturate(1.6) brightness(1.5);backdrop-filter:blur(12px) saturate(1.6) brightness(1.5)}
+.vb.g:active{transform:scale(.92);-webkit-backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.6) brightness(1.5);backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.6) brightness(1.5)}
 .vchrome{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .22s ease}
 .vscrim{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.34) 0,rgba(0,0,0,0) 20%,rgba(0,0,0,0) 58%,rgba(0,0,0,.5) 100%);pointer-events:none}
 .vp.ctl .vchrome{opacity:1}
@@ -1859,6 +1950,8 @@
 .vtitle small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 12px/1.2 var(--font);color:var(--sub);text-shadow:0 1px 2px rgba(0,0,0,.55)}
 .vcluster{display:flex;align-items:center;height:44px;border-radius:22px;padding:0 4px;transition:opacity .18s ease}
 .vb{all:unset;position:relative;display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:22px;cursor:pointer;color:#fff;flex:none;transition:transform .32s cubic-bezier(.34,1.56,.64,1)}
+/* "all:unset" oben nimmt runden Glasknöpfen sonst den Glas-Hintergrund – hier wieder dazu (mit Lupe) */
+.vb.g{background:rgba(26,28,38,.14);-webkit-backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.4) brightness(1.1);backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.4) brightness(1.1);box-shadow:0 6px 22px rgba(0,0,0,.24)}
 .vb:active{transform:scale(.88)}
 .vb[hidden]{display:none !important}
 .vb svg{width:22px;height:22px;fill:#fff;position:relative;z-index:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
@@ -1953,18 +2046,21 @@
 .vsfx.go i{animation:vsfxring .6s ease-out both}
 @keyframes vsfxring{0%{opacity:.7;transform:scale(1)}100%{opacity:0;transform:scale(1.38)}}
 .vp.seeking .vind{opacity:0}
-.vside{position:absolute;top:50%;width:50px;height:min(44vh,240px);border-radius:25px;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:13px 0 12px;opacity:0;transform:translateY(-50%) scale(.92);transition:opacity .16s ease,transform .24s cubic-bezier(.34,1.56,.64,1);pointer-events:none;z-index:3}
+/* Regler wie im iOS-Kontrollzentrum: große Glaskapsel, von unten weiß gefüllt, farbiges Symbol in der Füllung */
+.vside{position:absolute;top:50%;width:60px;height:min(46vh,252px);border-radius:30px;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:15px 0 17px;opacity:0;transform:translateY(-50%) scale(.88);transition:opacity .18s ease,transform .34s cubic-bezier(.34,1.56,.64,1);pointer-events:none;z-index:3;box-shadow:0 10px 30px rgba(0,0,0,.28)}
 .vside.r{right:calc(20px + var(--evp-sr,env(safe-area-inset-right,0px)))}
 .vside.l{left:calc(20px + var(--evp-sl,env(safe-area-inset-left,0px)))}
 .vside.on{opacity:1;transform:translateY(-50%) scale(1)}
 .vside::before{z-index:2}
-.vside i{position:absolute;left:0;right:0;bottom:0;height:0;filter:invert(1);background:linear-gradient(180deg,rgba(0,0,0,.96),rgba(0,0,0,.80));box-shadow:0 -1px 10px rgba(0,0,0,.55)}
+.vside i{position:absolute;left:0;right:0;bottom:0;height:0;filter:invert(1);background:linear-gradient(180deg,rgba(0,0,0,.93),rgba(0,0,0,.97) 60%,rgba(0,0,0,.90));box-shadow:inset 0 1px 0 rgba(0,0,0,.06),0 -1px 8px rgba(0,0,0,.30);transition:height .06s linear}
 
 .vside u{position:absolute;left:9px;right:9px;height:1.5px;border-radius:1px;background:rgba(255,255,255,.7);box-shadow:0 0 0 .5px rgba(0,0,0,.18);display:none;z-index:1}
 .vside.ext u{display:block}
-.vside b{position:relative;z-index:1;font:700 12.5px var(--font);font-variant-numeric:tabular-nums;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.45);transition:color .12s}
-.vside svg{position:relative;z-index:1;width:23px;height:23px;fill:#fff;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));transition:fill .12s}
-.vside.lit svg{fill:#d5d2c9;filter:invert(1)}
+.vside b{position:relative;z-index:3;font:600 12px var(--font);letter-spacing:.01em;font-variant-numeric:tabular-nums;color:#fff;opacity:.92;text-shadow:0 1px 2px rgba(0,0,0,.45);transition:color .12s}
+.vside svg{position:relative;z-index:3;width:26px;height:26px;fill:#fff;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));transition:fill .15s}
+/* in der weißen Füllung farbig wie bei iOS: Sonne gelb, Lautsprecher blau (als Gegenfarbe gezeichnet + invert, s. o.) */
+.vside.lit svg{fill:#0029f5;filter:invert(1)}
+.vside.lit.r svg{fill:#f57b00}
 .vside.top b{color:#d5d2c9;filter:invert(1);text-shadow:none}
 .vmenu{position:absolute;left:12px;right:12px;bottom:calc(12px + var(--evp-sb,env(safe-area-inset-bottom,0px)));max-height:62%;display:flex;flex-direction:column;overflow:hidden;border-radius:28px;padding:8px;opacity:0;transform:translateY(18px) scale(.98);transition:opacity .2s ease,transform .2s ease;pointer-events:none;z-index:4}
 /* nur der Inhalt scrollt – Glaskante und Glanz bleiben am Rahmen */
@@ -2146,6 +2242,9 @@
         h('div', { class: 'vbot ia' }, h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bPip, bQual, bFit, bRot)), h('div', { class: 'vrow' }, tCur, bar, tDur))),
       ind, side, seekBox, sfxL, sfxR, mini, menu, bUnlock);
     root.append(wrap);
+    // Lupen-Glas für alle Glasflächen (Größe kommt erst nach dem Einblenden; ändert sie sich, wird neu berechnet)
+    requestAnimationFrame(() => wrap.querySelectorAll('.g').forEach(lensWatch));
+    st.cleanup.push(() => { if (lensRO) wrap.querySelectorAll('.g').forEach((e) => lensRO.unobserve(e)); });
     // Der Lichtschein (Ambient) ragt über den Rand hinaus – der Player-Bereich darf dadurch nie verrutschen
     wrap.addEventListener('scroll', () => { if (wrap.scrollTop || wrap.scrollLeft) { wrap.scrollTop = 0; wrap.scrollLeft = 0; } }, { passive: true });
     if (toastEl) wrap.append(toastEl);   // Hinweise IM Player – im Vollbild wäre alles daneben unsichtbar
@@ -3232,8 +3331,8 @@
         const to = clamp(g.time + g.delta, 0, isFinite(m.duration) ? m.duration : g.time + g.delta);
         showSeek(to, m.duration, g.delta);
       } else if (g.mode === 'vol' || g.mode === 'bright') {
-        // knapp die halbe Bildschirmhöhe = 0 → 100 % (im Querformat mindestens 200 Pixel)
-        const range = Math.max(H * 0.42, 200);
+        // gut ein Drittel der Bildschirmhöhe = 0 → 100 % (im Querformat mindestens 180 Pixel)
+        const range = Math.max(H * 0.36, 180);
         const step = -(e.clientY - g.ly) / range;
         g.ly = e.clientY;
         if (g.mode === 'vol') {
@@ -3838,7 +3937,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 12.7',
+      'Video-Assistent 12.8',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
