@@ -13,7 +13,7 @@ on:
         default: 'test_*.py'
       browsers:
         description: 'Browser (JSON-Liste)'
-        default: '["chromium","firefox"]'
+        default: '["chromium","firefox","firefox-neu"]'
 
 permissions:
   contents: write
@@ -25,7 +25,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: ${{ fromJSON(github.event.inputs.browsers || '["chromium","firefox"]') }}
+        # chromium / firefox: Playwright 1.56 (Firefox 142) · firefox-neu: neueste Playwright-Version (aktuelles Firefox)
+        browser: ${{ fromJSON(github.event.inputs.browsers || '["chromium","firefox","firefox-neu"]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -40,13 +41,14 @@ jobs:
 
       - name: Werkzeuge
         run: |
-          pip install playwright==1.56.0 pillow   # gleiche Version wie beim Entwickeln (neuere verweigern Größenänderung im Vollbild)
-          python -m playwright install --with-deps ${{ matrix.browser }}
+          # Chromium: gleiche Version wie beim Entwickeln (neuere verweigern Größenänderung im Vollbild)
+          if [ "${{ matrix.browser }}" = firefox-neu ]; then pip install playwright pillow; else pip install playwright==1.56.0 pillow; fi
+          python -m playwright install --with-deps ${{ matrix.browser == 'chromium' && 'chromium' || 'firefox' }}
           sudo apt-get install -y ffmpeg
 
       - name: Tests (${{ matrix.browser }})
         env:
-          BROWSER: ${{ matrix.browser }}
+          BROWSER: ${{ matrix.browser == 'chromium' && 'chromium' || 'firefox' }}
           TESTS: ${{ github.event.inputs.tests || 'test_*.py' }}
         run: |
           cd tests/browser
