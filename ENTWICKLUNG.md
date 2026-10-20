@@ -82,11 +82,20 @@ speichert ihn per `GM_setValue('helperKey')` (übersteht Skript-Updates).
 
 ## 5. Tests
 
-**Browser-Tests** (`tests/browser`, Python + Playwright/Chromium):
+**Browser-Tests** (`tests/browser`, Python + Playwright, Chromium oder Firefox):
 ```
-pip install playwright && playwright install chromium
+pip install playwright==1.56.0 pillow && playwright install chromium
 cd tests/browser && ./run_all.sh        # oder einzeln: python3 test_player.py
+BROWSER=firefox ./run_all.sh            # dieselben Tests in Firefox (playwright install firefox)
+TESTS="test_v8.py test_sfx.py" ./run_all.sh   # nur ausgewählte
 ```
+`pwshim.py` (erste Zeile jedes Tests) tauscht bei `BROWSER=firefox` Chromium gegen Firefox und passt die Optionen an.
+
+**Auf GitHub** (`.github/workflows/browser-tests.yml`): bei jeder Änderung an Skript/Tests laufen alle Tests in
+Chromium und im aktuellen Firefox; von Hand („Run workflow“) auch mit Auswahl von Tests und Browsern
+(`firefox` = Firefox 142, `firefox-neu` = aktuelles). Die Ergebnisse stehen als Übersicht im Lauf und – samt
+Protokoll je Test und Bildschirmfotos – in den Zweigen `ergebnisse-chromium` / `ergebnisse-firefox-neu`
+(`git fetch origin '+refs/heads/ergebnisse-*:refs/remotes/origin/ergebnisse-*'`).
 Jeder Test startet einen kleinen Webserver mit den Seiten aus `web/`, lädt das Skript (Shadow-DOM wird zum Testen
 geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die Helfer-App wird nachgebaut
 (`GM_xmlhttpRequest` → Python). Wichtige Tests:
@@ -102,6 +111,8 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_topguard.py`, `test_idle.py` | gesperrter oberer Rand, sparsamer Takt ohne Video |
 
 Bekannt: `test_tt.py` besteht 2 von 3 (TikTok liefert ohne Anmeldung keine Video-ID) – kein Fehler.
+`test_sfx2.py` schwankt gelegentlich um eine Prüfung (Zeitverhalten, auch in alten Versionen).
+`test_ffcap.py` / `test_ffdiag.py` sind Untersuchungen (Spiegeln, Zeiger-Ereignisse) ohne Bestanden/Fehler.
 
 **Java-Tests** (`tests/java`, braucht JDK 17, ffmpeg, openssl):
 ```
@@ -137,6 +148,23 @@ Benachrichtigungen) – das prüft nur das Handy.
   `expose_function` laufen nur während Playwright-Aufrufen (`page.wait_for_timeout` statt `time.sleep`).
 - **Vollbild-Hinweis des Browsers** lässt sich nicht abschalten (weder Seite noch ADB) – nur `startFullscreen: false`.
 
+**Firefox** (`GECKO` im Skript):
+- Ein Tipp im eingebetteten Fenster gilt **nicht** für die Hauptseite (`navigator.userActivation` dort inaktiv) →
+  als Beweis zählt der Fokus auf dem Fenster. Darf die Hauptseite nicht ins Vollbild, meldet sie `fsno` und das
+  Fenster schaltet selbst (dort gilt der Tipp noch).
+- Ältere Versionen haben nur `mozCaptureStream` – der Ton geht dann **in** die Spiegelung (`FF_CAP`: Player-Video
+  nicht stumm, Lautstärke am Player-Video). Neuere haben `captureStream` wie Chrome.
+- Lädt das Original neu (Reel-Schleife), bekommt der Spiegel-Strom neue Spuren, aber dasselbe Videoelement zeigt
+  sie erst nach erneutem Zuweisen (`rebind`); ein frisch abgegriffener Strom bleibt dort stumm.
+- Ein angehaltenes, frisch geladenes Original liefert kein Bild (Chrome: letztes Bild) → Standbild-Canvas `.vhold`,
+  bis wieder Bilder kommen.
+- Abfragen im Namen der Seite (Instagram/TikTok) über `content.fetch`.
+- Kein Wellen-/Lupen-Glas (SVG-Filter in `backdrop-filter`) → Milchglas; `LENS_OK` prüft auf Chrome.
+- Testumgebung: Vollbild ohne `full-screen-api.ignore-widgets` springt auf Bildschirmgröße (1280 px); Größenänderung
+  im Vollbild hängt → Tests mit `set_viewport_size` bekommen ein nachgebautes Vollbild; Firefox 142 erzeugt mit
+  `has_touch` bei Maus keine Zeiger-Ereignisse (nur bei Berührung). Schriftmaße weichen ab → Tests prüfen Lage,
+  nicht Pixelhöhen. GitHub-Protokolle sind aus der Entwicklungsumgebung nicht abrufbar → Ergebnis-Zweige.
+
 ## 7. Versionen (kurz)
 
 | Version | Wichtigstes |
@@ -149,3 +177,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 13.2–13.3 | Downloads: YTDLnis direkt, Helfer lädt Dateien/HLS/DASH, Cookies, Laden über den Browser |
 | 13.4 | oberer Rand ohne Helligkeit/Lautstärke |
 | 13.5 | eigener Schlüssel + Koppeln, Cookies nur an die eigene Seite, sparsamer Takt |
+| 13.6 | Firefox: eingebettete Player, Facebook-Spiegel (Ton, Neuladen, Standbild), Seiten-Abfragen; Tests in beiden Browsern |

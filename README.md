@@ -5,7 +5,7 @@ auf allen Seiten. Besteht aus zwei Teilen:
 
 | Teil | Was es ist | Wo |
 |---|---|---|
-| **Userscript** | der Player selbst (läuft in Vivaldi/Chrome mit Violentmonkey) | `userscript/video-assistent.user.js` |
+| **Userscript** | der Player selbst (läuft in Vivaldi/Chrome **und Firefox** mit Violentmonkey) | `userscript/video-assistent.user.js` |
 | **Helfer-App** | kleine Android-App für alles, was ein Browser nicht darf (Helligkeit, Lautstärke, Downloads) | `app/` → fertige APK unter **Releases** |
 
 Der Player funktioniert auch **ohne** Helfer-App – dann regeln die Gesten nur das Video selbst.
@@ -63,6 +63,17 @@ dort YTDLnis). Den Vollbild-Hinweis des Browsers („zum Beenden … von oben zi
 
 Neue App-Versionen einfach über die alte installieren (gleicher Signaturschlüssel).
 
+### Firefox (Android)
+
+Alles funktioniert auch in Firefox. Violentmonkey aus den Firefox-Add-ons installieren, dann dasselbe Skript.
+Die Helfer-App muss **jeden Browser einmal koppeln**: in der App bei „4 · Mit dem Browser verbinden“ auf
+**Erneut** tippen und Firefox wählen (der Schlüssel bleibt derselbe, Vivaldi bleibt verbunden).
+
+Unterschiede zu Vivaldi:
+- Glas: einfaches Milchglas statt Wellen-/Lupen-Glas (Firefox kann diesen Filter nicht hinter Flächen zeichnen)
+- Bild-in-Bild: Firefox' eigenes – im Vollbild die Home-Taste drücken (Firefox-Einstellung „Bild-im-Bild“)
+- YTDLnis: Firefox fragt beim ersten Mal, ob die App geöffnet werden darf
+
 ## Einstellungen (oben im Userscript, `CONFIG`)
 
 | Einstellung | Standard | Bedeutung |
@@ -91,6 +102,6 @@ userscript/            das Userscript (aktuelle Version)
 app/                   Helfer-App (Java, ohne Bibliotheken)
 tests/browser/         Browser-Tests (Python + Playwright) mit Testseiten in web/
 tests/java/            Tests für den Download-Kern (ohne Android) + Erzeugung der Test-Streams
-.github/workflows/     baut bei jedem Push die APK und veröffentlicht sie als Release
+.github/workflows/     baut bei jedem Push die APK (Release) und testet das Skript in Chromium + Firefox
 ENTWICKLUNG.md         Aufbau, Schnittstelle, Tests, Stolperfallen – zum Weiterarbeiten
 ```

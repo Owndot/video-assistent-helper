@@ -28,9 +28,11 @@ def diff(a, b):
     A = Image.open(OUT + '/' + a).convert('RGB'); B = Image.open(OUT + '/' + b).convert('RGB')
     if A.size != B.size: B = B.resize(A.size)
     return round(sum(ImageStat.Stat(ImageChops.difference(A, B)).mean) / 3, 2)
-old = './backup-8.7-pre.js'
+# Erzwungener Dunkelmodus (wie Vivaldi „Dunkle Webseiten“) darf das Glas nicht verändern
 new = '../../userscript/video-assistent.user.js'
-shots(old, 'old', False); shots(new, 'new', False); shots(new, 'newdark', True); shots(old, 'olddark', True)
+shots(new, 'new', False); shots(new, 'newdark', True)
 srv.shutdown()
-for k in ['p', 'v', 's']:
-    print(k, 'alt vs neu (normal):', diff(k + '_old.png', k + '_new.png'), '| neu normal vs neu Dunkelmodus:', diff(k + '_new.png', k + '_newdark.png'), '| alt normal vs alt Dunkelmodus:', diff(k + '_old.png', k + '_olddark.png'))
+d = {k: diff(k + '_new.png', k + '_newdark.png') for k in ['p', 'v', 's']}
+for k, v in d.items(): print(k, 'normal vs Dunkelmodus:', v)
+# p = ganze Seite (die färbt der Dunkelmodus natürlich um) · v = Player · s = Regler – die müssen gleich bleiben
+print('ERGEBNIS:', 'Player gleich' if max(d['v'], d['s']) < 3 else 'Player UNTERSCHIEDLICH', d)
