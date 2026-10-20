@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      13.2
+// @version      13.3
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -1171,7 +1171,9 @@
   // ---------- Helfer-App: echte Helligkeit und Lautstärke des Handys ----------
   // Die App lauscht nur auf dem Handy selbst (127.0.0.1). Ohne App kommt schlicht keine Antwort – dann bleibt alles wie bisher.
   const HELPER = 'http://127.0.0.1:47811', HELPER_KEY = 'evp-1';
-  function helper(path) {
+  // to = Wartezeit in ms (Abholen beim Laden über den Browser wartet bis zu 8 s), body = Daten für POST /push
+  function helper(path, to, body) {
+    to = to || 1200;
     return new Promise((res) => {
       const x = CONFIG.systemHelper === false ? null : gmXhr();
       if (!x) { res(null); return; }
@@ -1179,13 +1181,61 @@
       const fin = (v) => { if (!done) { done = true; res(v); } };
       try {
         x({
-          method: 'GET', url: HELPER + path, headers: { 'X-EVP-Key': HELPER_KEY }, timeout: 1200, anonymous: true,
+          method: body ? 'POST' : 'GET', url: HELPER + path, headers: { 'X-EVP-Key': HELPER_KEY }, timeout: to, anonymous: true,
+          data: body || undefined,
           onload: (r) => { try { fin(r.status === 200 ? JSON.parse(r.responseText) : null); } catch (e) { fin(null); } },
           onerror: () => fin(null), ontimeout: () => fin(null), onabort: () => fin(null),
         });
       } catch (e) { fin(null); }
-      setTimeout(() => fin(null), 1600);
+      setTimeout(() => fin(null), to + 400);
     });
+  }
+  // ---------- Laden über den Browser (für Server, die nur dem eingeloggten Browser etwas geben) ----------
+  // Der Helfer sagt, was er braucht (/pull) – das Skript lädt es mit der Sitzung des Browsers und liefert (/push).
+  // Läuft, solange die Seite offen ist (der Player darf zu sein).
+  function gmGet(u, off, len, sizeOnly) {
+    return new Promise((res) => {
+      const x = gmXhr();
+      if (!x) { res({ st: 502 }); return; }
+      const headers = { Referer: location.href };
+      if (sizeOnly) headers.Range = 'bytes=0-0';
+      else if (off >= 0 && len > 0) headers.Range = 'bytes=' + off + '-' + (off + len - 1);
+      try {
+        x({
+          method: 'GET', url: u, headers: headers, responseType: 'arraybuffer', timeout: 60000,
+          onload: (r) => {
+            let total = -1;
+            const m = /content-range:\s*bytes\s+\d+-\d+\/(\d+)/i.exec(r.responseHeaders || '');
+            if (m) total = +m[1];
+            else if (sizeOnly && r.status === 200) { const l = /content-length:\s*(\d+)/i.exec(r.responseHeaders || ''); if (l) total = +l[1]; }
+            res({ st: r.status, total: total, body: sizeOnly ? null : r.response });
+          },
+          onerror: () => res({ st: 502 }), ontimeout: () => res({ st: 504 }), onabort: () => res({ st: 499 }),
+        });
+      } catch (e) { res({ st: 502 }); }
+    });
+  }
+  const proxyJobs = new Set();
+  async function proxyLoop(job) {
+    if (proxyJobs.has(job)) return;
+    proxyJobs.add(job);
+    try {
+      let idle = 0;
+      while (true) {
+        const r = await helper('/pull?job=' + job, 12000);
+        if (!r) { if (++idle > 5) break; await new Promise((ok) => setTimeout(ok, 1000)); continue; }
+        idle = 0;
+        if (r.done) break;
+        await Promise.all((r.reqs || []).map(async (q) => {
+          const g = await gmGet(q.u, q.o, q.l, q.s);
+          const st = g.st || 502;
+          const body = g.body && st < 400 ? g.body : new ArrayBuffer(0);
+          await helper('/push?job=' + job + '&id=' + q.id + '&st=' + st + '&total=' + (g.total || -1), 60000, body);
+        }));
+      }
+    } finally {
+      proxyJobs.delete(job);
+    }
   }
   // Beim Wischen nicht jede Bewegung schicken: immer nur den neuesten Wert, sobald die vorige Antwort da ist
   const helperQ = {};
@@ -2384,7 +2434,7 @@
     st.sys = null;
     helper('/ping').then((d) => {
       if (!d || !d.ok || vp !== st) return;
-      st.sys = { vol: true, bright: !!(d.overlay || d.write), max: d.volMax || 15, dl: !!d.dl };
+      st.sys = { vol: true, bright: !!(d.overlay || d.write), max: d.volMax || 15, dl: !!d.dl, proxy: !!d.proxy, dash: !!d.dash };
       if (st.refreshDl) st.refreshDl();   // mit Helfer lassen sich auch Streams speichern
       if (typeof d.vol === 'number') {
         st.level = clamp(d.vol, 0, 1);
@@ -2886,17 +2936,18 @@
     // Download und Teilen nur zeigen, wenn sie für DIESES Video auch funktionieren:
     // Download = Datei zum Speichern oder ein Link genau dieses Videos für YTDLnis (nicht die Feed-Adresse)
     // Teilen   = eine Adresse, die eine andere App abspielen kann
-    // Was der Helfer-App zum Speichern übergeben werden kann: die laufende Datei oder der HLS-Stream (kein DASH, kein blob:)
+    // Was der Helfer-App zum Speichern übergeben werden kann: die laufende Datei, ein HLS- oder DASH-Stream (kein blob:)
+    const kindOf = (u) => /\.mpd(\?|#|$)/i.test(u) ? 'dash' : /\.m3u8(\?|#|$)/i.test(u) ? 'hls' : 'file';
     const helperSrc = () => {
-      if (st.mode === 'own' && st.cur && /^https?:/i.test(st.cur)) {
-        if (/\.mpd(\?|#|$)/i.test(st.cur)) return null;
-        return { u: st.cur, k: (st.hls || PLAYLIST_RE.test(st.cur)) ? 'hls' : 'file' };
-      }
+      if (st.mode === 'own' && st.cur && /^https?:/i.test(st.cur)) return { u: st.cur, k: st.hls ? 'hls' : kindOf(st.cur) };
       if (st.igUrl) return { u: st.igUrl, k: 'file' };
       if (st.ttUrl) return { u: st.ttUrl, k: 'file' };
+      // Bild kommt gespiegelt vom Player der Seite (z. B. DASH, den wir nicht selbst abspielen): gefundene Stream-Adresse
+      const s2 = (st.sources || []).find((u) => /^https?:/i.test(u) && PLAYLIST_RE.test(u));
+      if (s2 && !FB_MIRROR) return { u: s2, k: kindOf(s2) };
       return null;
     };
-    const helperCanDl = () => !!(st.sys && st.sys.dl && helperSrc());
+    const helperCanDl = () => { const h = helperSrc(); return !!(st.sys && st.sys.dl && h && (h.k !== 'dash' || st.sys.dash)); };
     // Download und Teilen nur zeigen, wenn sie für DIESES Video auch funktionieren:
     // Download = Datei zum Speichern, ein Stream für den Helfer oder ein Link genau dieses Videos für YTDLnis
     // Teilen   = eine Adresse, die eine andere App abspielen kann
@@ -2906,14 +2957,40 @@
       bDl.hidden = !(directUrl() || link || helperCanDl());
       if (bExt) bExt.hidden = !((st.mode === 'own' && st.cur) || st.igUrl || st.ttUrl);
     };
-    // Helfer-App speichert: Datei über Androids Download-Manager, Stream Stück für Stück → MP4 (mit der Seite als Referer)
-    function helperDownload(src) {
+    // Helfer-App speichert: Datei über Androids Download-Manager, Stream Stück für Stück → MP4 (mit der Seite als Referer).
+    // Weist der Server den Helfer ab (401/403 – will die Sitzung des Browsers), lädt das Skript automatisch über den Browser.
+    // via = 'browser': gleich über den Browser laden
+    function helperDownload(src, via) {
       const send = (u) => {
-        const q = '/download?u=' + encodeURIComponent(u) + '&ref=' + encodeURIComponent(location.href) +
-          '&ua=' + encodeURIComponent(navigator.userAgent) + '&t=' + encodeURIComponent((pageTitle() || 'Video').slice(0, 100)) + '&k=' + src.k;
-        helper(q).then((r) => toast(r && r.ok
-          ? (src.k === 'hls' ? 'Helfer lädt den Stream – Fortschritt in der Benachrichtigung' : 'Download läuft – siehe Benachrichtigung')
-          : 'Helfer konnte den Download nicht starten' + (r && r.error ? ' (' + r.error + ')' : '')));
+        let ck = '';
+        try { if (baseDomain(hostOf(u)) === baseDomain(location.hostname)) ck = document.cookie || ''; } catch (e) {}   // nur Cookies der eigenen Seite
+        const q = (proxy) => '/download?u=' + encodeURIComponent(u) + '&ref=' + encodeURIComponent(location.href) +
+          '&ua=' + encodeURIComponent(navigator.userAgent) + '&t=' + encodeURIComponent((pageTitle() || 'Video').slice(0, 100)) +
+          '&k=' + src.k + (ck ? '&c=' + encodeURIComponent(ck) : '') + (proxy ? '&p=1' : '');
+        const viaBrowser = (why) => {
+          if (!(st.sys && st.sys.proxy)) { toast(why || 'Der Server lehnt den Helfer ab'); return; }
+          helper(q(true)).then((r) => {
+            if (!r || !r.ok) { toast('Helfer konnte den Download nicht starten'); return; }
+            toast((why ? why + ' – ' : '') + 'lädt über den Browser, Seite offen lassen');
+            proxyLoop(r.id);
+          });
+        };
+        if (via === 'browser') { viaBrowser(''); return; }
+        helper(q(false)).then((r) => {
+          if (!r || !r.ok) { toast('Helfer konnte den Download nicht starten' + (r && r.error ? ' (' + r.error + ')' : '')); return; }
+          toast(src.k === 'file' ? 'Download läuft – siehe Benachrichtigung' : 'Helfer lädt den Stream – Fortschritt in der Benachrichtigung');
+          // die ersten Sekunden beobachten: verlangt der Server die Browser-Sitzung? Dann von selbst den anderen Weg
+          let n = 0;
+          const iv = setInterval(() => {
+            if (++n > 18) { clearInterval(iv); return; }
+            helper('/dlstate?id=' + r.id).then((s2) => {
+              const t = s2 && s2.state || '';
+              if (/^Fehler: HTTP 40[13]/.test(t)) { clearInterval(iv); viaBrowser('Server verlangt die Browser-Sitzung'); }
+              else if (/^(fertig|läuft|\d+\/\d+|zusammensetzen)/.test(t) && n > 6) clearInterval(iv);
+              else if (/^Fehler/.test(t)) clearInterval(iv);
+            });
+          }, 1500);
+        });
       };
       // geschützte Adressen der Seite (/get_file/…) leiten nur MIT Browsersitzung weiter: Endadresse vorher holen
       if (src.k === 'file' && needsResolve(src.u)) {
@@ -2938,7 +3015,8 @@
       let link = '';
       try { link = SHOW_DOWNLOAD ? postUrlFor(orig) : ''; } catch (e) {}
       const items = [];
-      if (hs && st.sys && st.sys.dl) items.push({ label: 'Mit dem Helfer', sub: hs.k === 'hls' ? 'Stream → MP4' : 'Download-Manager', fn: () => helperDownload(hs) });
+      if (hs && st.sys && st.sys.dl) items.push({ label: 'Mit dem Helfer', sub: hs.k === 'file' ? 'Download-Manager' : 'Stream → MP4', fn: () => helperDownload(hs) });
+      if (hs && st.sys && st.sys.proxy) items.push({ label: 'Über den Browser laden', sub: 'für geschützte Seiten · Seite offen lassen', fn: () => helperDownload(hs, 'browser') });
       if (link) items.push({ label: 'Mit YTDLnis', sub: 'direkt öffnen', fn: () => toYtdlnis(link) });
       if (d && !browserFailed) items.push({ label: 'Im Browser speichern', sub: 'Download des Browsers', fn: () => browserSave(d) });
       if (d) {
@@ -4036,7 +4114,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 13.2',
+      'Video-Assistent 13.3',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
