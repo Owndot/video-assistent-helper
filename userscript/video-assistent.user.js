@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      13.4
+// @version      13.5
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @grant        GM.xmlHttpRequest
 // @grant        GM_registerMenuCommand
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @grant        GM.registerMenuCommand
 // @connect      *
 // @connect      127.0.0.1
@@ -447,7 +449,8 @@
       if (list.length > 80) list.shift();
     }
   }
-  if (META) setInterval(watchBuffers, 100);   // oft genug, um Einspeisen und Ankunft sauber zu trennen (sehr wenig Arbeit)
+  // oft genug, um Einspeisen und Ankunft sauber zu trennen – nur wo es gebraucht wird (Facebook spiegelt sonst ohnehin)
+  if (META && !FB_MIRROR) setInterval(watchBuffers, 100);
   ['loadstart', 'emptied'].forEach((t) => document.addEventListener(t, (e) => {
     const v = e.target; if (v && v.tagName === 'VIDEO') { bufCredit.delete(v); bufPrev.delete(v); }
   }, true));
@@ -753,14 +756,7 @@
       if (el.tagName === 'SCRIPT') collectUrls(el.textContent, out, seen, 'script');
     }
   }
-  function postContainer(v) {
-    let el = v, c = v;
-    for (let i = 0; el && el.nodeType === 1 && i < 14; i++, el = el.parentElement) {
-      if (i > 0 && el.getElementsByTagName('video').length > 1) break;
-      c = el;
-    }
-    return c;
-  }
+
   let lastNear = [];
   const byQuality = (a, b) => (b.res - a.res) || (b.br - a.br);
   function scanWholePage(out, seen) {
@@ -1014,6 +1010,7 @@
     return out;
   }
   let frameVids = [], frameAt = 0;
+  let lastVidCount = 0;
   function allVideos() {
     const list = Array.prototype.slice.call(document.getElementsByTagName('video'));
     if (Date.now() - shadowAt > 3000) { shadowAt = Date.now(); shadowVids = scanShadow(); }
@@ -1022,6 +1019,7 @@
     if (Date.now() - frameAt > 1500) { frameAt = Date.now(); frameVids = blankFrameVideos(); }
     frameVids = frameVids.filter((v) => v.isConnected);
     frameVids.forEach((v) => { if (list.indexOf(v) < 0) list.push(v); });
+    lastVidCount = list.length;
     return list;
   }
   // Position eines Videos auf dem Bildschirm – auch wenn es in einem eingebetteten Fenster steckt
@@ -1040,11 +1038,7 @@
     for (let i = 0; i < vids.length; i++) if (!(vp && vids[i] === vp.vid) && eligible(vids[i])) n++;   // eigenen Player nicht mitzählen
     return n;
   }
-  function genericBest() {
-    const list = recent();
-    const pl = list.filter((u) => PLAYLIST_RE.test(u));
-    return rankPlaylists(pl)[0] || list[list.length - 1] || '';
-  }
+
 
   function resolve(v) {
     const r = { best: '', alt: '', how: '', ids: [] };
@@ -1171,9 +1165,13 @@
   }
   // ---------- Helfer-App: echte Helligkeit und Lautstärke des Handys ----------
   // Die App lauscht nur auf dem Handy selbst (127.0.0.1). Ohne App kommt schlicht keine Antwort – dann bleibt alles wie bisher.
-  const HELPER = 'http://127.0.0.1:47811', HELPER_KEY = 'evp-1';
+  const HELPER = 'http://127.0.0.1:47811';
+  // Schlüssel: nach dem Koppeln (Knopf „Verbinden“ in der Helfer-App) der eigene Zufallsschlüssel der App –
+  // dauerhaft gespeichert, übersteht auch Updates des Skripts. Vorher der alte feste Schlüssel.
+  let helperKey = 'evp-1';
+  try { if (typeof GM_getValue === 'function') helperKey = GM_getValue('helperKey', '') || 'evp-1'; } catch (e) {}
   // to = Wartezeit in ms (Abholen beim Laden über den Browser wartet bis zu 8 s), body = Daten für POST /push
-  function helper(path, to, body) {
+  function helper(path, to, body, keyOverride) {
     to = to || 1200;
     return new Promise((res) => {
       const x = CONFIG.systemHelper === false ? null : gmXhr();
@@ -1182,7 +1180,7 @@
       const fin = (v) => { if (!done) { done = true; res(v); } };
       try {
         x({
-          method: body ? 'POST' : 'GET', url: HELPER + path, headers: { 'X-EVP-Key': HELPER_KEY }, timeout: to, anonymous: true,
+          method: body ? 'POST' : 'GET', url: HELPER + path, headers: { 'X-EVP-Key': keyOverride || helperKey }, timeout: to, anonymous: true,
           data: body || undefined,
           onload: (r) => { try { fin(r.status === 200 ? JSON.parse(r.responseText) : null); } catch (e) { fin(null); } },
           onerror: () => fin(null), ontimeout: () => fin(null), onabort: () => fin(null),
@@ -1194,7 +1192,8 @@
   // ---------- Laden über den Browser (für Server, die nur dem eingeloggten Browser etwas geben) ----------
   // Der Helfer sagt, was er braucht (/pull) – das Skript lädt es mit der Sitzung des Browsers und liefert (/push).
   // Läuft, solange die Seite offen ist (der Player darf zu sein).
-  function gmGet(u, off, len, sizeOnly) {
+  // anon = ohne Cookies: für Adressen fremder Seiten (eine bösartige Playlist darf nicht mit deiner Sitzung woanders abrufen)
+  function gmGet(u, off, len, sizeOnly, anon) {
     return new Promise((res) => {
       const x = gmXhr();
       if (!x) { res({ st: 502 }); return; }
@@ -1203,7 +1202,7 @@
       else if (off >= 0 && len > 0) headers.Range = 'bytes=' + off + '-' + (off + len - 1);
       try {
         x({
-          method: 'GET', url: u, headers: headers, responseType: 'arraybuffer', timeout: 60000,
+          method: 'GET', url: u, headers: headers, responseType: 'arraybuffer', timeout: 60000, anonymous: !!anon,
           onload: (r) => {
             let total = -1;
             const m = /content-range:\s*bytes\s+\d+-\d+\/(\d+)/i.exec(r.responseHeaders || '');
@@ -1217,8 +1216,10 @@
     });
   }
   const proxyJobs = new Set();
-  async function proxyLoop(job) {
+  // allow = Domains, an die die Browser-Sitzung (Cookies) mitgehen darf: die Seite selbst und der Server des Videos
+  async function proxyLoop(job, allow) {
     if (proxyJobs.has(job)) return;
+    const ok = (u) => { const d = baseDomain(hostOf(u)); return !!d && (allow || []).indexOf(d) >= 0; };
     proxyJobs.add(job);
     try {
       let idle = 0;
@@ -1228,7 +1229,8 @@
         idle = 0;
         if (r.done) break;
         await Promise.all((r.reqs || []).map(async (q) => {
-          const g = await gmGet(q.u, q.o, q.l, q.s);
+          if (!/^https?:\/\//i.test(q.u)) { await helper('/push?job=' + job + '&id=' + q.id + '&st=400&total=-1', 60000, new ArrayBuffer(0)); return; }
+          const g = await gmGet(q.u, q.o, q.l, q.s, !ok(q.u));
           const st = g.st || 502;
           const body = g.body && st < 400 ? g.body : new ArrayBuffer(0);
           await helper('/push?job=' + job + '&id=' + q.id + '&st=' + st + '&total=' + (g.total || -1), 60000, body);
@@ -1236,6 +1238,25 @@
       }
     } finally {
       proxyJobs.delete(job);
+    }
+  }
+  // Koppel-Seite der Helfer-App (http://127.0.0.1:47811/pair#SCHLÜSSEL): Schlüssel prüfen und dauerhaft merken.
+  // Der Schlüssel steht nur im #-Teil – den sieht weder der Server noch eine andere App.
+  if (location.origin === HELPER && location.pathname === '/pair') {
+    const m = /^#([0-9a-f]{32})$/.exec(location.hash);
+    if (m) {
+      try { history.replaceState(null, '', '/pair'); } catch (e) {}
+      const say = (t, okc) => {
+        const show = () => { const el = document.getElementById('evp-pair'); if (el) { el.textContent = t; el.style.color = okc ? '#4cd964' : '#ff9f0a'; } };
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show); else show();
+      };
+      helper('/ping', 2500, null, m[1]).then((r) => {
+        if (r && r.ok) {
+          try { GM_setValue('helperKey', m[1]); } catch (e) {}
+          helperKey = m[1];
+          say('✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helfer benutzen. Du kannst diese Seite schließen.', true);
+        } else say('Verbinden hat nicht geklappt – läuft der Helfer? In der App nochmal auf „Verbinden“ tippen.', false);
+      });
     }
   }
   // Beim Wischen nicht jede Bewegung schicken: immer nur den neuesten Wert, sobald die vorige Antwort da ist
@@ -1905,10 +1926,17 @@
   }
 
   let miss = 0;
+  // Seiten ohne Video (Nachrichten, Shops …): nur alle 2 Sekunden nachsehen statt 2,5-mal pro Sekunde.
+  // Startet irgendwo ein Video, geht es sofort wieder im normalen Takt weiter.
+  let quiet = 0, tickN = 0;
+  document.addEventListener('play', () => { quiet = 0; }, true);
   function tick() {
+    tickN++;
+    if (quiet > 5 && tickN % 5 && !vp) return;
     if (hostEl && !hostEl.isConnected) attachHost();   // von der Seite entfernt? Wieder einsetzen.
     if (vp) { hidePill(); return; }                    // eigener Player offen: kein Button darüber
     const v = pickPlaying();
+    quiet = lastVidCount ? 0 : quiet + 1;
     if (v) {
       miss = 0;
       if (v !== active || !pill || !pill.classList.contains('on')) showPill(v);
@@ -2973,7 +3001,7 @@
           helper(q(true)).then((r) => {
             if (!r || !r.ok) { toast('Helfer konnte den Download nicht starten'); return; }
             toast((why ? why + ' – ' : '') + 'lädt über den Browser, Seite offen lassen');
-            proxyLoop(r.id);
+            proxyLoop(r.id, [baseDomain(location.hostname), baseDomain(hostOf(u))]);
           });
         };
         if (via === 'browser') { viaBrowser(''); return; }
@@ -4119,7 +4147,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 13.4',
+      'Video-Assistent 13.5',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

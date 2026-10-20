@@ -23,12 +23,37 @@ public interface Fetcher {
 
     /** Direkt übers Netz, mit Herkunftsseite (Referer), Browser-Kennung und – falls bekannt – Cookies der Seite */
     class Http implements Fetcher {
-        final String referer, userAgent, cookie;
+        final String referer, userAgent, cookie, cookieBase;
 
         public Http(String referer, String userAgent, String cookie) {
             this.referer = referer;
             this.userAgent = userAgent;
             this.cookie = cookie;
+            String h = "";
+            try { h = new URL(referer).getHost(); } catch (Exception ignored) {}
+            this.cookieBase = baseOf(h);
+        }
+
+        /** grob die "Haupt-Domain" (letzte zwei Teile, bei co.uk & Co. drei) */
+        static String baseOf(String host) {
+            if (host == null || host.isEmpty()) return "";
+            host = host.toLowerCase(java.util.Locale.ROOT);
+            if (host.matches("[0-9.]+|\\[.*\\]")) return host;
+            String[] p = host.split("\\.");
+            if (p.length <= 2) return host;
+            int take = (p[p.length - 2].length() <= 3 && p[p.length - 1].length() == 2) ? 3 : 2;   // z. B. bbc.co.uk
+            StringBuilder b = new StringBuilder();
+            for (int i = Math.max(0, p.length - take); i < p.length; i++) { if (b.length() > 0) b.append('.'); b.append(p[i]); }
+            return b.toString();
+        }
+
+        /** Cookies der Seite nur an deren eigene Server – nie an fremde Adressen aus einer Playlist */
+        boolean cookieFor(String url) {
+            if (cookie == null || cookie.isEmpty() || cookieBase.isEmpty()) return false;
+            try {
+                String h = new URL(url).getHost().toLowerCase(java.util.Locale.ROOT);
+                return h.equals(cookieBase) || h.endsWith("." + cookieBase);
+            } catch (Exception e) { return false; }
         }
 
         HttpURLConnection open(String url) throws IOException {
@@ -41,7 +66,7 @@ public interface Fetcher {
                 c.setRequestProperty("Referer", referer);
                 try { URL r = new URL(referer); c.setRequestProperty("Origin", r.getProtocol() + "://" + r.getAuthority()); } catch (Exception ignored) {}
             }
-            if (cookie != null && !cookie.isEmpty()) c.setRequestProperty("Cookie", cookie);
+            if (cookieFor(url)) c.setRequestProperty("Cookie", cookie);
             c.setRequestProperty("Accept", "*/*");
             return c;
         }

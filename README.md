@@ -19,7 +19,16 @@ Kleine Android-App, mit der der eingebaute Videoplayer des Userscripts **Video-A
   Gespeichert in `Download/Video-Assistent`, Fortschritt und Abbrechen in der Benachrichtigung.
 - Läuft der Helfer nicht, regelt der Player wie bisher nur das Video.
 
-## Schnittstelle (nur mit Kopf `X-EVP-Key: evp-1`)
+## Schlüssel und Koppeln
+Die App erzeugt einen eigenen Zufallsschlüssel. „Mit dem Browser verbinden“ öffnet `http://127.0.0.1:47811/pair#SCHLÜSSEL`;
+das Userscript liest den Schlüssel aus dem #-Teil (den sieht weder der Server noch eine andere App), prüft ihn und
+speichert ihn dauerhaft (`GM_setValue`). Ab der ersten Anfrage mit dem eigenen Schlüssel gilt der alte feste Schlüssel
+`evp-1` nicht mehr. Lange auf den Status in der Karte drücken = neuer Schlüssel (dann neu verbinden).
+
+Cookies der Seite gehen nur an die Seite selbst und ihre eigenen Server – nie an fremde Adressen aus einer Playlist
+(auch nicht beim Laden über den Browser).
+
+## Schnittstelle (nur mit Kopf `X-EVP-Key: <Schlüssel>`)
 | Aufruf | Wirkung |
 |---|---|
 | `GET /ping` | Zustand: Rechte, Lautstärke, Helligkeit |
@@ -31,6 +40,7 @@ Kleine Android-App, mit der der eingebaute Videoplayer des Userscripts **Video-A
 | `GET /pull?job=…` | Laden über den Browser: offene Anfragen abholen (wartet bis zu 8 s) |
 | `POST /push?job=…&id=…&st=…&total=…` | Laden über den Browser: Daten einer Anfrage liefern |
 | `GET /dlstate?id=…` | Fortschritt eines Downloads |
+| `GET /pair` | Koppel-Seite (ohne Schlüssel abrufbar, enthält ihn nicht) |
 
 Normale Webseiten können den Kopf nicht mitschicken (der Browser fragt vorher nach, der Helfer antwortet darauf nicht).
 

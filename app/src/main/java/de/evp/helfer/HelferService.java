@@ -120,7 +120,11 @@ public class HelferService extends Service {
 
     // ---------- lokaler Mini-Server ----------
     private void startServer() {
-        server = new MiniServer(PORT, KEY, new MiniServer.Handler() {
+        // Schlüssel: eigener Zufallsschlüssel dieser App. Der alte feste Schlüssel gilt nur, bis ein Skript gekoppelt ist.
+        server = new MiniServer(PORT, (k) -> {
+            if (k.equals(Keys.key(this))) { Keys.markPaired(this); return true; }
+            return KEY.equals(k) && !Keys.paired(this);
+        }, new MiniServer.Handler() {
             @Override public String get(String path, Map<String, String> p) { return route(path, p); }
             @Override public String push(Map<String, String> p, byte[] body) { return MiniServer.push(Downloads.proxies, p, body); }
         });

@@ -24,8 +24,8 @@ import android.widget.TextView;
 
 /** Einstellungsseite: Rechte erteilen, Dienst starten/stoppen, ausprobieren. */
 public class MainActivity extends Activity {
-    private TextView stOverlay, stBattery, stService, stNotif;
-    private Button bOverlay, bBattery, bService, bNotif;
+    private TextView stOverlay, stBattery, stService, stNotif, stPair;
+    private Button bOverlay, bBattery, bService, bNotif, bPair;
     private LinearLayout root;
 
     static SharedPreferences prefs(Activity a) { return a.getSharedPreferences("helfer", MODE_PRIVATE); }
@@ -77,6 +77,13 @@ public class MainActivity extends Activity {
             card("3 · Benachrichtigung", "Android verlangt für Hintergrund-Helfer eine stille Benachrichtigung. "
                     + "Du kannst sie in den Android-Einstellungen danach ausblenden.", stNotif, bNotif);
         }
+
+        // Koppeln: eigener Schlüssel statt des festen – dann kann keine andere App den Helfer benutzen
+        stPair = status();
+        bPair = button("Verbinden", v -> pair());
+        card("4 · Mit dem Browser verbinden", "Öffnet eine kleine Seite im Browser mit Violentmonkey. Das Skript merkt sich dort "
+                + "den geheimen Schlüssel dieser App. Danach kann nur noch dein Skript den Helfer benutzen, keine andere App.", stPair, bPair);
+        stPair.setOnLongClickListener(v -> { Keys.reset(this); refresh(); android.widget.Toast.makeText(this, "Neuer Schlüssel – bitte neu verbinden", android.widget.Toast.LENGTH_LONG).show(); return true; });
 
         // Dienst
         stService = status();
@@ -135,7 +142,18 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void pair() {
+        if (!HelferService.running) HelferService.start(this);
+        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:" + HelferService.PORT + "/pair#" + Keys.key(this)));
+        i.addCategory(Intent.CATEGORY_BROWSABLE);
+        try { startActivity(Intent.createChooser(i, "Browser mit Violentmonkey wählen")); } catch (Exception e) { startActivity(i); }
+    }
+
     private void refresh() {
+        boolean pd = Keys.paired(this);
+        stPair.setText(pd ? "✓ Verbunden (eigener Schlüssel)" : "• Noch nicht verbunden");
+        stPair.setTextColor(pd ? 0xFF4CD964 : 0xFFFF9F0A);
+        bPair.setText(pd ? "Erneut" : "Verbinden");
         boolean ov = Settings.canDrawOverlays(this);
         set(stOverlay, bOverlay, ov, ov ? "Erlaubt" : "Noch nicht erlaubt");
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);

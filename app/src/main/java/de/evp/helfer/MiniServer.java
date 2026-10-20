@@ -26,16 +26,27 @@ public class MiniServer {
     }
 
     private final int port;
-    private final String key;
+    private final java.util.function.Predicate<String> keyOk;
     private final Handler handler;
     private final ExecutorService pool = Executors.newFixedThreadPool(10);   // auch für Abholen/Liefern beim Laden über den Browser
     private ServerSocket server;
 
     public MiniServer(int port, String key, Handler handler) {
+        this(port, key::equals, handler);
+    }
+
+    /** keyOk entscheidet, ob der mitgeschickte Schlüssel gilt (eigener Zufallsschlüssel der App) */
+    public MiniServer(int port, java.util.function.Predicate<String> keyOk, Handler handler) {
         this.port = port;
-        this.key = key;
+        this.keyOk = keyOk;
         this.handler = handler;
     }
+
+    /** Koppel-Seite (ohne Schlüssel abrufbar, enthält ihn aber nicht – er steht nur im #-Teil der Adresse im Browser) */
+    static final String PAIR_HTML = "<!doctype html><html><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">"
+            + "<title>Video-Assistent verbinden</title></head><body style=\"font:17px/1.4 system-ui,sans-serif;margin:0;padding:32px 22px;background:#16181d;color:#eee\">"
+            + "<h2 style=\"margin:0 0 12px\">Video-Assistent Helfer</h2><p id=evp-pair>Das Userscript verbindet sich gerade … Erscheint hier nach ein paar Sekunden"
+            + " nichts, ist Violentmonkey in diesem Browser nicht aktiv oder das Skript zu alt (ab 13.5).</p></body></html>";
 
     public void start() {
         Thread t = new Thread(() -> {
@@ -90,7 +101,8 @@ public class MiniServer {
             int q = target.indexOf('?');
             if (q >= 0) { path = target.substring(0, q); query = target.substring(q + 1); }
             boolean post = "POST".equals(method) && "/push".equals(path);
-            if (!("GET".equals(method) || post) || !key.equals(k)) { reply(s, 403, "{\"ok\":false}"); return; }
+            if ("GET".equals(method) && "/pair".equals(path)) { reply(s, 200, PAIR_HTML, "text/html; charset=utf-8"); return; }
+            if (!("GET".equals(method) || post) || k == null || !keyOk.test(k)) { reply(s, 403, "{\"ok\":false}"); return; }
             Map<String, String> p = parseQuery(query);
             if (post) {
                 if (clen < 0 || clen > (256L << 20)) { reply(s, 413, "{\"ok\":false}"); return; }
@@ -111,9 +123,13 @@ public class MiniServer {
     }
 
     static void reply(Socket s, int code, String body) throws Exception {
+        reply(s, code, body, "application/json; charset=utf-8");
+    }
+
+    static void reply(Socket s, int code, String body, String type) throws Exception {
         byte[] b = body.getBytes(StandardCharsets.UTF_8);
         String head = "HTTP/1.1 " + code + (code == 200 ? " OK" : " Forbidden") + "\r\n"
-                + "Content-Type: application/json; charset=utf-8\r\n"
+                + "Content-Type: " + type + "\r\n"
                 + "Cache-Control: no-store\r\n"
                 + "Content-Length: " + b.length + "\r\n"
                 + "Connection: close\r\n\r\n";

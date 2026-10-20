@@ -104,7 +104,7 @@ public class Downloads {
         DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
         if (referer != null && !referer.isEmpty()) r.addRequestHeader("Referer", referer);
         if (ua != null && !ua.isEmpty()) r.addRequestHeader("User-Agent", ua);
-        if (cookie != null && !cookie.isEmpty()) r.addRequestHeader("Cookie", cookie);
+        if (new Fetcher.Http(referer, ua, cookie).cookieFor(url)) r.addRequestHeader("Cookie", cookie);   // nur an die eigene Seite
         r.setTitle(name);
         r.setDescription("Video-Assistent");
         r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
