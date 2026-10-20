@@ -109,7 +109,9 @@ public class MainActivity extends Activity {
         root.addView(test, tl);
 
         TextView foot = text("Im Userscript ist nichts einzustellen: Sobald der Helfer läuft, steuern die Wischgesten links "
-                + "(Helligkeit) und rechts (Lautstärke) das Handy selbst. Läuft er nicht, regelt der Player wie bisher nur das Video.", 13, false);
+                + "(Helligkeit) und rechts (Lautstärke) das Handy selbst. Läuft er nicht, regelt der Player wie bisher nur das Video.\n\n"
+                + "Downloads: Der Knopf ⬇ im Player schickt Videos hierher – Dateien über Androids Download-Manager, Streams werden "
+                + "Stück für Stück geladen und zu MP4 zusammengesetzt. Gespeichert in Download/Video-Assistent.", 13, false);
         foot.setAlpha(0.6f);
         foot.setPadding(0, dp(18), 0, 0);
         root.addView(foot);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      13.1
+// @version      13.2
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -75,6 +75,9 @@
       'loom.com', 'mixcloud.com', 'naver.com', 'nicovideo.jp', 'vidio.com', 'bsky.app',
       'xvideos.com', 'xhamster.com',
     ],
+    // Wohin "Herunterladen" auf Seiten geht, die yt-dlp kennt: 'ytdlnis' = direkt in YTDLnis öffnen (ohne Teilen-Menü),
+    // 'share' = Teilen-Menü wie früher (z. B. für Seal oder andere Apps). Lange auf ⬇ drücken zeigt immer alle Wege.
+    downloader: 'ytdlnis',
     // true = Download-Button auf allen Seiten zeigen (yt-dlp versucht es dann mit seinem allgemeinen Modus)
     downloadEverywhere: false,
     // Seiten, auf denen nur der Download-Button (YTDLnis) erscheint – externer Player klappt dort nicht
@@ -1094,14 +1097,23 @@
   }
 
   // ---------- An externen Player übergeben ----------
-  function intentUrl(u, pkg) {
+  function intentUrl(u, pkg, fallback) {
     const x = new URL(u);
     const title = (pageTitle() || 'Video').slice(0, 120);
     return 'intent://' + x.host + x.pathname + x.search +
       '#Intent;scheme=' + x.protocol.slice(0, -1) +
       ';action=android.intent.action.VIEW;type=video/*;' +
       (pkg ? 'package=' + pkg + ';' : '') +
+      (fallback ? 'S.browser_fallback_url=' + encodeURIComponent(fallback) + ';' : '') +
       'S.title=' + encodeURIComponent(title) + ';end';
+  }
+  // YTDLnis nimmt Links jeder Seite direkt an (als "Video ansehen" mit Paketname) – ohne Teilen-Menü.
+  // Ist YTDLnis nicht installiert, öffnet sich dessen Download-Seite.
+  const YTDLNIS = 'com.deniscerri.ytdl';
+  function toYtdlnis(link) {
+    if (!link) return false;
+    openExternal(link, null, YTDLNIS, 'An YTDLnis übergeben …', 'https://github.com/deniscerri/ytdlnis/releases/latest');
+    return true;
   }
   // ---------- Pornhub: komplette MP4-Dateien mit Ton über die eigene Abfrage der Seite ----------
   // (der HLS-Stream ist dort an den Web-Player gebunden und bleibt im externen Player schwarz)
@@ -1244,11 +1256,11 @@
       return u;
     }
   }
-  function openExternal(u, v, pkg, msg) {
+  function openExternal(u, v, pkg, msg, fallback) {
     if (!u) { toast('Keine Quelle für dieses Video gefunden'); return; }
     try { if (v) v.pause(); } catch (e) {}
     toast(msg || 'Wird im Videoplayer geöffnet …');
-    const intent = intentUrl(u, pkg);
+    const intent = intentUrl(u, pkg, fallback);
     lastIntent = { url: u, t: Date.now(), how: '' };
     // Weg 1: wie ein angetippter Link – funktioniert auch aus dem abgeschirmten Bereich zuverlässig
     let left = false;
@@ -1611,7 +1623,7 @@
     try { r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; } catch (e) {}
     const id = lensFor(w, h, r), val = 'url(#' + id + ')';
     el.style.setProperty('--lens', val);
-    el.style.setProperty('--gb', '1.2px');   // mit Wellen-Glas nur ein wenig Weichzeichner – sonst sieht man die Wellen nicht
+    el.style.setProperty('--gb', '2px');   // mit Wellen-Glas nur ein wenig Weichzeichner – sonst sieht man die Wellen nicht
     // Chrome lädt das Kartenbild erst beim ersten Zeichnen und rechnet ruhige Flächen danach nicht neu →
     // kurz danach einmal ab- und wieder anschalten (bei laufendem Video passiert das ohnehin ständig)
     if (!el.__lensSeen) el.__lensSeen = {};
@@ -1646,6 +1658,7 @@
     const btn = h('button', { class: 'pb', 'aria-label': 'Im Videoplayer öffnen' }, icon(I.player), h('span', { class: 'hdot', 'aria-hidden': 'true' }));
     const dlBtn = h('button', { class: 'pb dl', 'aria-label': 'Herunterladen (z. B. mit YTDLnis)' }, icon(I.download));
     dlBtn.addEventListener('click', () => onDownload());
+    dlBtn.addEventListener('contextmenu', (e) => { e.preventDefault(); onDownload(null, { share: true }); });   // lange drücken: Teilen
     // Auf "nur Download"-Seiten (z. B. YouTube) gibt es keinen Player-Button
     // Download-Button nur auf Seiten, die YTDLnis kann
     // Der eingebaute Player geht überall – auch auf "nur Download"-Seiten wie YouTube
@@ -2371,7 +2384,8 @@
     st.sys = null;
     helper('/ping').then((d) => {
       if (!d || !d.ok || vp !== st) return;
-      st.sys = { vol: true, bright: !!(d.overlay || d.write), max: d.volMax || 15 };
+      st.sys = { vol: true, bright: !!(d.overlay || d.write), max: d.volMax || 15, dl: !!d.dl };
+      if (st.refreshDl) st.refreshDl();   // mit Helfer lassen sich auch Streams speichern
       if (typeof d.vol === 'number') {
         st.level = clamp(d.vol, 0, 1);
         st.sysK = typeof d.volStep === 'number' ? d.volStep : Math.round(st.level * st.sys.max);
@@ -2872,33 +2886,88 @@
     // Download und Teilen nur zeigen, wenn sie für DIESES Video auch funktionieren:
     // Download = Datei zum Speichern oder ein Link genau dieses Videos für YTDLnis (nicht die Feed-Adresse)
     // Teilen   = eine Adresse, die eine andere App abspielen kann
+    // Was der Helfer-App zum Speichern übergeben werden kann: die laufende Datei oder der HLS-Stream (kein DASH, kein blob:)
+    const helperSrc = () => {
+      if (st.mode === 'own' && st.cur && /^https?:/i.test(st.cur)) {
+        if (/\.mpd(\?|#|$)/i.test(st.cur)) return null;
+        return { u: st.cur, k: (st.hls || PLAYLIST_RE.test(st.cur)) ? 'hls' : 'file' };
+      }
+      if (st.igUrl) return { u: st.igUrl, k: 'file' };
+      if (st.ttUrl) return { u: st.ttUrl, k: 'file' };
+      return null;
+    };
+    const helperCanDl = () => !!(st.sys && st.sys.dl && helperSrc());
+    // Download und Teilen nur zeigen, wenn sie für DIESES Video auch funktionieren:
+    // Download = Datei zum Speichern, ein Stream für den Helfer oder ein Link genau dieses Videos für YTDLnis
+    // Teilen   = eine Adresse, die eine andere App abspielen kann
     st.refreshDl = () => {
       let link = '';
       try { link = SHOW_DOWNLOAD ? postUrlFor(orig) : ''; } catch (e) {}
-      bDl.hidden = !(directUrl() || link);
+      bDl.hidden = !(directUrl() || link || helperCanDl());
       if (bExt) bExt.hidden = !((st.mode === 'own' && st.cur) || st.igUrl || st.ttUrl);
     };
+    // Helfer-App speichert: Datei über Androids Download-Manager, Stream Stück für Stück → MP4 (mit der Seite als Referer)
+    function helperDownload(src) {
+      const send = (u) => {
+        const q = '/download?u=' + encodeURIComponent(u) + '&ref=' + encodeURIComponent(location.href) +
+          '&ua=' + encodeURIComponent(navigator.userAgent) + '&t=' + encodeURIComponent((pageTitle() || 'Video').slice(0, 100)) + '&k=' + src.k;
+        helper(q).then((r) => toast(r && r.ok
+          ? (src.k === 'hls' ? 'Helfer lädt den Stream – Fortschritt in der Benachrichtigung' : 'Download läuft – siehe Benachrichtigung')
+          : 'Helfer konnte den Download nicht starten' + (r && r.error ? ' (' + r.error + ')' : '')));
+      };
+      // geschützte Adressen der Seite (/get_file/…) leiten nur MIT Browsersitzung weiter: Endadresse vorher holen
+      if (src.k === 'file' && needsResolve(src.u)) {
+        if (st.extUrl && st.extFor === src.u) { send(st.extUrl); return; }
+        toast('Bereite Download vor …');
+        finalUrl(src.u).then(send, () => send(src.u));
+        return;
+      }
+      send(src.u);
+    }
+    function browserSave(d) {
+      toast('Download wird vorbereitet …');
+      browserDownload(d).then((ok) => {
+        if (ok) { toast('Download läuft im Browser – du kannst die Seite verlassen'); return; }
+        // Der Server gibt die Datei nicht als Download frei: alle Wege zur Auswahl
+        dlMenu(true);
+      });
+    }
+    // Alle Wege zum Speichern (langes Drücken auf ⬇, oder wenn der Browser nicht darf)
+    function dlMenu(browserFailed) {
+      const d = directUrl(), hs = helperSrc();
+      let link = '';
+      try { link = SHOW_DOWNLOAD ? postUrlFor(orig) : ''; } catch (e) {}
+      const items = [];
+      if (hs && st.sys && st.sys.dl) items.push({ label: 'Mit dem Helfer', sub: hs.k === 'hls' ? 'Stream → MP4' : 'Download-Manager', fn: () => helperDownload(hs) });
+      if (link) items.push({ label: 'Mit YTDLnis', sub: 'direkt öffnen', fn: () => toYtdlnis(link) });
+      if (d && !browserFailed) items.push({ label: 'Im Browser speichern', sub: 'Download des Browsers', fn: () => browserSave(d) });
+      if (d) {
+        items.push({ label: 'Im Browser öffnen', sub: 'dort ⋮ → Herunterladen', fn: () => {
+          const w = window.open(d, '_blank');
+          if (w) { try { w.opener = null; } catch (e) {} } else toast('Neuer Tab wurde blockiert – Pop-ups für diese Seite erlauben');
+        } });
+        items.push({ label: 'Hier speichern', sub: 'Player bis zum Ende offen lassen', fn: () => directDownload(d, () => toast('Die Seite sperrt den Download')) });
+      }
+      if (link || d) items.push({ label: 'Teilen …', sub: 'an eine andere App', fn: () => shareUrl(link || d) });
+      if (!items.length) { toast(hs && hs.k === 'hls' ? 'Für Streams wird die Helfer-App gebraucht' : 'Für dieses Video gibt es keine Datei zum Herunterladen'); return; }
+      openMenu('Herunterladen', items);
+    }
+    // Tipp: der beste Weg von selbst
+    //  1. Seiten, die yt-dlp kennt → YTDLnis (beste Qualität mit Ton)
+    //  2. Helfer-App läuft → sie speichert Datei oder Stream
+    //  3. Videodatei → Download des Browsers
+    //  4. sonst YTDLnis mit dem Link · ohne alles: Hinweis
     on(bDl, () => {
-      const d = directUrl();
-      // Facebook, Instagram & Co.: YTDLnis holt dort die beste Qualität mit Ton – sonst die Datei direkt speichern
-      if (d && !onSite(CONFIG.ytdlpSites)) {
-        toast('Download wird vorbereitet …');
-        browserDownload(d).then((ok) => {
-          if (ok) { toast('Download läuft im Browser – du kannst die Seite verlassen'); return; }
-          // Der Server gibt die Datei nicht als Download frei: Wege zur Auswahl
-          const items = [
-            { label: 'Im Browser öffnen', sub: 'dort ⋮ → Herunterladen · Seite darf zu', fn: () => {
-              const w = window.open(d, '_blank');
-              if (w) { try { w.opener = null; } catch (e) {} } else toast('Neuer Tab wurde blockiert – Pop-ups für diese Seite erlauben');
-            } },
-            { label: 'Hier speichern', sub: 'Player bis zum Ende offen lassen', fn: () => directDownload(d, () => toast('Die Seite sperrt den Download')) },
-          ];
-          if (SHOW_DOWNLOAD) items.push({ label: 'Mit YTDLnis', sub: 'Link teilen', fn: () => onDownload(orig) });
-          openMenu('Herunterladen', items);
-        });
-      } else if (SHOW_DOWNLOAD) onDownload(orig);
-      else toast('Für dieses Video gibt es keine Datei zum Herunterladen');
+      const d = directUrl(), hs = helperSrc();
+      let link = '';
+      try { link = SHOW_DOWNLOAD ? postUrlFor(orig) : ''; } catch (e) {}
+      if (link && onSite(CONFIG.ytdlpSites)) { if (CONFIG.downloader === 'share') shareUrl(link); else toYtdlnis(link); return; }
+      if (hs && st.sys && st.sys.dl) { helperDownload(hs); return; }
+      if (d) { browserSave(d); return; }
+      if (link) { if (CONFIG.downloader === 'share') shareUrl(link); else toYtdlnis(link); return; }
+      dlMenu();
     });
+    bDl.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); dlMenu(); });
     on(bExt, () => {
       const t = M().currentTime;
       const go = (u) => { closePlayer(); try { orig.currentTime = t; } catch (e) {} openExternal(u, orig, CONFIG.player); };
@@ -3877,10 +3946,14 @@
     return p;
   }
 
-  function onDownload(v) {
+  function onDownload(v, opts) {
     collapse();
     const url = postUrlFor(v || active);
     if (!url) { toast('Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen'); return; }
+    if (CONFIG.downloader !== 'share' && !opts) { toYtdlnis(url); return; }
+    shareUrl(url);
+  }
+  function shareUrl(url) {
     const fallback = () => copyText(url, 'Link kopiert – in YTDLnis einfügen');
     if (navigator.share) {
       navigator.share({ url: url }).catch((e) => { if (!e || e.name !== 'AbortError') fallback(); });
@@ -3963,7 +4036,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 13.1',
+      'Video-Assistent 13.2',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
