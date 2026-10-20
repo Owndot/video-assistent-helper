@@ -11,6 +11,15 @@ STATS = '''(el) => { const c = document.createElement('canvas'); c.width = 48; c
   let d; try { d = g.getImageData(0, 0, 48, 27).data; } catch (e) { return ['gesperrt ' + e.name]; }
   let s = 0, s2 = 0, n = d.length / 4; for (let i = 0; i < d.length; i += 4) { const y = (d[i] + d[i+1] + d[i+2]) / 3; s += y; s2 += y * y; }
   const m = s / n; return [Math.round(m), Math.round(Math.sqrt(Math.max(0, s2 / n - m * m)))]; }'''
+GRID = '''(el) => { const c = document.createElement('canvas'); c.width = 16; c.height = 9; const g = c.getContext('2d');
+  try { g.drawImage(el, 0, 0, 16, 9); return Array.from(g.getImageData(0, 0, 16, 9).data).filter((_, i) => i % 4 === 1); } catch (e) { return []; } }'''
+def same_frame(pg, t):
+    # Hauptvideo (angehalten) an dieselbe Stelle wie das Vorschaubild – wie ähnlich sind die beiden Bilder?
+    a = pg.evaluate('() => (%s)(%s.querySelector(".vprev video"))' % (GRID, R))
+    pg.evaluate('(t) => new Promise((res) => { const v = %s.querySelector(".vv"); v.pause(); v.addEventListener("seeked", () => setTimeout(res, 150), { once: true }); v.currentTime = t; setTimeout(res, 3000); })' % R, t)
+    b = pg.evaluate('() => (%s)(%s.querySelector(".vv"))' % (GRID, R))
+    if not a or not b: return 999
+    return round(sum(abs(x - y) for x, y in zip(a, b)) / len(a), 1)
 def band(path, box):
     im = Image.open(path).convert('L').crop(box); return round(ImageStat.Stat(im).mean[0], 1)
 with sync_playwright() as p:
@@ -48,9 +57,28 @@ with sync_playwright() as p:
         time.sleep(1.2)
         pv = pg.evaluate('() => { const pr = %s.querySelector(".vprev"), v = pr.querySelector("video"); return [v.readyState, v.currentTime.toFixed(1), v.videoWidth, pr.classList.contains("img"), (%s)(v), (%s)(pr.querySelector("canvas"))]; }' % (R, STATS, STATS))
         pg.screenshot(path=OUT + '/pix_prev_%s.png' % tag)
+        d1 = same_frame(pg, float(pv[1]))
         pg.mouse.up()
+        print('   %s Vorschau: Abweichung zum echten Bild an der Stelle %s' % (tag, d1))
+        check(tag + ': Vorschaubild passt zur Stelle', d1 < 12, d1)
+        pg.evaluate('() => %s.querySelector(".vv").play()' % R)
         print('   %s Vorschau: Video bereit %s, Zeit %s, Breite %s, Bild-Flag %s, Vorschau-Video %s, gezeigtes Bild %s' % (tag, *pv))
         check(tag + ': Vorschau zeigt ein echtes Bild', pv[3] and len(pv[5]) == 2 and pv[5][0] > 8 and pv[5][1] > 4, pv[5])
+        # Nach längerem Zuschauen (Firefox hält unsichtbare Videos nach ~10 s an): noch einmal an eine neue Stelle
+        time.sleep(13)
+        a2 = pg.evaluate('() => (%s)(%s.querySelector(".vamb"))' % (STATS, R))
+        pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R); time.sleep(0.3)
+        pg.mouse.move(br[0] + br[2] * 0.15, y); pg.mouse.down(); pg.mouse.move(br[0] + br[2] * 0.33, y, steps=8)
+        time.sleep(1.5)
+        pv2 = pg.evaluate('() => { const pr = %s.querySelector(".vprev"), v = pr.querySelector("video"); return [v.readyState, v.currentTime.toFixed(1), pr.dataset.t, (%s)(v), (%s)(pr.querySelector("canvas"))]; }' % (R, STATS, STATS))
+        pg.screenshot(path=OUT + '/pix_prev_spaet_%s.png' % tag)
+        d2 = same_frame(pg, float(pv2[1]))
+        pg.mouse.up()
+        print('   %s nach 13 s: Abweichung zum echten Bild %s' % (tag, d2))
+        check(tag + ': nach 13 s Vorschaubild passt zur Stelle', d2 < 12, d2)
+        print('   %s nach 13 s: Ambient %s · Vorschau bereit %s, Zeit %s, gezeigt bei %s, Vorschau-Video %s, gezeigtes Bild %s' % (tag, a2, *pv2))
+        check(tag + ': nach 13 s Ambient-Bild hat Inhalt', len(a2) == 2 and a2[0] > 8, a2)
+        check(tag + ': nach 13 s Vorschau an der neuen Stelle', pv2[2] is not None and abs(float(pv2[2]) - float(pv2[1])) < 3 and float(pv2[1]) < float(pv[1]) - 5 and len(pv2[4]) == 2 and pv2[4][1] > 4, pv2)
         ctx.close()
     b.close()
 srv.shutdown()
