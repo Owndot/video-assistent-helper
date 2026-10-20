@@ -1,0 +1,8 @@
+srv/
+out/
+out_e2e/
+classes/
+src.mp4
+src.webm
+*.log
+gm_log.txt

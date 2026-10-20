@@ -1,0 +1,7 @@
+<!doctype html><html><head><title>Reel Schleife</title></head><body style="margin:0">
+<video id=v src="clip.webm" muted autoplay playsinline style="width:100%;display:block"></video><p>x</p>
+<script>
+// wie Facebook/Instagram-Reels: am Ende wird das Video NEU geladen und wieder abgespielt
+let n = 0; const v = document.getElementById('v');
+v.addEventListener('ended', () => { n++; v.src = 'clip.webm?schleife=' + n; v.play().catch(() => {}); window.__loops = n; });
+</script></body></html>

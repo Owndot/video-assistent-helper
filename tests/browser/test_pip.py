@@ -1,0 +1,52 @@
+import time, json, sys
+exec(open('test_v8.py').read().split("results = []")[0])
+results = []
+def check(name, ok, info=''):
+    results.append((name, bool(ok))); print(('OK   ' if ok else 'FAIL ') + name + ('  – ' + str(info) if info != '' else ''))
+R = 'window.__evpRoot'
+with sync_playwright() as p:
+    b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
+    ctx = b.new_context(viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True, device_scale_factor=2)
+    ctx.add_init_script(PRE); ctx.add_init_script(HLS); ctx.add_init_script(SCRIPT)
+    errors = []
+    page = ctx.new_page(); page.on('pageerror', lambda e: errors.append(str(e)))
+    page.goto('http://127.0.0.1:8775/direct.html')
+    page.wait_for_function('document.getElementById("v").currentTime > 1.5', timeout=15000)
+    page.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(1)
+    page.locator('button[aria-label="Im Videoplayer öffnen"]').click()
+    page.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.currentTime > 1 && !v.paused; }' % R, timeout=15000)
+    time.sleep(0.8)
+    print('fullscreen:', page.evaluate('() => !!document.fullscreenElement'), 'pipEnabled:', page.evaluate('() => document.pictureInPictureEnabled'))
+    if not page.evaluate('() => %s.querySelector(".vp").classList.contains("ctl")' % R):
+        page.mouse.click(200, 300); time.sleep(0.4)
+    chips = page.evaluate('() => Array.from(%s.querySelectorAll(".vtools .vchip")).filter(c => !c.hidden).map(c => { const r = c.getBoundingClientRect(); const s = c.querySelector("span").getBoundingClientRect(); return [Math.round(r.width), s.width]; })' % R)
+    check('Werkzeuge nur als Symbole', all(w <= 50 and sw <= 1 for w, sw in chips), chips)
+    page.screenshot(path=OUT + '/shot_icons.png')
+    page.locator('button[aria-label="Bild-in-Bild"]').click(); time.sleep(1.5)
+    st = page.evaluate('() => [!!%s.querySelector(".vp"), !!document.pictureInPictureElement, %s.querySelector(".toast").classList.contains("on"), %s.querySelector(".toast").parentNode.className]' % (R, R, R))
+    check('Bild-in-Bild: Player bleibt offen', st[0], st)
+    check('Bild-in-Bild aktiv oder Hinweis sichtbar im Player', st[1] or (st[2] and 'vp' in st[3]), st)
+    # Vollbild endet direkt nach Bild-in-Bild -> Player darf NICHT schließen
+    page.evaluate('() => { document.exitFullscreen && document.fullscreenElement && document.exitFullscreen(); }'); time.sleep(1.0)
+    check('Vollbild-Ende nach Bild-in-Bild schließt Player nicht', page.evaluate('() => !!%s.querySelector(".vp")' % R))
+    bg = page.evaluate('() => %s.querySelector(".vbar").style.getPropertyValue("--trk")' % R)
+    check('Abgespielter Teil der Leiste ist weiß', bg.startswith('linear-gradient(to right,#000') or 'rgb(255, 255, 255)' in bg.split(',')[1] if bg else False, bg[:60])
+    page.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.8)
+    check('Player zu: kleines Fenster schließt mit', page.evaluate('() => !document.pictureInPictureElement'))
+    page.evaluate('() => document.pictureInPictureElement && document.exitPictureInPicture()'); time.sleep(0.5)
+    time.sleep(0.3)
+    check('Nach Schließen: Hinweis-Blase wieder auf der Seite', page.evaluate('() => %s.querySelector(".toast").parentNode === %s' % (R, R)))
+    # Dunkle Seite: Knopf bekommt das helle Glas für Dunkelmodus
+    page.evaluate('() => { document.body.style.background = "#18191a"; document.documentElement.style.background = "#18191a"; }')
+    page.mouse.wheel(0, 5); time.sleep(1.2)
+    bgD = page.evaluate('() => getComputedStyle(%s.querySelector(".pill"), "::after").backgroundImage' % R)
+    page.screenshot(path=OUT + '/shot_dark_pill.png', clip={'x': 0, 'y': 150, 'width': 400, 'height': 250})
+    page.evaluate('() => { document.body.style.background = "#fff"; document.documentElement.style.background = "#fff"; }')
+    page.mouse.wheel(0, -5); time.sleep(1.2)
+    bgL = page.evaluate('() => getComputedStyle(%s.querySelector(".pill"), "::after").backgroundImage' % R)
+    page.screenshot(path=OUT + '/shot_light_pill.png', clip={'x': 0, 'y': 150, 'width': 400, 'height': 250})
+    check('Gleiches helles Glas auf dunkler und heller Seite', bgD == bgL and bgD != 'none', bgD[:50])
+    b.close()
+srv.shutdown()
+print('Fehler:', json.dumps(errors[:5]))
+f = [r for r in results if not r[1]]; print('ERGEBNIS:', len(results)-len(f), 'von', len(results)); sys.exit(1 if f else 0)

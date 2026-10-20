@@ -1,0 +1,5 @@
+<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1"><title>HLS-Testseite</title>
+<script src="hls.min.js"></script></head>
+<body style="margin:0"><video id=v muted autoplay playsinline style="width:100%;display:block"></video>
+<script>const v=document.getElementById('v');const h=new Hls();h.loadSource('hls/master.m3u8');h.attachMedia(v);h.on(Hls.Events.MANIFEST_PARSED,()=>v.play());</script>
+</body></html>

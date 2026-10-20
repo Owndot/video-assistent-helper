@@ -1,0 +1,48 @@
+import time
+exec(open('test_v8.py').read().split("results = []")[0])
+R = 'window.__evpRoot'; ok = []
+def check(n, c, i=''): ok.append(bool(c)); print(('OK   ' if c else 'FAIL ') + n + ('  – ' + str(i) if i != '' else ''))
+with sync_playwright() as p:
+    b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
+    for bg, name in [('#fff', 'hell'), ('#18191a', 'dunkel')]:
+        ctx = b.new_context(viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True, device_scale_factor=3)
+        ctx.add_init_script(PRE); ctx.add_init_script(HLS); ctx.add_init_script(SCRIPT)
+        pg = ctx.new_page(); pg.goto('http://127.0.0.1:8775/direct.html')
+        pg.evaluate('(c) => { document.body.style.background = c; document.documentElement.style.background = c; }', bg)
+        pg.wait_for_function('document.getElementById("v").currentTime > 1', timeout=15000)
+        pg.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(1.2)
+        r = pg.evaluate('() => { const q = %s.querySelector(".pill").getBoundingClientRect(); return [q.left, q.top, q.width, q.height]; }' % R)
+        pg.screenshot(path=OUT + '/u_pill_%s.png' % name, clip={'x': r[0] - 16, 'y': r[1] - 12, 'width': r[2] + 32, 'height': r[3] + 24})
+        if name == 'dunkel': ctx.close(); continue
+        pg.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
+        pg.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.currentTime > 1; }' % R, timeout=15000)
+        pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R); time.sleep(0.3)
+        pg.evaluate('() => %s.querySelector("button[aria-label=\'Bedienung sperren\']").click()' % R); time.sleep(0.4)
+        locked = lambda: pg.evaluate('() => %s.querySelector(".vp").classList.contains("locked")' % R)
+        def show_unlock():
+            pg.mouse.click(200, 300); time.sleep(0.35)
+            u = pg.evaluate('() => { const r = %s.querySelector(".vunlock").getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, r.width]; }' % R)
+            return u
+        u = show_unlock(); check('gesperrt, Schloss erscheint nach Tippen', locked() and u[2] > 0, u)
+        pg.mouse.click(u[0], u[1]); time.sleep(0.6)
+        check('ein Tipp: bleibt gesperrt, kein Hinweis', locked() and not pg.evaluate('() => %s.querySelector(".vind").classList.contains("on")' % R))
+        time.sleep(0.3)
+        pg.mouse.move(u[0], u[1]); pg.mouse.down(); time.sleep(0.35); pg.mouse.up(); time.sleep(0.6)
+        check('kurz gedrückt (0,35 s): bleibt gesperrt', locked())
+        u = show_unlock()
+        pg.mouse.click(u[0], u[1]); time.sleep(0.12); pg.mouse.click(u[0], u[1]); time.sleep(0.4)
+        check('zweimal schnell getippt: entsperrt', not locked())
+        pg.evaluate('() => { %s.querySelector(".vp").classList.add("ctl"); %s.querySelector("button[aria-label=\'Bedienung sperren\']").click(); }' % (R, R)); time.sleep(0.6)
+        u = show_unlock()
+        pg.mouse.move(u[0], u[1]); pg.mouse.down(); time.sleep(0.5)
+        pg.screenshot(path=OUT + '/u_ring.png', clip={'x': 0, 'y': u[1] - 60, 'width': 140, 'height': 120})
+        time.sleep(0.6)
+        check('1 s gedrückt halten: entsperrt (noch während des Haltens)', not locked())
+        pg.mouse.up()
+        ctx.close()
+    b.close()
+srv.shutdown()
+from PIL import Image
+a = Image.open(OUT + '/u_pill_hell.png'); d = Image.open(OUT + '/u_pill_dunkel.png'); g = Image.open(OUT + '/u_ring.png')
+c = Image.new('RGB', (a.width + d.width + g.width + 40, max(a.height, d.height, g.height)), (128, 128, 128)); c.paste(a, (0, 0)); c.paste(d, (a.width + 20, 0)); c.paste(g, (a.width + d.width + 40, 0)); c.save(OUT + '/u_all.png')
+print('ERGEBNIS:', sum(ok), 'von', len(ok))

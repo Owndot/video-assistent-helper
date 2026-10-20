@@ -1,0 +1,23 @@
+exec(open('test_v8.py').read().split("results = []")[0])
+R='window.__evpRoot'
+import sys
+with sync_playwright() as p:
+    b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
+    ctx = b.new_context(viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True, device_scale_factor=2)
+    ctx.add_init_script(PRE); ctx.add_init_script(HLS); ctx.add_init_script(SCRIPT)
+    page = ctx.new_page(); errs=[]; page.on('pageerror', lambda e: errs.append(str(e)))
+    page.goto('http://127.0.0.1:8775/direct.html')
+    page.wait_for_function('document.getElementById("v").currentTime > 1', timeout=15000)
+    page.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(1.0)
+    page.screenshot(path=OUT+'/d_pill.png', clip={'x':200,'y':150,'width':200,'height':200})
+    page.locator('button[aria-label="Im Videoplayer öffnen"]').click(); time.sleep(1.5)
+    print('lens:', page.evaluate('() => [...%s.querySelectorAll(".g")].map(e => e.style.getPropertyValue("--lens")).filter(Boolean).length + " von " + %s.querySelectorAll(".g").length' % (R,R)))
+    page.screenshot(path=OUT+'/d_player.png')
+    page.mouse.move(330, 600); page.mouse.down(); page.mouse.move(330, 520, steps=6); time.sleep(0.25)
+    page.screenshot(path=OUT+'/d_vol.png'); page.mouse.up(); time.sleep(1.2)
+    page.mouse.move(60, 300); page.mouse.down(); page.mouse.move(60, 380, steps=6); time.sleep(0.25)
+    page.screenshot(path=OUT+'/d_bright.png'); page.mouse.up()
+    page.set_viewport_size({'width':800,'height':400}); time.sleep(1.0); page.mouse.click(400, 120); time.sleep(0.5)
+    page.screenshot(path=OUT+'/d_land.png')
+    print(errs)
+    b.close()

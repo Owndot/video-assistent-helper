@@ -1,0 +1,34 @@
+<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:url(stripes.svg);background-size:40px 40px;height:100vh">
+<div id=host style='all:initial;display:block;position:fixed;top:0;left:0;width:0;height:0;overflow:visible;z-index:2147483647'></div>
+<script src="/lensnew.js"></script>
+<script>
+const root = document.getElementById('host').attachShadow({mode:'closed'});
+window.__r = root;
+const NS='http://www.w3.org/2000/svg';
+root.innerHTML = `<style>*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+.b{position:absolute;border-radius:999px;background:rgba(255,255,255,.06);box-shadow:inset 0 1px 0 rgba(255,255,255,.5),0 8px 24px rgba(0,0,0,.3)}
+</style><svg width=0 height=0 style=position:absolute><defs></defs></svg>
+<div class=b id=a style="left:30px;top:60px;width:160px;height:64px"></div>
+<div class=b id=c style="left:220px;top:40px;width:100px;height:100px"></div>
+<div class=b id=s style="left:40px;top:200px;width:60px;height:260px;border-radius:30px"></div>`;
+const svgd=document.createElementNS(NS,'svg'); svgd.setAttribute('width','0'); svgd.setAttribute('height','0'); svgd.style.position='absolute'; const defs=document.createElementNS(NS,'defs'); svgd.appendChild(defs); document.getElementById('host').appendChild(svgd);
+let n=0;
+function lens(el, r, bezel, mag, scale, blur){
+  const w = el.offsetWidth, h = el.offsetHeight, id='L'+(n++);
+  const f = document.createElementNS(NS,'filter');
+  f.setAttribute('id',id); f.setAttribute('x','0%'); f.setAttribute('y','0%'); f.setAttribute('width','100%'); f.setAttribute('height','100%'); f.setAttribute('color-interpolation-filters','sRGB');
+  const fi = document.createElementNS(NS,'feImage');
+  const m=Math.min(w,h), big=Math.max(w,h); const zoom = big <= 90 ? 1.45 : big <= 200 ? 1.3 : 1.2; const ep=Math.max(4,Math.min(12,m*.16)); const half=Math.ceil(big/2*(1-1/zoom)+ep+1); scale=half*2; fi.setAttribute('href', lensMap(w,h,r,bezel,zoom,ep,half)); fi.setAttributeNS('http://www.w3.org/1999/xlink','xlink:href', fi.getAttribute('href'));
+  fi.setAttribute('x','0'); fi.setAttribute('y','0'); fi.setAttribute('width', w); fi.setAttribute('height', h); fi.setAttribute('result','m'); fi.setAttribute('preserveAspectRatio','none');
+  const dm = document.createElementNS(NS,'feDisplacementMap');
+  dm.setAttribute('in','SourceGraphic'); dm.setAttribute('in2','m'); dm.setAttribute('scale', scale); dm.setAttribute('xChannelSelector','R'); dm.setAttribute('yChannelSelector','G');
+  f.append(fi, dm);
+  defs.appendChild(f);
+  el.style.backdropFilter = `url(#${id}) blur(${blur}px) saturate(1.4)`;
+}
+lens(root.getElementById('a'), 32, 18, 0.06, 36, 1);
+lens(root.getElementById('c'), 50, 22, 0.08, 40, 1);
+lens(root.getElementById('s'), 30, 16, 0.04, 30, 1);
+setTimeout(()=>{ for (const e of root.querySelectorAll('.b')) { const v=e.style.backdropFilter; e.style.backdropFilter='none'; e.offsetWidth; e.style.backdropFilter=v; } }, 500);
+</script></body></html>

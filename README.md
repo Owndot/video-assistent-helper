@@ -1,51 +1,96 @@
-# Video-Assistent Helfer
+# Video-Assistent
 
-Kleine Android-App, mit der der eingebaute Videoplayer des Userscripts **Video-Assistent** (Violentmonkey) die echte
-**Bildschirmhelligkeit** und die **Medienlautstärke** des Handys steuern kann – wie Samsung Internet.
+Ein eigener Videoplayer für den Browser auf Android – wie der Video-Assistent von Samsung Internet, nur schöner und
+auf allen Seiten. Besteht aus zwei Teilen:
 
-## So funktioniert es
-- Die App startet einen Dienst, der nur auf `127.0.0.1:47811` lauscht (vom WLAN/Internet nicht erreichbar).
-- Wischt du im Player links (Helligkeit) oder rechts (Lautstärke), schickt das Userscript den Wert an den Helfer.
-- **Helligkeit:** ein unsichtbares 1-Pixel-Fenster „über anderen Apps“ trägt den Helligkeitswunsch. Wird der Player
-  geschlossen (oder kommt 30 s kein Lebenszeichen), verschwindet es – die normale (auch automatische) Helligkeit ist
-  sofort zurück. Ohne dieses Recht, aber mit „Systemeinstellungen ändern“, wird notfalls die Einstellung gesetzt und
-  danach zurückgestellt.
-- **Lautstärke:** direkt die Android-Medienlautstärke (keine Berechtigung nötig).
-- **Downloads:** Videodateien über Androids Download-Manager (mit Herkunftsseite als Referer und den Cookies der Seite),
-  HLS-Streams (auch AES-128, getrennte Tonspur, fMP4) und DASH-Streams (SegmentTemplate/Timeline, SegmentList,
-  SegmentBase) werden Stück für Stück geladen und ohne Neukodieren zu MP4 zusammengesetzt.
-  Weist ein Server den Helfer ab (401/403), lädt das Userscript die Daten mit der Sitzung des Browsers und reicht sie
-  an den Helfer weiter (`/pull` + `POST /push`) – dafür muss die Seite offen bleiben.
-  Gespeichert in `Download/Video-Assistent`, Fortschritt und Abbrechen in der Benachrichtigung.
-- Läuft der Helfer nicht, regelt der Player wie bisher nur das Video.
+| Teil | Was es ist | Wo |
+|---|---|---|
+| **Userscript** | der Player selbst (läuft in Vivaldi/Chrome mit Violentmonkey) | `userscript/video-assistent.user.js` |
+| **Helfer-App** | kleine Android-App für alles, was ein Browser nicht darf (Helligkeit, Lautstärke, Downloads) | `app/` → fertige APK unter **Releases** |
 
-## Schlüssel und Koppeln
-Die App erzeugt einen eigenen Zufallsschlüssel. „Mit dem Browser verbinden“ öffnet `http://127.0.0.1:47811/pair#SCHLÜSSEL`;
-das Userscript liest den Schlüssel aus dem #-Teil (den sieht weder der Server noch eine andere App), prüft ihn und
-speichert ihn dauerhaft (`GM_setValue`). Ab der ersten Anfrage mit dem eigenen Schlüssel gilt der alte feste Schlüssel
-`evp-1` nicht mehr. Lange auf den Status in der Karte drücken = neuer Schlüssel (dann neu verbinden).
+Der Player funktioniert auch **ohne** Helfer-App – dann regeln die Gesten nur das Video selbst.
 
-Cookies der Seite gehen nur an die Seite selbst und ihre eigenen Server – nie an fremde Adressen aus einer Playlist
-(auch nicht beim Laden über den Browser).
+---
 
-## Schnittstelle (nur mit Kopf `X-EVP-Key: <Schlüssel>`)
-| Aufruf | Wirkung |
-|---|---|
-| `GET /ping` | Zustand: Rechte, Lautstärke, Helligkeit |
-| `GET /bright?v=0..1` | Helligkeit setzen |
-| `GET /vol?v=0..1` | Lautstärke setzen (ohne `v`: abfragen) |
-| `GET /beat` | Lebenszeichen, solange der Player offen ist |
-| `GET /end` | Player zu: Helligkeit zurück |
-| `GET /download?u=…&ref=…&ua=…&c=…&t=…&k=file\|hls\|dash&p=1` | Video speichern (`c` = Cookies, `p=1` = über den Browser laden) |
-| `GET /pull?job=…` | Laden über den Browser: offene Anfragen abholen (wartet bis zu 8 s) |
-| `POST /push?job=…&id=…&st=…&total=…` | Laden über den Browser: Daten einer Anfrage liefern |
-| `GET /dlstate?id=…` | Fortschritt eines Downloads |
-| `GET /pair` | Koppel-Seite (ohne Schlüssel abrufbar, enthält ihn nicht) |
+## Was es kann
 
-Normale Webseiten können den Kopf nicht mitschicken (der Browser fragt vorher nach, der Helfer antwortet darauf nicht).
+**Player**
+- Knopf „Player“ unter jedem laufenden Video (verschiebbar) → eigener Vollbild-Player über der Seite
+- Design im Stil von iOS/Samsung: Glasflächen mit feinem Rand und Wellen-/Lupen-Effekt, Ambient-Licht in den Rändern
+- Wischen: **links** Helligkeit, **rechts** Lautstärke, **waagerecht** spulen (mit Vorschaubild)
+  - oberer Rand (15 %) gesperrt, damit das Herunterziehen der Schnelleinstellungen nichts verstellt
+  - ganz unten bei der Helligkeit **weiterwischen = Auto** (automatische Helligkeit des Handys)
+- Doppeltippen links/rechts = ±10 s (mehrfach = 20, 30 … s), lange drücken = 2× schneller
+- Zwei Finger = zoomen, Bildformate (Original, Füllen, Strecken, 16:9, 4:3, 21:9), Qualität wählen
+- Sperre (entsperren: 1 s halten oder doppeltippen), Bild-in-Bild, Drehen, Geschwindigkeit
+- dünne Fortschrittslinie, wenn die Leisten ausgeblendet sind; am Ende anhalten statt endlos schleifen
 
-## Bauen
-GitHub Actions baut bei jedem Push automatisch eine signierte APK und veröffentlicht sie unter **Releases → neueste**.
-Der Signaturschlüssel liegt fest im Repo (`keystore.jks`), damit sich neue Versionen über alte installieren lassen.
+**Seiten**
+- Facebook (spiegelt das Bild des Facebook-Players → immer das richtige Video), Instagram, TikTok, Pornhub u. a.
+- eingebettete Player (Video in einem fremden iframe): der Kasten wird über den ganzen Bildschirm gelegt,
+  Titel kommt von der Hauptseite
+- Seiten mit Kopierschutz (Netflix, Disney+, Prime …) bleiben bewusst aus
 
-`userscript/` enthält die jeweils aktuelle Version des Userscripts.
+**Übergeben und Herunterladen** (Knopf ⬇ – Tippen = bester Weg, lange drücken = alle Wege)
+- Seiten, die yt-dlp kennt → **direkt in YTDLnis** (ohne Teilen-Menü)
+- mit Helfer-App: Videodateien, **HLS-** und **DASH-Streams** → MP4 in `Download/Video-Assistent`
+  (auch verschlüsselte HLS, getrennte Tonspur); verlangt ein Server die Anmeldung des Browsers, lädt das Skript
+  automatisch über die Browser-Sitzung
+- ohne Helfer: Download des Browsers; „In App öffnen“ für VLC & Co.
+
+**Helfer-App**
+- echte **Bildschirmhelligkeit** (nur solange der Player offen ist, danach automatisch zurück) und
+  **Medienlautstärke** in 1-%-Schritten
+- Downloads mit Fortschritt und „Abbrechen“ in der Benachrichtigung
+- nur vom Handy selbst erreichbar, mit eigenem geheimem Schlüssel (Koppeln)
+
+**Nicht möglich:** Kopierschutz (DRM), Livestreams speichern, Videos ganz ohne Adresse (z. B. Facebook-Spiegel →
+dort YTDLnis). Den Vollbild-Hinweis des Browsers („zum Beenden … von oben ziehen“) kann keine Seite abschalten.
+
+---
+
+## Installieren
+
+1. **Violentmonkey** in Vivaldi installieren (Erweiterungen, ab Vivaldi 8.2 auf Android).
+2. **Userscript:** `userscript/video-assistent.user.js` in Violentmonkey installieren (alte Version vorher löschen).
+3. **Helfer-App (optional):** unter **Releases → neueste** `VideoAssistent-Helfer.apk` laden und installieren.
+   In der App die Karten der Reihe nach antippen:
+   1. Helligkeit erlauben („Über anderen Apps einblenden“)
+   2. vom Akku-Sparen ausnehmen
+   3. Benachrichtigung erlauben
+   4. **Mit dem Browser verbinden** → Vivaldi wählen → „✓ Verbunden“
+   „Ausprobieren: 3 Sekunden dunkel“ prüft die Helligkeit.
+
+Neue App-Versionen einfach über die alte installieren (gleicher Signaturschlüssel).
+
+## Einstellungen (oben im Userscript, `CONFIG`)
+
+| Einstellung | Standard | Bedeutung |
+|---|---|---|
+| `startFullscreen` | `true` | Player im Vollbild öffnen (`false` = ohne Browser-Hinweis, aber mit Statusleiste) |
+| `lensGlass` | `true` | Wellen-/Lupen-Glas (`false` = einfaches Milchglas, spart etwas Grafikleistung) |
+| `ambient` / `progressLine` | `true` | Ambient-Licht / Fortschrittslinie (auch im Format-Menü umschaltbar) |
+| `topGuard` | `0.15` | oberer Bereich ohne Helligkeits-/Lautstärke-Gesten (Anteil der Höhe) |
+| `holdSpeed` | `2` | Tempo beim langen Drücken |
+| `systemHelper` | `true` | Helfer-App benutzen, wenn sie läuft |
+| `downloader` | `'ytdlnis'` | `'share'` = Teilen-Menü statt direkt YTDLnis |
+| `fbMirror` | `true` | Facebook: Bild des Facebook-Players spiegeln |
+| `buttonAt` | `'below'` | Player-Knopf `'below'` (unter dem Video), `'video'` (im Video) oder `'top'` |
+| `onlyWithSound` | `true` | Knopf nur bei Videos mit Ton (stumme Feed-Videos lösen ihn nicht aus) |
+| `autoRotate` | `false` | Querformat-Videos automatisch drehen |
+| `resumeAfterClose` | `true` | nach dem Schließen läuft das Video auf der Seite weiter |
+| `ytdlpSites`, `downloadOnlySites`, `disabledSites` | Listen | wohin ⬇ YTDLnis nimmt / nur Download / Skript ganz aus |
+
+Die Einstellungen stehen im Skript selbst – bei einem Update werden sie überschrieben (der Schlüssel der
+Helfer-App nicht, der wird gespeichert).
+
+## Repository
+
+```
+userscript/            das Userscript (aktuelle Version)
+app/                   Helfer-App (Java, ohne Bibliotheken)
+tests/browser/         Browser-Tests (Python + Playwright) mit Testseiten in web/
+tests/java/            Tests für den Download-Kern (ohne Android) + Erzeugung der Test-Streams
+.github/workflows/     baut bei jedem Push die APK und veröffentlicht sie als Release
+ENTWICKLUNG.md         Aufbau, Schnittstelle, Tests, Stolperfallen – zum Weiterarbeiten
+```

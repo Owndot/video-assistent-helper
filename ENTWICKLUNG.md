@@ -1,0 +1,151 @@
+# Weiterentwickeln
+
+Alles, was man braucht, um am Video-Assistent weiterzuarbeiten: Aufbau, Schnittstelle zwischen Skript und App,
+Bauen, Tests und die Stolperfallen, die schon gelöst sind (bitte nicht wieder einbauen).
+
+## 1. Aufbau des Userscripts (`userscript/video-assistent.user.js`)
+
+Ein einziges Skript (~4.100 Zeilen, ohne Build-Schritt), `@inject-into content`, `@run-at document-start`,
+nutzt `hls.js` per `@require`. Die Oberfläche liegt in einem **geschlossenen Shadow-DOM** an einem Element mit
+Zufallsnamen (Seiten können sie weder sehen noch verändern). Abschnitte in der Datei, von oben nach unten:
+
+| Abschnitt | Aufgabe |
+|---|---|
+| Einstellungen (`CONFIG`) | alle Schalter, siehe README |
+| Eingebettete Fenster | Brücke iframe ↔ Hauptseite per `postMessage` (`__evpFrame1`): Kasten vergrößern, Vollbild, Drehen, Titel, Ränder (safe-area) |
+| 1) Netzwerk-Quellen | `PerformanceObserver` sammelt HLS/DASH/MP4-Adressen (Fetch/XHR-Haken sehen im content-world nichts) |
+| 2) Facebook/Instagram | fertige MP4s aus Seitendaten; Pufferwachstum ↔ Video-Zuordnung (nur ohne Spiegel-Modus) |
+| 3) Passende Quelle | `resolve()` / `playerSources()` – welche Adresse gehört zu GENAU diesem Video |
+| Externer Player | `intent://`-Adressen (VLC, YTDLnis …), `openExternal()` |
+| Helfer-App | `helper()` (GM_xmlhttpRequest an 127.0.0.1:47811), Koppeln, gedrosseltes Senden (`helperSend`) |
+| Laden über den Browser | `proxyLoop()`: holt Anfragen des Helfers ab (`/pull`), lädt mit Browser-Sitzung, liefert (`/push`) |
+| Oberfläche / Button | Player-Knopf unter dem Video, verschiebbar, Position pro Seite gemerkt |
+| Lupen-Glas | Verschiebungskarten (Canvas) als SVG-Filter für `backdrop-filter` |
+| Eingebauter Player | `openPlayer()` … `closePlayer()`: Video, Gesten, Menüs, Vorschau, Ambient, Spiegeln (`captureStream`), Download-Wege |
+| TikTok / Instagram / Diagnose | Sonderwege und Diagnose (lange auf „Player“ drücken oder Violentmonkey-Menü) |
+
+Wichtige Abläufe:
+- **Gesten:** `pointerdown` merkt Start (`g`), ab 14 px Bewegung wird die Art festgelegt (spulen/Helligkeit/Lautstärke);
+  danach zählt jede Bewegung gleich (kein Sprung), Wert wird an den Enden abgeschnitten. Start am Rand (Zurück-Geste)
+  oder oben (`topGuard`) → keine Helligkeit/Lautstärke.
+- **Helligkeit mit Helfer:** Reglerwert ist „gefühlt gleichmäßig“ (Androids Kurve, `gammaToLin`/`linToGamma`).
+  Unter 0 % weiter → `Auto` (`/end`). **Lautstärke:** Android-Stufen + Feinabstufung über die Videolautstärke
+  (`volDb`, Androids Medien-Kurve).
+- **Download-Knopf:** yt-dlp-Seite → YTDLnis · Helfer → `/download` (danach `/dlstate` beobachten; bei 401/403
+  automatisch `p=1` = über den Browser) · sonst Browser-Download · lange drücken → `dlMenu()`.
+
+## 2. Aufbau der Helfer-App (`app/src/main/java/de/evp/helfer/`)
+
+Reines Java, keine Bibliotheken, `minSdk 26`, `targetSdk 34`.
+
+| Klasse | Aufgabe |
+|---|---|
+| `HelferService` | Vordergrund-Dienst (`specialUse`): Server starten, Helligkeit (1-px-Overlay mit `screenBrightness`, notfalls Systemeinstellung), Lautstärke, Wächter (30 s ohne Lebenszeichen → Helligkeit zurück) |
+| `MiniServer` | HTTP nur auf 127.0.0.1, prüft den Schlüssel, GET + `POST /push`, Koppel-Seite `/pair` – **ohne Android-Teile** |
+| `Keys` | eigener Zufallsschlüssel; alter fester Schlüssel `evp-1` gilt nur bis zur ersten Kopplung |
+| `Fetcher` | Laden: `Http` (Referer, User-Agent, Cookies nur an die eigene Domain), `Proxy` (über den Browser), `toFile` (Dateien in 4-MB-Stücken) – **ohne Android-Teile** |
+| `HlsCore` | HLS: beste Stufe, getrennte Tonspur, fMP4, AES-128, Byte-Bereiche, parallel – **ohne Android-Teile** |
+| `DashCore` | DASH: SegmentTemplate (Timeline/Dauer), SegmentList, SegmentBase, längste Periode – **ohne Android-Teile** |
+| `Downloads` | Aufträge, Benachrichtigungen, Download-Manager (mit Fehlerstatus), `MediaMuxer` → MP4, Speichern über MediaStore |
+| `MainActivity` | Einstellungsseite (Rechte, Koppeln, Start/Stopp, Test) |
+| `BootReceiver` | Autostart nach Neustart/Update |
+
+Die mit „ohne Android-Teile“ markierten Klassen lassen sich am Rechner übersetzen und testen (`tests/java`).
+
+## 3. Schnittstelle Skript ↔ App
+
+Alle Anfragen mit Kopf `X-EVP-Key: <Schlüssel>` an `http://127.0.0.1:47811`. Webseiten können den Kopf nicht
+setzen (Browser fragt vorher nach, der Server antwortet darauf nicht) – nur das Userscript über Violentmonkey.
+
+| Aufruf | Wirkung |
+|---|---|
+| `GET /ping` | Zustand: `v`, `dl`, `dash`, `proxy`, Rechte (`overlay`/`write`), Lautstärke (`vol`, `volStep`, `volMax`), `bright` |
+| `GET /bright?v=0..1` | Helligkeit setzen (linear) |
+| `GET /vol?v=0..1` | Lautstärke-Stufe setzen (ohne `v`: abfragen) |
+| `GET /beat` | Lebenszeichen, solange der Player offen ist (alle 2,5 s) |
+| `GET /end` | Helligkeit zurück an das System (auch automatisch) |
+| `GET /download?u=…&ref=…&ua=…&c=…&t=…&k=file\|hls\|dash&p=1` | Video speichern · `c` = Cookies der Seite · `p=1` = über den Browser |
+| `GET /dlstate?id=…` | Zustand: `startet`, `läuft`, `12/40`, `zusammensetzen`, `fertig`, `Fehler: …` |
+| `GET /pull?job=…` | über den Browser: offene Anfragen abholen (wartet bis 8 s) → `{reqs:[{id,u,o,l,s}],done}` |
+| `POST /push?job=…&id=…&st=…&total=…` | über den Browser: Daten einer Anfrage (Körper = rohe Bytes) |
+| `GET /pair` | Koppel-Seite, ohne Schlüssel abrufbar – der Schlüssel steht nur im `#`-Teil der Adresse |
+
+**Koppeln:** App öffnet `http://127.0.0.1:47811/pair#SCHLÜSSEL` im Browser → Skript prüft ihn mit `/ping` und
+speichert ihn per `GM_setValue('helperKey')` (übersteht Skript-Updates).
+
+## 4. Bauen
+
+- **App:** jeder Push auf `main` baut per GitHub Actions eine signierte APK (`keystore.jks`, Passwort im
+  `app/build.gradle`) und ersetzt das Release **neueste**. Versionsnummer = Build-Nummer.
+- **Skript:** kein Build. `@version` und die Zeile `Video-Assistent X.Y` in der Diagnose hochzählen, Datei nach
+  `userscript/` kopieren.
+
+## 5. Tests
+
+**Browser-Tests** (`tests/browser`, Python + Playwright/Chromium):
+```
+pip install playwright && playwright install chromium
+cd tests/browser && ./run_all.sh        # oder einzeln: python3 test_player.py
+```
+Jeder Test startet einen kleinen Webserver mit den Seiten aus `web/`, lädt das Skript (Shadow-DOM wird zum Testen
+geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die Helfer-App wird nachgebaut
+(`GM_xmlhttpRequest` → Python). Wichtige Tests:
+
+| Test | prüft |
+|---|---|
+| `test_player.py`, `test_v8.py` | Grundfunktionen, Gesten, Menüs, Qualität |
+| `test_helper.py` | Helligkeit/Lautstärke über den Helfer, Auto, Feinstufen, Lebenszeichen |
+| `test_dl3.py` | Download-Wege (Helfer, YTDLnis direkt, Menü) |
+| `test_e2e.py`, `test_pair.py` | **echter** Java-Server-Kern + Browser: Laden über die Sitzung, Cookies nur an die eigene Seite, Koppeln |
+| `test_embed.py`, `test_nest.py` | eingebettete / verschachtelte Fenster |
+| `test_mirror.py`, `test_fb*.py`, `test_ig.py`, `test_tt.py` | Facebook-Spiegel, Instagram, TikTok (nachgebaut) |
+| `test_topguard.py`, `test_idle.py` | gesperrter oberer Rand, sparsamer Takt ohne Video |
+
+Bekannt: `test_tt.py` besteht 2 von 3 (TikTok liefert ohne Anmeldung keine Video-ID) – kein Fehler.
+
+**Java-Tests** (`tests/java`, braucht JDK 17, ffmpeg, openssl):
+```
+cd tests/java && ./run_core_tests.sh    # erzeugt Test-Streams, übersetzt, prüft mit ffprobe
+```
+
+Nicht am Rechner testbar: alles mit Android-Klassen (Overlay-Helligkeit, `MediaMuxer`, Download-Manager,
+Benachrichtigungen) – das prüft nur das Handy.
+
+## 6. Stolperfallen (schon gelöst – nicht wieder einbauen)
+
+- **Erzwungener Dunkelmodus** (Vivaldi „Dunkle Webseiten“) färbt helles Glas dunkel. Lösung: helle Teile dunkel
+  zeichnen und mit `filter: invert(1)` umdrehen (`color-scheme: only light` reicht in Chromium nicht).
+- **`all: unset`** bei `.vb` setzt auch `backdrop-filter`/`background` von `.g` zurück → eigene Regel `.vb.g`.
+- **`CSS` ist im Skript der Stil-Text** – für `CSS.supports` immer `window.CSS` nehmen.
+- **SVG-Filter für `backdrop-filter`** müssen im **selben Shadow-DOM** liegen wie die Fläche. Chrome lädt das
+  `feImage`-Bild erst beim ersten Zeichnen und rechnet ruhige Flächen danach nicht neu → kurz ab- und wieder
+  anschalten (180 ms / 900 ms).
+- **Verschiebungskarte:** die Steigung muss überall < 1 bleiben, sonst überschlägt sich das Bild (Text gespiegelt).
+  Test immer über Text/Gitter – Streifen verdecken Fehler.
+- **Video zentrieren ohne `transform`**: Android setzte die Verschiebung in eingebetteten Vollbild-Fenstern falsch
+  um (Bild ¼ Höhe zu hoch). Jetzt `inset:0; margin:auto`.
+- **Player-Container `overflow: clip`** + Scroll zurücksetzen – sonst verschiebt das Ambient-Canvas alles.
+- **iframes:** `url(#…)`/Vollbild/Drehen nur über die Hauptseite; Rand-Abstände (safe-area) kommen von dort.
+  Fremde Fenster dürfen sich nur nach einem echten Tipp und ab sichtbarer Größe vergrößern.
+- **Facebook:** Zuordnung Video ↔ Datei ist unsicher (Reels-Feed lädt vor) → Standard ist Spiegeln
+  (`captureStream`), mit Wächter für schwarzes Bild und „am Ende anhalten“.
+- **Instagram:** eigene Abfragen über `rawFetch` (sonst sieht der eigene Haken sie).
+- **Vollbild-Ende ≠ Zurück-Taste**, wenn gerade gedreht wurde oder Bild-in-Bild startet (`onFs`-Logik).
+- **Laden über den Browser:** Cookies nur an Seite + Videoserver (gleiche Haupt-Domain), fremde Adressen aus einer
+  Playlist ohne Sitzung (`anonymous`).
+- **Testumgebung:** Playwright-Chromium kann kein H.264 abspielen → WebM für Abspiel-Tests; Bindungen von
+  `expose_function` laufen nur während Playwright-Aufrufen (`page.wait_for_timeout` statt `time.sleep`).
+- **Vollbild-Hinweis des Browsers** lässt sich nicht abschalten (weder Seite noch ADB) – nur `startFullscreen: false`.
+
+## 7. Versionen (kurz)
+
+| Version | Wichtigstes |
+|---|---|
+| bis 11.x | Player, Gesten, Glas-Design, Facebook-Spiegel, Instagram/TikTok, Vorschau, Ambient, Sperre, ±10-Anzeige |
+| 12.0–12.2 | Fortschrittslinie, symmetrisches Querformat, Menü-Auslaufen nur bei Bedarf |
+| 12.3–12.4 | eingebettete Fenster über den ganzen Bildschirm, Zentrierung ohne `transform` |
+| 12.5–12.7 | Helfer-App: echte Helligkeit/Lautstärke, Feinstufen, Auto durch Weiterwischen |
+| 12.8–13.1 | iOS-Regler, Lupen-/Wellen-Glas, Play/±10/Menüs wieder schlicht |
+| 13.2–13.3 | Downloads: YTDLnis direkt, Helfer lädt Dateien/HLS/DASH, Cookies, Laden über den Browser |
+| 13.4 | oberer Rand ohne Helligkeit/Lautstärke |
+| 13.5 | eigener Schlüssel + Koppeln, Cookies nur an die eigene Seite, sparsamer Takt |

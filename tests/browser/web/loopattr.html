@@ -1,0 +1,2 @@
+<!doctype html><html><head><title>Reel Schleife</title></head><body style="margin:0"><video id=v src="clip.webm" muted autoplay loop playsinline style="width:100%;display:block"></video><p>x</p>
+<script>const v = document.getElementById("v"); let last = 0; v.addEventListener("timeupdate", () => { if (last > v.duration - 1.5 && v.currentTime < 1.5) window.__loops = (window.__loops || 0) + 1; last = v.currentTime; });</script></body></html>

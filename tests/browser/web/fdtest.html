@@ -1,0 +1,11 @@
+<!doctype html><html><body style="margin:0;background:#fff">
+<div id="a" style="position:absolute;left:0;top:0;width:100px;height:100px;background:#fff"></div>
+<div id="b" style="position:absolute;left:100px;top:0;width:100px;height:100px;background:#fff;color-scheme:only light"></div>
+<div id="c" style="position:absolute;left:200px;top:0;width:100px;height:100px;color-scheme:only light"><div style="width:100%;height:100%;background:#fff"></div></div>
+<x-host id="d" style="position:absolute;left:300px;top:0;width:100px;height:100px;display:block;color-scheme:only light"></x-host>
+<x-host id="e" style="position:absolute;left:400px;top:0;width:100px;height:100px;display:block"></x-host>
+<div id="f" style="position:absolute;left:500px;top:0;width:100px;height:100px;background:rgba(255,255,255,.35)"></div>
+<div id="g" style="position:absolute;left:600px;top:0;width:100px;height:100px;background:rgba(255,255,255,.35);filter:invert(0)"></div>
+<script>
+for (const id of ['d','e']) { const r = document.getElementById(id).attachShadow({mode:'open'}); r.innerHTML = '<style>:host{color-scheme:only light}div{color-scheme:only light}</style><div style="width:100px;height:100px;background:#fff"></div>'; }
+</script></body></html>

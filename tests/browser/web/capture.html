@@ -1,0 +1,8 @@
+<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1"><title>Testvideo Stream ohne Adresse</title></head>
+<body style="margin:0"><canvas id=c width=640 height=360 style="display:none"></canvas>
+<video id=v muted autoplay playsinline style="width:100%;display:block"></video>
+<script>
+const c=document.getElementById('c'),x=c.getContext('2d');let n=0;
+setInterval(()=>{x.fillStyle='hsl('+(n++%360)+',70%,50%)';x.fillRect(0,0,640,360);x.fillStyle='#fff';x.font='48px sans-serif';x.fillText('Frame '+n,40,200)},40);
+const v=document.getElementById('v');v.srcObject=c.captureStream(25);v.play();
+</script></body></html>

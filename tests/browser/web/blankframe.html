@@ -1,0 +1,7 @@
+<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1"><title>Player im Fenster ohne Adresse</title></head>
+<body style="margin:0"><h1 style="font:16px sans-serif;padding:8px">Einbettung</h1>
+<iframe id=f style="width:100%;height:240px;border:0;margin-top:40px"></iframe>
+<script>
+const d=document.getElementById('f').contentDocument;
+d.open();d.write('<body style="margin:0;background:#000"><video id="iv" src="'+location.href.replace(/[^/]*$/,'')+'clip.webm" muted autoplay loop playsinline style="width:100%;height:100%"></video></body>');d.close();
+</script></body></html>
