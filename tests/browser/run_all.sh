@@ -9,7 +9,7 @@ if ls ${TESTS:-test_*.py} | grep -qE "test_(e2e|pair)"; then
 fi
 mkdir -p out
 for t in ${TESTS:-test_*.py}; do
-  timeout 300 python3 "$t" > "out/${t%.py}.log" 2>&1
+  timeout 300 python3 -u "$t" > "out/${t%.py}.log" 2>&1
   r=$(grep -E 'ERGEBNIS|FAIL|bestanden|symmetrisch|Bilder/s|pausiert' "out/${t%.py}.log" | tr '\n' ' ' | cut -c1-160)
   printf '%-22s %s\n' "$t" "${r:-(keine Ausgabe)}"
 done

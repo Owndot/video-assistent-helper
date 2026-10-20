@@ -34,7 +34,13 @@ def run(path, url):
         f1 = frames(pg)
         pg.evaluate('() => { const o = document.getElementById("v"); o.currentTime = o.duration - 1.2; }')
         pg.wait_for_function('() => window.__loops >= 1', timeout=10000)
-        time.sleep(2.0)
+        # Zeitleiste (nur im Protokoll): Zustand des Player-Videos alle 100 ms
+        tl = pg.evaluate('''() => new Promise((res) => { const v = window.__evpRoot.querySelector(".vv"); const out = []; let last = null, id = 0, n = 0;
+            const t0 = performance.now(); const iv = setInterval(() => { const so = v.srcObject; if (so !== last) { last = so; id++; }
+              const tr = so ? so.getVideoTracks().map((t) => t.readyState[0] + (t.muted ? "m" : "")).join("") : "-";
+              out.push(Math.round(performance.now() - t0) + ":s" + id + "/" + tr + (v.paused ? "/P" : "") + (v.ended ? "/E" : "") + "/r" + v.readyState);
+              if (++n >= 20) { clearInterval(iv); res(out.join(" ")); } }, 100); })''')
+        print('   Zeitleiste:', tl)
         f2 = frames(pg)
         bright = pg.evaluate("""() => { const v = window.__evpRoot.querySelector(".vv"); const c = document.createElement('canvas'); c.width = 64; c.height = 36;
             const g = c.getContext('2d'); g.drawImage(v, 0, 0, 64, 36); const d = g.getImageData(0, 0, 64, 36).data; let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] + d[i+1] + d[i+2]; return Math.round(s / (d.length / 4) / 3); }""")

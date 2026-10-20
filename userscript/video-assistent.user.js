@@ -292,6 +292,7 @@
   const FB_MIRROR = /(^|\.)facebook\.com$/i.test(location.hostname) && CONFIG.fbMirror !== false;
   // Firefox spiegelt mit mozCaptureStream – dabei wandert der Ton in die Spiegelung (siehe Player: VOL)
   const FF_CAP = !HTMLMediaElement.prototype.captureStream && !!HTMLMediaElement.prototype.mozCaptureStream;
+  const GECKO = /\bGecko\/\d/.test(navigator.userAgent) && !/like Gecko/.test(navigator.userAgent);   // Firefox
 
   // Icons (Material Icons, Apache 2.0)
   const I = {
@@ -2802,17 +2803,22 @@
     }
     // Spiegeln am Leben halten: Facebook/Instagram laden ein Reel am Ende jeder Schleife NEU ins Videoelement.
     // Dabei reißt die Bildübertragung ab (Ton läuft weiter, Bild schwarz) – dann sofort neu verbinden.
-    let mirrorAt = 0, mirrorWatch = 0, mutedSince = 0;
+    // Firefox: dasselbe Videoelement zeigt neue Spuren eines Stroms nicht an – dort jedes Neuladen nachholen
+    let mirrorAt = 0, mirrorWatch = 0, mutedSince = 0, mirrorLater = 0;
     function recapture(why) {
       if (vp !== st || st.mode !== 'capture') return;
       const now = Date.now();
-      if (now - mirrorAt < 400) return;   // nicht im Kreis neu verbinden
+      if (now - mirrorAt < 400) {   // nicht im Kreis neu verbinden
+        if (GECKO && !mirrorLater) mirrorLater = setTimeout(() => { mirrorLater = 0; recapture(why); }, 410 - (now - mirrorAt));
+        return;
+      }
       mirrorAt = now;
       let ms2 = null;
       try { ms2 = orig.captureStream ? orig.captureStream() : (orig.mozCaptureStream ? orig.mozCaptureStream() : null); } catch (e) {}
       if (!ms2) return;
       st.mirrorFix = (st.mirrorFix || 0) + 1;
       st.mirrorWhy = why;
+      if (GECKO) vid.srcObject = null;
       vid.srcObject = ms2;
       vid.muted = !FF_CAP;
       vid.play().catch(() => {});
@@ -2836,9 +2842,10 @@
     function watchMirror(ms) {
       try {
         // neue Spur: nur neu verbinden, wenn gerade wirklich kein Bild ankommt (sonst unnötiges Flackern)
-        ms.addEventListener('addtrack', () => setTimeout(() => { if (Date.now() - lastFrame > 600) recapture('neue Spur'); }, 300));
-        ms.addEventListener('removetrack', () => setTimeout(() => { if (!liveVideo().length) recapture('Spur entfernt'); }, 30));
-        ms.getVideoTracks().forEach((t) => t.addEventListener('ended', () => setTimeout(() => recapture('Spur beendet'), 30)));
+        const cur = () => vid.srcObject === ms;   // Meldungen älterer Ströme zählen nicht mehr
+        ms.addEventListener('addtrack', () => setTimeout(() => { if (cur() && (GECKO || Date.now() - lastFrame > 600)) recapture('neue Spur'); }, GECKO ? 60 : 300));
+        ms.addEventListener('removetrack', () => setTimeout(() => { if (cur() && !liveVideo().length) recapture('Spur entfernt'); }, 30));
+        ms.getVideoTracks().forEach((t) => t.addEventListener('ended', () => setTimeout(() => { if (cur()) recapture('Spur beendet'); }, 30)));
       } catch (e) {}
       if (mirrorWatch) return;
       frameLoop();
@@ -2862,6 +2869,7 @@
       }, 500);
       st.cleanup.push(() => {
         clearInterval(mirrorWatch);
+        clearTimeout(mirrorLater);
         frameLoopId++;
         ['loadedmetadata', 'loadeddata'].forEach((t) => orig.removeEventListener(t, onSrc));
       });

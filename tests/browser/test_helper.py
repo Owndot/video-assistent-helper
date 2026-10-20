@@ -66,7 +66,7 @@ with sync_playwright() as p:
     print('   Anzeige nach 120 px:', side)
     # bis ganz unten: dunkelste Stufe, aber noch nicht Auto
     n_end = len(calls('/end'))
-    page.mouse.move(60, 200); page.mouse.down(); page.mouse.move(60, 380, steps=12); page.mouse.up(); page.wait_for_timeout(400)
+    page.mouse.move(60, 200); page.mouse.down(); page.mouse.move(60, 395, steps=13); page.mouse.up(); page.wait_for_timeout(400)
     side = page.evaluate('() => %s.querySelector(".vside b").textContent' % R)
     check('Ganz unten: dunkelste Stufe (1 %), noch nicht Auto', state['bright'] <= 0.01 and side == '0%' and len(calls('/end')) == n_end, [state['bright'], side])
     flt = page.evaluate('() => [...%s.querySelectorAll("*")].filter(e => e.className && /dim/.test(e.className)).map(e => getComputedStyle(e).opacity)' % R)
