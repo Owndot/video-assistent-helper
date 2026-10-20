@@ -293,6 +293,11 @@
   // Firefox spiegelt mit mozCaptureStream – dabei wandert der Ton in die Spiegelung (siehe Player: VOL)
   const FF_CAP = !HTMLMediaElement.prototype.captureStream && !!HTMLMediaElement.prototype.mozCaptureStream;
   const GECKO = /\bGecko\/\d/.test(navigator.userAgent) && !/like Gecko/.test(navigator.userAgent);   // Firefox
+  // Firefox auf dem Handy: Android liefert Videobilder direkt an die Grafik – auf eine Zeichenfläche kopiert kommen sie
+  // leer an (Mozilla-Bug 1479947). Ambient-Licht und Spul-Vorschau zeigen dort deshalb Videos selbst statt Kopien.
+  // (Auch bei "Desktop-Seite", daher zusätzlich Touch; "evp-ffmobile" = 1 erzwingt es zum Testen.)
+  const FF_MOBILE = GECKO && (/Android|Mobile/.test(navigator.userAgent) || navigator.maxTouchPoints > 0 ||
+    (() => { try { return localStorage.getItem('evp-ffmobile') === '1'; } catch (e) { return false; } })());
 
   // Icons (Material Icons, Apache 2.0)
   const I = {
@@ -2133,6 +2138,8 @@
 .vpv{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;pointer-events:none}
 .vpc{position:absolute;inset:0;width:100%;height:100%;border-radius:inherit;opacity:0;transition:opacity .1s ease}
 .vprev.img .vpc{opacity:1}
+.vprev.live .vpv{opacity:1}
+.vprev.live .vpc{opacity:0}
 .vprev.noimg .vpbox{display:none}
 .vprev b{font:700 13px var(--font);font-variant-numeric:tabular-nums;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);padding:4px 10px;border-radius:12px;background:rgba(18,20,28,.5)}
 /* Spulen per Wischen: große, dünne Zeit mitten im Bild, darunter die Restzeit – nur Zahlen, kein Kasten */
@@ -2300,9 +2307,12 @@
     vid.setAttribute('webkit-playsinline', '');
     vid.preload = 'auto';
     const dimEl = h('div', { class: 'vdim' });
-    const amb = document.createElement('canvas');   // Ambient-Modus (siehe unten)
+    const amb = document.createElement(FF_MOBILE ? 'video' : 'canvas');   // Ambient-Modus (siehe unten)
     amb.className = 'vamb';
-    amb.width = 32; amb.height = 18;
+    if (FF_MOBILE) {
+      amb.muted = true; amb.setAttribute('playsinline', ''); amb.disablePictureInPicture = true;
+      amb.style.objectFit = 'fill';
+    } else { amb.width = 32; amb.height = 18; }
     const gest = h('div', { class: 'vgest' });
     // Anzeige für Gesten (Text + Füllstand) als Glaskapsel
     const indTxt = h('span', null, '');
@@ -2642,10 +2652,29 @@
     // Ein winziges Abbild des aktuellen Bildes (32 Pixel breit), stark weichgezeichnet hinter dem Video.
     // Wenig Arbeit: ~8 Mal pro Sekunde ein Mini-Bild, sanft überblendet. Abschaltbar im Format-Menü (wird gemerkt).
     let actx = null;
-    try { actx = amb.getContext('2d', { alpha: false }); } catch (e) {}
+    if (!FF_MOBILE) { try { actx = amb.getContext('2d', { alpha: false }); } catch (e) {} }
+    // Firefox-Handy: derselbe Bildstrom in einem zweiten, weichgezeichneten Video (kein Kopieren, kein zweites Laden).
+    // Eigene Quelle: Abgriff des Player-Videos – nur mit captureStream (lässt den Ton im Player); ältere Firefox
+    // (nur mozCaptureStream, das den Ton mitnimmt) zeigen Ambient nur beim Spiegeln.
+    let ambStream = null, ambTag = '';
+    function ambFeed(force) {
+      if (!ambOn || vp !== st) { if (amb.srcObject) amb.srcObject = null; ambTag = ''; return; }
+      let s = null;
+      if (st.mode === 'capture') s = vid.srcObject;
+      else if (!FF_CAP && vid.captureStream && vid.readyState >= 1) {
+        if (!ambStream) { try { ambStream = vid.captureStream(); } catch (e) { ambStream = null; } }
+        s = ambStream;
+      }
+      if (!s) { if (amb.srcObject) amb.srcObject = null; return; }
+      const tag = st.mode + ':' + (st.mirrorFix || 0) + ':' + (st.cur || '');
+      // neue Quelle/Spuren: Firefox zeigt neue Spuren eines Stroms erst nach erneutem Zuweisen
+      if (amb.srcObject !== s || force || tag !== ambTag) { ambTag = tag; amb.srcObject = null; amb.srcObject = s; }
+      if (amb.paused) amb.play().catch(() => {});
+    }
     let ambOn = CONFIG.ambient !== false;
     try { const sv = localStorage.getItem('evp-ambient'); if (sv === '0') ambOn = false; else if (sv === '1') ambOn = true; } catch (e) {}
     function ambDraw(first) {
+      if (FF_MOBILE) { ambFeed(first); return; }
       if (!actx || !ambOn || vp !== st) return;
       const vw = vid.videoWidth, vh = vid.videoHeight;
       if (!vw || !vh || vid.readyState < 2) return;
@@ -2665,7 +2694,10 @@
     const ambTimer = setInterval(() => { if (!document.hidden && !M().paused) ambDraw(false); }, 120);
     vid.addEventListener('loadeddata', () => ambDraw(true));
     vid.addEventListener('seeked', () => ambDraw(true));
-    st.cleanup.push(() => clearInterval(ambTimer));
+    st.cleanup.push(() => {
+      clearInterval(ambTimer);
+      if (FF_MOBILE) { amb.srcObject = null; if (ambStream) { try { ambStream.getVideoTracks().forEach((t) => t.stop()); } catch (e) {} } ambStream = null; }
+    });
     setAmbient(ambOn, false);
     // Fortschrittslinie ganz unten: an/aus aus dem Format-Menü (gemerkt), Standard an
     try { if (localStorage.getItem('evp-line') === '0' || CONFIG.progressLine === false && localStorage.getItem('evp-line') !== '1') wrap.classList.add('nomini'); } catch (e) {}
@@ -3374,7 +3406,7 @@
       if (pvs.hls) { try { pvs.hls.destroy(); } catch (e) {} }
       pvs.hls = null; pvs.src = ''; pvs.key = ''; pvs.want = -1; pvs.lastWant = -1; pvs.busy = false; pvs.grid = []; pvs.gridOn = false; pvs.userDone = false;
       thumbs.clear();
-      prev.classList.remove('img');
+      prev.classList.remove('img', 'live');
       try { pv.removeAttribute('src'); pv.load(); } catch (e) {}
     }
     st.cleanup.push(prevReset);
@@ -3455,6 +3487,7 @@
       try { pv.currentTime = t; } catch (e) { pvs.busy = false; }
     }
     function startGrid() {
+      if (FF_MOBILE) return;   // dort keine gemerkten Bilder (lassen sich nicht kopieren) – das Video selbst zeigt die Stelle
       const d = pv.duration;
       // Beim ersten Ziehen hat deine Fingerstelle Vorrang – das Raster startet erst, wenn ihr Bild da ist
       if (prev.classList.contains('on') && !pvs.userDone) { pvs.autoGrid = true; return; }
@@ -3482,6 +3515,12 @@
     });
     pv.addEventListener('seeked', () => {
       pvs.busy = false;
+      if (FF_MOBILE) {
+        // Vorschau-Video direkt zeigen (statt eines kopierten Bildes)
+        if (prev.classList.contains('on')) { prev.dataset.t = String(Math.round(pv.currentTime * 10) / 10); prev.classList.add('img', 'live'); }
+        pump();
+        return;
+      }
       if (pvs.kind === 'user' && !pvs.userDone) { pvs.userDone = true; if (pvs.autoGrid) setTimeout(startGrid, 0); }
       const c = snap();
       if (c && prev.classList.contains('on')) {

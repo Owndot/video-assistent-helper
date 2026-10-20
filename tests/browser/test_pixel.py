@@ -13,9 +13,12 @@ STATS = '''(el) => { const c = document.createElement('canvas'); c.width = 48; c
   const m = s / n; return [Math.round(m), Math.round(Math.sqrt(Math.max(0, s2 / n - m * m)))]; }'''
 GRID = '''(el) => { const c = document.createElement('canvas'); c.width = 16; c.height = 9; const g = c.getContext('2d');
   try { g.drawImage(el, 0, 0, 16, 9); return Array.from(g.getImageData(0, 0, 16, 9).data).filter((_, i) => i % 4 === 1); } catch (e) { return []; } }'''
-def same_frame(pg, t):
-    # Hauptvideo (angehalten) an dieselbe Stelle wie das Vorschaubild – wie ähnlich sind die beiden Bilder?
-    a = pg.evaluate('() => (%s)(%s.querySelector(".vprev video"))' % (GRID, R))
+def same_frame(pg, _t=None):
+    # Liefert das Vorschau-Video an seiner Stelle das richtige Bild? (Hauptvideo angehalten dorthin; die gemerkten
+    # Bilder in Chrome tragen nur ungefähre Zeiten, darum das Video selbst – in Firefox-Handy ist es das gezeigte Bild)
+    pg.wait_for_function('() => !%s.querySelector(".vprev video").seeking' % R, timeout=5000)
+    time.sleep(0.2)
+    a, t = pg.evaluate('() => { const pr = %s.querySelector(".vprev"), v = pr.querySelector("video"); const live = pr.classList.contains("live"); return [(%s)(v), v.currentTime]; }' % (R, GRID))
     pg.evaluate('(t) => new Promise((res) => { const v = %s.querySelector(".vv"); v.pause(); v.addEventListener("seeked", () => setTimeout(res, 150), { once: true }); v.currentTime = t; setTimeout(res, 3000); })' % R, t)
     b = pg.evaluate('() => (%s)(%s.querySelector(".vv"))' % (GRID, R))
     if not a or not b: return 999
@@ -40,6 +43,7 @@ with sync_playwright() as p:
         pg.screenshot(path=OUT + '/pix_amb_an_%s.png' % tag)
         a_on = band(OUT + '/pix_amb_an_%s.png' % tag, box)
         ac = pg.evaluate('() => (%s)(%s.querySelector(".vamb"))' % (STATS, R))
+        print('   %s Ambient-Element: %s' % (tag, pg.evaluate('() => %s.querySelector(".vamb").tagName' % R)))
         pg.evaluate('() => %s.querySelector(".vp").classList.remove("amb")' % R); time.sleep(1.2)
         pg.screenshot(path=OUT + '/pix_amb_aus_%s.png' % tag)
         a_off = band(OUT + '/pix_amb_aus_%s.png' % tag, box)
@@ -55,7 +59,7 @@ with sync_playwright() as p:
         try: pg.wait_for_function('() => %s.querySelector(".vprev").classList.contains("img")' % R, timeout=6000)
         except Exception: pass
         time.sleep(1.2)
-        pv = pg.evaluate('() => { const pr = %s.querySelector(".vprev"), v = pr.querySelector("video"); return [v.readyState, v.currentTime.toFixed(1), v.videoWidth, pr.classList.contains("img"), (%s)(v), (%s)(pr.querySelector("canvas"))]; }' % (R, STATS, STATS))
+        pv = pg.evaluate('() => { const pr = %s.querySelector(".vprev"), v = pr.querySelector("video"); return [v.readyState, v.currentTime.toFixed(1), v.videoWidth, pr.classList.contains("img"), (%s)(v), (%s)(pr.classList.contains("live") ? v : pr.querySelector("canvas"))]; }' % (R, STATS, STATS))
         pg.screenshot(path=OUT + '/pix_prev_%s.png' % tag)
         d1 = same_frame(pg, float(pv[1]))
         pg.mouse.up()
@@ -70,7 +74,7 @@ with sync_playwright() as p:
         pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R); time.sleep(0.3)
         pg.mouse.move(br[0] + br[2] * 0.15, y); pg.mouse.down(); pg.mouse.move(br[0] + br[2] * 0.33, y, steps=8)
         time.sleep(1.5)
-        pv2 = pg.evaluate('() => { const pr = %s.querySelector(".vprev"), v = pr.querySelector("video"); return [v.readyState, v.currentTime.toFixed(1), pr.dataset.t, (%s)(v), (%s)(pr.querySelector("canvas"))]; }' % (R, STATS, STATS))
+        pv2 = pg.evaluate('() => { const pr = %s.querySelector(".vprev"), v = pr.querySelector("video"); return [v.readyState, v.currentTime.toFixed(1), pr.dataset.t, (%s)(v), (%s)(pr.classList.contains("live") ? v : pr.querySelector("canvas"))]; }' % (R, STATS, STATS))
         pg.screenshot(path=OUT + '/pix_prev_spaet_%s.png' % tag)
         d2 = same_frame(pg, float(pv2[1]))
         pg.mouse.up()
