@@ -198,8 +198,10 @@
       if (fsElem() === f) return;
       const rq = f.requestFullscreen || f.webkitRequestFullscreen;
       const pr = rq && rq.call(f, { navigationUI: 'hide' });
-      if (pr && pr.then) pr.then(sendState, sendState);
-    } catch (e) {}
+      // abgelehnt (Firefox: kein Tipp hier oben) → das Fenster selbst versucht es, dort gilt der Tipp noch
+      const no = () => { sendState(); if (fb.childWin) fpost(fb.childWin, { t: 'fsno' }); };
+      if (pr && pr.then) pr.then(sendState, no); else if (!rq) no();
+    } catch (e) { if (fb.childWin) fpost(fb.childWin, { t: 'fsno' }); }
   }
   addEventListener('message', (e) => {
     const d = e.data;
@@ -211,6 +213,7 @@
         if (fb.childWin) sendState();          // Zwischenebene: weiter nach unten
         else if (fb.onState) fb.onState(d);
       }
+      if (d.t === 'fsno') { if (fb.childWin) fpost(fb.childWin, { t: 'fsno' }); else if (fb.onFsNo) fb.onFsNo(); }
       return;
     }
     // Nachricht von UNTEN (aus einem eingebetteten Fenster)
@@ -220,9 +223,10 @@
     if (d.t === 'take') {
       if (fb.child !== f) {
         // nur nach einem echten Tipp und für ein sichtbares Fenster (keine Werbung, die sich selbst groß macht)
+        // Firefox reicht den Tipp nicht an die Hauptseite weiter – dort zeigt der Fokus auf dem Fenster den Tipp an
         const ua = navigator.userActivation;
         const r = f.getBoundingClientRect();
-        if ((ua && !ua.isActive) || r.width < 100 || r.height < 60) return;
+        if ((ua && !ua.isActive && document.activeElement !== f) || r.width < 100 || r.height < 60) return;
       }
       stretch(f, e.source);
       if (IN_FRAME) fpost(window.parent, { t: 'take', fs: !!d.fs });
@@ -3704,9 +3708,19 @@
         if (st.rfs && st.fsWait) st.fsWait();
         if (was !== st.rfs) { onFsLayout(); onFs(); }
       };
+      // Hauptseite durfte nicht ins Vollbild schalten → selbst (geht, wenn das Fenster Vollbild erlaubt)
+      fb.onFsNo = () => {
+        if (vp !== st || !st.fsWait) return;
+        const w = st.fsWait;
+        try {
+          const rq = wrap.requestFullscreen || wrap.webkitRequestFullscreen;
+          const pr = rq && rq.call(wrap, { navigationUI: 'hide' });
+          if (pr && pr.then) pr.then(w, w); else w();
+        } catch (e) { w(); }
+      };
       const ins0 = (fb.up && fb.up.ins) || null;
       if (ins0) ['t', 'r', 'b', 'l'].forEach((k, i) => wrap.style.setProperty('--evp-s' + k, (ins0[i] || 0) + 'px'));
-      st.cleanup.push(() => { fb.onState = null; if (st.framed) fpost(window.parent, { t: 'release' }); });
+      st.cleanup.push(() => { fb.onState = null; fb.onFsNo = null; if (st.framed) fpost(window.parent, { t: 'release' }); });
       if (!CONFIG.startFullscreen) fpost(window.parent, { t: 'take', fs: false });
     }
     // Ohne Vollbild würde die Zurück-Taste die Seite verlassen – dann ein Eintrag im Verlauf, der nur den Player schließt.

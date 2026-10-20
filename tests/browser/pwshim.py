@@ -12,8 +12,13 @@ if os.environ.get('BROWSER', '').lower() == 'firefox' and not getattr(_pw, '_evp
         'media.autoplay.block-webaudio': False,
         'full-screen-api.allow-trusted-requests-only': False,
         'full-screen-api.warning.timeout': 0,
+        'full-screen-api.ignore-widgets': True,    # Vollbild im Fenster (sonst springt es ohne Bildschirm auf 1280 px)
+        'full-screen-api.transition-duration.enter': '0 0',
+        'full-screen-api.transition-duration.leave': '0 0',
         'dom.user_activation.transient.timeout': 5.0,
     }
+
+    HOSTS = 'top.test,mid.test,cdn.test'
 
     class _Ctx:
         def __init__(s, c): s._c = c
@@ -31,8 +36,12 @@ if os.environ.get('BROWSER', '').lower() == 'firefox' and not getattr(_pw, '_evp
     class _Type:
         def __init__(s, t): s._t = t
         def launch(s, **kw):
-            kw.pop('args', None)
-            prefs = dict(FF_PREFS); prefs.update(kw.pop('firefox_user_prefs', {}) or {})
+            args = kw.pop('args', None) or []
+            prefs = dict(FF_PREFS)
+            # --host-resolver-rules=MAP *.test 127.0.0.1 → Firefox: diese Namen auf das eigene Gerät
+            if any('host-resolver-rules' in a for a in args):
+                prefs['network.dns.localDomains'] = HOSTS
+            prefs.update(kw.pop('firefox_user_prefs', {}) or {})
             return _Browser(s._t.launch(firefox_user_prefs=prefs, **kw))
         def __getattr__(s, n): return getattr(s._t, n)
 
@@ -44,6 +53,7 @@ if os.environ.get('BROWSER', '').lower() == 'firefox' and not getattr(_pw, '_evp
 
     class _CM:
         def __init__(s): s._cm = _orig()
+        def start(s): return _PW(s._cm.start())
         def __enter__(s): return _PW(s._cm.__enter__())
         def __exit__(s, *a): return s._cm.__exit__(*a)
 

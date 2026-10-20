@@ -7,6 +7,13 @@ on:
     branches: [main]
     paths: ['userscript/**', 'tests/**', '.github/workflows/browser-tests.yml']
   workflow_dispatch:
+    inputs:
+      tests:
+        description: 'Welche Tests (Muster, z. B. test_loop*.py)'
+        default: 'test_*.py'
+      browsers:
+        description: 'Browser (JSON-Liste)'
+        default: '["chromium","firefox"]'
 
 permissions:
   contents: write
@@ -18,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: [chromium, firefox]
+        browser: ${{ fromJSON(github.event.inputs.browsers || '["chromium","firefox"]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -40,6 +47,7 @@ jobs:
       - name: Tests (${{ matrix.browser }})
         env:
           BROWSER: ${{ matrix.browser }}
+          TESTS: ${{ github.event.inputs.tests || 'test_*.py' }}
         run: |
           cd tests/browser
           ./run_all.sh | tee ergebnis-${{ matrix.browser }}.txt
