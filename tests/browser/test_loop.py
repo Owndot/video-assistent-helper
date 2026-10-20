@@ -38,8 +38,9 @@ def run(path, url):
         tl = pg.evaluate('''() => new Promise((res) => { const v = window.__evpRoot.querySelector(".vv"); const out = []; let last = null, id = 0, n = 0;
             const t0 = performance.now(); const iv = setInterval(() => { const so = v.srcObject; if (so !== last) { last = so; id++; }
               const tr = so ? so.getVideoTracks().map((t) => t.readyState[0] + (t.muted ? "m" : "")).join("") : "-";
-              out.push(Math.round(performance.now() - t0) + ":s" + id + "/" + tr + (v.paused ? "/P" : "") + (v.ended ? "/E" : "") + "/r" + v.readyState);
-              if (++n >= 20) { clearInterval(iv); res(out.join(" ")); } }, 100); })''')
+              const o = document.getElementById("v"), w = v.closest(".vp") || v.parentElement;
+              out.push(Math.round(performance.now() - t0) + ":s" + id + "/" + tr + (v.paused ? "/P" : "") + (v.ended ? "/E" : "") + "/r" + v.readyState + " o" + o.currentTime.toFixed(1) + (o.paused ? "P" : "") + " [" + ((w && w.dataset.mirror) || "") + "]");
+              if (++n >= 25) { clearInterval(iv); res(out.join(" ")); } }, 100); })''')
         print('   Zeitleiste:', tl)
         f2 = frames(pg)
         bright = pg.evaluate("""() => { const v = window.__evpRoot.querySelector(".vv"); const c = document.createElement('canvas'); c.width = 64; c.height = 36;

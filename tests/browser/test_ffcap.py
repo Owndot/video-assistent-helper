@@ -29,14 +29,19 @@ JS = r'''async () => {
   out.vorher = [tr(s1), await frames(o1)];
   ['emptied', 'loadstart', 'loadedmetadata', 'loadeddata', 'playing', 'ended'].forEach((t) => v.addEventListener(t, () => L('orig ' + t)));
   let s2 = null, o2 = null, s3 = null, o3 = null;
+  let s0 = null, o0 = null;
+  v.addEventListener('ended', () => setTimeout(() => { s0 = cap(v); o0 = sink(s0); L('s0 (ended+30) ' + tr(s0)); }, 30), { once: true });
   v.addEventListener('loadeddata', () => setTimeout(() => { s2 = cap(v); o2 = sink(s2); L('s2 erstellt ' + tr(s2)); }, 60), { once: true });
   v.addEventListener('playing', () => setTimeout(() => { if (window.__loops) { s3 = cap(v); o3 = sink(s3); L('s3 erstellt ' + tr(s3)); } }, 400));
   v.currentTime = v.duration - 1.0;
   while (!window.__loops) await sleep(50);
   await sleep(2000);
   out.nachher_s1 = [tr(s1), await frames(o1)];
+  out.nachher_s0 = s0 ? [tr(s0), await frames(o0)] : null;
   out.nachher_s2 = s2 ? [tr(s2), await frames(o2)] : null;
   out.nachher_s3 = s3 ? [tr(s3), await frames(o3)] : null;
+  // dasselbe Element neu an denselben Strom binden
+  o1.srcObject = null; o1.srcObject = s1; o1.play().catch(() => {}); await sleep(300); out.s1_neu_gebunden = [tr(s1), await frames(o1)];
   // frisches Element an den gleichen Strom (s1)
   const o4 = sink(s1); await sleep(300); out.s1_neues_element = await frames(o4);
   // spätere neue Spiegelung

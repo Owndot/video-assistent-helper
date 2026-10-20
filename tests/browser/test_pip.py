@@ -27,16 +27,21 @@ with sync_playwright() as p:
     st = page.evaluate('() => [!!%s.querySelector(".vp"), !!document.pictureInPictureElement, %s.querySelector(".toast").classList.contains("on"), %s.querySelector(".toast").parentNode.className]' % (R, R, R))
     check('Bild-in-Bild: Player bleibt offen', st[0], st)
     check('Bild-in-Bild aktiv oder Hinweis sichtbar im Player', st[1] or (st[2] and 'vp' in st[3]), st)
-    # Vollbild endet direkt nach Bild-in-Bild -> Player darf NICHT schließen
-    page.evaluate('() => { document.exitFullscreen && document.fullscreenElement && document.exitFullscreen(); }'); time.sleep(1.0)
-    check('Vollbild-Ende nach Bild-in-Bild schließt Player nicht', page.evaluate('() => !!%s.querySelector(".vp")' % R))
-    bg = page.evaluate('() => %s.querySelector(".vbar").style.getPropertyValue("--trk")' % R)
-    check('Abgespielter Teil der Leiste ist weiß', bg.startswith('linear-gradient(to right,#000') or 'rgb(255, 255, 255)' in bg.split(',')[1] if bg else False, bg[:60])
-    page.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.8)
-    check('Player zu: kleines Fenster schließt mit', page.evaluate('() => !document.pictureInPictureElement'))
-    page.evaluate('() => document.pictureInPictureElement && document.exitPictureInPicture()'); time.sleep(0.5)
-    time.sleep(0.3)
-    check('Nach Schließen: Hinweis-Blase wieder auf der Seite', page.evaluate('() => %s.querySelector(".toast").parentNode === %s' % (R, R)))
+    if st[1]:
+        # Vollbild endet direkt nach Bild-in-Bild -> Player darf NICHT schließen
+        page.evaluate('() => { document.exitFullscreen && document.fullscreenElement && document.exitFullscreen(); }'); time.sleep(1.0)
+        check('Vollbild-Ende nach Bild-in-Bild schließt Player nicht', page.evaluate('() => !!%s.querySelector(".vp")' % R))
+        bg = page.evaluate('() => %s.querySelector(".vbar").style.getPropertyValue("--trk")' % R)
+        check('Abgespielter Teil der Leiste ist weiß', bg.startswith('linear-gradient(to right,#000') or 'rgb(255, 255, 255)' in bg.split(',')[1] if bg else False, bg[:60])
+        page.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.8)
+        check('Player zu: kleines Fenster schließt mit', page.evaluate('() => !document.pictureInPictureElement'))
+        page.evaluate('() => document.pictureInPictureElement && document.exitPictureInPicture()'); time.sleep(0.5)
+        time.sleep(0.3)
+        check('Nach Schließen: Hinweis-Blase wieder auf der Seite', page.evaluate('() => %s.querySelector(".toast").parentNode === %s' % (R, R)))
+    else:
+        # Browser ohne startbares Bild-in-Bild (z. B. Firefox ohne Fenster): nur der Hinweis zählt, Player schließen
+        print('   Hinweis: Bild-in-Bild startet hier nicht – Folgeprüfungen übersprungen')
+        page.evaluate('() => { const b = %s.querySelector("button[aria-label=Schließen]"); b && b.click(); }' % R); time.sleep(0.8)
     # Dunkle Seite: Knopf bekommt das helle Glas für Dunkelmodus
     page.evaluate('() => { document.body.style.background = "#18191a"; document.documentElement.style.background = "#18191a"; }')
     page.mouse.wheel(0, 5); time.sleep(1.2)

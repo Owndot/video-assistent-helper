@@ -2805,6 +2805,16 @@
     // Dabei reißt die Bildübertragung ab (Ton läuft weiter, Bild schwarz) – dann sofort neu verbinden.
     // Firefox: dasselbe Videoelement zeigt neue Spuren eines Stroms nicht an – dort jedes Neuladen nachholen
     let mirrorAt = 0, mirrorWatch = 0, mutedSince = 0, mirrorLater = 0;
+    function rebind(ms) {
+      st.mirrorFix = (st.mirrorFix || 0) + 1;
+      st.mirrorWhy = 'neu zugewiesen';
+      wrap.dataset.mirror = st.mirrorFix + ' ' + st.mirrorWhy;
+      vid.srcObject = null;
+      vid.srcObject = ms;
+      vid.play().catch(() => {});
+      lastFrame = mirrorAt = Date.now();
+      frameLoop();
+    }
     function recapture(why) {
       if (vp !== st || st.mode !== 'capture') return;
       const now = Date.now();
@@ -2818,6 +2828,7 @@
       if (!ms2) return;
       st.mirrorFix = (st.mirrorFix || 0) + 1;
       st.mirrorWhy = why;
+      wrap.dataset.mirror = st.mirrorFix + ' ' + why;   // (nur zur Fehlersuche sichtbar)
       if (GECKO) vid.srcObject = null;
       vid.srcObject = ms2;
       vid.muted = !FF_CAP;
@@ -2841,16 +2852,27 @@
     }
     function watchMirror(ms) {
       try {
-        // neue Spur: nur neu verbinden, wenn gerade wirklich kein Bild ankommt (sonst unnötiges Flackern)
         const cur = () => vid.srcObject === ms;   // Meldungen älterer Ströme zählen nicht mehr
-        ms.addEventListener('addtrack', () => setTimeout(() => { if (cur() && (GECKO || Date.now() - lastFrame > 600)) recapture('neue Spur'); }, GECKO ? 60 : 300));
-        ms.addEventListener('removetrack', () => setTimeout(() => { if (cur() && !liveVideo().length) recapture('Spur entfernt'); }, 30));
-        ms.getVideoTracks().forEach((t) => t.addEventListener('ended', () => setTimeout(() => { if (cur()) recapture('Spur beendet'); }, 30)));
+        if (GECKO) {
+          // Firefox: der Strom bekommt nach dem Neuladen selbst neue Spuren, nur das Videoelement zeigt sie erst nach
+          // erneutem Zuweisen (ein frisch abgegriffener Strom bleibt dort dagegen oft stumm)
+          let rb = 0;
+          ms.addEventListener('addtrack', (e) => {
+            if (!e.track || e.track.kind !== 'video') return;
+            clearTimeout(rb);
+            rb = setTimeout(() => { if (cur() && vp === st && st.mode === 'capture') rebind(ms); }, 40);
+          });
+        } else {
+          // neue Spur: nur neu verbinden, wenn gerade wirklich kein Bild ankommt (sonst unnötiges Flackern)
+          ms.addEventListener('addtrack', () => setTimeout(() => { if (cur() && Date.now() - lastFrame > 600) recapture('neue Spur'); }, 300));
+          ms.addEventListener('removetrack', () => setTimeout(() => { if (cur() && !liveVideo().length) recapture('Spur entfernt'); }, 30));
+          ms.getVideoTracks().forEach((t) => t.addEventListener('ended', () => setTimeout(() => { if (cur()) recapture('Spur beendet'); }, 30)));
+        }
       } catch (e) {}
       if (mirrorWatch) return;
       frameLoop();
       // Neues Video im Original (Schleife, nächstes Reel): neu verbinden, sobald es wieder Bild hat
-      const onSrc = () => setTimeout(() => recapture('Original neu geladen'), 60);
+      const onSrc = () => { if (!GECKO) setTimeout(() => recapture('Original neu geladen'), 60); };
       ['loadedmetadata', 'loadeddata'].forEach((t) => orig.addEventListener(t, onSrc));
       // Wächter: Das Original läuft WIRKLICH weiter (Zeit rückt vor), aber hier kommt seit 1 s kein Bild an
       // – oder die Spur ist weg / stumm? Dann neu verbinden.

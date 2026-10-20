@@ -1,7 +1,7 @@
 # Testbrowser umschalten: BROWSER=firefox python3 test_xyz.py
 # Die Tests sind für Chromium geschrieben (p.chromium.launch, is_mobile …). Diese Weiche ersetzt Chromium durch
 # Firefox und passt die Optionen an (Firefox kennt is_mobile nicht, Autoplay über Einstellungen statt Startoptionen).
-import os
+import os, sys
 import playwright.sync_api as _pw
 
 if os.environ.get('BROWSER', '').lower() == 'firefox' and not getattr(_pw, '_evp_ff', False):
@@ -19,6 +19,20 @@ if os.environ.get('BROWSER', '').lower() == 'firefox' and not getattr(_pw, '_evp
     }
 
     HOSTS = 'top.test,mid.test,cdn.test'
+    # Firefox hängt bei einer Größenänderung im Vollbild. Tests, die drehen (set_viewport_size), bekommen deshalb ein
+    # nachgebautes Vollbild (gleiche Schnittstelle und Ereignisse, ohne echtes Umschalten).
+    try: FAKE_FS = 'set_viewport_size' in open(sys.argv[0], encoding='utf-8').read()
+    except Exception: FAKE_FS = False
+    FAKE_FS_JS = r'''(() => {
+      let fe = null;
+      const fire = () => { try { document.dispatchEvent(new Event('fullscreenchange', { bubbles: true })); } catch (e) {} };
+      Object.defineProperty(Document.prototype, 'fullscreenElement', { configurable: true, get() { return fe; } });
+      Object.defineProperty(Document.prototype, 'fullscreenEnabled', { configurable: true, get() { return true; } });
+      Element.prototype.requestFullscreen = function () { fe = this; setTimeout(fire, 0); return Promise.resolve(); };
+      Document.prototype.exitFullscreen = function () {
+        if (!fe) return Promise.reject(new TypeError('Not in fullscreen mode'));
+        fe = null; setTimeout(fire, 0); return Promise.resolve(); };
+    })();'''
 
     class _Ctx:
         def __init__(s, c): s._c = c
@@ -29,8 +43,14 @@ if os.environ.get('BROWSER', '').lower() == 'firefox' and not getattr(_pw, '_evp
         def _fix(s, kw):
             kw.pop('is_mobile', None)
             return kw
-        def new_context(s, **kw): return s._b.new_context(**s._fix(kw))
-        def new_page(s, **kw): return s._b.new_page(**s._fix(kw))
+        def new_context(s, **kw):
+            c = s._b.new_context(**s._fix(kw))
+            if FAKE_FS: c.add_init_script(FAKE_FS_JS)
+            return c
+        def new_page(s, **kw):
+            pg = s._b.new_page(**s._fix(kw))
+            if FAKE_FS: pg.add_init_script(FAKE_FS_JS)
+            return pg
         def __getattr__(s, n): return getattr(s._b, n)
 
     class _Type:

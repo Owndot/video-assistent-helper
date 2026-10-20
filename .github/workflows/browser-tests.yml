@@ -13,7 +13,7 @@ on:
         default: 'test_*.py'
       browsers:
         description: 'Browser (JSON-Liste)'
-        default: '["chromium","firefox","firefox-neu"]'
+        default: '["chromium","firefox-neu"]'
 
 permissions:
   contents: write
@@ -25,8 +25,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # chromium / firefox: Playwright 1.56 (Firefox 142) · firefox-neu: neueste Playwright-Version (aktuelles Firefox)
-        browser: ${{ fromJSON(github.event.inputs.browsers || '["chromium","firefox","firefox-neu"]') }}
+        # chromium: Playwright 1.56 · firefox-neu: neueste Playwright (aktuelles Firefox) · firefox: Firefox 142 (nur von Hand; erzeugt dort bei Maus keine Zeiger-Ereignisse)
+        browser: ${{ fromJSON(github.event.inputs.browsers || '["chromium","firefox-neu"]') }}
     steps:
       - uses: actions/checkout@v4
 
