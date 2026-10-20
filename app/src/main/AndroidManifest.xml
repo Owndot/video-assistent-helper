@@ -11,6 +11,8 @@
     <!-- Helligkeit: unsichtbares Mini-Fenster (bevorzugt) oder notfalls Systemeinstellung -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- nur Android 8/9: Download-Manager darf sonst nicht in "Download" schreiben -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <application
         android:allowBackup="false"

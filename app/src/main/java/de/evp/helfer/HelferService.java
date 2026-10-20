@@ -82,6 +82,11 @@ public class HelferService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && "cancel".equals(intent.getAction())) {
+            // "Abbrechen" in der Download-Benachrichtigung
+            Downloads.cancel.put(intent.getIntExtra("id", -1), true);
+            return START_STICKY;
+        }
         if (intent != null && "test".equals(intent.getAction())) {
             // Knopf "Ausprobieren" in der App: 3 Sekunden dunkel, dann zurück
             lastBeat = System.currentTimeMillis();
@@ -186,6 +191,22 @@ public class HelferService extends Service {
             case "/beat":
                 lastBeat = System.currentTimeMillis();
                 return status();
+            case "/download": {
+                // Video speichern: u = Adresse, ref = Seite (Referer), ua = Browser-Kennung, t = Titel, k = file|hls|auto
+                String u = p.get("u");
+                if (u == null || !(u.startsWith("http://") || u.startsWith("https://"))) return "{\"ok\":false,\"error\":\"keine Adresse\"}";
+                try {
+                    int id = Downloads.start(this, u, p.get("ref"), p.get("ua"), p.get("t"), p.get("k"));
+                    return "{\"ok\":true,\"id\":" + id + "}";
+                } catch (Exception e) {
+                    return "{\"ok\":false,\"error\":\"" + String.valueOf(e.getMessage()).replace("\"", "'") + "\"}";
+                }
+            }
+            case "/dlstate": {
+                int id = (int) parse(p.get("id"), -1);
+                String st = Downloads.state.get(id);
+                return "{\"ok\":true,\"state\":\"" + (st == null ? "" : st.replace("\"", "'")) + "\"}";
+            }
             case "/end":
                 main.post(this::clearBright);
                 return "{\"ok\":true}";
@@ -201,7 +222,7 @@ public class HelferService extends Service {
         boolean writeOk = Settings.System.canWrite(this);
         float b = curBright >= 0 ? curBright : systemBright();
         return String.format(Locale.US,
-                "{\"ok\":true,\"v\":1,\"app\":\"%s\",\"overlay\":%b,\"write\":%b,\"vol\":%.4f,\"volStep\":%d,\"volMax\":%d,\"bright\":%.4f}",
+                "{\"ok\":true,\"v\":2,\"dl\":true,\"app\":\"%s\",\"overlay\":%b,\"write\":%b,\"vol\":%.4f,\"volStep\":%d,\"volMax\":%d,\"bright\":%.4f}",
                 appVersion(), overlayOk, writeOk, max > 0 ? (float) cur / max : 0f, cur, max, b);
     }
 
