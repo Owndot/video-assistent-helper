@@ -2611,6 +2611,7 @@
       st.panX = clamp(st.panX, -mx, mx);
       st.panY = clamp(st.panY, -my, my);
       vid.style.transform = st.zoom > 1.001 ? 'translate(' + st.panX + 'px,' + st.panY + 'px) scale(' + st.zoom + ')' : '';
+      if (st.holdCv && st.holdCv.isConnected) st.holdCv.style.cssText = vid.style.cssText + ';pointer-events:none';
     }
     const onLayout = () => { if (vp === st) layoutVideo(); };
     addEventListener('resize', onLayout);
@@ -2805,7 +2806,21 @@
     // Dabei reißt die Bildübertragung ab (Ton läuft weiter, Bild schwarz) – dann sofort neu verbinden.
     // Firefox: dasselbe Videoelement zeigt neue Spuren eines Stroms nicht an – dort jedes Neuladen nachholen
     let mirrorAt = 0, mirrorWatch = 0, mutedSince = 0, mirrorLater = 0;
+    // Firefox liefert für ein angehaltenes, gerade neu geladenes Original kein Bild (schwarz) – das letzte Bild als
+    // Standbild darüberlegen, bis wieder echte Bilder ankommen (Chrome zeigt es von selbst weiter)
+    function holdFrame() {
+      if (!GECKO || vid.readyState < 2 || !vid.videoWidth) return;
+      try {
+        if (!st.holdCv) { st.holdCv = document.createElement('canvas'); st.holdCv.className = 'vv vhold'; st.holdCv.style.pointerEvents = 'none'; }
+        st.holdCv.width = vid.videoWidth; st.holdCv.height = vid.videoHeight;
+        st.holdCv.getContext('2d').drawImage(vid, 0, 0);
+        st.holdCv.style.cssText = vid.style.cssText + ';pointer-events:none';
+        if (st.holdCv.previousSibling !== vid) vid.after(st.holdCv);
+      } catch (e) {}
+    }
+    function dropHold() { if (st.holdCv && st.holdCv.isConnected) st.holdCv.remove(); }
     function rebind(ms) {
+      holdFrame();
       st.mirrorFix = (st.mirrorFix || 0) + 1;
       st.mirrorWhy = 'neu zugewiesen';
       wrap.dataset.mirror = st.mirrorFix + ' ' + st.mirrorWhy;
@@ -2829,7 +2844,7 @@
       st.mirrorFix = (st.mirrorFix || 0) + 1;
       st.mirrorWhy = why;
       wrap.dataset.mirror = st.mirrorFix + ' ' + why;   // (nur zur Fehlersuche sichtbar)
-      if (GECKO) vid.srcObject = null;
+      if (GECKO) { holdFrame(); vid.srcObject = null; }
       vid.srcObject = ms2;
       vid.muted = !FF_CAP;
       vid.play().catch(() => {});
@@ -2842,7 +2857,7 @@
     function frameLoop() {
       if (!vid.requestVideoFrameCallback) return;
       const id = ++frameLoopId;
-      const cb = () => { if (id !== frameLoopId || vp !== st) return; lastFrame = Date.now(); vid.requestVideoFrameCallback(cb); };
+      const cb = () => { if (id !== frameLoopId || vp !== st) return; lastFrame = Date.now(); if (st.holdCv) dropHold(); vid.requestVideoFrameCallback(cb); };
       vid.requestVideoFrameCallback(cb);
     }
     function liveVideo() {
@@ -2892,6 +2907,7 @@
       st.cleanup.push(() => {
         clearInterval(mirrorWatch);
         clearTimeout(mirrorLater);
+        dropHold();
         frameLoopId++;
         ['loadedmetadata', 'loadeddata'].forEach((t) => orig.removeEventListener(t, onSrc));
       });
