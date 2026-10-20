@@ -1,0 +1,55 @@
+name: Browser-Tests
+
+# Alle Tests aus tests/browser – einmal in Chromium, einmal in Firefox.
+# Läuft bei Änderungen am Skript oder an den Tests (und von Hand über "Run workflow").
+on:
+  push:
+    branches: [main]
+    paths: ['userscript/**', 'tests/**', '.github/workflows/browser-tests.yml']
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Werkzeuge
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps ${{ matrix.browser }}
+          sudo apt-get install -y ffmpeg
+
+      - name: Tests (${{ matrix.browser }})
+        env:
+          BROWSER: ${{ matrix.browser }}
+        run: |
+          cd tests/browser
+          ./run_all.sh | tee ergebnis-${{ matrix.browser }}.txt
+          echo '### Ergebnis ${{ matrix.browser }}' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat ergebnis-${{ matrix.browser }}.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tests-${{ matrix.browser }}
+          path: |
+            tests/browser/ergebnis-*.txt
+            tests/browser/*.png
+          if-no-files-found: ignore

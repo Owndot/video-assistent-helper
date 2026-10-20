@@ -1,3 +1,4 @@
+import pwshim  # BROWSER=firefox → Tests in Firefox
 import http.server, threading, functools, time, json, sys, os, re
 from playwright.sync_api import sync_playwright
 

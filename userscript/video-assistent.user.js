@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      13.5
+// @version      13.6
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -286,6 +286,8 @@
   const NS = 'http://www.w3.org/2000/svg';
   const META = /(^|\.)(facebook\.com|instagram\.com|threads\.net|threads\.com|messenger\.com)$/i.test(location.hostname);
   const FB_MIRROR = /(^|\.)facebook\.com$/i.test(location.hostname) && CONFIG.fbMirror !== false;
+  // Firefox spiegelt mit mozCaptureStream – dabei wandert der Ton in die Spiegelung (siehe Player: VOL)
+  const FF_CAP = !HTMLMediaElement.prototype.captureStream && !!HTMLMediaElement.prototype.mozCaptureStream;
 
   // Icons (Material Icons, Apache 2.0)
   const I = {
@@ -510,6 +512,9 @@
   try {
     const of = window.fetch;
     rawFetch = of ? of.bind(window) : null;
+    // Firefox: Abfragen eines Erweiterungs-Skripts laufen sonst als Erweiterung (andere Herkunft) –
+    // content.fetch fragt wie die Seite selbst (nötig z. B. für Instagram/TikTok)
+    try { if (typeof content !== 'undefined' && content && typeof content.fetch === 'function') rawFetch = content.fetch.bind(content); } catch (e) {}
     if (of) {
       window.fetch = function (input) {
         let u = '';
@@ -2370,6 +2375,9 @@
     st.aspect = 'contain'; st.zoom = 1; st.panX = 0; st.panY = 0; st.qualPinned = null;
 
     const M = () => (st.mode === 'capture' ? orig : vid);   // was gerade steuert: eigenes Video oder das Original
+    // Ton beim Spiegeln: Chrome spielt ihn weiter über das Original. Firefox (mozCaptureStream) leitet ihn in die
+    // Spiegelung um – dort kommt er also aus unserem Video, und die Lautstärke wird dort geregelt.
+    const VOL = () => (st.mode === 'capture' && !FF_CAP ? orig : vid);
 
     // ----- Lautstärke & Helligkeit (System-Werte sind für Webseiten gesperrt – daher im Player selbst) -----
     // Verstärken über 100 % geht nur, wenn der Ton für den Player "lesbar" ist: eigene Streams (hls.js) oder Dateien derselben Seite
@@ -2379,7 +2387,7 @@
       return !!st.hls || (st.cur && hostOf(st.cur) === location.hostname);
     }
     function applyLevel(level) {
-      const m = M();
+      const m = VOL();
       let lv = clamp(level, 0, 1);   // höchstens 100 %
       if (st.sys && st.sys.vol) {
         // Helfer-App: echte Medienlautstärke des Handys. Android kennt nur ~15 Stufen – die Zwischenwerte (1 %-genau)
@@ -2390,7 +2398,7 @@
         if (k <= 0) page = 0;
         else if (k === 1) page = pos;   // zwischen Stille und der leisesten Stufe: einfach linear
         else page = Math.pow(10, (volDb(pos, mx) - volDb(k, mx)) / 20);
-        try { m.volume = clamp(page, 0, 1); m.muted = lv === 0; if (st.mode === 'capture') vid.muted = true; } catch (e) {}
+        try { m.volume = clamp(page, 0, 1); m.muted = lv === 0; if (st.mode === 'capture' && !FF_CAP) vid.muted = true; } catch (e) {}
         if (st.gain) st.gain.gain.value = 1;
         st.level = lv;
         if (k !== st.sysK) { st.sysK = k; helperSend('vol', k / mx); }
@@ -2408,7 +2416,7 @@
       }
       m.volume = Math.min(1, lv);
       m.muted = lv === 0;
-      if (st.mode === 'capture') vid.muted = true;
+      if (st.mode === 'capture' && !FF_CAP) vid.muted = true;
       if (st.gain) st.gain.gain.value = Math.max(1, lv);
       st.level = lv;
       return lv;
@@ -2468,7 +2476,7 @@
       if (typeof d.vol === 'number') {
         st.level = clamp(d.vol, 0, 1);
         st.sysK = typeof d.volStep === 'number' ? d.volStep : Math.round(st.level * st.sys.max);
-        try { const m = M(); m.volume = 1; } catch (e) {}
+        try { const m = VOL(); m.volume = 1; } catch (e) {}
       }
       st.autoB = !!st.sys.bright;   // zu Beginn: Helligkeit wie im System (auch automatisch) – bis du wischst
       if (st.sys.bright) {
@@ -2483,7 +2491,7 @@
           if (!r || !r.ok || vp !== st || helperBusy('vol') || typeof r.vol !== 'number') return;
           // Lautstärketasten gedrückt? Dann gilt die neue Stufe des Handys, das Video wieder voll
           const k = typeof r.volStep === 'number' ? r.volStep : Math.round(r.vol * st.sys.max);
-          if (k !== st.sysK) { st.sysK = k; st.level = clamp(r.vol, 0, 1); try { M().volume = 1; M().muted = false; } catch (e) {} }
+          if (k !== st.sysK) { st.sysK = k; st.level = clamp(r.vol, 0, 1); try { VOL().volume = 1; VOL().muted = false; } catch (e) {} }
         });
       }, 2500);
       // App verlassen (Startbildschirm, anderes Fenster): Helligkeit sofort zurückgeben, beim Zurückkommen wieder setzen
@@ -2778,7 +2786,7 @@
       if (st.refreshDl) st.refreshDl();
       try { vid.removeAttribute('src'); } catch (e) {}
       vid.srcObject = ms;
-      vid.muted = true;   // der Ton kommt vom Original-Video
+      vid.muted = !FF_CAP;   // Chrome: der Ton kommt vom Original-Video · Firefox: aus der Spiegelung
       vid.play().catch(() => {});
       orig.playbackRate = st.speed;
       try { orig.muted = st.origMuted; } catch (e) {}   // hier kommt der Ton vom Original – also Ton wieder an
@@ -2802,7 +2810,7 @@
       st.mirrorFix = (st.mirrorFix || 0) + 1;
       st.mirrorWhy = why;
       vid.srcObject = ms2;
-      vid.muted = true;
+      vid.muted = !FF_CAP;
       vid.play().catch(() => {});
       lastFrame = now;
       frameLoop();
@@ -4147,7 +4155,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 13.5',
+      'Video-Assistent 13.6',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
