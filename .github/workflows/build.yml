@@ -1,0 +1,46 @@
+name: APK bauen
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: APK bauen
+        run: gradle :app:assembleRelease --no-daemon --stacktrace
+
+      - name: APK umbenennen
+        run: cp app/build/outputs/apk/release/app-release.apk VideoAssistent-Helfer.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VideoAssistent-Helfer
+          path: VideoAssistent-Helfer.apk
+
+      # Immer unter derselben Adresse: Releases → "Neueste Version" → VideoAssistent-Helfer.apk
+      - name: Als Release veröffentlichen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete neueste -y --cleanup-tag || true
+          gh release create neueste VideoAssistent-Helfer.apk \
+            --title "Video-Assistent Helfer 1.0.${{ github.run_number }}" \
+            --notes "Auf dem Handy öffnen, VideoAssistent-Helfer.apk antippen und installieren. Neue Versionen lassen sich einfach drüber installieren." \
+            --latest
