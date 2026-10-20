@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      13.3
+// @version      13.4
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -55,6 +55,7 @@
     autoRotate: false,  // true = Querformat-Videos im Vollbild automatisch drehen
     resumeAfterClose: true,   // nach dem Schließen des Players läuft das Video auf der Seite weiter
     holdSpeed: 2,             // lange ins Video drücken = so viel schneller, solange du hältst
+    topGuard: 0.15,           // oberer Rand (Anteil der Höhe): hier starten keine Helligkeits-/Lautstärke-Gesten (Schnelleinstellungen)
     // Helfer-App "Video-Assistent Helfer" (eigene APK): Läuft sie, steuern die Wischgesten die ECHTE Helligkeit und
     // Medienlautstärke des Handys. Läuft sie nicht, regelt der Player wie bisher nur das Video. false = nie fragen.
     systemHelper: true,
@@ -3462,7 +3463,10 @@
       const Wd = wrap.clientWidth || innerWidth;
       // ganz am Rand beginnt die Zurück-Geste von Android – dort keine Player-Geste starten
       const edge = e.clientX < 28 || e.clientX > Wd - 28;
-      g = { x: e.clientX, y: e.clientY, t: Date.now(), mode: '', time: m.currentTime, vol: st.level, bright: st.bright, delta: 0, edge: edge, holdTimer: 0 };
+      // oben (15 % der Höhe, mindestens 48 Pixel) zieht man die Schnelleinstellungen herunter – dort keine Helligkeit/Lautstärke
+      const Hd = wrap.clientHeight || innerHeight;
+      const top = e.clientY < Math.max(Hd * CONFIG.topGuard, 48);
+      g = { x: e.clientX, y: e.clientY, t: Date.now(), mode: '', time: m.currentTime, vol: st.level, bright: st.bright, delta: 0, edge: edge, top: top, holdTimer: 0 };
       // Lange drücken = schneller, solange gedrückt (wie Just Player)
       const gg = g;
       gg.holdTimer = setTimeout(() => {
@@ -3493,7 +3497,8 @@
         if (Math.abs(dx) < 14 && Math.abs(dy) < 14) return;
         clearTimeout(g.holdTimer);
         if (g.edge) { g.mode = 'none'; return; }
-        g.mode = Math.abs(dx) > Math.abs(dy) ? 'seek' : (g.x > W / 2 ? 'vol' : 'bright');
+        g.mode = Math.abs(dx) > Math.abs(dy) ? 'seek' : (g.top ? 'none' : (g.x > W / 2 ? 'vol' : 'bright'));
+        if (g.mode === 'none') return;
         // ab hier zählt jede Bewegung gleich (kein Sprung um die Anfangsstrecke); an den Enden sofort umkehrbar
         g.ly = e.clientY;
         g.v = g.mode === 'vol' ? st.level : st.bright;   // aus "Auto" heraus: von der aktuellen Helligkeit weiter
@@ -4114,7 +4119,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 13.3',
+      'Video-Assistent 13.4',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
