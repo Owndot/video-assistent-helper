@@ -26,6 +26,11 @@ with sync_playwright() as p:
         try:
             pg.wait_for_function('() => %s.querySelector(".vprev").classList.contains("img")' % R, timeout=6000)
         except Exception: pass
+        # Stream-Vorschau braucht auf langsamen Rechnern länger für das letzte Bild: warten, bis sie aufholt (max. 5 s)
+        try:
+            pg.wait_for_function('''() => { const pr = %s.querySelector(".vprev"), pv = pr.querySelector("video"), v = %s.querySelector(".vv"), bar = %s.querySelector(".vbar");
+                const t = pr.dataset.t != null ? parseFloat(pr.dataset.t) : pv.currentTime; return Math.abs(t - bar.value / 1000 * v.duration) < 2.5; }''' % (R, R, R), timeout=5000)
+        except Exception: pass
         time.sleep(0.6)
         info = pg.evaluate('''() => { const pr = %s.querySelector(".vprev"); const pv = pr.querySelector("video"); const v = %s.querySelector(".vv");
             const r = pr.getBoundingClientRect(); const bar = %s.querySelector(".vbar"); const shownT = pr.dataset.t != null ? parseFloat(pr.dataset.t) : pv.currentTime;
