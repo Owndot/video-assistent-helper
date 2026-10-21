@@ -9,9 +9,17 @@ with sync_playwright() as p:
     ctx.add_init_script(PRE); ctx.add_init_script(HLS); ctx.add_init_script(SCRIPT)
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     open_player(pg, 'subs.html')
-    lay = pg.evaluate('''() => { const r = %s; return [!!r.querySelector(".vcluster button[aria-label=Mehr]"), !!r.querySelector(".vtools button[aria-label=Untertitel]"),
-        Array.from(r.querySelectorAll(".vtools button")).map(b => b.getAttribute("aria-label"))]; }''' % R)
-    check('⋮ oben rechts, Untertitel-Knopf unten (Drehen bleibt außen)', lay[0] and lay[1] and lay[2][-1] == 'Drehen' and lay[2][-2] == 'Untertitel', lay)
+    # Aufteilung „oben schlank“ (16.4): oben nur Download und ⋮, unten Tempo, CC, Bildformat, Bild-in-Bild, Drehen
+    lay = pg.evaluate('''() => { const r = %s, vis = (b) => !b.hidden;
+        return [Array.from(r.querySelectorAll(".vcluster button")).map(b => b.getAttribute("aria-label")),
+                Array.from(r.querySelectorAll(".vhead .vtools:not(.solo) button")).filter(vis).map(b => b.getAttribute("aria-label")),
+                (() => { const t = r.querySelector(".vtitle span"); return [t.textContent, t.scrollWidth <= t.clientWidth + 1]; })()]; }''' % R)
+    want_bot = ['Geschwindigkeit', 'Untertitel', 'Bildformat'] + (['Bild-in-Bild'] if 'Bild-in-Bild' in lay[1] else []) + ['Drehen']
+    check('oben nur Download und ⋮, unten Tempo · CC · Format · Bild-in-Bild · Drehen', lay[0] == ['Herunterladen (z. B. mit YTDLnis)', 'Mehr'] and lay[1] == want_bot, lay)
+    check('Titel ganz lesbar (nicht abgeschnitten)', lay[2][1], lay[2])
+    more(pg); mi = [x[0] for x in items(pg)]
+    check('⋮: Teilen, Standbild, Einstellungen (Einstellungen zuletzt)', mi[0] == 'Link teilen' and mi[-1] == 'Einstellungen' and 'Standbild speichern' in mi, mi)
+    pg.evaluate('() => { %s.querySelector(".vmenu").classList.remove("on"); %s.querySelector(".vp").classList.remove("menu"); }' % (R, R)); time.sleep(0.3)
     subsm(pg); pick(pg, 'Deutsch'); time.sleep(0.5)
     check('Untertitel an: Knopf leuchtet', pg.evaluate('() => %s.querySelector("button[aria-label=Untertitel]").classList.contains("on")' % R))
     # Hinweise (16.3): eine Stelle UNTER dem Bild, mit Abstand – im selben Glas wie die Knöpfe
@@ -51,12 +59,12 @@ with sync_playwright() as p:
     check('Zeitleiste über der Knopfreihe', lay2[0] <= lay2[1] + 1, lay2)
     # Teilen: Link zum Video (hier die Seite selbst), mit Titel
     pg.evaluate('() => { window.__shared = []; Object.defineProperty(navigator, "share", { configurable: true, value: (d) => { window.__shared.push(d); return Promise.resolve(); } }); }')
-    ctl(pg); pg.evaluate('() => %s.querySelector(".vcluster button[aria-label=\'Link teilen\']").click()' % R); time.sleep(0.5)
+    more(pg); pick(pg, 'Link teilen'); time.sleep(0.5)   # über das ⋮-Menü (echter Weg)
     sh = pg.evaluate('() => window.__shared')
     check('Teilen-Knopf: teilt Link und Titel', len(sh) == 1 and sh[0]['url'].endswith('/subs.html') and sh[0].get('title'), sh)
     # ohne Teilen-Menü (oder abgelehnt): Link wird kopiert
     pg.evaluate('() => { Object.defineProperty(navigator, "share", { configurable: true, value: undefined }); window.__copied = null; navigator.clipboard.writeText = (t) => { window.__copied = t; return Promise.resolve(); }; }')
-    ctl(pg); pg.evaluate('() => %s.querySelector(".vcluster button[aria-label=\'Link teilen\']").click()' % R); time.sleep(0.5)
+    more(pg); pick(pg, 'Link teilen'); time.sleep(0.5)
     cp = pg.evaluate('() => [window.__copied, %s.querySelector(".toast").textContent]' % R)
     check('… ohne Teilen-Menü: Link kopiert', cp[0] and cp[0].endswith('/subs.html') and cp[1] == 'Link kopiert', cp)
     # Einstellungen: Wischsperre mit Stufe in Worten und kurzer Erklärung – Hinweis ÜBER dem offenen Menü

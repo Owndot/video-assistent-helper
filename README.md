@@ -33,7 +33,12 @@ Der Player funktioniert auch **ohne** Helper-App – dann regeln die Gesten nur 
   z. B. ARD/ZDF-Mediathek), aus dem Stream oder eigene `.srt`/`.vtt`/`.ttml`-Datei vom Handy; Größe, Lage (unten/oben
   **im Bild**) und Verschiebung (früher/später)
 
+**Aufteilung**: oben links ✕ und Titel, oben rechts nur **Download** und **⋮**; unten (am Daumen) Sperre links,
+rechts **Tempo · Untertitel (CC) · Bildformat · Bild-in-Bild · Drehen**.
+
 **⋮ Mehr** (oben rechts im Player)
+- **Link teilen** – Link zum Video (Beitrag bei Instagram/Facebook/TikTok, sonst die Seite)
+- **In App öffnen** (z. B. VLC) und **Qualität**, wenn es sie für das Video gibt
 - **Einstellungen** – kurz wie in einer Einstellungs-App: Design (Glas/Schlicht), Ambient, Fortschrittslinie, Vollbild,
   Sprungweite, Halten, Wischsperre oben/unten, Auto-Drehen, Download, Helper-App, **Sprache** (Auto/Deutsch/English),
   Zurücksetzen – gelten für alle Seiten und **überstehen Updates**
