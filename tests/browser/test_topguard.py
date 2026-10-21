@@ -23,6 +23,7 @@ with sync_playwright() as p:
     for (W, H) in ((400, 800), (800, 400)):
         page.set_viewport_size({'width': W, 'height': H}); time.sleep(0.8)
         zone = max(H * 0.15, 48)
+        page.evaluate('''() => { window.__wl = []; if (window.__wlOn) return; window.__wlOn = 1; ["pointerdown","pointerup","pointercancel","lostpointercapture","gotpointercapture"].forEach((t) => window.addEventListener(t, (e) => { const el = e.composedPath()[0]; window.__wl.push(t.replace("pointer","").slice(0,6) + "@" + Math.round(e.clientX) + "," + Math.round(e.clientY) + ":" + ((el && (el.className && el.className.baseVal === undefined ? el.className : el.tagName)) || "?")); }, true)); }''')
         v0 = vol(); swipe(W - 70, zone - 20, zone + 140)
         check('%dx%d: oben (%d px) runterziehen – Lautstärke bleibt' % (W, H, zone - 20), abs(vol() - v0) < 0.001, [v0, vol()])
         d0 = dim(); swipe(70, 10, 160)
@@ -43,6 +44,7 @@ with sync_playwright() as p:
         # zurück auf voll
         swipe(W - 70, H - zone - 10, zone + 10)
         swipe(70, H - zone - 10, zone + 10)
+        print('   Fenster-Ereignisse %dx%d:' % (W, H), page.evaluate('window.__wl.join(" | ")'))
     print('Fehler der Seite:', errs)
     print('ERGEBNIS: %d von %d' % (sum(1 for _, o in results if o), len(results)))
     b.close()
