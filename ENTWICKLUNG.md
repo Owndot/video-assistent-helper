@@ -109,6 +109,7 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_embed.py`, `test_nest.py` | eingebettete / verschachtelte Fenster |
 | `test_mirror.py`, `test_fb*.py`, `test_ig.py`, `test_tt.py` | Facebook-Spiegel, Instagram, TikTok (nachgebaut) |
 | `test_topguard.py`, `test_idle.py` | gesperrter oberer Rand, sparsamer Takt ohne Video |
+| `test_pixel.py` | sieht man wirklich etwas? Ambient-Licht im Rand, Vorschaubild = echtes Bild an der Stelle (auch nach 13 s) |
 
 Bekannt: `test_tt.py` besteht 2 von 3 (TikTok liefert ohne Anmeldung keine Video-ID) – kein Fehler.
 `test_sfx2.py` schwankt gelegentlich um eine Prüfung (Zeitverhalten, auch in alten Versionen).
@@ -159,6 +160,11 @@ Benachrichtigungen) – das prüft nur das Handy.
 - Ein angehaltenes, frisch geladenes Original liefert kein Bild (Chrome: letztes Bild) → Standbild-Canvas `.vhold`,
   bis wieder Bilder kommen.
 - Abfragen im Namen der Seite (Instagram/TikTok) über `content.fetch`.
+- **Firefox auf Android** (`FF_MOBILE`): Videobilder kommen auf einer Zeichenfläche (`drawImage`) leer an
+  (Mozilla-Bug 1479947) → Ambient ist dort ein zweites `<video>` mit demselben Bildstrom (Spiegel-Strom bzw.
+  `captureStream()` des Player-Videos, nie `mozCaptureStream` – das nähme den Ton mit), die Vorschau zeigt das
+  Vorschau-Video selbst (`.vprev.live`, kein Bilder-Raster). Am Rechner tritt das nicht auf – die Testweiche schaltet
+  Firefox per `evp-ffmobile` auf diesen Weg. `test_pixel.py` prüft an den Pixeln (nicht nur „eingeschaltet“).
 - Kein Wellen-/Lupen-Glas (SVG-Filter in `backdrop-filter`) → Milchglas; `LENS_OK` prüft auf Chrome.
 - Testumgebung: Vollbild ohne `full-screen-api.ignore-widgets` springt auf Bildschirmgröße (1280 px); Größenänderung
   im Vollbild hängt → Tests mit `set_viewport_size` bekommen ein nachgebautes Vollbild; Firefox 142 erzeugt mit
@@ -178,3 +184,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 13.4 | oberer Rand ohne Helligkeit/Lautstärke |
 | 13.5 | eigener Schlüssel + Koppeln, Cookies nur an die eigene Seite, sparsamer Takt |
 | 13.6 | Firefox: eingebettete Player, Facebook-Spiegel (Ton, Neuladen, Standbild), Seiten-Abfragen; Tests in beiden Browsern |
+| 13.7 | Firefox-Handy: Ambient-Licht und Spul-Vorschau ohne Kopieren von Videobildern; Pixel-Test |
