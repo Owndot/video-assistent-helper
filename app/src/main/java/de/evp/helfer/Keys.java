@@ -29,6 +29,19 @@ final class Keys {
 
     static boolean paired(Context c) { return prefs(c).getBoolean("paired", false); }
 
+    /** Sprache der App: "auto" (wie das Handy), "de" oder "en" – gilt für Bildschirm und Benachrichtigungen */
+    static String lang(Context c) { return prefs(c).getString("lang", "auto"); }
+
+    static void applyLang(Context c) {
+        String l = lang(c);
+        Tr.force = "de".equals(l) || "en".equals(l) ? l : null;
+    }
+
+    static void setLang(Context c, String l) {
+        prefs(c).edit().putString("lang", l).apply();
+        applyLang(c);
+    }
+
     static void markPaired(Context c) {
         if (!paired(c)) prefs(c).edit().putBoolean("paired", true).apply();
     }

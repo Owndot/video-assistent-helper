@@ -148,9 +148,13 @@ with sync_playwright() as p:
     # Geschwindigkeit
     if not c2:
         page.mouse.click(200, 650); time.sleep(0.5)
-    page.locator('button[aria-label="Geschwindigkeit"]').click()
+    # seit 16.5 im ⋮-Menü: Geschwindigkeit → Liste
+    page.locator('.vcluster button[aria-label="Mehr"]').click(); time.sleep(0.4)
+    page.evaluate('() => Array.from(window.__evpRoot.querySelectorAll(".vmenu .vmi")).find(b => b.firstChild.textContent === "Geschwindigkeit").click()'); time.sleep(0.4)
+    sp = page.evaluate('() => Array.from(window.__evpRoot.querySelectorAll(".vmenu .vmi")).map(b => b.firstChild.textContent)')
+    page.evaluate('() => Array.from(window.__evpRoot.querySelectorAll(".vmenu .vmi")).find(b => b.firstChild.textContent === "1,25×").click()'); time.sleep(0.4)
     rate = page.evaluate('() => window.__evpRoot.querySelector(".vv").playbackRate')
-    check('Geschwindigkeit-Knopf', rate == 1.25, rate)
+    check('Geschwindigkeit im ⋮-Menü (Liste langsam → schnell)', rate == 1.25 and sp[0] == '0,5×' and sp[2] == '1× · Normal', [rate, sp])
 
     # Drehen-Knopf: Querformat, nochmal = Hochformat – beides im Vollbild, Player bleibt offen
     def show_ctl():

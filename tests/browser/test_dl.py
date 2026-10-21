@@ -25,7 +25,7 @@ with sync_playwright() as p:
     if not pg.evaluate('() => %s.querySelector(".vp").classList.contains("ctl")' % R):
         pg.mouse.click(200, 300); time.sleep(0.4)
     order = pg.evaluate('() => Array.from(%s.querySelectorAll(".vhead .vtools:last-child button")).filter(b => !b.hidden).map(b => b.getAttribute("aria-label"))' % R)
-    check('Unten rechts: Tempo zuerst, Drehen ganz außen (16.4)', order[0] == 'Geschwindigkeit' and order[-1] == 'Drehen', order)
+    check('Unten rechts: Untertitel zuerst, Drehen ganz außen (16.5)', order[0] == 'Untertitel' and order[-1] == 'Drehen' and 'Geschwindigkeit' not in order, order)
     vis = pg.evaluate('() => !%s.querySelector("button[aria-label=\'Herunterladen (z. B. mit YTDLnis)\']").hidden' % R)
     check('Echte Videodatei: Download-Knopf sichtbar', vis)
     pg.locator('button[aria-label="Herunterladen (z. B. mit YTDLnis)"]').click()

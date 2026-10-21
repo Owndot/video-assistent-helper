@@ -33,6 +33,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        Keys.applyLang(this);
         ScrollView sv = new ScrollView(this);
         sv.setFillViewport(true);
         root = new LinearLayout(this);
@@ -42,7 +43,7 @@ public class MainActivity extends Activity {
         sv.addView(root);
         setContentView(sv);
 
-        TextView title = text(getString(R.string.app_name), 24, true);
+        TextView title = text(Tr.t("Video-Assistent Helper", "Video Assistant Helper"), 24, true);
         root.addView(title);
         TextView intro = text(Tr.t("Damit der Videoplayer im Browser die echte Bildschirmhelligkeit und die Medienlautstärke "
                 + "deines Handys steuern kann. Der Helper läuft still im Hintergrund und ist nur vom Handy selbst "
@@ -125,6 +126,23 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams tl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         tl.topMargin = dp(12);
         root.addView(test, tl);
+
+        // Sprache von Hand (zweisprachig beschriftet, damit man sie auch in der falschen Sprache findet)
+        String cur = Keys.lang(this);
+        String curName = "de".equals(cur) ? "Deutsch" : "en".equals(cur) ? "English" : Tr.t("Automatisch (wie das Handy)", "Automatic (like the phone)");
+        Button lang = button("Sprache · Language: " + curName, v -> {
+            String l = Keys.lang(this);
+            String next = "auto".equals(l) ? "de" : "de".equals(l) ? "en" : "auto";
+            Keys.setLang(this, next);
+            if (HelferService.running) {   // Benachrichtigung in der neuen Sprache
+                stopService(new Intent(this, HelferService.class));
+                HelferService.start(this);
+            }
+            recreate();
+        });
+        LinearLayout.LayoutParams ll = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        ll.topMargin = dp(8);
+        root.addView(lang, ll);
 
         TextView foot = text(Tr.t("Im Userscript ist nichts einzustellen: Sobald der Helper läuft, steuern die Wischgesten links "
                 + "(Helligkeit) und rechts (Lautstärke) das Handy selbst. Läuft er nicht, regelt der Player wie bisher nur das Video.\n\n"

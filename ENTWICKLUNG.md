@@ -232,3 +232,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 16.2 | Spul-Vorschau: Wächter gegen hängende Sprünge (kein `seeked` bei Streams → nach 1,2 s neu fragen, Vorschau bleibt nicht stehen) |
 | 16.3 | Hinweise unter dem Bild (mit Abstand, sonst über der Leiste/dem Menü/den Untertiteln) im Glas der Knöpfe; Wischsperre oben/unten in Worten mit Erklärung; Teilen-Knopf (Beitragslink, im eingebetteten Fenster der Link der Hauptseite); „Helper“ statt „Helfer“. App: Deutsch/Englisch (`Tr`), nur noch eigener Schlüssel, Host-Prüfung gegen DNS-Rebinding |
 | 16.4 | Aufteilung „oben schlank“: oben Download + ⋮, unten Tempo · CC · Format · Bild-in-Bild · Drehen; Teilen, In App öffnen, Qualität im ⋮-Menü (Knöpfe unsichtbar in `.vstash`, das Menü löst sie aus) |
+| 16.5 | Tempo aus der unteren Leiste ins ⋮-Menü (Liste 0,5×–2×). App: Sprache von Hand (Auto/Deutsch/English, `Keys.lang` → `Tr.force`) |

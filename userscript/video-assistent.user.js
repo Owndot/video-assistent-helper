@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      16.4
+// @version      16.5
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -2558,9 +2558,9 @@
     const bFit = chip(P.fit, 'Format', 'Bildformat');
     const bRot = chip(P.rotate, 'Drehen', 'Drehen');
     const bLock = chip(P.lock, 'Sperren', 'Bedienung sperren');
-    // Aufteilung (16.4, „oben schlank“): oben nur Download und ⋮ (Titel bleibt lesbar), unten am Daumen Tempo, CC,
-    // Bildformat, Bild-in-Bild, Drehen. Teilen, In App öffnen, Qualität, Tonspur, Standbild, Einstellungen: im ⋮-Menü.
-    // Teilen/In App/Qualität bleiben als (nicht eingehängte) Knöpfe bestehen – das Menü löst sie aus.
+    // Aufteilung (16.4, „oben schlank“): oben nur Download und ⋮ (Titel bleibt lesbar), unten am Daumen CC,
+    // Bildformat, Bild-in-Bild, Drehen. Teilen, In App öffnen, Qualität, Tempo (16.5), Tonspur, Standbild, Einstellungen: im ⋮-Menü.
+    // Teilen/In App/Qualität/Tempo bleiben als unsichtbare Knöpfe (.vstash) bestehen – das Menü löst sie aus.
     const bMore = ib(I.more, 'Mehr');
     const bSubs = chip(P.cc, 'Untertitel', 'Untertitel');   // unten: Untertitel (leuchtet, wenn an)
     const subEl = h('div', { class: 'vsub', 'aria-live': 'polite' });
@@ -2572,7 +2572,7 @@
         h('div', { class: 'vscrim' }),
         h('div', { class: 'vtop' }, bClose, title, h('div', { class: 'vcluster g ia' }, bDl, bMore)),
         h('div', { class: 'vmid' }, bBack, bPlay, bFwd),
-        h('div', { class: 'vbot ia' }, h('div', { class: 'vrow' }, tCur, bar, tDur), h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bSpeed, bSubs, bFit, bPip, bRot))), h('div', { class: 'vstash' }, bShare, bExt, bQual)),
+        h('div', { class: 'vbot ia' }, h('div', { class: 'vrow' }, tCur, bar, tDur), h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bSubs, bFit, bPip, bRot))), h('div', { class: 'vstash' }, bShare, bExt, bQual, bSpeed)),
       ind, side, seekBox, sfxL, sfxR, mini, menu, bUnlock);
     root.append(wrap);
     // Lupen-Glas für alle Glasflächen (Größe kommt erst nach dem Einblenden; ändert sie sich, wird neu berechnet)
@@ -3282,11 +3282,13 @@
     };
     on(bBack, () => btnSkip(-1));
     on(bFwd, () => btnSkip(1));
-    on(bSpeed, () => {
-      st.speed = SPEEDS[(SPEEDS.indexOf(st.speed) + 1) % SPEEDS.length];
-      M().playbackRate = st.speed;
-      bSpeed.textContent = String(st.speed).replace('.', ',') + '×';
-    });
+    const spLabel = (v) => String(v).replace('.', UI_EN() ? '.' : ',') + '×';
+    const setSpeed = (v) => { st.speed = v; M().playbackRate = v; bSpeed.textContent = spLabel(v); };
+    on(bSpeed, () => setSpeed(SPEEDS[(SPEEDS.indexOf(st.speed) + 1) % SPEEDS.length]));   // unsichtbar – nur für alte Wege
+    // Tempo im ⋮-Menü: Liste zum Antippen (wie YouTube), langsam → schnell
+    const openSpeed = () => openMenu('Geschwindigkeit', SPEEDS.slice().sort((a, b) => a - b).map((v) => ({
+      label: v === 1 ? spLabel(1) + ' · Normal' : spLabel(v), cur: v === st.speed, fn: () => { setSpeed(v); toast(spLabel(v)); },
+    })));
     // Bild-in-Bild: kleines Fenster über anderen Apps. Dabei endet das Vollbild – das darf den Player NICHT schließen.
     const pipFallback = () => {
       // Manche Android-Browser kennen nur das automatische Bild-in-Bild: Video im Vollbild + zum Startbildschirm wischen
@@ -3585,6 +3587,7 @@
       const items = [{ label: 'Link teilen', fn: () => bShare.click() }];
       if (bExt && !bExt.hidden) items.push({ label: 'In App öffnen', sub: 'z. B. VLC', fn: () => bExt.click() });
       if (!bQual.hidden) { const q = bQual.querySelector('span'); items.push({ label: 'Qualität', sub: q ? q.textContent : '', fn: () => bQual.click() }); }
+      items.push({ label: 'Geschwindigkeit', sub: spLabel(st.speed), fn: openSpeed });
       const at = audioItems();
       if (at.length > 1) items.push({ label: 'Tonspur', sub: (at.find((x) => x.cur) || {}).label || '', fn: () => openMenu('Tonspur', at) });
       items.push({ label: 'Standbild speichern', fn: snapshot });
@@ -5112,7 +5115,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 16.4',
+      'Video-Assistent 16.5',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

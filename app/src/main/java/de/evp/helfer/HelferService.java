@@ -61,6 +61,7 @@ public class HelferService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        Keys.applyLang(this);   // Sprache aus der App (auch nach dem Einschalten des Handys)
         wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         startInForeground();
@@ -108,7 +109,7 @@ public class HelferService extends Service {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification n = new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat)
-                .setContentTitle(getString(R.string.app_name))
+                .setContentTitle(Tr.t("Video-Assistent Helper", "Video Assistant Helper"))
                 .setContentText(Tr.t("Bereit für Helligkeit und Lautstärke", "Ready for brightness and volume"))
                 .setContentIntent(open)
                 .setOngoing(true)

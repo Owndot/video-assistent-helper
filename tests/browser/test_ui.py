@@ -14,8 +14,8 @@ with sync_playwright() as p:
         return [Array.from(r.querySelectorAll(".vcluster button")).map(b => b.getAttribute("aria-label")),
                 Array.from(r.querySelectorAll(".vhead .vtools:not(.solo) button")).filter(vis).map(b => b.getAttribute("aria-label")),
                 (() => { const t = r.querySelector(".vtitle span"); return [t.textContent, t.scrollWidth <= t.clientWidth + 1]; })()]; }''' % R)
-    want_bot = ['Geschwindigkeit', 'Untertitel', 'Bildformat'] + (['Bild-in-Bild'] if 'Bild-in-Bild' in lay[1] else []) + ['Drehen']
-    check('oben nur Download und ⋮, unten Tempo · CC · Format · Bild-in-Bild · Drehen', lay[0] == ['Herunterladen (z. B. mit YTDLnis)', 'Mehr'] and lay[1] == want_bot, lay)
+    want_bot = ['Untertitel', 'Bildformat'] + (['Bild-in-Bild'] if 'Bild-in-Bild' in lay[1] else []) + ['Drehen']
+    check('oben nur Download und ⋮, unten CC · Format · Bild-in-Bild · Drehen', lay[0] == ['Herunterladen (z. B. mit YTDLnis)', 'Mehr'] and lay[1] == want_bot, lay)
     check('Titel ganz lesbar (nicht abgeschnitten)', lay[2][1], lay[2])
     more(pg); mi = [x[0] for x in items(pg)]
     check('⋮: Teilen, Standbild, Einstellungen (Einstellungen zuletzt)', mi[0] == 'Link teilen' and mi[-1] == 'Einstellungen' and 'Standbild speichern' in mi, mi)

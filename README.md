@@ -34,11 +34,12 @@ Der Player funktioniert auch **ohne** Helper-App – dann regeln die Gesten nur 
   **im Bild**) und Verschiebung (früher/später)
 
 **Aufteilung**: oben links ✕ und Titel, oben rechts nur **Download** und **⋮**; unten (am Daumen) Sperre links,
-rechts **Tempo · Untertitel (CC) · Bildformat · Bild-in-Bild · Drehen**.
+rechts **Untertitel (CC) · Bildformat · Bild-in-Bild · Drehen**.
 
 **⋮ Mehr** (oben rechts im Player)
 - **Link teilen** – Link zum Video (Beitrag bei Instagram/Facebook/TikTok, sonst die Seite)
 - **In App öffnen** (z. B. VLC) und **Qualität**, wenn es sie für das Video gibt
+- **Geschwindigkeit** (0,5× bis 2×, Liste zum Antippen)
 - **Einstellungen** – kurz wie in einer Einstellungs-App: Design (Glas/Schlicht), Ambient, Fortschrittslinie, Vollbild,
   Sprungweite, Halten, Wischsperre oben/unten, Auto-Drehen, Download, Helper-App, **Sprache** (Auto/Deutsch/English),
   Zurücksetzen – gelten für alle Seiten und **überstehen Updates**
@@ -67,7 +68,7 @@ The interface is available in English and German – it follows the browser lang
 - echte **Bildschirmhelligkeit** (nur solange der Player offen ist, danach automatisch zurück) und
   **Medienlautstärke** in 1-%-Schritten
 - Downloads mit Fortschritt und „Abbrechen“ in der Benachrichtigung
-- Deutsch/Englisch nach Sprache des Handys
+- Deutsch/Englisch nach Sprache des Handys oder von Hand („Sprache · Language“ in der App)
 - nur vom Handy selbst erreichbar, mit eigenem geheimem Schlüssel (Koppeln) – Details unter „Sicherheit“
 
 **Nicht möglich:** Kopierschutz (DRM), Livestreams speichern, Videos ganz ohne Adresse (z. B. Facebook-Spiegel →
