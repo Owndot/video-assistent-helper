@@ -35,6 +35,7 @@ with sync_playwright() as p:
         swipe(70, zone + 20, zone + 120)                      # erst etwas abdunkeln …
         d0 = dim(); swipe(70, H - 10, H - 10 - 140)           # … dann vom unteren Rand hoch
         check('%dx%d: unten links hochwischen – Helligkeit bleibt' % (W, H), abs(dim() - d0) < 0.001 and d0 > 0.01, [d0, dim()])
+        print('   Maße:', page.evaluate('(p) => { const w = %s.querySelector(".vp"); const e = %s.elementFromPoint ? %s.elementFromPoint(p[0], p[1]) : null; return [w.clientHeight, innerHeight, w.getBoundingClientRect().top, e ? e.className || e.tagName : null]; }' % (R, R, R), [W - 70, H - zone - 30]))
         v0 = vol(); swipe(W - 70, H - zone - 30, H - zone - 130)
         check('%dx%d: knapp darüber – Lautstärke ändert sich' % (W, H), vol() > v0 + 0.05, [v0, vol()])
         # zurück auf voll
