@@ -30,7 +30,7 @@ Der Player funktioniert auch **ohne** Helfer-App – dann regeln die Gesten nur 
 **⋯ Mehr** (Knopf unten rechts im Player)
 - **Untertitel**: von der Seite (auch wenn die Seite sie mit ihrem eigenen Player zeigt, z. B. ARD/ZDF-Mediathek –
   das Skript sucht sie beim Öffnen des Menüs), aus dem Stream oder eigene `.srt`/`.vtt`/`.ttml`-Datei vom Handy;
-  Größe, Höhe und Verschiebung (früher/später) einstellbar
+  Größe, Lage (unten/oben **im Bild** – auch bei Querformat-Videos hochkant) und Verschiebung (früher/später)
 - **Tonspur** (Sprache) bei Streams mit mehreren Tonspuren
 - **Standbild speichern** (JPG in Downloads) – wo die Seite es zulässt, nicht in Firefox auf dem Handy
 - **Einstellungen**: Vollbild, Sprungweite (5/10/15/30 s), Tempo beim Halten, Randsperren, Weiterschauen, Ambient,
@@ -104,7 +104,7 @@ Updates erhalten. Alle Werte stehen außerdem oben im Userscript (`CONFIG`, Stan
 | `holdSpeed` | `2` | Tempo beim langen Drücken |
 | `skipSeconds` | `10` | Sprungweite für Doppeltipp und ±-Knöpfe (5, 10, 15, 30) |
 | `resumePlayback` | `true` | Weiterschauen (Stelle merken ab 3 Minuten Länge) |
-| `subSize` / `subHigh` | `'m'` / `false` | Untertitel-Größe (`s`/`m`/`l`) und höher setzen |
+| `subSize` / `subHigh` | `'m'` / `false` | Untertitel-Größe (`s`/`m`/`l`) und oben im Bild statt unten |
 | `systemHelper` | `true` | Helfer-App benutzen, wenn sie läuft |
 | `downloader` | `'ytdlnis'` | `'share'` = Teilen-Menü statt direkt YTDLnis |
 | `fbMirror` | `true` | Facebook: Bild des Facebook-Players spiegeln |

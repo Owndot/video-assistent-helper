@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      14.2
+// @version      14.3
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -62,7 +62,7 @@
     skipSeconds: 10,          // Doppeltipp links/rechts und die Sprung-Knöpfe: so viele Sekunden
     resumePlayback: true,     // Weiterschauen: Stelle pro Video merken (ab 3 Minuten Länge) und beim Öffnen anbieten
     subSize: 'm',             // Untertitel: 's' klein, 'm' mittel, 'l' groß
-    subHigh: false,           // Untertitel höher setzen (z. B. wenn das Video eigene Texte unten hat)
+    subHigh: false,           // Untertitel oben im Bild statt unten (z. B. wenn das Video eigene Texte unten hat)
     // Helfer-App "Video-Assistent Helfer" (eigene APK): Läuft sie, steuern die Wischgesten die ECHTE Helligkeit und
     // Medienlautstärke des Handys. Läuft sie nicht, regelt der Player wie bisher nur das Video. false = nie fragen.
     systemHelper: true,
@@ -2085,12 +2085,9 @@
 .vv.vzan{transition:transform .25s cubic-bezier(.215,.61,.355,1)}
 /* Untertitel: über dem Bild, unter den Bedienelementen; rücken über die Leisten, wenn die sichtbar sind */
 .vsub{position:absolute;left:5%;right:5%;bottom:calc(26px + var(--evp-sb,env(safe-area-inset-bottom,0px)));text-align:center;pointer-events:none;white-space:pre-line;
- font:600 19px/1.32 var(--font);color:#fff;text-shadow:0 0 2px #000,0 1px 3px #000,0 0 8px rgba(0,0,0,.7);transition:bottom .25s ease}
+ font:600 19px/1.32 var(--font);color:#fff;text-shadow:0 0 2px #000,0 1px 3px #000,0 0 8px rgba(0,0,0,.7);transition:bottom .25s ease,top .25s ease}
 .vsub[data-size="s"]{font-size:15px}.vsub[data-size="l"]{font-size:25px}
 .vsub span{background:rgba(0,0,0,.42);padding:2px 9px;border-radius:7px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
-.vsub.hi{bottom:24%}
-.vp.ctl .vsub{bottom:calc(150px + var(--evp-sb,env(safe-area-inset-bottom,0px)))}
-.vp.ctl .vsub.hi{bottom:max(24%,calc(150px + var(--evp-sb,env(safe-area-inset-bottom,0px))))}
 /* Weiterschauen-Knopf */
 .vresume{position:absolute;left:50%;top:calc(76px + var(--evp-st,env(safe-area-inset-top,0px)));transform:translate(-50%,-8px);opacity:0;pointer-events:none;
  display:flex;align-items:center;gap:6px;padding:9px 16px 9px 12px;border:0;border-radius:22px;color:#fff;font:600 14px var(--font);cursor:pointer;transition:opacity .25s ease,transform .3s ease;z-index:6}
@@ -2675,6 +2672,7 @@
       }
       vid.style.transform = st.zoom > 1.001 ? 'translate(' + st.panX + 'px,' + st.panY + 'px) scale(' + st.zoom + ')' : '';
       if (st.holdCv && st.holdCv.isConnected) st.holdCv.style.cssText = vid.style.cssText + ';pointer-events:none';
+      if (st.subPlace) st.subPlace();
     }
     // Sichtbares Bild bei 1× (ohne die schwarzen Ränder) und wie weit es sich bei Zoom z verschieben lässt
     function contentBox() {
@@ -3654,11 +3652,37 @@
       subEl.textContent = '';
       if (x) subEl.append(h('span', null, x));
     }
+    // Lage am SICHTBAREN Bild (nicht am Bildschirmrand): unten knapp über der Unterkante des Bildes, oben knapp unter
+    // der Oberkante – bei Querformat-Videos hochkant also im Bild statt ganz unten. Eingeblendete Leisten verdecken nie.
+    function subPlace() {
+      if (!subEl.isConnected) return;
+      const b = contentBox(), H = b[3];
+      const hz = b[1] * st.zoom;
+      const top = Math.max(0, H / 2 + st.panY - hz / 2), bot = Math.min(H, H / 2 + st.panY + hz / 2);
+      const pad = Math.round(Math.max(8, (bot - top) * 0.04));
+      const ctlOn = wrap.classList.contains('ctl');
+      if (CONFIG.subHigh) {
+        subEl.style.bottom = 'auto';
+        subEl.style.top = 'max(' + Math.round(top + pad) + 'px, calc(' + (ctlOn ? 82 : 12) + 'px + var(--evp-st,env(safe-area-inset-top,0px))))';
+      } else {
+        subEl.style.top = 'auto';
+        subEl.style.bottom = 'max(' + Math.round(H - bot + pad) + 'px, calc(' + (ctlOn ? 150 : 26) + 'px + var(--evp-sb,env(safe-area-inset-bottom,0px))))';
+      }
+    }
+    st.subPlace = subPlace;
     function subLayout() {
       subEl.dataset.size = CONFIG.subSize || 'm';
       subEl.classList.toggle('hi', !!CONFIG.subHigh);
+      subPlace();
     }
     subLayout();
+    // Leisten ein/aus → Lage nachziehen (nur ein Blick auf die Klasse)
+    let subCtl = wrap.classList.contains('ctl');
+    const subMO = new MutationObserver(() => { const c = wrap.classList.contains('ctl'); if (c !== subCtl) { subCtl = c; subPlace(); } });
+    subMO.observe(wrap, { attributes: true, attributeFilter: ['class'] });
+    vid.addEventListener('loadedmetadata', subPlace);
+    addEventListener('resize', subPlace);
+    st.cleanup.push(() => { subMO.disconnect(); removeEventListener('resize', subPlace); });
     function subStop(keepHls) {
       clearInterval(subs.timer); subs.timer = 0;
       if (subs.cur && subs.cur.kind === 'hls') {
@@ -3867,7 +3891,7 @@
       const SIZES = { s: 'klein', m: 'mittel', l: 'groß' };
       items.push(
         it('Größe', SIZES[CONFIG.subSize] || 'mittel', () => { setSetting('subSize', { s: 'm', m: 'l', l: 's' }[CONFIG.subSize] || 'l'); subLayout(); }),
-        it('Höhe', CONFIG.subHigh ? 'höher' : 'unten', () => { setSetting('subHigh', !CONFIG.subHigh); subLayout(); }));
+        it('Lage', CONFIG.subHigh ? 'oben im Bild' : 'unten im Bild', () => { setSetting('subHigh', !CONFIG.subHigh); subLayout(); }));
       if (subs.cur) {
         items.push(
           it('Früher zeigen', 'Verschiebung ' + fmtOff(subs.offset), () => { subs.offset = Math.round((subs.offset + 0.5) * 10) / 10; subs.last = '\u0000'; subTick(); }),
@@ -4906,7 +4930,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 14.2',
+      'Video-Assistent 14.3',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

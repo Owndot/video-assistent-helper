@@ -205,3 +205,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 14.0 | Zoom wie Telegram (aus dessen offenem Quellcode): 3× um die Tippstelle, ein Finger verschiebt, Gummiband ⅓, Schwung, 250 ms |
 | 14.1 | ⋯ Mehr: Untertitel (Seite/Stream/Datei), Tonspur, Standbild, Einstellungen (dauerhaft); Weiterschauen; Media Session |
 | 14.2 | Untertitel der Seite finden (Seitendaten, vom Player Geladenes, ARD-Schnittstelle); TTML/EBU-TT-Leser |
+| 14.3 | Untertitel-Lage am sichtbaren Bild (unten/oben im Bild, folgt Zoom, weicht den Leisten aus) |

@@ -39,11 +39,25 @@ with sync_playwright() as p:
     t = sub_at(pg, 7.5)
     check('Deutsch: richtige Zeile, ohne HTML, &amp; als &', t == 'Seite Zeile 6 & mehr', t)
     check('zwischen zwei Zeilen: nichts', sub_at(pg, 8.8) == '')
+    # Lage am sichtbaren Bild: Querformat-Video hochkant – unten im Bild (nicht am Bildschirmrand)
+    def place():
+        pg.evaluate('() => %s.querySelector(".vp").classList.remove("ctl")' % R); time.sleep(0.45)
+        return pg.evaluate('''() => { const v = %s.querySelector(".vv"), s = %s.querySelector(".vsub span").getBoundingClientRect(); const r = v.getBoundingClientRect();
+            const sc = Math.min(r.width / v.videoWidth, r.height / v.videoHeight), ch = v.videoHeight * sc; const top = r.top + (r.height - ch) / 2;
+            return [Math.round(top), Math.round(top + ch), Math.round(s.top), Math.round(s.bottom)]; }''' % (R, R))
+    sub_at(pg, 7.5); pl = place()
+    check('hochkant: Untertitel unten IM Bild', pl[1] - 40 < pl[3] <= pl[1] and pl[2] > pl[0], pl)
     more(pg); pick(pg, 'Untertitel'); pick(pg, 'Größe')
     sz = pg.evaluate('() => [%s.querySelector(".vsub").dataset.size, getComputedStyle(%s.querySelector(".vsub")).fontSize]' % (R, R))
     check('Größe umschalten (bleibt im Menü)', sz[0] == 'l' and sz[1] == '25px' and pg.evaluate('() => %s.querySelector(".vmenu").classList.contains("on")' % R), sz)
-    pick(pg, 'Höhe')
-    check('Höhe: höher', pg.evaluate('() => %s.querySelector(".vsub").classList.contains("hi")' % R))
+    pick(pg, 'Lage')
+    check('Lage: oben', pg.evaluate('() => %s.querySelector(".vsub").classList.contains("hi")' % R))
+    pg.evaluate('() => %s.querySelector(".vp").click()' % R); sub_at(pg, 7.5); pl = place()
+    check('oben: Untertitel oben IM Bild', pl[0] <= pl[2] < pl[0] + 40, pl)
+    pg.set_viewport_size({'width': 800, 'height': 400}); time.sleep(0.9); pl = place()
+    check('quer (Bild füllt die Höhe): oben am Bildrand', 8 <= pl[2] < 45, pl)
+    pg.set_viewport_size({'width': 400, 'height': 800}); time.sleep(0.9)
+    more(pg); pick(pg, 'Untertitel')
     pick(pg, 'Früher zeigen')
     t = sub_at(pg, 8.6)   # +0,5 s → 9,1 s: Zeile 9
     check('Verschiebung: früher zeigen (+0,5 s)', t == 'Seite Zeile 9 & mehr', t)
@@ -61,7 +75,7 @@ with sync_playwright() as p:
     check('eigene Datei steht in der Liste (gewählt)', any(x[0] == 'eigene' and x[2] for x in m), m[:5])
     pick(pg, 'Aus')
     check('Aus: nichts mehr', sub_at(pg, 21) == '')
-    more(pg); pick(pg, 'Untertitel'); pick(pg, 'Größe'); pick(pg, 'Höhe'); pg.evaluate('() => %s.querySelector(".vp").click()' % R)
+    more(pg); pick(pg, 'Untertitel'); pick(pg, 'Größe'); pick(pg, 'Lage'); pg.evaluate('() => %s.querySelector(".vp").click()' % R)
     # ---------- Media Session ----------
     pg.evaluate('() => %s.querySelector(".vv").play()' % R); time.sleep(0.8)
     ms = pg.evaluate('() => { const m = navigator.mediaSession; return m ? [m.metadata && m.metadata.title, m.metadata && m.metadata.artist, m.playbackState, m.metadata && m.metadata.artwork.length] : null; }')
