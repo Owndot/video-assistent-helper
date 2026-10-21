@@ -101,13 +101,14 @@ with sync_playwright() as p:
     # ---------- Einstellungen (dauerhaft) ----------
     more(pg); pick(pg, 'Einstellungen'); m = items(pg)
     check('Einstellungen: Doppeltipp 10 s, Rand oben/unten 15 %', ['Doppeltipp springt', '10 s', False] in m and ['Oberer Rand gesperrt', '15 %', False] in m and ['Unterer Rand gesperrt', '15 %', False] in m, m)
-    glas = [x for x in m if x[0] == 'Glas']
-    if glas:   # nur Chrome kann Wellen-Glas
-        bf = lambda: pg.evaluate('() => { const e = %s.querySelector("button[aria-label=Schließen]"); return [e.style.getPropertyValue("--lens"), getComputedStyle(e).backdropFilter]; }' % R)
-        g0 = bf(); pick(pg, 'Glas'); time.sleep(0.3); g1 = bf()
-        check('Glas → Milchglas wirkt sofort (Wellen-Filter weg, Weichzeichner stark)', g0[0].startswith('url(') and g1[0] == '' and 'url(' not in g1[1] and 'blur(12px)' in g1[1], [g0, g1])
-        pick(pg, 'Glas'); time.sleep(0.3); g2 = bf()
-        check('Glas → Wellen wirkt sofort wieder', g2[0].startswith('url('), g2)
+    # Design: Glas ↔ Schlicht (nur Milchglas, keine Glaskante/Glanz/Lupe) – wirkt sofort, in allen Browsern
+    dz = lambda: pg.evaluate('''() => { const e = %s.querySelector("button[aria-label=Schließen]"), m = %s.querySelector(".vmenu");
+        return [%s.host.classList.contains("flat"), getComputedStyle(e, "::before").display, getComputedStyle(e).backdropFilter, getComputedStyle(m, "::after").display, e.style.getPropertyValue("--lens")]; }''' % (R, R, R))
+    d0 = dz(); pick(pg, 'Design'); time.sleep(0.3); d1 = dz()
+    check('Design → Schlicht: überall Milchglas, ohne Kante/Glanz/Lupe', (not d0[0]) and d1[0] and d1[1] == 'none' and d1[3] == 'none' and 'blur(20px)' in d1[2] and 'url(' not in d1[2] and d1[4] == '', [d0, d1])
+    check('Design-Eintrag zeigt „Schlicht (Milchglas)“', ['Design', 'Schlicht (Milchglas)', False] in items(pg), items(pg))
+    pick(pg, 'Design'); time.sleep(0.3); d2 = dz()
+    check('Design → Glas: Kante zurück', (not d2[0]) and d2[1] != 'none', d2)
     pick(pg, 'Doppeltipp springt')
     lab = pg.evaluate('() => [%s.querySelector(".vskip:last-of-type").getAttribute("aria-label"), %s.querySelector("button[aria-label=\'15 s vor\'] text").textContent]' % (R, R))
     check('auf 15 s: Knöpfe zeigen 15', lab[1] == '15', lab)

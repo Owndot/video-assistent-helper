@@ -34,7 +34,7 @@ Der Player funktioniert auch **ohne** Helfer-App – dann regeln die Gesten nur 
 - **Tonspur** (Sprache) bei Streams mit mehreren Tonspuren
 - **Standbild speichern** (JPG in Downloads) – wo die Seite es zulässt, nicht in Firefox auf dem Handy
 - **Einstellungen**: Vollbild, Sprungweite (5/10/15/30 s), Tempo beim Halten, Randsperren, Weiterschauen, Ambient,
-  Fortschrittslinie, Glas, Helfer-App, Download-Weg, Drehen – gelten für alle Seiten und **überstehen Updates**
+  Fortschrittslinie, **Design** (Glas mit Lupe oder Schlicht = nur Milchglas), Helfer-App, Download-Weg, Drehen – gelten für alle Seiten und **überstehen Updates**
 
 **Weiterschauen**: bei Videos ab 3 Minuten merkt sich der Player die Stelle (bis zu 200 Videos) und bietet beim
 nächsten Öffnen „Weiter ab 12:34“ an.
@@ -98,7 +98,7 @@ Updates erhalten. Alle Werte stehen außerdem oben im Userscript (`CONFIG`, Stan
 | Einstellung | Standard | Bedeutung |
 |---|---|---|
 | `startFullscreen` | `true` | Player im Vollbild öffnen (`false` = ohne Browser-Hinweis, aber mit Statusleiste) |
-| `lensGlass` | `true` | Wellen-/Lupen-Glas (`false` = einfaches Milchglas, spart etwas Grafikleistung) |
+| `lensGlass` | `true` | Design: Glas mit Lupe (`false` = Schlicht: nur Milchglas, ohne Glaskante – spart etwas Grafikleistung) |
 | `ambient` / `progressLine` | `true` | Ambient-Licht / Fortschrittslinie (auch im Format-Menü umschaltbar) |
 | `topGuard` / `bottomGuard` | `0.15` | oberer / unterer Bereich ohne Helligkeits-/Lautstärke-Gesten (Anteil der Höhe) |
 | `holdSpeed` | `2` | Tempo beim langen Drücken |

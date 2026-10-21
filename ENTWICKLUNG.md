@@ -209,3 +209,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 14.4 | Querformat: Untertitel bleiben beim Einblenden der Leisten stehen (nur über die Zeitleiste) |
 | 14.5 | Querformat, Untertitel oben: direkt unter Titel/Knöpfen (gemessen) |
 | 14.6 | Glas-Einstellung wirkt sofort (Wellen/Lupe ↔ Milchglas, `setLens`) |
+| 14.7 | Design-Wahl: Glas ↔ Schlicht (`:host(.flat)` – nur Milchglas, ohne Kante/Glanz/Lupe, überall) |
