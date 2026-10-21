@@ -2426,7 +2426,7 @@
         h('div', { class: 'vscrim' }),
         h('div', { class: 'vtop' }, bClose, title, h('div', { class: 'vcluster g ia' }, bDl, bExt, bSpeed)),
         h('div', { class: 'vmid' }, bBack, bPlay, bFwd),
-        h('div', { class: 'vbot ia' }, h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bPip, bQual, bFit, bRot, bMore)), h('div', { class: 'vrow' }, tCur, bar, tDur))),
+        h('div', { class: 'vbot ia' }, h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bPip, bQual, bFit, bMore, bRot)), h('div', { class: 'vrow' }, tCur, bar, tDur))),
       ind, side, seekBox, sfxL, sfxR, mini, menu, bUnlock);
     root.append(wrap);
     // Lupen-Glas für alle Glasflächen (Größe kommt erst nach dem Einblenden; ändert sie sich, wird neu berechnet)
