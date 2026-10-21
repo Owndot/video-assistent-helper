@@ -1,0 +1,80 @@
+1
+00:00:00,000 --> 00:00:02,500
+Seite <i>Zeile</i> 0 &amp; mehr
+
+2
+00:00:03,000 --> 00:00:05,500
+Seite <i>Zeile</i> 3 &amp; mehr
+
+3
+00:00:06,000 --> 00:00:08,500
+Seite <i>Zeile</i> 6 &amp; mehr
+
+4
+00:00:09,000 --> 00:00:11,500
+Seite <i>Zeile</i> 9 &amp; mehr
+
+5
+00:00:12,000 --> 00:00:14,500
+Seite <i>Zeile</i> 12 &amp; mehr
+
+6
+00:00:15,000 --> 00:00:17,500
+Seite <i>Zeile</i> 15 &amp; mehr
+
+7
+00:00:18,000 --> 00:00:20,500
+Seite <i>Zeile</i> 18 &amp; mehr
+
+8
+00:00:21,000 --> 00:00:23,500
+Seite <i>Zeile</i> 21 &amp; mehr
+
+9
+00:00:24,000 --> 00:00:26,500
+Seite <i>Zeile</i> 24 &amp; mehr
+
+10
+00:00:27,000 --> 00:00:29,500
+Seite <i>Zeile</i> 27 &amp; mehr
+
+11
+00:00:30,000 --> 00:00:32,500
+Seite <i>Zeile</i> 30 &amp; mehr
+
+12
+00:00:33,000 --> 00:00:35,500
+Seite <i>Zeile</i> 33 &amp; mehr
+
+13
+00:00:36,000 --> 00:00:38,500
+Seite <i>Zeile</i> 36 &amp; mehr
+
+14
+00:00:39,000 --> 00:00:41,500
+Seite <i>Zeile</i> 39 &amp; mehr
+
+15
+00:00:42,000 --> 00:00:44,500
+Seite <i>Zeile</i> 42 &amp; mehr
+
+16
+00:00:45,000 --> 00:00:47,500
+Seite <i>Zeile</i> 45 &amp; mehr
+
+17
+00:00:48,000 --> 00:00:50,500
+Seite <i>Zeile</i> 48 &amp; mehr
+
+18
+00:00:51,000 --> 00:00:53,500
+Seite <i>Zeile</i> 51 &amp; mehr
+
+19
+00:00:54,000 --> 00:00:56,500
+Seite <i>Zeile</i> 54 &amp; mehr
+
+20
+00:00:57,000 --> 00:00:59,500
+Seite <i>Zeile</i> 57 &amp; mehr
+

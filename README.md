@@ -27,6 +27,19 @@ Der Player funktioniert auch **ohne** Helfer-App – dann regeln die Gesten nur 
 - Sperre (entsperren: 1 s halten oder doppeltippen), Bild-in-Bild, Drehen, Geschwindigkeit
 - dünne Fortschrittslinie, wenn die Leisten ausgeblendet sind; am Ende anhalten statt endlos schleifen
 
+**⋯ Mehr** (Knopf unten rechts im Player)
+- **Untertitel**: von der Seite, aus dem Stream oder eigene `.srt`/`.vtt`-Datei vom Handy; Größe, Höhe und
+  Verschiebung (früher/später) einstellbar
+- **Tonspur** (Sprache) bei Streams mit mehreren Tonspuren
+- **Standbild speichern** (JPG in Downloads) – wo die Seite es zulässt, nicht in Firefox auf dem Handy
+- **Einstellungen**: Vollbild, Sprungweite (5/10/15/30 s), Tempo beim Halten, Randsperren, Weiterschauen, Ambient,
+  Fortschrittslinie, Glas, Helfer-App, Download-Weg, Drehen – gelten für alle Seiten und **überstehen Updates**
+
+**Weiterschauen**: bei Videos ab 3 Minuten merkt sich der Player die Stelle (bis zu 200 Videos) und bietet beim
+nächsten Öffnen „Weiter ab 12:34“ an.
+
+**Benachrichtigung & Sperrbildschirm**: Titel, Play/Pause, Springen und Position – auch Kopfhörer-Tasten.
+
 **Seiten**
 - Facebook (spiegelt das Bild des Facebook-Players → immer das richtige Video), Instagram, TikTok, Pornhub u. a.
 - eingebettete Player (Video in einem fremden iframe): der Kasten wird über den ganzen Bildschirm gelegt,
@@ -76,7 +89,10 @@ Unterschiede zu Vivaldi:
 - Bild-in-Bild: Firefox' eigenes – im Vollbild die Home-Taste drücken (Firefox-Einstellung „Bild-im-Bild“)
 - YTDLnis: Firefox fragt beim ersten Mal, ob die App geöffnet werden darf
 
-## Einstellungen (oben im Userscript, `CONFIG`)
+## Einstellungen
+
+Die wichtigsten stellst du **im Player unter ⋯ → Einstellungen** ein – die gelten für alle Seiten und bleiben bei
+Updates erhalten. Alle Werte stehen außerdem oben im Userscript (`CONFIG`, Standardwerte):
 
 | Einstellung | Standard | Bedeutung |
 |---|---|---|
@@ -85,6 +101,9 @@ Unterschiede zu Vivaldi:
 | `ambient` / `progressLine` | `true` | Ambient-Licht / Fortschrittslinie (auch im Format-Menü umschaltbar) |
 | `topGuard` / `bottomGuard` | `0.15` | oberer / unterer Bereich ohne Helligkeits-/Lautstärke-Gesten (Anteil der Höhe) |
 | `holdSpeed` | `2` | Tempo beim langen Drücken |
+| `skipSeconds` | `10` | Sprungweite für Doppeltipp und ±-Knöpfe (5, 10, 15, 30) |
+| `resumePlayback` | `true` | Weiterschauen (Stelle merken ab 3 Minuten Länge) |
+| `subSize` / `subHigh` | `'m'` / `false` | Untertitel-Größe (`s`/`m`/`l`) und höher setzen |
 | `systemHelper` | `true` | Helfer-App benutzen, wenn sie läuft |
 | `downloader` | `'ytdlnis'` | `'share'` = Teilen-Menü statt direkt YTDLnis |
 | `fbMirror` | `true` | Facebook: Bild des Facebook-Players spiegeln |
@@ -94,8 +113,8 @@ Unterschiede zu Vivaldi:
 | `resumeAfterClose` | `true` | nach dem Schließen läuft das Video auf der Seite weiter |
 | `ytdlpSites`, `downloadOnlySites`, `disabledSites` | Listen | wohin ⬇ YTDLnis nimmt / nur Download / Skript ganz aus |
 
-Die Einstellungen stehen im Skript selbst – bei einem Update werden sie überschrieben (der Schlüssel der
-Helfer-App nicht, der wird gespeichert).
+Änderungen direkt im Skript gehen bei einem Update verloren – darum besser das Menü im Player nutzen
+(gespeichert wie der Schlüssel der Helfer-App).
 
 ## Repository
 

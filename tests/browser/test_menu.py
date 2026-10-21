@@ -27,8 +27,8 @@ with sync_playwright() as p:
     check('Scrollen: nur die Liste bewegt sich, der Glasrahmen bleibt stehen', (sc[0] or not scrollable) and sc[1] == 0 and sc[2] == m[2], sc)
     pg.evaluate('() => Array.from(%s.querySelectorAll(".vmenu .vmi")).find(b => b.firstChild.textContent === "Fortschrittslinie").click()' % R); time.sleep(0.3)
     pg.evaluate('() => %s.querySelector(".vp").classList.remove("ctl")' % R); time.sleep(0.6)
-    off = pg.evaluate('() => [getComputedStyle(%s.querySelector(".vmini")).opacity, localStorage.getItem("evp-line")]' % R)
-    check('Fortschrittslinie aus: verschwindet und wird gemerkt', float(off[0]) < 0.05 and off[1] == '0', off)
+    off = pg.evaluate('() => [getComputedStyle(%s.querySelector(".vmini")).opacity, JSON.parse(localStorage.getItem("evp-s-settings") || "{}").progressLine]' % R)
+    check('Fortschrittslinie aus: verschwindet und wird gemerkt', float(off[0]) < 0.05 and off[1] is False, off)
     b.close()
     # Hochformat: Menü wie bisher unten über die Breite
     ctx = b if False else None

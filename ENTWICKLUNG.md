@@ -110,6 +110,7 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_mirror.py`, `test_fb*.py`, `test_ig.py`, `test_tt.py` | Facebook-Spiegel, Instagram, TikTok (nachgebaut) |
 | `test_topguard.py`, `test_idle.py` | gesperrter oberer/unterer Rand, sparsamer Takt ohne Video |
 | `test_tapzoom.py` | Doppeltipp-Zoom: füllt hochkant, Richtung zum Finger, 3× quer, Verschieben, Gummiband, Schwung, Drehen |
+| `test_extras.py` | ⋯ Mehr: Untertitel (Seite, .srt/.vtt, Datei, Stream), Tonspur, Standbild, Einstellungen, Weiterschauen, Media Session |
 | `test_pixel.py` | sieht man wirklich etwas? Ambient-Licht im Rand, Vorschaubild = echtes Bild an der Stelle (auch nach 13 s) |
 
 Bekannt: `test_tt.py` besteht 2 von 3 (TikTok liefert ohne Anmeldung keine Video-ID) – kein Fehler.
@@ -149,6 +150,12 @@ Benachrichtigungen) – das prüft nur das Handy.
 - **Testumgebung:** Playwright-Chromium kann kein H.264 abspielen → WebM für Abspiel-Tests; Bindungen von
   `expose_function` laufen nur während Playwright-Aufrufen (`page.wait_for_timeout` statt `time.sleep`).
 - **Vollbild-Hinweis des Browsers** lässt sich nicht abschalten (weder Seite noch ADB) – nur `startFullscreen: false`.
+
+- **Speicher:** `store.get/set` = `GM_getValue/GM_setValue` (ersatzweise `localStorage` `evp-s-…`, so in den Tests).
+  `settings` (nur die Schlüssel in `SETTING_KEYS`) überschreibt `CONFIG` beim Start; `resume` = {Seite|Länge: [Sekunde, Zeit]}.
+- **Untertitel** zeichnet der Player selbst (`.vsub`, nur Text). hls.js liefert Zeilen nur an eine eingeschaltete Spur
+  → `subtitleDisplay` an, Spur aber auf `hidden`; hls.js hängt außerdem einen leeren `<track src="data:,WEBVTT">` an
+  (ignorieren).
 
 **Firefox** (`GECKO` im Skript):
 - Ein Tipp im eingebetteten Fenster gilt **nicht** für die Hauptseite (`navigator.userActivation` dort inaktiv) →
@@ -190,3 +197,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 13.8 | auch unterer Rand ohne Helligkeit/Lautstärke (Home-Wischgeste) |
 | 13.9 | Doppeltipp Mitte = Bild füllen zum Finger hin; Verschieben nicht mehr in die schwarzen Ränder |
 | 14.0 | Zoom wie Telegram (aus dessen offenem Quellcode): 3× um die Tippstelle, ein Finger verschiebt, Gummiband ⅓, Schwung, 250 ms |
+| 14.1 | ⋯ Mehr: Untertitel (Seite/Stream/Datei), Tonspur, Standbild, Einstellungen (dauerhaft); Weiterschauen; Media Session |

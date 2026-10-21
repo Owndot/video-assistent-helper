@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      14.0
+// @version      14.1
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -59,6 +59,10 @@
     holdSpeed: 2,             // lange ins Video drücken = so viel schneller, solange du hältst
     topGuard: 0.15,           // oberer Rand (Anteil der Höhe): hier starten keine Helligkeits-/Lautstärke-Gesten (Schnelleinstellungen)
     bottomGuard: 0.15,        // unterer Rand: ebenso (Home-Wischgeste von Android)
+    skipSeconds: 10,          // Doppeltipp links/rechts und die Sprung-Knöpfe: so viele Sekunden
+    resumePlayback: true,     // Weiterschauen: Stelle pro Video merken (ab 3 Minuten Länge) und beim Öffnen anbieten
+    subSize: 'm',             // Untertitel: 's' klein, 'm' mittel, 'l' groß
+    subHigh: false,           // Untertitel höher setzen (z. B. wenn das Video eigene Texte unten hat)
     // Helfer-App "Video-Assistent Helfer" (eigene APK): Läuft sie, steuern die Wischgesten die ECHTE Helligkeit und
     // Medienlautstärke des Handys. Läuft sie nicht, regelt der Player wie bisher nur das Video. false = nie fragen.
     systemHelper: true,
@@ -92,6 +96,31 @@
       'skyshowtime.com', 'joyn.de', 'plus.rtl.de', 'rtlplus.de', 'crunchyroll.com', 'dazn.com',
       'magentatv.de', 'waipu.tv', 'zattoo.com', 'spotify.com'],
   };
+
+  // ----- Dauerhafter Speicher (Violentmonkey; ohne GM-Rechte ersatzweise der Speicher der Seite) -----
+  const store = {
+    get(k, d) {
+      try { if (typeof GM_getValue === 'function') { const v = GM_getValue(k, undefined); if (v !== undefined) return v; } } catch (e) {}
+      try { const v = localStorage.getItem('evp-s-' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; }
+    },
+    set(k, v) {
+      try { if (typeof GM_setValue === 'function') { GM_setValue(k, v); return; } } catch (e) {}
+      try { localStorage.setItem('evp-s-' + k, JSON.stringify(v)); } catch (e) {}
+    },
+  };
+  // Eigene Einstellungen (im Player: ⋯ → Einstellungen) gelten vor den Werten oben und überstehen Updates des Skripts
+  const SETTING_KEYS = ['startFullscreen', 'lensGlass', 'ambient', 'progressLine', 'holdSpeed', 'topGuard', 'bottomGuard',
+    'skipSeconds', 'resumePlayback', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh'];
+  const CONFIG_DEFAULT = {};
+  SETTING_KEYS.forEach((k) => { CONFIG_DEFAULT[k] = CONFIG[k]; });
+  const userSettings = () => { const o = store.get('settings', {}); return o && typeof o === 'object' ? o : {}; };
+  (() => { const o = userSettings(); SETTING_KEYS.forEach((k) => { if (k in o && o[k] !== null) CONFIG[k] = o[k]; }); })();
+  function setSetting(k, v) {
+    CONFIG[k] = v;
+    const o = userSettings(); o[k] = v; store.set('settings', o);
+  }
+  function resetSettings() { store.set('settings', {}); SETTING_KEYS.forEach((k) => { CONFIG[k] = CONFIG_DEFAULT[k]; }); }
+  const SKIP = () => ([5, 10, 15, 30].indexOf(+CONFIG.skipSeconds) >= 0 ? +CONFIG.skipSeconds : 10);
   // =================================================
 
   // ================= Eingebettete Fenster (iframe) =================
@@ -2054,6 +2083,22 @@
 .vp{--glass:rgba(255,255,255,.13);--edge1:rgba(255,255,255,.6);--edge2:rgba(255,255,255,.06);--sub:rgba(255,255,255,.74);--ice:#9BE7FF;--trk:rgba(255,255,255,.25);
  position:fixed;inset:0;background:#000;z-index:2147483647;touch-action:none;color:#fff;font:15px/1.2 var(--font);-webkit-user-select:none;user-select:none;overflow:hidden;overflow:clip;-webkit-tap-highlight-color:transparent}
 .vv.vzan{transition:transform .25s cubic-bezier(.215,.61,.355,1)}
+/* Untertitel: über dem Bild, unter den Bedienelementen; rücken über die Leisten, wenn die sichtbar sind */
+.vsub{position:absolute;left:5%;right:5%;bottom:calc(26px + var(--evp-sb,env(safe-area-inset-bottom,0px)));text-align:center;pointer-events:none;white-space:pre-line;
+ font:600 19px/1.32 var(--font);color:#fff;text-shadow:0 0 2px #000,0 1px 3px #000,0 0 8px rgba(0,0,0,.7);transition:bottom .25s ease}
+.vsub[data-size="s"]{font-size:15px}.vsub[data-size="l"]{font-size:25px}
+.vsub span{background:rgba(0,0,0,.42);padding:2px 9px;border-radius:7px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.vsub.hi{bottom:24%}
+.vp.ctl .vsub{bottom:calc(150px + var(--evp-sb,env(safe-area-inset-bottom,0px)))}
+.vp.ctl .vsub.hi{bottom:max(24%,calc(150px + var(--evp-sb,env(safe-area-inset-bottom,0px))))}
+/* Weiterschauen-Knopf */
+.vresume{position:absolute;left:50%;top:calc(76px + var(--evp-st,env(safe-area-inset-top,0px)));transform:translate(-50%,-8px);opacity:0;pointer-events:none;
+ display:flex;align-items:center;gap:6px;padding:9px 16px 9px 12px;border:0;border-radius:22px;color:#fff;font:600 14px var(--font);cursor:pointer;transition:opacity .25s ease,transform .3s ease;z-index:6}
+.vresume.on{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+.vresume svg{width:18px;height:18px;fill:currentColor}
+/* Standbild: kurzer Blitz */
+.vp.flash::after{content:"";position:absolute;inset:0;background:#fff;opacity:0;animation:vflash .35s ease;pointer-events:none;z-index:9}
+@keyframes vflash{0%{opacity:.55}100%{opacity:0}}
 .vv{position:absolute;inset:0;margin:auto;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;object-position:50% 50%;background:transparent;transform-origin:50% 50%}
 /* Ambient-Modus: die Farben des Bildes leuchten weich in die schwarzen Ränder (wie bei YouTube) */
 .vamb{position:absolute;left:-12%;top:-12%;width:124%;height:124%;filter:blur(48px) saturate(1.45) brightness(.7);opacity:0;transition:opacity .8s ease;pointer-events:none;
@@ -2271,7 +2316,7 @@
     g.append(spin);
     const t = document.createElementNS(NS, 'text');
     t.setAttribute('x', '12'); t.setAttribute('y', '15.7'); t.setAttribute('text-anchor', 'middle');
-    t.textContent = '10';
+    t.textContent = String(SKIP());
     s.append(g, t);
     return s;
   }
@@ -2337,7 +2382,7 @@
       spin.append(arc, head); mir.append(spin);
       const t = document.createElementNS(NS, 'text');
       t.setAttribute('x', '12'); t.setAttribute('y', '15.7'); t.setAttribute('text-anchor', 'middle');
-      t.textContent = '10';
+      t.textContent = String(SKIP());
       sv.append(mir, t);
       const el = h('div', { class: 'vsfx g ' + (dir > 0 ? 'r' : 'l'), 'aria-live': 'polite' }, h('i'), sv);
       el.lab = t;
@@ -2361,9 +2406,9 @@
     const bExt = DOWNLOAD_ONLY ? null : ib(I.open, 'In externer App öffnen');
     const bDl = ib(I.download, 'Herunterladen (z. B. mit YTDLnis)');
     bDl.hidden = !SHOW_DOWNLOAD;   // wird sichtbar, sobald eine echte Videodatei läuft
-    const bBack = h('button', { class: 'vb vskip g', 'aria-label': '10 s zurück' }, h('i', { class: 'ring' }), skipIcon(false));
+    const bBack = h('button', { class: 'vb vskip g', 'aria-label': SKIP() + ' s zurück' }, h('i', { class: 'ring' }), skipIcon(false));
     const bPlay = ib(P.pause, 'Wiedergabe', 'vplay g');
-    const bFwd = h('button', { class: 'vb vskip g', 'aria-label': '10 s vor' }, h('i', { class: 'ring' }), skipIcon(true));
+    const bFwd = h('button', { class: 'vb vskip g', 'aria-label': SKIP() + ' s vor' }, h('i', { class: 'ring' }), skipIcon(true));
     const tCur = h('span', { class: 'vtime' }, '0:00');
     const tDur = h('span', { class: 'vtime' }, '0:00');
     const bar = h('input', { type: 'range', min: '0', max: '1000', value: '0', class: 'vbar', 'aria-label': 'Position' });
@@ -2371,15 +2416,17 @@
     const bFit = chip(P.fit, 'Format', 'Bildformat');
     const bRot = chip(P.rotate, 'Drehen', 'Drehen');
     const bLock = chip(P.lock, 'Sperren', 'Bedienung sperren');
+    const bMore = ib(I.more, 'Mehr', 'vtool');   // Untertitel, Tonspur, Standbild, Einstellungen
+    const subEl = h('div', { class: 'vsub', 'aria-live': 'polite' });
     const bUnlock = ib(P.lock, 'Entsperren', 'vunlock g');
     const menu = h('div', { class: 'vmenu g', role: 'menu' });
     bQual.hidden = true;   // erscheint, sobald es Qualitätsstufen gibt
-    wrap.append(amb, vid, dimEl, gest, spin,
+    wrap.append(amb, vid, dimEl, subEl, gest, spin,
       h('div', { class: 'vchrome' },
         h('div', { class: 'vscrim' }),
         h('div', { class: 'vtop' }, bClose, title, h('div', { class: 'vcluster g ia' }, bDl, bExt, bSpeed)),
         h('div', { class: 'vmid' }, bBack, bPlay, bFwd),
-        h('div', { class: 'vbot ia' }, h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bPip, bQual, bFit, bRot)), h('div', { class: 'vrow' }, tCur, bar, tDur))),
+        h('div', { class: 'vbot ia' }, h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bPip, bQual, bFit, bRot, bMore)), h('div', { class: 'vrow' }, tCur, bar, tDur))),
       ind, side, seekBox, sfxL, sfxR, mini, menu, bUnlock);
     root.append(wrap);
     // Lupen-Glas für alle Glasflächen (Größe kommt erst nach dem Einblenden; ändert sie sich, wird neu berechnet)
@@ -2573,7 +2620,7 @@
         clearTimeout(btnFxTimer);
         btnFxTimer = setTimeout(() => {
           wrap.classList.remove('skipfx'); btn.classList.remove('go');
-          [bFwd, bBack].forEach((b) => { const x = b.querySelector('text'); if (x) { x.textContent = '10'; x.style.fontSize = ''; } });
+          [bFwd, bBack].forEach((b) => { const x = b.querySelector('text'); if (x) { x.textContent = String(SKIP()); x.style.fontSize = ''; } });
         }, 700);
         return;
       }
@@ -2736,7 +2783,7 @@
       ambOn = on;
       wrap.classList.toggle('amb', on);
       if (on) ambDraw(true);
-      if (save) { try { localStorage.setItem('evp-ambient', on ? '1' : '0'); } catch (e) {} }
+      if (save) { setSetting('ambient', on); try { localStorage.removeItem('evp-ambient'); } catch (e) {} }   // gilt für alle Seiten
     }
     const ambTimer = setInterval(() => { if (!document.hidden && !M().paused) ambDraw(false); }, 120);
     vid.addEventListener('loadeddata', () => ambDraw(true));
@@ -2814,7 +2861,8 @@
       try { vid.srcObject = null; vid.removeAttribute('src'); } catch (e) {}
       if (PLAYLIST_RE.test(u)) {
         if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-          const hls = new Hls({ enableWorker: false, startPosition: st.startTime > 1 ? st.startTime : -1 });
+          // Untertitel zeichnet der Player selbst (⋯ → Untertitel) – hls.js lädt sie nur
+          const hls = new Hls({ enableWorker: false, subtitleDisplay: false, startPosition: st.startTime > 1 ? st.startTime : -1 });
           st.hls = hls;
           hls.on(Hls.Events.ERROR, (ev, data) => { if (data && data.fatal) tryNext(); });
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -3065,9 +3113,9 @@
     on(bPlay, togglePlay);
     const btnSkip = (dir) => {
       const now = Date.now();
-      seekBy(dir * 10);
-      if (st.skipRun && st.skipRun.zone === dir && now < st.skipRun.until) st.skipRun.total += 10;
-      else st.skipRun = { zone: dir, total: 10 };
+      seekBy(dir * SKIP());
+      if (st.skipRun && st.skipRun.zone === dir && now < st.skipRun.until) st.skipRun.total += SKIP();
+      else st.skipRun = { zone: dir, total: SKIP() };
       st.skipRun.until = now + 650;
       showSkipFx(dir, st.skipRun.total);
     };
@@ -3264,14 +3312,16 @@
     if (IG) igVideoUrl(orig).then((x) => { if (x) { st.igUrl = x; st.refreshDl(); } }, () => {});
     st.refreshDl();
     // ----- Menüs: Glas-Blatt von unten -----
-    function openMenu(head, items) {
+    function openMenu(head, items, keepScroll) {
+      const old = keepScroll && menu.classList.contains('on') ? menu.querySelector('.vmlist') : null;
+      const oldTop = old ? old.scrollTop : 0;
       menu.textContent = '';
       const list = h('div', { class: 'vmlist' });
       menu.append(h('div', { class: 'vmh' }, head), list);
       items.forEach((it) => {
         const b = h('button', { class: 'vmi' + (it.cur ? ' cur' : ''), role: 'menuitemradio', 'aria-checked': it.cur ? 'true' : 'false' },
           it.label, it.sub ? h('small', null, it.sub) : null);
-        b.addEventListener('click', (e) => { stop(e); closeMenu(); it.fn(); });
+        b.addEventListener('click', (e) => { stop(e); if (!it.stay) closeMenu(); it.fn(); });
         list.append(b);
       });
       wrap.classList.add('menu');
@@ -3281,6 +3331,7 @@
         list.classList.toggle('mb', list.scrollTop + list.clientHeight < list.scrollHeight - 1);
       };
       list.addEventListener('scroll', edges, { passive: true });
+      if (oldTop) list.scrollTop = oldTop;
       requestAnimationFrame(edges);
     }
     function closeMenu() { menu.classList.remove('on'); wrap.classList.remove('menu'); scheduleHide(); }
@@ -3306,7 +3357,7 @@
         fn: () => { setAmbient(!ambOn, true); } });
       const lineOn = !wrap.classList.contains('nomini');
       items.push({ label: 'Fortschrittslinie', sub: lineOn ? 'an' : 'aus', cur: false,
-        fn: () => { wrap.classList.toggle('nomini', lineOn); try { localStorage.setItem('evp-line', lineOn ? '0' : '1'); } catch (e) {} } });
+        fn: () => { wrap.classList.toggle('nomini', lineOn); setSetting('progressLine', !lineOn); try { localStorage.removeItem('evp-line'); } catch (e) {} } });
       openMenu('Bildformat', items);
     });
 
@@ -3359,6 +3410,395 @@
       tryNext();
     }
     on(bQual, () => { const items = qualityItems(); if (items.length > 1) openMenu('Qualität', items); });
+
+    // ===== ⋯ Mehr: Untertitel, Tonspur, Standbild, Einstellungen =====
+    on(bMore, () => openMore());
+    function openMore() {
+      const items = [{ label: 'Untertitel', sub: subs.cur ? subs.cur.label : 'aus', fn: openSubs }];
+      const at = audioItems();
+      if (at.length > 1) items.push({ label: 'Tonspur', sub: (at.find((x) => x.cur) || {}).label || '', fn: () => openMenu('Tonspur', at) });
+      items.push({ label: 'Standbild speichern', sub: 'aktuelles Bild als Foto', fn: snapshot });
+      items.push({ label: 'Einstellungen', sub: 'gelten für alle Seiten', fn: () => openSettings(false) });
+      openMenu('Mehr', items);
+    }
+
+    // ----- Einstellungen (dauerhaft gespeichert, überstehen Updates) -----
+    function openSettings(keep) {
+      const yn = (b) => (b ? 'an' : 'aus');
+      const pct = (v) => (+v > 0 ? Math.round(+v * 100) + ' %' : 'aus');
+      const next = (k, list) => { const i = list.indexOf(CONFIG[k]); setSetting(k, list[(i + 1) % list.length]); };
+      const it = (label, sub, fn) => ({ label: label, sub: sub, stay: true, fn: () => { fn(); openSettings(true); } });
+      const items = [
+        it('Im Vollbild starten', yn(CONFIG.startFullscreen), () => setSetting('startFullscreen', !CONFIG.startFullscreen)),
+        it('Doppeltipp springt', SKIP() + ' s', () => {
+          next('skipSeconds', [5, 10, 15, 30]);
+          [bFwd, bBack].forEach((b) => { const x = b.querySelector('text'); if (x) x.textContent = String(SKIP()); });
+          [sfxL, sfxR].forEach((e) => { if (e.lab) e.lab.textContent = String(SKIP()); });
+          bBack.setAttribute('aria-label', SKIP() + ' s zurück'); bFwd.setAttribute('aria-label', SKIP() + ' s vor');
+        }),
+        it('Lange drücken', String(CONFIG.holdSpeed).replace('.', ',') + '× schneller', () => next('holdSpeed', [1.5, 2, 3])),
+        it('Oberer Rand gesperrt', pct(CONFIG.topGuard), () => next('topGuard', [0, 0.1, 0.15, 0.2, 0.25])),
+        it('Unterer Rand gesperrt', pct(CONFIG.bottomGuard), () => next('bottomGuard', [0, 0.1, 0.15, 0.2, 0.25])),
+        it('Weiterschauen', yn(CONFIG.resumePlayback !== false), () => setSetting('resumePlayback', CONFIG.resumePlayback === false)),
+        it('Ambient-Modus', yn(ambOn), () => setAmbient(!ambOn, true)),
+        it('Fortschrittslinie', yn(!wrap.classList.contains('nomini')), () => {
+          const on = wrap.classList.contains('nomini'); wrap.classList.toggle('nomini', !on); setSetting('progressLine', on);
+          try { localStorage.removeItem('evp-line'); } catch (e) {}
+        }),
+      ];
+      if (/Chrome\//.test(navigator.userAgent)) {
+        items.push(it('Glas', CONFIG.lensGlass !== false ? 'Wellen/Lupe' : 'Milchglas (sparsamer)', () => {
+          setSetting('lensGlass', CONFIG.lensGlass === false);
+          toast('Gilt ab dem nächsten Laden der Seite');
+        }));
+      }
+      items.push(
+        it('Helfer-App benutzen', yn(CONFIG.systemHelper !== false), () => { setSetting('systemHelper', CONFIG.systemHelper === false); toast('Gilt ab dem nächsten Öffnen des Players'); }),
+        it('Herunterladen', CONFIG.downloader === 'share' ? 'Teilen-Menü' : 'direkt mit YTDLnis', () => setSetting('downloader', CONFIG.downloader === 'share' ? 'ytdlnis' : 'share')),
+        it('Querformat-Videos drehen', CONFIG.autoRotate ? 'automatisch' : 'nur per Knopf', () => setSetting('autoRotate', !CONFIG.autoRotate)),
+        it('Alles zurücksetzen', 'Standardwerte', () => {
+          resetSettings();
+          setAmbient(CONFIG.ambient !== false, false);
+          wrap.classList.toggle('nomini', CONFIG.progressLine === false);
+          toast('Einstellungen zurückgesetzt');
+        }));
+      openMenu('Einstellungen', items, keep);
+    }
+
+    // ----- Weiterschauen: Stelle pro Video merken (Seite + Länge), höchstens 200 Videos -----
+    const RES_MIN = 180;
+    function resKey() {
+      const m = M(), d = m.duration;
+      if (!isFinite(d) || d < RES_MIN) return '';
+      return location.href.split('#')[0] + '|' + Math.round(d);
+    }
+    let resLast = 0;
+    function resSave(force) {
+      if (CONFIG.resumePlayback === false || vp !== st) return;
+      const now = Date.now();
+      if (!force && now - resLast < 10000) return;
+      const k = resKey();
+      if (!k) return;
+      resLast = now;
+      const m = M(), t = m.currentTime, d = m.duration;
+      const map = store.get('resume', {}) || {};
+      if (t < 30 || t > d - 30) { if (!map[k]) return; delete map[k]; }   // am Anfang/Ende: nichts (mehr) merken
+      else map[k] = [Math.round(t), now];
+      const keys = Object.keys(map);
+      if (keys.length > 200) keys.sort((a, b) => map[a][1] - map[b][1]).slice(0, keys.length - 200).forEach((x) => delete map[x]);
+      store.set('resume', map);
+    }
+    const resChip = h('button', { class: 'vresume g', 'aria-label': 'Weiterschauen' });
+    wrap.append(resChip);
+    let resOffered = false, resTimer = 0;
+    function resOffer() {
+      if (resOffered || CONFIG.resumePlayback === false || vp !== st) return;
+      const k = resKey();
+      if (!k) return;
+      resOffered = true;
+      const e = (store.get('resume', {}) || {})[k];
+      const m = M();
+      if (!e || e[0] < 30 || Math.abs(m.currentTime - e[0]) < 15) return;
+      resChip.textContent = '';
+      resChip.append(icon(P.play), h('span', null, 'Weiter ab ' + fmtTime(e[0])));
+      resChip.classList.add('on');
+      resChip.onclick = (ev) => {
+        stop(ev); resChip.classList.remove('on');
+        st.userSeekAt = Date.now(); st.endHold = false;
+        try { m.currentTime = e[0]; } catch (er) {}
+        if (m.paused) m.play().catch(() => {});
+        toast('Weiter ab ' + fmtTime(e[0]));
+      };
+      clearTimeout(resTimer);
+      resTimer = setTimeout(() => resChip.classList.remove('on'), 9000);
+    }
+    ['pointerdown', 'pointerup', 'click'].forEach((t) => resChip.addEventListener(t, (ev) => ev.stopPropagation()));
+
+    // ----- Benachrichtigung & Sperrbildschirm (Media Session): Titel, Play/Pause, Springen, Position -----
+    const MS = navigator.mediaSession || null;
+    const msH = (a, f) => { try { MS.setActionHandler(a, f); } catch (e) {} };
+    function msMeta() {
+      if (!MS) return;
+      try {
+        let art = '';
+        const og = document.querySelector('meta[property="og:image"],meta[name="twitter:image"]');
+        if (og && og.content) { try { art = new URL(og.content, location.href).href; } catch (e) {} }
+        const t = pageTitle() || pageHost();
+        MS.metadata = new MediaMetadata({ title: t, artist: pageTitle() ? pageHost() : '', artwork: art ? [{ src: art }] : [] });
+      } catch (e) {}
+    }
+    function msPos() {
+      if (!MS || vp !== st) return;
+      const m = M();
+      try { MS.playbackState = m.paused ? 'paused' : 'playing'; } catch (e) {}
+      if (!MS.setPositionState || !isFinite(m.duration) || m.duration <= 0) return;
+      try { MS.setPositionState({ duration: m.duration, playbackRate: m.playbackRate || 1, position: clamp(m.currentTime, 0, m.duration) }); } catch (e) {}
+    }
+    if (MS) {
+      msMeta();
+      msH('play', () => { const m = M(); st.endHold = false; m.play().catch(() => {}); });
+      msH('pause', () => M().pause());
+      msH('stop', () => M().pause());
+      msH('seekbackward', (d) => seekBy(-((d && d.seekOffset) || SKIP())));
+      msH('seekforward', (d) => seekBy((d && d.seekOffset) || SKIP()));
+      msH('previoustrack', () => seekBy(-SKIP()));
+      msH('nexttrack', () => seekBy(SKIP()));
+      msH('seekto', (d) => { if (d && isFinite(d.seekTime)) { st.userSeekAt = Date.now(); try { M().currentTime = d.seekTime; } catch (e) {} msPos(); } });
+      st.cleanup.push(() => {
+        ['play', 'pause', 'stop', 'seekbackward', 'seekforward', 'previoustrack', 'nexttrack', 'seekto'].forEach((a) => msH(a, null));
+        try { MS.metadata = null; MS.playbackState = 'none'; } catch (e) {}
+      });
+    }
+    // Ereignisse beider Videos (eigenes bzw. gespiegeltes Original)
+    const onMedia = (ev) => {
+      if (vp !== st) return;
+      if (ev.target !== M()) return;
+      if (ev.type === 'loadedmetadata' || ev.type === 'durationchange') { resOffer(); msMeta(); }
+      if (ev.type === 'pause' || ev.type === 'seeked') resSave(true);
+      else if (ev.type === 'timeupdate') { resSave(false); if (!resOffered) resOffer(); }
+      if (ev.type !== 'timeupdate') msPos();
+    };
+    const MEDIA_EV = ['play', 'pause', 'seeked', 'ratechange', 'loadedmetadata', 'durationchange', 'timeupdate'];
+    MEDIA_EV.forEach((t) => { vid.addEventListener(t, onMedia); orig.addEventListener(t, onMedia); });
+    st.beforeClose = () => resSave(true);
+    st.cleanup.push(() => {
+      MEDIA_EV.forEach((t) => { vid.removeEventListener(t, onMedia); orig.removeEventListener(t, onMedia); });
+      clearTimeout(resTimer);
+    });
+
+    // ----- Untertitel: von der Seite (<track>), aus dem Stream (HLS) oder eigene Datei (.srt/.vtt) -----
+    // Eigene Anzeige (gleich in allen Browsern, Größe/Höhe einstellbar), Text immer nur als Text (kein HTML der Seite).
+    const subs = { cur: null, cues: null, tt: null, last: '', timer: 0, offset: 0, file: null };
+    function parseSubs(txt) {
+      const out = [];
+      const ts = (x) => {
+        const m = /(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})/.exec(x);
+        return m ? (+m[1] || 0) * 3600 + +m[2] * 60 + +m[3] + +(m[4] + '00').slice(0, 3) / 1000 : NaN;
+      };
+      const ent = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+      String(txt || '').replace(/^﻿/, '').replace(/\r/g, '').split(/\n[ \t]*\n/).forEach((b) => {
+        const lines = b.split('\n');
+        const i = lines.findIndex((l) => l.indexOf('-->') >= 0);
+        if (i < 0) return;
+        const pr = lines[i].split('-->');
+        const a = ts(pr[0]), z = ts(pr[1] || '');
+        if (!(z > a)) return;
+        const text = lines.slice(i + 1).join('\n').replace(/<[^>]*>/g, '').replace(/\{\\[^}]*\}/g, '')
+          .replace(/&(amp|lt|gt|quot|apos|nbsp);/g, (_, k) => ent[k]).trim();
+        if (text) out.push([a, z, text]);
+      });
+      return out.sort((x, y) => x[0] - y[0]);
+    }
+    function cueAt(t) {
+      const c = subs.cues;
+      if (!c || !c.length) return '';
+      let lo = 0, hi = c.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (c[mid][0] <= t) lo = mid + 1; else hi = mid; }
+      const on = [];
+      for (let i = lo - 1; i >= 0 && i >= lo - 8; i--) if (c[i][1] > t) on.unshift(c[i][2]);
+      return on.join('\n');
+    }
+    function subText() {
+      const t = M().currentTime + subs.offset;
+      if (subs.cues) return cueAt(t);
+      const tt = subs.tt;
+      if (!tt || !tt.cues) return '';
+      const on = [];
+      for (let i = 0; i < tt.cues.length; i++) { const c = tt.cues[i]; if (c.startTime <= t && c.endTime > t) on.push(String(c.text || '')); }
+      return on.join('\n').replace(/<[^>]*>/g, '');
+    }
+    function subTick() {
+      if (vp !== st || !subs.cur) return;
+      if (subs.tt && subs.tt.mode !== 'hidden') { try { subs.tt.mode = 'hidden'; } catch (e) {} }   // nicht doppelt (Browser + wir)
+      const x = subText();
+      if (x === subs.last) return;
+      subs.last = x;
+      subEl.textContent = '';
+      if (x) subEl.append(h('span', null, x));
+    }
+    function subLayout() {
+      subEl.dataset.size = CONFIG.subSize || 'm';
+      subEl.classList.toggle('hi', !!CONFIG.subHigh);
+    }
+    subLayout();
+    function subStop(keepHls) {
+      clearInterval(subs.timer); subs.timer = 0;
+      if (subs.cur && subs.cur.kind === 'hls') {
+        try { if (st.hls && keepHls !== true) { st.hls.subtitleTrack = -1; st.hls.subtitleDisplay = false; } } catch (e) {}
+        if (subs.tt) { try { subs.tt.mode = 'disabled'; } catch (e) {} }
+      } else if (subs.tt && subs.ttWas != null) { try { subs.tt.mode = subs.ttWas; } catch (e) {} }
+      subs.cur = null; subs.cues = null; subs.tt = null; subs.ttWas = null; subs.last = '';
+      subEl.textContent = '';
+    }
+    st.cleanup.push(() => subStop());
+    function subStart(src, cues, tt) {
+      subStop(src.kind === 'hls');   // neue Stream-Spur ist schon gewählt – nicht wieder abschalten
+      subs.cur = src; subs.cues = cues || null;
+      if (tt) { subs.tt = tt; subs.ttWas = tt.mode; try { tt.mode = 'hidden'; } catch (e) {} }
+      subs.timer = setInterval(subTick, 150);
+      subTick();
+    }
+    function gmText(u) {
+      return new Promise((res) => {
+        const x = /^(data|blob):/i.test(u) ? null : gmXhr();
+        if (!x) { fetch(u, { credentials: 'include' }).then((r) => (r.ok ? r.text() : ''), () => '').then(res, () => res('')); return; }
+        try {
+          x({ method: 'GET', url: u, timeout: 20000, headers: { Referer: location.href },
+            onload: (r) => res(r.status >= 200 && r.status < 300 ? String(r.responseText || '') : ''),
+            onerror: () => res(''), ontimeout: () => res(''), onabort: () => res('') });
+        } catch (e) { res(''); }
+      });
+    }
+    function subSources() {
+      const out = [];
+      const seen = new Set();
+      [orig, vid].forEach((v) => {
+        v.querySelectorAll('track[src]').forEach((t) => {
+          const k = (t.getAttribute('kind') || 'subtitles').toLowerCase();
+          if (k !== 'subtitles' && k !== 'captions') return;
+          let u = ''; try { u = new URL(t.getAttribute('src'), location.href).href; } catch (e) { return; }
+          if (/^data:/i.test(u) && u.length < 60) return;   // leerer Platzhalter (legt z. B. hls.js an)
+          if (seen.has(u)) return; seen.add(u);
+          out.push({ label: t.label || (t.srclang || '').toUpperCase() || 'Untertitel', kind: 'url', src: u });
+        });
+      });
+      if (st.hls && st.hls.subtitleTracks && st.hls.subtitleTracks.length) {
+        st.hls.subtitleTracks.forEach((t, i) => {
+          const label = t.name || (t.lang || '').toUpperCase() || 'Spur ' + (i + 1);
+          if (out.some((x) => x.kind === 'hls' && x.label === label && x.lang === t.lang)) return;   // hls.js listet manche doppelt
+          out.push({ label: label, kind: 'hls', idx: i, lang: t.lang });
+        });
+      }
+      // schon geladene Spuren des Originals (z. B. vom Player der Seite eingebunden)
+      if (!out.length) {
+        const tl = orig.textTracks || [];
+        for (let i = 0; i < tl.length; i++) {
+          const t = tl[i];
+          if (t.kind === 'subtitles' || t.kind === 'captions') out.push({ label: t.label || (t.language || '').toUpperCase() || 'Spur ' + (i + 1), kind: 'tt', tt: t });
+        }
+      }
+      if (subs.file) out.push(subs.file);
+      return out;
+    }
+    function subPick(src) {
+      if (src.kind === 'url') {
+        toast('Untertitel werden geladen …');
+        gmText(src.src).then((txt) => {
+          if (vp !== st) return;
+          const c = parseSubs(txt);
+          if (!c.length) { toast('Diese Untertitel lassen sich nicht laden'); return; }
+          subStart(src, c); toast('Untertitel: ' + src.label);
+        });
+      } else if (src.kind === 'file') {
+        subStart(src, src.cues); toast('Untertitel: ' + src.label);
+      } else if (src.kind === 'tt') {
+        subStart(src, null, src.tt);
+      } else if (src.kind === 'hls' && st.hls) {
+        // hls.js liefert die Zeilen nur an eine eingeschaltete Spur – sie bleibt für den Browser unsichtbar (wir zeichnen)
+        try { st.hls.subtitleDisplay = true; st.hls.subtitleTrack = src.idx; } catch (e) {}
+        // hls.js legt die Spur als Textspur am Video an – die wird unsichtbar geschaltet und von uns gezeichnet
+        let n = 0;
+        const find = () => {
+          if (vp !== st) return;
+          const tl = vid.textTracks || [];
+          let t = null;
+          for (let i = 0; i < tl.length; i++) if (tl[i].label === src.label || (src.lang && tl[i].language === src.lang)) t = tl[i];
+          if (t) { subStart(src, null, t); toast('Untertitel: ' + src.label); }
+          else if (++n < 20) setTimeout(find, 250);
+          else toast('Diese Untertitel lassen sich nicht laden');
+        };
+        find();
+      }
+    }
+    function subFile() {
+      const inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = '.srt,.vtt,.txt,text/vtt,application/x-subrip';
+      inp.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+      inp.addEventListener('change', () => {
+        const f = inp.files && inp.files[0];
+        inp.remove();
+        if (!f) return;
+        const rd = new FileReader();
+        rd.onload = () => {
+          const c = parseSubs(rd.result);
+          if (!c.length) { toast('Keine Untertitel in dieser Datei gefunden'); return; }
+          subs.file = { label: f.name.replace(/\.(srt|vtt|txt)$/i, '').slice(0, 40), kind: 'file', cues: c };
+          subPick(subs.file);
+        };
+        rd.readAsText(f);
+      });
+      wrap.append(inp);
+      inp.click();
+    }
+    function openSubs(keep) {
+      const fmtOff = (o) => (o > 0 ? '+' : '') + o.toFixed(1).replace('.', ',') + ' s';
+      const items = [{ label: 'Aus', cur: !subs.cur, fn: () => subStop() }];
+      subSources().forEach((src) => items.push({ label: src.label, sub: src.kind === 'file' ? 'eigene Datei' : '', cur: !!subs.cur && subs.cur.label === src.label && subs.cur.kind === src.kind, fn: () => subPick(src) }));
+      items.push({ label: 'Datei laden …', sub: '.srt oder .vtt vom Handy', fn: subFile });
+      const it = (label, sub, fn) => ({ label: label, sub: sub, stay: true, fn: () => { fn(); openSubs(true); } });
+      const SIZES = { s: 'klein', m: 'mittel', l: 'groß' };
+      items.push(
+        it('Größe', SIZES[CONFIG.subSize] || 'mittel', () => { setSetting('subSize', { s: 'm', m: 'l', l: 's' }[CONFIG.subSize] || 'l'); subLayout(); }),
+        it('Höhe', CONFIG.subHigh ? 'höher' : 'unten', () => { setSetting('subHigh', !CONFIG.subHigh); subLayout(); }));
+      if (subs.cur) {
+        items.push(
+          it('Früher zeigen', 'Verschiebung ' + fmtOff(subs.offset), () => { subs.offset = Math.round((subs.offset + 0.5) * 10) / 10; subs.last = '\u0000'; subTick(); }),
+          it('Später zeigen', 'Verschiebung ' + fmtOff(subs.offset), () => { subs.offset = Math.round((subs.offset - 0.5) * 10) / 10; subs.last = '\u0000'; subTick(); }));
+      }
+      openMenu('Untertitel', items, keep === true);
+    }
+
+    // ----- Tonspur (Sprache) bei Streams mit mehreren Tonspuren -----
+    function audioItems() {
+      const items = [];
+      const hls = st.hls;
+      if (st.mode === 'own' && hls && hls.audioTracks && hls.audioTracks.length > 1) {
+        hls.audioTracks.forEach((t, i) => items.push({ label: t.name || (t.lang || '').toUpperCase() || 'Spur ' + (i + 1), sub: t.lang && t.name ? t.lang.toUpperCase() : '',
+          cur: hls.audioTrack === i, fn: () => { try { hls.audioTrack = i; } catch (e) {} toast('Tonspur: ' + (t.name || t.lang || i + 1)); } }));
+      } else {
+        const at = M().audioTracks;   // nur wo der Browser das kann
+        if (at && at.length > 1) {
+          for (let i = 0; i < at.length; i++) {
+            const t = at[i];
+            items.push({ label: t.label || (t.language || '').toUpperCase() || 'Spur ' + (i + 1), cur: !!t.enabled,
+              fn: () => { for (let j = 0; j < at.length; j++) at[j].enabled = j === i; } });
+          }
+        }
+      }
+      return items;
+    }
+
+    // ----- Standbild speichern -----
+    function snapshot() {
+      const v = vid;
+      if (!v.videoWidth || v.readyState < 2) { toast('Noch kein Bild da'); return; }
+      const c = document.createElement('canvas');
+      c.width = v.videoWidth; c.height = v.videoHeight;
+      const g2 = c.getContext('2d');
+      try { g2.drawImage(v, 0, 0); } catch (e) { toast('Diese Seite erlaubt kein Standbild'); return; }
+      // gesperrt (fremder Server ohne Freigabe) oder leer (Firefox auf dem Handy)?
+      try {
+        const t = document.createElement('canvas'); t.width = 8; t.height = 8;
+        const tx = t.getContext('2d'); tx.drawImage(c, 0, 0, 8, 8);
+        const d = tx.getImageData(0, 0, 8, 8).data;
+        let any = false; for (let i = 3; i < d.length; i += 4) if (d[i]) { any = true; break; }
+        if (!any) { toast(FF_MOBILE ? 'In Firefox auf dem Handy leider nicht möglich' : 'Kein Bild bekommen'); return; }
+      } catch (e) { toast('Diese Seite erlaubt kein Standbild (Videoserver sperrt es)'); return; }
+      const name = ((pageTitle() || pageHost()).replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 60) || 'Video') + ' ' + fmtTime(M().currentTime).replace(/:/g, '-') + '.jpg';
+      const go = (href, rev) => {
+        const a = document.createElement('a');
+        a.href = href; a.download = name; a.style.display = 'none';
+        wrap.append(a); a.click(); a.remove();
+        if (rev) setTimeout(() => URL.revokeObjectURL(href), 30000);
+        wrap.classList.remove('flash'); void wrap.offsetWidth; wrap.classList.add('flash');
+        setTimeout(() => wrap.classList.remove('flash'), 400);
+        toast('Standbild gespeichert (Downloads)');
+      };
+      try {
+        if (GECKO) { go(c.toDataURL('image/jpeg', 0.92), false); return; }   // Firefox lädt Blob-Adressen des Skripts nicht
+        c.toBlob((b) => { if (b) go(URL.createObjectURL(b), true); else toast('Kein Bild bekommen'); }, 'image/jpeg', 0.92);
+      } catch (e) { toast('Diese Seite erlaubt kein Standbild'); }
+    }
     // Drehen: ins Querformat (dafür echter Vollbildmodus) – nochmal tippen: zurück ins Hochformat
     on(bRot, () => {
       st.selfTurnAt = Date.now();   // merken: diese Drehung kam von dir (nicht von der Zurück-Taste)
@@ -3771,8 +4211,8 @@
       // Serie: nach einem Doppeltipp zählt jeder weitere schnelle Tipp auf derselben Seite 10 s dazu
       if (zone && st.skipRun && st.skipRun.zone === zone && now < st.skipRun.until) {
         clearTimeout(tapTimer);
-        seekBy(zone * 10);
-        st.skipRun.total += 10; st.skipRun.until = now + 650;
+        seekBy(zone * SKIP());
+        st.skipRun.total += SKIP(); st.skipRun.until = now + 650;
         showSkipFx(zone, st.skipRun.total);
         return;
       }
@@ -3780,9 +4220,9 @@
         clearTimeout(tapTimer);
         lastTapT = 0;
         if (zone) {
-          seekBy(zone * 10);
-          st.skipRun = { zone: zone, total: 10, until: now + 650 };
-          showSkipFx(zone, 10);
+          seekBy(zone * SKIP());
+          st.skipRun = { zone: zone, total: SKIP(), until: now + 650 };
+          showSkipFx(zone, SKIP());
         }
         else tapZoom(cur.x, cur.y) || togglePlay();
         return;
@@ -3998,6 +4438,7 @@
   function closePlayer() {
     const st = vp;
     if (!st) return;
+    try { if (st.beforeClose) st.beforeClose(); } catch (e) {}   // z. B. Stelle fürs Weiterschauen merken (vor dem Abbau)
     vp = null;
     // Kleines Fenster (Bild-in-Bild) gleich mitschließen – sonst bliebe es pausiert und tot stehen
     try {
@@ -4337,7 +4778,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 14.0',
+      'Video-Assistent 14.1',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
