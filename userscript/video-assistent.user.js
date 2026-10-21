@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      14.5
+// @version      14.6
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -1655,7 +1655,9 @@
   // Zu jeder Glasfläche (Größe + Rundung) eine Verschiebungskarte: am Rand wird das Bild dahinter nach innen
   // gebogen (wie dickes Glas), in der Mitte leicht vergrößert (Lupe). Läuft als SVG-Filter im Hintergrund-Filter
   // (backdrop-filter) – das kann nur Chrome/Chromium; sonst bleibt es beim Milchglas.
-  const LENS_OK = CONFIG.lensGlass !== false && /Chrome\//.test(navigator.userAgent) &&
+  // LENS_CAN = der Browser kann es (Chrome); ob es an ist, entscheidet die Einstellung – auch sofort umschaltbar
+  const lensOn = () => LENS_CAN && CONFIG.lensGlass !== false;
+  const LENS_CAN = /Chrome\//.test(navigator.userAgent) &&
     (() => { try { return window.CSS.supports('backdrop-filter', 'url(#a) blur(1px)'); } catch (e) { return false; } })();   // ("CSS" ist hier unser Stil-Text)
   const lensCache = new Map(), lensPre = 'l' + Math.random().toString(36).slice(2, 8);
   let lensSvg = null, lensDefs = null;
@@ -1733,7 +1735,7 @@
     return id;
   }
   function applyLens(el) {
-    if (!LENS_OK || !el || !el.isConnected) return;
+    if (!lensOn() || !el || !el.isConnected) return;
     const w = Math.round(el.offsetWidth), h = Math.round(el.offsetHeight);
     if (w < 16 || h < 16 || w * h > 420000) { el.style.removeProperty('--lens'); el.style.removeProperty('--gb'); return; }
     let r = 0;
@@ -1755,9 +1757,18 @@
       setTimeout(again, 900);
     }
   }
-  const lensRO = LENS_OK && window.ResizeObserver ? new ResizeObserver((es) => es.forEach((e) => applyLens(e.target))) : null;
+  const lensRO = LENS_CAN && window.ResizeObserver ? new ResizeObserver((es) => es.forEach((e) => applyLens(e.target))) : null;
+  // Glas sofort umschalten: Wellen/Lupe ↔ Milchglas (ohne --lens greift der normale Weichzeichner)
+  function setLens(on) {
+    setSetting('lensGlass', !!on);
+    const all = root ? Array.from(root.querySelectorAll('.g')) : [];
+    all.forEach((el) => {
+      if (on) lensWatch(el);
+      else { el.style.removeProperty('--lens'); el.style.removeProperty('--gb'); if (lensRO) lensRO.unobserve(el); }
+    });
+  }
   function lensWatch(el) {
-    if (!LENS_OK || !el) return;
+    if (!lensOn() || !el) return;
     // Play, ±10 und das Menü bleiben wie in 12.7 (ohne Lupe) – so gewünscht
     if (el.classList && (el.classList.contains('vplay') || el.classList.contains('vskip') || el.classList.contains('vmenu'))) return;
     applyLens(el);
@@ -3445,10 +3456,7 @@
         }),
       ];
       if (/Chrome\//.test(navigator.userAgent)) {
-        items.push(it('Glas', CONFIG.lensGlass !== false ? 'Wellen/Lupe' : 'Milchglas (sparsamer)', () => {
-          setSetting('lensGlass', CONFIG.lensGlass === false);
-          toast('Gilt ab dem nächsten Laden der Seite');
-        }));
+        items.push(it('Glas', CONFIG.lensGlass !== false ? 'Wellen/Lupe' : 'Milchglas (sparsamer)', () => setLens(CONFIG.lensGlass === false)));
       }
       items.push(
         it('Helfer-App benutzen', yn(CONFIG.systemHelper !== false), () => { setSetting('systemHelper', CONFIG.systemHelper === false); toast('Gilt ab dem nächsten Öffnen des Players'); }),
@@ -4944,7 +4952,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 14.5',
+      'Video-Assistent 14.6',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

@@ -101,6 +101,13 @@ with sync_playwright() as p:
     # ---------- Einstellungen (dauerhaft) ----------
     more(pg); pick(pg, 'Einstellungen'); m = items(pg)
     check('Einstellungen: Doppeltipp 10 s, Rand oben/unten 15 %', ['Doppeltipp springt', '10 s', False] in m and ['Oberer Rand gesperrt', '15 %', False] in m and ['Unterer Rand gesperrt', '15 %', False] in m, m)
+    glas = [x for x in m if x[0] == 'Glas']
+    if glas:   # nur Chrome kann Wellen-Glas
+        bf = lambda: pg.evaluate('() => { const e = %s.querySelector("button[aria-label=Schließen]"); return [e.style.getPropertyValue("--lens"), getComputedStyle(e).backdropFilter]; }' % R)
+        g0 = bf(); pick(pg, 'Glas'); time.sleep(0.3); g1 = bf()
+        check('Glas → Milchglas wirkt sofort (Wellen-Filter weg, Weichzeichner stark)', g0[0].startswith('url(') and g1[0] == '' and 'url(' not in g1[1] and 'blur(12px)' in g1[1], [g0, g1])
+        pick(pg, 'Glas'); time.sleep(0.3); g2 = bf()
+        check('Glas → Wellen wirkt sofort wieder', g2[0].startswith('url('), g2)
     pick(pg, 'Doppeltipp springt')
     lab = pg.evaluate('() => [%s.querySelector(".vskip:last-of-type").getAttribute("aria-label"), %s.querySelector("button[aria-label=\'15 s vor\'] text").textContent]' % (R, R))
     check('auf 15 s: Knöpfe zeigen 15', lab[1] == '15', lab)
