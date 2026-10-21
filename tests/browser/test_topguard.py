@@ -33,8 +33,6 @@ with sync_playwright() as p:
         # unten (Home-Wischgeste): Hochwischen vom unteren Rand ändert nichts – knapp darüber schon
         v0 = vol(); swipe(W - 70, H - 15, H - 15 - 140)
         check('%dx%d: unten (%d px) hochwischen – Lautstärke bleibt' % (W, H, zone), abs(vol() - v0) < 0.001, [v0, vol()])
-        # Gegenprobe: Firefox' Maus-Nachbildung verschluckt hier das nächste „Drücken“ – ein Tipp vorweg fängt es auf
-        page.mouse.move(W / 2, H / 2); page.mouse.down(); page.mouse.up(); time.sleep(0.8)
         v0 = vol(); swipe(W - 70, H - zone - 30, H - zone - 130)
         check('%dx%d: knapp darüber – Lautstärke ändert sich' % (W, H), vol() > v0 + 0.05, [v0, vol()])
         swipe(70, zone + 20, zone + 120)                      # etwas abdunkeln …

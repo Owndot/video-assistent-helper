@@ -16,6 +16,8 @@ if os.environ.get('BROWSER', '').lower() == 'firefox' and not getattr(_pw, '_evp
         'full-screen-api.transition-duration.enter': '0 0',
         'full-screen-api.transition-duration.leave': '0 0',
         'dom.user_activation.transient.timeout': 5.0,
+        # Desktop-Firefox legt einen eigenen Bild-im-Bild-Knopf über Videos, der Klicks rechts abfängt (gibt's auf Android nicht)
+        'media.videocontrols.picture-in-picture.video-toggle.enabled': False,
     }
 
     HOSTS = 'top.test,mid.test,cdn.test'
