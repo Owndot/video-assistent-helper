@@ -100,16 +100,16 @@ public class HelferService extends Service {
     // ---------- Benachrichtigung (Android verlangt sie für Dienste im Hintergrund) ----------
     private void startInForeground() {
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        NotificationChannel ch = new NotificationChannel(CHANNEL, "Helfer bereit", NotificationManager.IMPORTANCE_MIN);
+        NotificationChannel ch = new NotificationChannel(CHANNEL, Tr.t("Helper bereit", "Helper ready"), NotificationManager.IMPORTANCE_MIN);
         ch.setShowBadge(false);
-        ch.setDescription("Zeigt an, dass der Helfer für den Videoplayer bereit ist");
+        ch.setDescription(Tr.t("Zeigt an, dass der Helper für den Videoplayer bereit ist", "Shows that the helper is ready for the video player"));
         nm.createNotificationChannel(ch);
         PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification n = new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat)
-                .setContentTitle("Video-Assistent Helfer")
-                .setContentText("Bereit für Helligkeit und Lautstärke")
+                .setContentTitle(getString(R.string.app_name))
+                .setContentText(Tr.t("Bereit für Helligkeit und Lautstärke", "Ready for brightness and volume"))
                 .setContentIntent(open)
                 .setOngoing(true)
                 .setShowWhen(false)
@@ -120,10 +120,11 @@ public class HelferService extends Service {
 
     // ---------- lokaler Mini-Server ----------
     private void startServer() {
-        // Schlüssel: eigener Zufallsschlüssel dieser App. Der alte feste Schlüssel gilt nur, bis ein Skript gekoppelt ist.
+        // Schlüssel: nur der eigene Zufallsschlüssel dieser App (128 Bit). Den alten festen "evp-1" konnte jeder kennen –
+        // er gilt nicht mehr, auch nicht vor dem Koppeln.
         server = new MiniServer(PORT, (k) -> {
             if (k.equals(Keys.key(this))) { Keys.markPaired(this); return true; }
-            return KEY.equals(k) && !Keys.paired(this);
+            return false;
         }, new MiniServer.Handler() {
             @Override public String get(String path, Map<String, String> p) { return route(path, p); }
             @Override public String push(Map<String, String> p, byte[] body) { return MiniServer.push(Downloads.proxies, p, body); }

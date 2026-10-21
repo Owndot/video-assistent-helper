@@ -52,7 +52,7 @@ public class Downloads {
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm.getNotificationChannel(CHANNEL) != null) return;
         NotificationChannel ch = new NotificationChannel(CHANNEL, "Downloads", NotificationManager.IMPORTANCE_LOW);
-        ch.setDescription("Fortschritt beim Herunterladen von Videos");
+        ch.setDescription(Tr.t("Fortschritt beim Herunterladen von Videos", "Progress of video downloads"));
         nm.createNotificationChannel(ch);
     }
 
@@ -147,8 +147,8 @@ public class Downloads {
         final long[] lastShown = {0};
         String shortTitle = title == null || title.isEmpty() ? "Video" : (title.length() > 60 ? title.substring(0, 60) + "…" : title);
         try {
-            if (!work.exists() && !work.mkdirs()) throw new Exception("Kein Arbeitsordner");
-            progressNote(c, nm, id, shortTitle, 0, 0, net instanceof Fetcher.Proxy ? "Lädt über den Browser – Seite offen lassen" : "Wird vorbereitet …");
+            if (!work.exists() && !work.mkdirs()) throw new Exception(Tr.t("Kein Arbeitsordner", "No working folder"));
+            progressNote(c, nm, id, shortTitle, 0, 0, net instanceof Fetcher.Proxy ? Tr.t("Lädt über den Browser – Seite offen lassen", "Loading via the browser – keep the page open") : Tr.t("Wird vorbereitet …", "Preparing …"));
             HlsCore.Listener l = new HlsCore.Listener() {
                 @Override public void progress(int done, int total) {
                     long now = System.currentTimeMillis();
@@ -168,7 +168,7 @@ public class Downloads {
                 return;
             }
             HlsCore.Result r = "dash".equals(kind) ? new DashCore(net, work, 4).run(url, l) : new HlsCore(net, work, 4).run(url, l);
-            progressNote(c, nm, id, shortTitle, 0, 0, "Wird zu MP4 zusammengesetzt …");
+            progressNote(c, nm, id, shortTitle, 0, 0, Tr.t("Wird zu MP4 zusammengesetzt …", "Joining into MP4 …"));
             state.put(id, "zusammensetzen");
             File mp4 = new File(work, "fertig.mp4");
             File out;
@@ -205,12 +205,12 @@ public class Downloads {
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setShowWhen(false)
-                .addAction(new Notification.Action.Builder(null, "Abbrechen", stop).build());
+                .addAction(new Notification.Action.Builder(null, Tr.t("Abbrechen", "Cancel"), stop).build());
         if (total > 0) {
             int pct = (int) (100L * done / total);
-            b.setProgress(total, done, false).setContentText(pct + " % · " + done + " von " + total + " Teilen");
+            b.setProgress(total, done, false).setContentText(pct + " % · " + done + Tr.t(" von ", " of ") + total + Tr.t(" Teilen", " parts"));
         } else {
-            b.setProgress(0, 0, true).setContentText(text != null ? text : "Lädt …");
+            b.setProgress(0, 0, true).setContentText(text != null ? text : Tr.t("Lädt …", "Loading …"));
         }
         nm.notify(id, b.build());
     }
@@ -220,14 +220,14 @@ public class Downloads {
                 .setContentTitle(title)
                 .setAutoCancel(true);
         if (file != null) {
-            b.setSmallIcon(android.R.drawable.stat_sys_download_done).setContentText("Gespeichert in Download/" + FOLDER);
+            b.setSmallIcon(android.R.drawable.stat_sys_download_done).setContentText(Tr.t("Gespeichert in Download/", "Saved in Download/") + FOLDER);
             if (!"content".equals(file.getScheme())) { nm.notify(id, b.build()); return; }   // Android 8/9: nur Hinweis
             Intent open = new Intent(Intent.ACTION_VIEW).setDataAndType(file, mime)
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
             b.setContentIntent(PendingIntent.getActivity(c, id, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
         } else {
-            b.setSmallIcon(android.R.drawable.stat_notify_error).setContentText("Download fehlgeschlagen: " + error)
-                    .setStyle(new Notification.BigTextStyle().bigText("Download fehlgeschlagen: " + error));
+            b.setSmallIcon(android.R.drawable.stat_notify_error).setContentText(Tr.t("Download fehlgeschlagen: ", "Download failed: ") + error)
+                    .setStyle(new Notification.BigTextStyle().bigText(Tr.t("Download fehlgeschlagen: ", "Download failed: ") + error));
         }
         nm.notify(id, b.build());
     }
@@ -307,9 +307,9 @@ public class Downloads {
             cv.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/" + FOLDER);
             cv.put(MediaStore.Downloads.IS_PENDING, 1);
             Uri uri = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
-            if (uri == null) throw new Exception("Speichern nicht möglich");
+            if (uri == null) throw new Exception(Tr.t("Speichern nicht möglich", "Saving not possible"));
             try (InputStream in = new FileInputStream(f); OutputStream o = cr.openOutputStream(uri)) {
-                if (o == null) throw new Exception("Speichern nicht möglich");
+                if (o == null) throw new Exception(Tr.t("Speichern nicht möglich", "Saving not possible"));
                 copy(in, o);
             }
             cv.clear();

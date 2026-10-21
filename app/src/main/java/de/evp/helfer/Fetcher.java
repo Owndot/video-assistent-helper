@@ -99,7 +99,7 @@ public interface Fetcher {
                 }
                 try { Thread.sleep(600L * (attempt + 1)); } catch (InterruptedException ie) { throw new IOException("abgebrochen"); }
             }
-            throw last != null ? last : new IOException("Download fehlgeschlagen");
+            throw last != null ? last : new IOException(Tr.t("Download fehlgeschlagen", "Download failed"));
         }
 
         @Override
@@ -207,7 +207,7 @@ public interface Fetcher {
                     // warten, bis das Skript liefert; ist die Seite zu (kein Abholen mehr), aufgeben
                     while (!r.done.await(2, TimeUnit.SECONDS)) {
                         if (closed) throw new IOException("abgebrochen");
-                        if (System.currentTimeMillis() - lastPull > 45000) throw new IOException("Seite geschlossen – Download über den Browser braucht die offene Seite");
+                        if (System.currentTimeMillis() - lastPull > 45000) throw new IOException(Tr.t("Seite geschlossen – Download über den Browser braucht die offene Seite", "Page closed – downloading via the browser needs the page to stay open"));
                     }
                 } catch (InterruptedException e) {
                     throw new IOException("abgebrochen");

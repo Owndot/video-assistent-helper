@@ -129,6 +129,8 @@ Benachrichtigungen) – das prüft nur das Handy.
 
 ## 6. Stolperfallen (schon gelöst – nicht wieder einbauen)
 
+- App-Texte: `Tr.t("deutsch", "english")` (nach Sprache des Handys), App-Name in `res/values*/strings.xml`.
+  Die Zustände von `/dlstate` (`fertig`, `läuft`, `Fehler: …`) sind Schnittstelle zum Skript – nicht übersetzen.
 - Sprache: alle sichtbaren Texte bleiben im Code deutsch und laufen durch `tr()` (in `h()`, `toast()`, `showInd()`,
   Menüs). Neue Texte → Eintrag in `EN` (oder Muster in `EN_RX`). Tests laufen mit `locale de-DE` (pwshim.py).
 
@@ -228,3 +230,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 16.0 | Neue Aufteilung: ⋮ Mehr oben rechts, CC-Knopf unten, Bildformat wechselt je Tippen (Original/Füllen/Strecken), kurze Einstellungen inkl. Ambient/Fortschrittslinie; Deutsch/Englisch (`language`, `tr()`); Hinweise an einer Stelle (`notePos`); Zeitleiste: Hochwischen spult nicht |
 | 16.1 | Wie Samsung: Zeitleiste über der Knopfreihe (Knöpfe zwischen Leiste und Android-Geste), größerer Kreis; Hochwisch-Schutz mild (ab 10 px seitlich nie Abbruch, sonst erst 40 px hoch oder `pointercancel`) |
 | 16.2 | Spul-Vorschau: Wächter gegen hängende Sprünge (kein `seeked` bei Streams → nach 1,2 s neu fragen, Vorschau bleibt nicht stehen) |
+| 16.3 | Hinweise unter dem Bild (mit Abstand, sonst über der Leiste/dem Menü/den Untertiteln) im Glas der Knöpfe; Wischsperre oben/unten in Worten mit Erklärung; Teilen-Knopf (Beitragslink, im eingebetteten Fenster der Link der Hauptseite); „Helper“ statt „Helfer“. App: Deutsch/Englisch (`Tr`), nur noch eigener Schlüssel, Host-Prüfung gegen DNS-Rebinding |

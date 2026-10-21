@@ -34,9 +34,11 @@ SHIM = r"""(() => {
     send().catch(() => o.onerror && o.onerror({}));
   };
 })();"""
-def helper_get(path, key):
+def helper_get(path, key, host=None):
     import urllib.request, urllib.error
-    q = urllib.request.Request('http://127.0.0.1:47811' + path, headers={'X-EVP-Key': key})
+    hd = {'X-EVP-Key': key}
+    if host: hd['Host'] = host
+    q = urllib.request.Request('http://127.0.0.1:47811' + path, headers=hd)
     try: return urllib.request.urlopen(q, timeout=5).status
     except urllib.error.HTTPError as e: return e.code
 def hlog():
@@ -65,6 +67,8 @@ try:
         check('… Schlüssel aus der Adresse entfernt', '#' not in txt[1], txt[1])
         check('Nach dem Koppeln: alter Schlüssel abgelehnt', helper_get('/ping', 'evp-1') == 403)
         check('… neuer Schlüssel gilt', helper_get('/ping', KEY) == 200)
+        # DNS-Rebinding: eine Webseite, deren Name auf 127.0.0.1 zeigt, kommt nicht durch (auch nicht mit Schlüssel)
+        check('Fremder Host-Name wird abgelehnt', helper_get('/ping', KEY, 'evil.example:47811') == 403 and helper_get('/ping', KEY, 'localhost:47811') == 200)
         ctx.close()
         # Player mit gespeichertem Schlüssel: Helfer antwortet, Laden über den Browser schickt Cookies nur an die eigene Seite
         open(H + '/gm_log.txt', 'w').close()

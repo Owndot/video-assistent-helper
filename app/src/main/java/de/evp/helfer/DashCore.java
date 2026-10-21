@@ -154,7 +154,7 @@ public class DashCore {
                 s.init = true;
                 m.init = s;
             }
-            if (media == null) throw new IOException("DASH: keine Teil-Adressen");
+            if (media == null) throw new IOException(Tr.t("DASH: keine Teil-Adressen", "DASH: no segment addresses"));
             Element timeline = null;
             for (Element t : new Element[]{tRep, tAs, tPer}) if (timeline == null && t != null) timeline = kid(t, "SegmentTimeline");
             long number = startNumber;
@@ -176,9 +176,9 @@ public class DashCore {
                 }
             } else if (durA != null) {
                 double segDur = Double.parseDouble(durA) / timescale;
-                if (periodDur <= 0 || segDur <= 0) throw new IOException("DASH: Länge unbekannt");
+                if (periodDur <= 0 || segDur <= 0) throw new IOException(Tr.t("DASH: Länge unbekannt", "DASH: length unknown"));
                 long count = (long) Math.ceil(periodDur / segDur - 1e-6);
-                if (count > 50000) throw new IOException("DASH: zu viele Teile");
+                if (count > 50000) throw new IOException(Tr.t("DASH: zu viele Teile", "DASH: too many segments"));
                 for (long k = 0; k < count; k++) {
                     HlsCore.Seg g = new HlsCore.Seg();
                     g.url = HlsCore.resolve(baseUrl, fill(media, repId, bw, startNumber + k, (long) (k * Double.parseDouble(durA))));
@@ -212,7 +212,7 @@ public class DashCore {
                 if (r != null) { g.off = r[0]; g.len = r[1]; }
                 m.segs.add(g);
             }
-            if (m.segs.isEmpty()) throw new IOException("DASH: leere Teil-Liste");
+            if (m.segs.isEmpty()) throw new IOException(Tr.t("DASH: leere Teil-Liste", "DASH: empty segment list"));
             return m;
         }
         // SegmentBase oder nur BaseURL: die ganze Spur ist eine Datei
@@ -225,7 +225,7 @@ public class DashCore {
     static String def(String v, String d) { return v == null || v.isEmpty() ? d : v; }
 
     public HlsCore.Result run(String url, HlsCore.Listener l) throws Exception {
-        if (!work.exists() && !work.mkdirs()) throw new IOException("Kein Arbeitsordner");
+        if (!work.exists() && !work.mkdirs()) throw new IOException(Tr.t("Kein Arbeitsordner", "No working folder"));
         byte[] xml = net.fetch(url, -1, -1);
         DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
         f.setNamespaceAware(true);
@@ -233,12 +233,12 @@ public class DashCore {
         DocumentBuilder b = f.newDocumentBuilder();
         Document doc = b.parse(new ByteArrayInputStream(xml));
         Element mpd = doc.getDocumentElement();
-        if ("dynamic".equals(mpd.getAttribute("type"))) throw new IOException("Livestreams lassen sich nicht herunterladen");
+        if ("dynamic".equals(mpd.getAttribute("type"))) throw new IOException(Tr.t("Livestreams lassen sich nicht herunterladen", "Live streams can’t be downloaded"));
         double total = isoDur(mpd.getAttribute("mediaPresentationDuration"));
         String mpdBase = base(mpd, url);
         // längste Periode (Werbung steckt oft in eigenen, kurzen Perioden)
         List<Element> periods = kids(mpd, "Period");
-        if (periods.isEmpty()) throw new IOException("DASH: keine Periode");
+        if (periods.isEmpty()) throw new IOException(Tr.t("DASH: keine Periode", "DASH: no period"));
         Element period = periods.get(0);
         double best = -1;
         for (int i = 0; i < periods.size(); i++) {

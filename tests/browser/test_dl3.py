@@ -57,7 +57,7 @@ with sync_playwright() as p:
     showCtl()
     page.locator('.vp .vb[aria-label^="Herunterladen"]').dispatch_event('contextmenu'); page.wait_for_timeout(500)
     items = page.evaluate('() => [...%s.querySelectorAll(".vmenu.on .vmi")].map(e => e.textContent)' % R)
-    check('Lange drücken: Menü mit allen Wegen', any('Mit dem Helfer' in x for x in items) and any('Im Browser speichern' in x for x in items) and any('Teilen' in x for x in items), items)
+    check('Lange drücken: Menü mit allen Wegen', any('Mit dem Helper' in x for x in items) and any('Im Browser speichern' in x for x in items) and any('Teilen' in x for x in items), items)
     page.screenshot(path=OUT + '/dl_menu.png')
     # 3. HLS-Stream + Helfer: k=hls mit der m3u8
     state['calls'] = []

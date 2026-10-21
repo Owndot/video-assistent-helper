@@ -151,7 +151,7 @@ public class HlsCore {
                 k.method = a.getOrDefault("METHOD", "NONE");
                 if (a.containsKey("URI")) k.uri = resolve(url, a.get("URI"));
                 if (a.containsKey("IV")) k.iv = hex(a.get("IV"));
-                if (k.method.startsWith("SAMPLE-AES")) throw new IOException("Dieser Stream ist kopiergeschützt (SAMPLE-AES)");
+                if (k.method.startsWith("SAMPLE-AES")) throw new IOException(Tr.t("Dieser Stream ist kopiergeschützt (SAMPLE-AES)", "This stream is copy-protected (SAMPLE-AES)"));
                 key = k;
             } else if (l.startsWith("#EXT-X-MAP")) {
                 Map<String, String> a = attrs(l);
@@ -258,7 +258,7 @@ public class HlsCore {
     }
 
     public Result run(String url, Listener l) throws Exception {
-        if (!work.exists() && !work.mkdirs()) throw new IOException("Kein Arbeitsordner");
+        if (!work.exists() && !work.mkdirs()) throw new IOException(Tr.t("Kein Arbeitsordner", "No working folder"));
         Result r = new Result();
         String body = text(url);
         String videoUrl = url, audioUrl = null;
@@ -269,8 +269,8 @@ public class HlsCore {
             body = text(videoUrl);
         }
         Media vm = parseMedia(videoUrl, body);
-        if (!vm.ended) throw new IOException("Livestreams lassen sich nicht herunterladen");
-        if (vm.segs.isEmpty()) throw new IOException("Leere Playlist");
+        if (!vm.ended) throw new IOException(Tr.t("Livestreams lassen sich nicht herunterladen", "Live streams can’t be downloaded"));
+        if (vm.segs.isEmpty()) throw new IOException(Tr.t("Leere Playlist", "Empty playlist"));
         Media am = null;
         if (audioUrl != null && !audioUrl.equals(videoUrl)) {
             am = parseMedia(audioUrl, text(audioUrl));

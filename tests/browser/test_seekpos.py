@@ -33,7 +33,7 @@ with sync_playwright() as p:
         if not pg.evaluate('() => %s.querySelector(".vp").classList.contains("ctl")' % R):
             pg.mouse.click(W / 2, H * 0.3); time.sleep(0.4)
         order = pg.evaluate('() => Array.from(%s.querySelectorAll(".vcluster button")).map(b => b.getAttribute("aria-label"))' % R)
-        check(tag + ': Download oben rechts bei Teilen und 1×', order[0].startswith('Herunterladen') and 'Geschwindigkeit' in order, order)
+        check(tag + ': Download oben rechts bei Teilen und 1×', 'Herunterladen (z. B. mit YTDLnis)' in order and 'Link teilen' in order and 'Geschwindigkeit' in order, order)
         pg.locator('button[aria-label="Herunterladen (z. B. mit YTDLnis)"]').last.click(); time.sleep(0.6)
         sh = pg.evaluate('() => [window.__shared ? window.__shared.url : null, !!%s.querySelector(".vp")]' % R)
         print('   Hinweis:', pg.evaluate('() => %s.querySelector(".toast").textContent' % R))

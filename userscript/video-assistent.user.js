@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      16.2
+// @version      16.3
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -143,8 +143,12 @@
     'Füllen': 'Fill', 'Strecken': 'Stretch', 'Zoom zurückgesetzt': 'Zoom reset',
     // Einstellungen (kurz)
     'Design': 'Design', 'Glas': 'Glass', 'Schlicht': 'Plain', 'Vollbild': 'Full screen', 'Ambient': 'Ambient',
-    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Rand oben': 'Top edge', 'Rand unten': 'Bottom edge',
-    'Auto-Drehen': 'Auto-rotate', 'Helfer-App': 'Helper app', 'Download': 'Download', 'Teilen': 'Share', 'Sprache': 'Language',
+    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
+    'Link teilen': 'Share link', 'Link kopiert': 'Link copied', 'Kein Link zu diesem Video gefunden': 'No link to this video found',
+    'Oben: Wischen bis ganz an den Rand': 'Top: swiping works right up to the edge', 'Unten: Wischen bis ganz an den Rand': 'Bottom: swiping works right down to the edge',
+    '✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helper benutzen. Du kannst diese Seite schließen.': '✓ Connected. From now on only this script can use the helper. You can close this page.',
+    'Verbinden hat nicht geklappt – läuft der Helper? In der App nochmal auf „Verbinden“ tippen.': 'Connecting failed – is the helper running? Tap “Connect” in the app again.',
+    'Auto-Drehen': 'Auto-rotate', 'Helper-App': 'Helper app', 'Download': 'Download', 'Teilen': 'Share', 'Sprache': 'Language',
     'Zurücksetzen': 'Reset', 'Deutsch': 'Deutsch', 'English': 'English',
     // Hinweise
     'Einstellungen zurückgesetzt': 'Settings reset', 'Gilt ab dem nächsten Öffnen des Players': 'Applies the next time the player opens',
@@ -164,10 +168,10 @@
     'Wird im Videoplayer geöffnet (Weiterleitung aufgelöst) …': 'Opening in video player (redirect resolved) …',
     'Die Seite sperrt den Download': 'The site blocks the download', 'Download des Browsers': 'Browser download',
     'Download läuft im Browser – du kannst die Seite verlassen': 'Downloading in the browser – you can leave the page',
-    'Download läuft – siehe Benachrichtigung': 'Downloading – see notification', 'Der Server lehnt den Helfer ab': 'The server rejects the helper',
-    'Für Streams wird die Helfer-App gebraucht': 'Streams need the helper app', 'Für dieses Video gibt es keine Datei zum Herunterladen': 'There’s no file to download for this video',
-    'Für dieses Video gibt es keine Datei-Adresse': 'There’s no file address for this video', 'Helfer konnte den Download nicht starten': 'The helper couldn’t start the download',
-    'Helfer lädt den Stream – Fortschritt in der Benachrichtigung': 'The helper is downloading the stream – progress in the notification',
+    'Download läuft – siehe Benachrichtigung': 'Downloading – see notification', 'Der Server lehnt den Helper ab': 'The server rejects the helper',
+    'Für Streams wird die Helper-App gebraucht': 'Streams need the helper app', 'Für dieses Video gibt es keine Datei zum Herunterladen': 'There’s no file to download for this video',
+    'Für dieses Video gibt es keine Datei-Adresse': 'There’s no file address for this video', 'Helper konnte den Download nicht starten': 'The helper couldn’t start the download',
+    'Helper lädt den Stream – Fortschritt in der Benachrichtigung': 'The helper is downloading the stream – progress in the notification',
     'Server verlangt die Browser-Sitzung': 'The server needs the browser session',
     'Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen': 'No link to this video found – open the post and try again',
     'Kein passendes Video gefunden – kurz laufen lassen und nochmal tippen': 'No matching video found – let it play briefly and tap again',
@@ -175,7 +179,7 @@
     'klappt nicht? Nochmal tippen': 'not working? Tap again', 'Neuer Tab wurde blockiert – Pop-ups für diese Seite erlauben': 'New tab was blocked – allow pop-ups for this site',
     'Videodatei gefunden': 'Video file found', 'Loslassen, um die Diagnose zu kopieren': 'Release to copy the diagnostics', 'Diagnose kopiert': 'Diagnostics copied',
     // Download-Menü
-    'Mit dem Helfer': 'With the helper', 'Download-Manager': 'Download manager', 'Stream → MP4': 'Stream → MP4',
+    'Mit dem Helper': 'With the helper', 'Download-Manager': 'Download manager', 'Stream → MP4': 'Stream → MP4',
     'Über den Browser laden': 'Load via the browser', 'für geschützte Seiten · Seite offen lassen': 'for protected sites · keep the page open',
     'Mit YTDLnis': 'With YTDLnis', 'direkt öffnen': 'open directly', 'Im Browser speichern': 'Save in the browser',
     'Im Browser öffnen': 'Open in the browser', 'dort ⋮ → Herunterladen': 'then ⋮ → Download', 'Hier speichern': 'Save here',
@@ -186,6 +190,8 @@
     'links': 'left', 'rechts': 'right',
   };
   const EN_RX = [
+    [/^Oberste (\d+) %: kein Wischen für Helligkeit\/Lautstärke$/, (m) => 'Top ' + m[1] + ' %: no brightness/volume swipe'],
+    [/^Unterste (\d+) %: kein Wischen für Helligkeit\/Lautstärke$/, (m) => 'Bottom ' + m[1] + ' %: no brightness/volume swipe'],
     [/^Untertitel: (.+)$/, (m) => 'Subtitles: ' + m[1]], [/^Tonspur: (.+)$/, (m) => 'Audio: ' + m[1]],
     [/^(\d+) s zurück$/, (m) => m[1] + ' s back'], [/^(\d+) s vor$/, (m) => m[1] + ' s forward'],
     [/^([\d,.]+)× schneller$/, (m) => m[1].replace(',', '.') + '× faster'], [/^Verschiebung (.+)$/, (m) => 'Offset ' + m[1].replace(',', '.')],
@@ -323,6 +329,7 @@
     // Nachricht von OBEN (Hauptseite an uns)
     if (IN_FRAME && e.source === window.parent) {
       if (d.t === 'info' || d.t === 'state') { fb.up = Object.assign(fb.up || {}, d); fb.ack = true; }
+      if (d.t === 'pageurl') { if (fb.childWin) fpost(fb.childWin, d); else if (fb.onPageUrl) fb.onPageUrl(d.url, d.title); }
       if (d.t === 'state') {
         if (fb.childWin) sendState();          // Zwischenebene: weiter nach unten
         else if (fb.onState) fb.onState(d);
@@ -334,6 +341,13 @@
     const f = frameOf(e.source);
     if (!f) return;
     if (d.t === 'hello') { fpost(e.source, { t: 'info', title: pageTitle(), host: pageHost(), ins: safeInsets() }); return; }
+    // Adresse der Seite nur an das Fenster, das gerade den Player zeigt (nicht an jede eingebettete Werbung)
+    if (d.t === 'askurl') {
+      if (fb.child !== f) return;
+      if (IN_FRAME) fpost(window.parent, { t: 'askurl' });
+      else fpost(e.source, { t: 'pageurl', url: location.href.split('#')[0], title: pageTitle() });
+      return;
+    }
     if (d.t === 'take') {
       if (fb.child !== f) {
         // nur nach einem echten Tipp und für ein sichtbares Fenster (keine Werbung, die sich selbst groß macht)
@@ -422,6 +436,7 @@
     link: 'M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z',
     download: 'M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z',
     player: 'M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM10 8.5v7l5.5-3.5L10 8.5z',
+    share: 'M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z',
     more: 'M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z',
     sd: 'M19 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 7.5H8.5V10h-2v1h2.5c.55 0 1 .45 1 1v2c0 .55-.45 1-1 1H6v-1.5h2.5v-1H6c-.55 0-1-.45-1-1V9.5c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1v1zm7 3.5c0 .55-.45 1-1 1h-4.5V8.5H17c.55 0 1 .45 1 1V14zm-4-4h2.5v3.5H14V10z',
     bug: 'M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5s-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z',
@@ -1376,15 +1391,15 @@
     if (m) {
       try { history.replaceState(null, '', '/pair'); } catch (e) {}
       const say = (t, okc) => {
-        const show = () => { const el = document.getElementById('evp-pair'); if (el) { el.textContent = t; el.style.color = okc ? '#4cd964' : '#ff9f0a'; } };
+        const show = () => { const el = document.getElementById('evp-pair'); if (el) { el.textContent = tr(t); el.style.color = okc ? '#4cd964' : '#ff9f0a'; } };
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show); else show();
       };
       helper('/ping', 2500, null, m[1]).then((r) => {
         if (r && r.ok) {
           try { GM_setValue('helperKey', m[1]); } catch (e) {}
           helperKey = m[1];
-          say('✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helfer benutzen. Du kannst diese Seite schließen.', true);
-        } else say('Verbinden hat nicht geklappt – läuft der Helfer? In der App nochmal auf „Verbinden“ tippen.', false);
+          say('✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helper benutzen. Du kannst diese Seite schließen.', true);
+        } else say('Verbinden hat nicht geklappt – läuft der Helper? In der App nochmal auf „Verbinden“ tippen.', false);
       });
     }
   }
@@ -1991,13 +2006,13 @@
 
   function toast(msg) {
     ui();
-    // im Player: eine feste Stelle für alle Hinweise (oben mittig) – die Gesten-Anzeige macht so lange Platz
+    // im Player: eine feste Stelle für alle Hinweise (unter dem Bild) – die Gesten-Anzeige macht so lange Platz
     const pw = toastEl.parentElement;
+    toastEl.textContent = tr(msg);
     if (pw && pw.classList && pw.classList.contains('vp')) {
       const ind = pw.querySelector('.vind'); if (ind) ind.classList.remove('on');
-      toastEl.style.top = vp && vp.notePos ? vp.notePos() : '';
+      if (vp && vp.notePos) vp.notePos(toastEl); else toastEl.style.top = '';
     } else toastEl.style.top = '';
-    toastEl.textContent = tr(msg);
     toastEl.classList.add('on');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toastEl.classList.remove('on'), 2400);
@@ -2202,9 +2217,11 @@
 .vp{--glass:rgba(255,255,255,.13);--edge1:rgba(255,255,255,.6);--edge2:rgba(255,255,255,.06);--sub:rgba(255,255,255,.74);--ice:#9BE7FF;--trk:rgba(255,255,255,.25);
  position:fixed;inset:0;background:#000;z-index:2147483647;touch-action:none;color:#fff;font:15px/1.2 var(--font);-webkit-user-select:none;user-select:none;overflow:hidden;overflow:clip;-webkit-tap-highlight-color:transparent}
 .vv.vzan{transition:transform .25s cubic-bezier(.215,.61,.355,1)}
-/* Hinweise im Player: immer an derselben Stelle – oben mittig unter der Kopfleiste (wie die Gesten-Anzeige) */
-.vp .toast{position:absolute;top:calc(74px + var(--evp-st,env(safe-area-inset-top,0px)));bottom:auto;transform:translate(-50%,-8px);
+/* Hinweise im Player: immer an derselben Stelle wie die Gesten-Anzeige (unter dem Bild) und im selben Glas (.g) */
+.vp .toast{position:absolute;top:auto;bottom:auto;transform:translate(-50%,8px);
  max-width:calc(100% - 40px);text-align:center;z-index:7;pointer-events:none}
+.vp .toast.g{font:650 15px/22px var(--font);padding:12px 20px;min-height:46px;box-sizing:border-box;border-radius:23px;transition:opacity .16s ease,transform .16s ease}
+.vp .toast.g::before{border:0}
 .vp .toast.on{transform:translate(-50%,0)}
 /* Untertitel: über dem Bild, unter den Bedienelementen; rücken über die Leisten, wenn die sichtbar sind */
 .vsub{position:absolute;left:5%;right:5%;bottom:calc(26px + var(--evp-sb,env(safe-area-inset-bottom,0px)));text-align:center;pointer-events:none;white-space:pre-line;
@@ -2295,7 +2312,7 @@
 .vbar::-moz-range-thumb{width:18px;height:18px;border:0;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1)}
 .vbar:active::-moz-range-thumb{transform:scale(1.2)}
 .vbar:active::-webkit-slider-thumb{transform:scale(1.2);margin-top:-4.5px}
-.vind{position:absolute;left:50%;top:calc(72px + var(--evp-st,env(safe-area-inset-top,0px)));transform:translate(-50%,-8px) scale(.96);display:flex;align-items:center;gap:12px;height:46px;padding:0 20px;border-radius:23px;font:650 15px var(--font);opacity:0;transition:opacity .16s ease,transform .16s ease;pointer-events:none;white-space:nowrap;z-index:3}
+.vind{position:absolute;left:50%;top:calc(72px + var(--evp-st,env(safe-area-inset-top,0px)));transform:translate(-50%,8px) scale(.96);display:flex;align-items:center;gap:12px;height:46px;padding:0 20px;border-radius:23px;font:650 15px var(--font);opacity:0;transition:opacity .16s ease,transform .16s ease;pointer-events:none;white-space:nowrap;z-index:3}
 .vind span{position:relative;z-index:1}
 .vind.on{opacity:1;transform:translate(-50%,0) scale(1)}
 /* Lautstärke (rechts) und Helligkeit (links): senkrechte Glaskapsel, füllt sich von unten wie bei iOS */
@@ -2528,6 +2545,7 @@
     const bPip = document.pictureInPictureEnabled ? ib(I.pip, 'Bild-in-Bild', 'vtool') : null;
     const bExt = DOWNLOAD_ONLY ? null : ib(I.open, 'In externer App öffnen');
     const bDl = ib(I.download, 'Herunterladen (z. B. mit YTDLnis)');
+    const bShare = ib(I.share, 'Link teilen');
     bDl.hidden = !SHOW_DOWNLOAD;   // wird sichtbar, sobald eine echte Videodatei läuft
     const bBack = h('button', { class: 'vb vskip g', 'aria-label': SKIP() + ' s zurück' }, h('i', { class: 'ring' }), skipIcon(false));
     const bPlay = ib(P.pause, 'Wiedergabe', 'vplay g');
@@ -2548,7 +2566,7 @@
     wrap.append(amb, vid, dimEl, subEl, gest, spin,
       h('div', { class: 'vchrome' },
         h('div', { class: 'vscrim' }),
-        h('div', { class: 'vtop' }, bClose, title, h('div', { class: 'vcluster g ia' }, bDl, bExt, bSpeed, bMore)),
+        h('div', { class: 'vtop' }, bClose, title, h('div', { class: 'vcluster g ia' }, bShare, bDl, bExt, bSpeed, bMore)),
         h('div', { class: 'vmid' }, bBack, bPlay, bFwd),
         h('div', { class: 'vbot ia' }, h('div', { class: 'vrow' }, tCur, bar, tDur), h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bPip, bQual, bFit, bSubs, bRot)))),
       ind, side, seekBox, sfxL, sfxR, mini, menu, bUnlock);
@@ -2558,7 +2576,7 @@
     st.cleanup.push(() => { if (lensRO) wrap.querySelectorAll('.g').forEach((e) => lensRO.unobserve(e)); });
     // Der Lichtschein (Ambient) ragt über den Rand hinaus – der Player-Bereich darf dadurch nie verrutschen
     wrap.addEventListener('scroll', () => { if (wrap.scrollTop || wrap.scrollLeft) { wrap.scrollTop = 0; wrap.scrollLeft = 0; } }, { passive: true });
-    if (toastEl) wrap.append(toastEl);   // Hinweise IM Player – im Vollbild wäre alles daneben unsichtbar
+    if (toastEl) { wrap.append(toastEl); toastEl.classList.add('g'); lensWatch(toastEl); }   // Hinweise IM Player (im Vollbild wäre alles daneben unsichtbar) – gleiches Glas wie die Knöpfe
     st.wrap = wrap; st.vid = vid;
     st.aspect = 'contain'; st.zoom = 1; st.panX = 0; st.panY = 0; st.qualPinned = null;
 
@@ -2696,20 +2714,32 @@
     // Anzeige: Text, optional Füllstand (0–1, über 1 = verstärkt/aufgehellt); "stay" = bleibt stehen (langes Drücken)
     // Hochformat: Anzeige direkt über der Oberkante des Videobilds (nicht ganz oben im Schwarzen).
     // Füllt das Video den Bildschirm (Reels), dann knapp über den Play-Knöpfen. Querformat: oben wie bisher.
-    function placeInd() {
-      const W = wrap.clientWidth || innerWidth, H = wrap.clientHeight || innerHeight;
-      if (H <= W * 1.1) { ind.style.top = ''; return; }
-      let ct = -1;
+    // Hinweise und Gesten-Anzeige: eine Stelle UNTER dem Bild – mit Abstand unter der Unterkante des Videobilds.
+    // Füllt das Bild den Bildschirm (Reels, Querformat, Zoom): knapp über der unteren Leiste. Nie über Untertiteln.
+    function placeInd(el) {
+      el = el || ind;
+      const H = wrap.clientHeight || innerHeight, hh = el.offsetHeight || 46;
+      let cb = H, wt = 0;
       try {
         const r = vid.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
         const vw = vid.videoWidth, vh = vid.videoHeight;
-        ct = r.top - wr.top;
-        if (vw && vh && (getComputedStyle(vid).objectFit || 'contain') === 'contain') ct += (r.height - vh * Math.min(r.width / vw, r.height / vh)) / 2;
+        wt = wr.top; cb = r.bottom - wt;
+        if (vw && vh && (getComputedStyle(vid).objectFit || 'contain') === 'contain' && st.zoom <= 1.001) cb -= (r.height - vh * Math.min(r.width / vw, r.height / vh)) / 2;
       } catch (e) {}
-      const top = ct >= 120 ? ct - 60 : H / 2 - 150;
-      ind.style.top = Math.max(76, Math.round(top)) + 'px';
+      const vb = wrap.querySelector('.vbot');
+      let lim = (vb ? vb.getBoundingClientRect().top - wt : H - 130) - 12;
+      const mn = wrap.classList.contains('menu') ? wrap.querySelector('.vmenu.on') : null;   // offenes Menü: darüber
+      if (mn) lim = Math.min(lim, mn.getBoundingClientRect().top - wt - 12);
+      let top = cb + 14;
+      if (top + hh > lim) top = lim - hh;
+      const sb = wrap.querySelector('.vsub');
+      if (sb && sb.textContent.trim() && sb.offsetParent) {
+        const sr = sb.getBoundingClientRect(), a = sr.top - wt, b = sr.bottom - wt;
+        if (top < b && top + hh > a) top = a - hh - 10;
+      }
+      el.style.top = Math.max(70, Math.round(top)) + 'px';
     }
-    st.notePos = () => { placeInd(); return ind.style.top; };   // dieselbe Stelle für Hinweise (toast)
+    st.notePos = (el) => { placeInd(el); return (el || ind).style.top; };   // dieselbe Stelle für Hinweise (toast)
     const showInd = (t, lvl, stay) => {
       if (toastEl) toastEl.classList.remove('on');   // gleiche Stelle wie die Hinweise – nie beide übereinander
       placeInd();
@@ -3309,17 +3339,17 @@
           '&ua=' + encodeURIComponent(navigator.userAgent) + '&t=' + encodeURIComponent((pageTitle() || 'Video').slice(0, 100)) +
           '&k=' + src.k + (ck ? '&c=' + encodeURIComponent(ck) : '') + (proxy ? '&p=1' : '');
         const viaBrowser = (why) => {
-          if (!(st.sys && st.sys.proxy)) { toast(why || 'Der Server lehnt den Helfer ab'); return; }
+          if (!(st.sys && st.sys.proxy)) { toast(why || 'Der Server lehnt den Helper ab'); return; }
           helper(q(true)).then((r) => {
-            if (!r || !r.ok) { toast('Helfer konnte den Download nicht starten'); return; }
+            if (!r || !r.ok) { toast('Helper konnte den Download nicht starten'); return; }
             toast((why ? why + ' – ' : '') + 'lädt über den Browser, Seite offen lassen');
             proxyLoop(r.id, [baseDomain(location.hostname), baseDomain(hostOf(u))]);
           });
         };
         if (via === 'browser') { viaBrowser(''); return; }
         helper(q(false)).then((r) => {
-          if (!r || !r.ok) { toast('Helfer konnte den Download nicht starten' + (r && r.error ? ' (' + r.error + ')' : '')); return; }
-          toast(src.k === 'file' ? 'Download läuft – siehe Benachrichtigung' : 'Helfer lädt den Stream – Fortschritt in der Benachrichtigung');
+          if (!r || !r.ok) { toast('Helper konnte den Download nicht starten' + (r && r.error ? ' (' + r.error + ')' : '')); return; }
+          toast(src.k === 'file' ? 'Download läuft – siehe Benachrichtigung' : 'Helper lädt den Stream – Fortschritt in der Benachrichtigung');
           // die ersten Sekunden beobachten: verlangt der Server die Browser-Sitzung? Dann von selbst den anderen Weg
           let n = 0;
           const iv = setInterval(() => {
@@ -3356,7 +3386,7 @@
       let link = '';
       try { link = SHOW_DOWNLOAD ? postUrlFor(orig) : ''; } catch (e) {}
       const items = [];
-      if (hs && st.sys && st.sys.dl) items.push({ label: 'Mit dem Helfer', sub: hs.k === 'file' ? 'Download-Manager' : 'Stream → MP4', fn: () => helperDownload(hs) });
+      if (hs && st.sys && st.sys.dl) items.push({ label: 'Mit dem Helper', sub: hs.k === 'file' ? 'Download-Manager' : 'Stream → MP4', fn: () => helperDownload(hs) });
       if (hs && st.sys && st.sys.proxy) items.push({ label: 'Über den Browser laden', sub: 'für geschützte Seiten · Seite offen lassen', fn: () => helperDownload(hs, 'browser') });
       if (link) items.push({ label: 'Mit YTDLnis', sub: 'direkt öffnen', fn: () => toYtdlnis(link) });
       if (d && !browserFailed) items.push({ label: 'Im Browser speichern', sub: 'Download des Browsers', fn: () => browserSave(d) });
@@ -3368,7 +3398,7 @@
         items.push({ label: 'Hier speichern', sub: 'Player bis zum Ende offen lassen', fn: () => directDownload(d, () => toast('Die Seite sperrt den Download')) });
       }
       if (link || d) items.push({ label: 'Teilen …', sub: 'an eine andere App', fn: () => shareUrl(link || d) });
-      if (!items.length) { toast(hs && hs.k === 'hls' ? 'Für Streams wird die Helfer-App gebraucht' : 'Für dieses Video gibt es keine Datei zum Herunterladen'); return; }
+      if (!items.length) { toast(hs && hs.k === 'hls' ? 'Für Streams wird die Helper-App gebraucht' : 'Für dieses Video gibt es keine Datei zum Herunterladen'); return; }
       openMenu('Herunterladen', items);
     }
     // Tipp: der beste Weg von selbst
@@ -3387,6 +3417,22 @@
       dlMenu();
     });
     bDl.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); dlMenu(); });
+    // Teilen: der Link zum Video – Beitrag (Instagram/Facebook/TikTok …), sonst die Seite. In einem eingebetteten
+    // Fenster fragt das Skript die Hauptseite nach ihrer Adresse (nur für das Fenster, das gerade den Player zeigt).
+    on(bShare, () => {
+      const title = pageTitle();
+      if (IN_FRAME) {
+        let done = false;
+        const own = () => { if (done) return; done = true; shareLinkTo(location.href.split('#')[0], title); };
+        fb.onPageUrl = (u, t) => { if (done) return; done = true; fb.onPageUrl = null; shareLinkTo(u || location.href.split('#')[0], t || title); };
+        fpost(window.parent, { t: 'askurl' });
+        setTimeout(own, 500);
+        return;
+      }
+      let link = '';
+      try { link = postUrlFor(orig); } catch (e) {}
+      shareLinkTo(link || location.href.split('#')[0], title);
+    });
     on(bExt, () => {
       const t = M().currentTime;
       const go = (u) => { closePlayer(); try { orig.currentTime = t; } catch (e) {} openExternal(u, orig, CONFIG.player); };
@@ -3543,6 +3589,9 @@
     function openSettings(keep) {
       const yn = (b) => (b ? 'An' : 'Aus');
       const pct = (v) => (+v > 0 ? Math.round(+v * 100) + ' %' : 'Aus');
+      const ZONES = [0, 0.1, 0.15, 0.2, 0.25];
+      const zone = (v) => ({ 0: 'Aus', 0.1: 'Schmal', 0.15: 'Mittel', 0.2: 'Breit', 0.25: 'Sehr breit' })[+v] || pct(v);
+      const zoneTip = (k, a, b) => toast(+CONFIG[k] > 0 ? a + ' ' + Math.round(CONFIG[k] * 100) + ' %: kein Wischen für Helligkeit/Lautstärke' : b + ': Wischen bis ganz an den Rand');
       const next = (k, list) => { const i = list.indexOf(CONFIG[k]); setSetting(k, list[(i + 1) % list.length]); };
       const it = (label, sub, fn) => ({ label: label, sub: sub, stay: true, fn: () => { fn(); openSettings(true); } });
       const lineOn = !wrap.classList.contains('nomini');
@@ -3561,11 +3610,12 @@
           bBack.setAttribute('aria-label', tr(SKIP() + ' s zurück')); bFwd.setAttribute('aria-label', tr(SKIP() + ' s vor'));
         }),
         it('Halten', String(CONFIG.holdSpeed).replace('.', UI_EN() ? '.' : ',') + '×', () => next('holdSpeed', [1.5, 2, 3])),
-        it('Rand oben', pct(CONFIG.topGuard), () => next('topGuard', [0, 0.1, 0.15, 0.2, 0.25])),
-        it('Rand unten', pct(CONFIG.bottomGuard), () => next('bottomGuard', [0, 0.1, 0.15, 0.2, 0.25])),
+        // Wischsperre: Streifen am Rand ohne Helligkeit/Lautstärke (Schnelleinstellungen, Home-Geste) – Stufe in Worten
+        it('Wischsperre oben', zone(CONFIG.topGuard), () => { next('topGuard', ZONES); zoneTip('topGuard', 'Oberste', 'Oben'); }),
+        it('Wischsperre unten', zone(CONFIG.bottomGuard), () => { next('bottomGuard', ZONES); zoneTip('bottomGuard', 'Unterste', 'Unten'); }),
         it('Auto-Drehen', yn(CONFIG.autoRotate), () => setSetting('autoRotate', !CONFIG.autoRotate)),
         it('Download', CONFIG.downloader === 'share' ? 'Teilen' : 'YTDLnis', () => setSetting('downloader', CONFIG.downloader === 'share' ? 'ytdlnis' : 'share')),
-        it('Helfer-App', yn(CONFIG.systemHelper !== false), () => { setSetting('systemHelper', CONFIG.systemHelper === false); toast('Gilt ab dem nächsten Öffnen des Players'); }),
+        it('Helper-App', yn(CONFIG.systemHelper !== false), () => { setSetting('systemHelper', CONFIG.systemHelper === false); toast('Gilt ab dem nächsten Öffnen des Players'); }),
         it('Sprache', { de: 'Deutsch', en: 'English' }[CONFIG.language] || 'Auto', () => {
           next('language', ['auto', 'de', 'en']);
           toast('Gilt ab dem nächsten Öffnen des Players');
@@ -4740,7 +4790,7 @@
     st.cleanup.forEach((f) => { try { f(); } catch (e) {} });
     // Mit ✕ geschlossen: unseren Verlaufseintrag wieder entfernen, damit "Zurück" danach normal funktioniert
     if (st.histPushed) { try { history.back(); } catch (e) {} }
-    if (toastEl && root) { root.append(toastEl); toastEl.style.top = ''; }
+    if (toastEl && root) { root.append(toastEl); toastEl.style.top = ''; toastEl.classList.remove('g'); toastEl.style.removeProperty('--lens'); toastEl.style.removeProperty('--gb'); if (lensRO) lensRO.unobserve(toastEl); }
     st.wrap.remove();
   }
 
@@ -4962,6 +5012,16 @@
     if (CONFIG.downloader !== 'share' && !opts) { toYtdlnis(url); return; }
     shareUrl(url);
   }
+  // Link mit Titel teilen (Android: Teilen-Menü) – geht das nicht (z. B. eingebettetes Fenster), Link kopieren
+  function shareLinkTo(url, title) {
+    if (!url) { toast('Kein Link zu diesem Video gefunden'); return; }
+    const copy = () => copyText(url, 'Link kopiert');
+    if (navigator.share) {
+      const data = { url: url };
+      if (title) data.title = title;
+      navigator.share(data).catch((e) => { if (!e || e.name !== 'AbortError') copy(); });
+    } else copy();
+  }
   function shareUrl(url) {
     const fallback = () => copyText(url, 'Link kopiert – in YTDLnis einfügen');
     if (navigator.share) {
@@ -5045,7 +5105,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 16.2',
+      'Video-Assistent 16.3',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

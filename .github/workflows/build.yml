@@ -27,20 +27,20 @@ jobs:
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
       - name: APK umbenennen
-        run: cp app/build/outputs/apk/release/app-release.apk VideoAssistent-Helfer.apk
+        run: cp app/build/outputs/apk/release/app-release.apk VideoAssistent-Helper.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: VideoAssistent-Helfer
-          path: VideoAssistent-Helfer.apk
+          path: VideoAssistent-Helper.apk
 
-      # Immer unter derselben Adresse: Releases → "Neueste Version" → VideoAssistent-Helfer.apk
+      # Immer unter derselben Adresse: Releases → "Neueste Version" → VideoAssistent-Helper.apk
       - name: Als Release veröffentlichen
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete neueste -y --cleanup-tag || true
-          gh release create neueste VideoAssistent-Helfer.apk \
-            --title "Video-Assistent Helfer 1.0.${{ github.run_number }}" \
-            --notes "Auf dem Handy öffnen, VideoAssistent-Helfer.apk antippen und installieren. Neue Versionen lassen sich einfach drüber installieren." \
+          gh release create neueste VideoAssistent-Helper.apk \
+            --title "Video-Assistent Helper 1.0.${{ github.run_number }}" \
+            --notes "Auf dem Handy öffnen, VideoAssistent-Helper.apk antippen und installieren. Neue Versionen lassen sich einfach drüber installieren. / Open on your phone, tap VideoAssistent-Helper.apk and install. New versions install over the old one." \
             --latest

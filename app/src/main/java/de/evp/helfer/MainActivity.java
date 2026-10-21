@@ -42,52 +42,63 @@ public class MainActivity extends Activity {
         sv.addView(root);
         setContentView(sv);
 
-        TextView title = text("Video-Assistent Helfer", 24, true);
+        TextView title = text(getString(R.string.app_name), 24, true);
         root.addView(title);
-        TextView intro = text("Damit der Videoplayer im Browser die echte Bildschirmhelligkeit und die Medienlautstärke "
-                + "deines Handys steuern kann. Der Helfer läuft still im Hintergrund und ist nur vom Handy selbst "
-                + "erreichbar. Die Helligkeit gilt nur, solange der Player offen ist – danach ist alles wieder wie vorher.", 15, false);
+        TextView intro = text(Tr.t("Damit der Videoplayer im Browser die echte Bildschirmhelligkeit und die Medienlautstärke "
+                + "deines Handys steuern kann. Der Helper läuft still im Hintergrund und ist nur vom Handy selbst "
+                + "erreichbar. Die Helligkeit gilt nur, solange der Player offen ist – danach ist alles wieder wie vorher.",
+                "Lets the video player in your browser control your phone's real screen brightness and media volume. "
+                + "The helper runs quietly in the background and can only be reached from the phone itself. "
+                + "The brightness only applies while the player is open – afterwards everything is back to normal."), 15, false);
         intro.setAlpha(0.8f);
         intro.setPadding(0, dp(8), 0, dp(18));
         root.addView(intro);
 
         // 1. Helligkeit
         stOverlay = status();
-        bOverlay = button("Erlauben", v -> startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+        bOverlay = button(Tr.t("Erlauben", "Allow"), v -> startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                 Uri.parse("package:" + getPackageName()))));
-        card("1 · Helligkeit", "„Über anderen Apps einblenden“ erlauben. Der Helfer legt dann ein unsichtbares 1-Pixel-Fenster "
-                + "über den Bildschirm, das nur die Helligkeit wünscht.", stOverlay, bOverlay);
+        card(Tr.t("1 · Helligkeit", "1 · Brightness"), Tr.t("„Über anderen Apps einblenden“ erlauben. Der Helper legt dann ein unsichtbares 1-Pixel-Fenster "
+                + "über den Bildschirm, das nur die Helligkeit wünscht.",
+                "Allow “Display over other apps”. The helper then places an invisible 1-pixel window on the screen "
+                + "that only requests the brightness."), stOverlay, bOverlay);
 
         // 2. Akku
         stBattery = status();
-        bBattery = button("Ausnehmen", v -> {
+        bBattery = button(Tr.t("Ausnehmen", "Exclude"), v -> {
             try {
                 startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName())));
             } catch (Exception e) {
                 startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
             }
         });
-        card("2 · Im Hintergrund bleiben", "Vom Akku-Sparen ausnehmen, sonst beendet Android den Helfer nach einer Weile. "
-                + "Er verbraucht praktisch nichts: er wartet nur auf den Player.", stBattery, bBattery);
+        card(Tr.t("2 · Im Hintergrund bleiben", "2 · Stay in the background"), Tr.t("Vom Akku-Sparen ausnehmen, sonst beendet Android den Helper nach einer Weile. "
+                + "Er verbraucht praktisch nichts: er wartet nur auf den Player.",
+                "Exclude it from battery saving, otherwise Android stops the helper after a while. "
+                + "It uses practically nothing: it just waits for the player."), stBattery, bBattery);
 
         // 3. Benachrichtigung (Android 13+)
         if (Build.VERSION.SDK_INT >= 33) {
             stNotif = status();
-            bNotif = button("Erlauben", v -> requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1));
-            card("3 · Benachrichtigung", "Android verlangt für Hintergrund-Helfer eine stille Benachrichtigung. "
-                    + "Du kannst sie in den Android-Einstellungen danach ausblenden.", stNotif, bNotif);
+            bNotif = button(Tr.t("Erlauben", "Allow"), v -> requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1));
+            card(Tr.t("3 · Benachrichtigung", "3 · Notification"), Tr.t("Android verlangt für Hintergrund-Helfer eine stille Benachrichtigung. "
+                    + "Du kannst sie in den Android-Einstellungen danach ausblenden.",
+                    "Android requires a silent notification for background helpers. "
+                    + "You can hide it afterwards in the Android settings."), stNotif, bNotif);
         }
 
         // Koppeln: eigener Schlüssel statt des festen – dann kann keine andere App den Helfer benutzen
         stPair = status();
-        bPair = button("Verbinden", v -> pair());
-        card("4 · Mit dem Browser verbinden", "Öffnet eine kleine Seite im Browser mit Violentmonkey. Das Skript merkt sich dort "
-                + "den geheimen Schlüssel dieser App. Danach kann nur noch dein Skript den Helfer benutzen, keine andere App.", stPair, bPair);
-        stPair.setOnLongClickListener(v -> { Keys.reset(this); refresh(); android.widget.Toast.makeText(this, "Neuer Schlüssel – bitte neu verbinden", android.widget.Toast.LENGTH_LONG).show(); return true; });
+        bPair = button(Tr.t("Verbinden", "Connect"), v -> pair());
+        card(Tr.t("4 · Mit dem Browser verbinden", "4 · Connect to the browser"), Tr.t("Öffnet eine kleine Seite im Browser mit Violentmonkey. Das Skript merkt sich dort "
+                + "den geheimen Schlüssel dieser App. Ohne Verbinden funktioniert der Helper nicht – danach kann nur dein Skript ihn benutzen, keine andere App.",
+                "Opens a small page in the browser with Violentmonkey. The script remembers this app's secret key there. "
+                + "The helper doesn't work until connected – afterwards only your script can use it, no other app."), stPair, bPair);
+        stPair.setOnLongClickListener(v -> { Keys.reset(this); refresh(); android.widget.Toast.makeText(this, Tr.t("Neuer Schlüssel – bitte neu verbinden", "New key – please connect again"), android.widget.Toast.LENGTH_LONG).show(); return true; });
 
         // Dienst
         stService = status();
-        bService = button("Starten", v -> {
+        bService = button(Tr.t("Starten", "Start"), v -> {
             if (HelferService.running) {
                 stopService(new Intent(this, HelferService.class));
                 prefs(this).edit().putBoolean("on", false).apply();
@@ -97,16 +108,16 @@ public class MainActivity extends Activity {
             }
             root.postDelayed(this::refresh, 400);
         });
-        card("Helfer", "Startet auch automatisch nach dem Einschalten des Handys.", stService, bService);
+        card("Helper", Tr.t("Startet auch automatisch nach dem Einschalten des Handys.", "Also starts automatically when the phone is switched on."), stService, bService);
 
         Switch boot = new Switch(this);
-        boot.setText("Beim Einschalten automatisch starten");
+        boot.setText(Tr.t("Beim Einschalten automatisch starten", "Start automatically at boot"));
         boot.setChecked(prefs(this).getBoolean("boot", true));
         boot.setOnCheckedChangeListener((c, on) -> prefs(this).edit().putBoolean("boot", on).apply());
         boot.setPadding(dp(4), dp(10), dp(4), dp(10));
         root.addView(boot);
 
-        Button test = button("Ausprobieren: 3 Sekunden dunkel", v -> {
+        Button test = button(Tr.t("Ausprobieren: 3 Sekunden dunkel", "Try it: 3 seconds dark"), v -> {
             if (!HelferService.running) HelferService.start(this);
             Intent i = new Intent(this, HelferService.class).setAction("test");
             startForegroundService(i);
@@ -115,10 +126,14 @@ public class MainActivity extends Activity {
         tl.topMargin = dp(12);
         root.addView(test, tl);
 
-        TextView foot = text("Im Userscript ist nichts einzustellen: Sobald der Helfer läuft, steuern die Wischgesten links "
+        TextView foot = text(Tr.t("Im Userscript ist nichts einzustellen: Sobald der Helper läuft, steuern die Wischgesten links "
                 + "(Helligkeit) und rechts (Lautstärke) das Handy selbst. Läuft er nicht, regelt der Player wie bisher nur das Video.\n\n"
                 + "Downloads: Der Knopf ⬇ im Player schickt Videos hierher – Dateien über Androids Download-Manager, Streams werden "
-                + "Stück für Stück geladen und zu MP4 zusammengesetzt. Gespeichert in Download/Video-Assistent.", 13, false);
+                + "Stück für Stück geladen und zu MP4 zusammengesetzt. Gespeichert in Download/Video-Assistent.",
+                "Nothing to set up in the userscript: as soon as the helper runs, swiping on the left "
+                + "(brightness) and right (volume) controls the phone itself. If it doesn't run, the player only adjusts the video as before.\n\n"
+                + "Downloads: the ⬇ button in the player sends videos here – files via Android's download manager, streams are "
+                + "loaded piece by piece and joined into an MP4. Saved in Download/Video-Assistent."), 13, false);
         foot.setAlpha(0.6f);
         foot.setPadding(0, dp(18), 0, 0);
         root.addView(foot);
@@ -146,27 +161,27 @@ public class MainActivity extends Activity {
         if (!HelferService.running) HelferService.start(this);
         Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:" + HelferService.PORT + "/pair#" + Keys.key(this)));
         i.addCategory(Intent.CATEGORY_BROWSABLE);
-        try { startActivity(Intent.createChooser(i, "Browser mit Violentmonkey wählen")); } catch (Exception e) { startActivity(i); }
+        try { startActivity(Intent.createChooser(i, Tr.t("Browser mit Violentmonkey wählen", "Choose the browser with Violentmonkey"))); } catch (Exception e) { startActivity(i); }
     }
 
     private void refresh() {
         boolean pd = Keys.paired(this);
-        stPair.setText(pd ? "✓ Verbunden (eigener Schlüssel)" : "• Noch nicht verbunden");
+        stPair.setText(pd ? Tr.t("✓ Verbunden (eigener Schlüssel)", "✓ Connected (own key)") : Tr.t("• Noch nicht verbunden", "• Not connected yet"));
         stPair.setTextColor(pd ? 0xFF4CD964 : 0xFFFF9F0A);
-        bPair.setText(pd ? "Erneut" : "Verbinden");
+        bPair.setText(pd ? Tr.t("Erneut", "Again") : Tr.t("Verbinden", "Connect"));
         boolean ov = Settings.canDrawOverlays(this);
-        set(stOverlay, bOverlay, ov, ov ? "Erlaubt" : "Noch nicht erlaubt");
+        set(stOverlay, bOverlay, ov, ov ? Tr.t("Erlaubt", "Allowed") : Tr.t("Noch nicht erlaubt", "Not allowed yet"));
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         boolean bat = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
-        set(stBattery, bBattery, bat, bat ? "Ausgenommen" : "Android könnte den Helfer beenden");
+        set(stBattery, bBattery, bat, bat ? Tr.t("Ausgenommen", "Excluded") : Tr.t("Android könnte den Helper beenden", "Android might stop the helper"));
         if (stNotif != null) {
             boolean n = checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
-            set(stNotif, bNotif, n, n ? "Erlaubt" : "Noch nicht erlaubt");
+            set(stNotif, bNotif, n, n ? Tr.t("Erlaubt", "Allowed") : Tr.t("Noch nicht erlaubt", "Not allowed yet"));
         }
         boolean on = HelferService.running;
-        stService.setText(on ? "● Läuft" : "○ Gestoppt");
+        stService.setText(on ? Tr.t("● Läuft", "● Running") : Tr.t("○ Gestoppt", "○ Stopped"));
         stService.setTextColor(on ? 0xFF4CD964 : 0xFFFF9F0A);
-        bService.setText(on ? "Stoppen" : "Starten");
+        bService.setText(on ? Tr.t("Stoppen", "Stop") : Tr.t("Starten", "Start"));
     }
 
     private void set(TextView st, Button b, boolean ok, String msg) {

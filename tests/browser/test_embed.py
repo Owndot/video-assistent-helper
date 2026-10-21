@@ -37,6 +37,11 @@ with sync_playwright() as p:
     check('Player füllt das Fenster', abs(pv[0] - pv[2]) < 2 and abs(pv[1] - pv[3]) < 2 and pv[1] > 700, pv)
     check('Titel der Hauptseite statt doppelter Adresse', pv[4].startswith("Don't Treat Love") and pv[5] == '127.0.0.1', pv[4:])
     page.screenshot(path=OUT + '/emb_open.png')
+    # Teilen im eingebetteten Fenster: Link der HAUPTSEITE (dort steht der Beitrag), nicht die Adresse des Fensters
+    fi.evaluate('() => { window.__shared = []; Object.defineProperty(navigator, "share", { configurable: true, value: (d) => { window.__shared.push(d); return Promise.resolve(); } }); }')
+    fi.evaluate('() => { %s.querySelector(".vp").classList.add("ctl"); %s.querySelector("button[aria-label=\'Link teilen\']").click(); }' % (R, R)); time.sleep(0.8)
+    sh = fi.evaluate('() => window.__shared')
+    check('Teilen im Fenster: Link und Titel der Hauptseite', len(sh) == 1 and sh[0].get('url', '').endswith('/emb_top.html') and sh[0].get('title', '').startswith("Don't Treat Love"), sh)
     # Zurück-Taste (Vollbild beendet) = Player zu, Fenster wieder klein
     page.evaluate('() => document.exitFullscreen()')
     time.sleep(1.4)

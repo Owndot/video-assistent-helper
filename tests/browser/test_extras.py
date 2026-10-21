@@ -107,7 +107,7 @@ with sync_playwright() as p:
     check('Standbild: JPG mit Titel und Zeit im Namen', d.suggested_filename.startswith('Film mit Untertiteln') and d.suggested_filename.endswith('.jpg') and head[:2] == b'\xff\xd8' and os.path.getsize(path) > 3000, [d.suggested_filename, os.path.getsize(path)])
     # ---------- Einstellungen (dauerhaft) ----------
     more(pg); pick(pg, 'Einstellungen'); m = items(pg)
-    check('Einstellungen (kurz): Sprungweite 10 s, Rand oben/unten 15 %', ['Sprungweite', '10 s', False] in m and ['Rand oben', '15 %', False] in m and ['Rand unten', '15 %', False] in m, m)
+    check('Einstellungen (kurz): Sprungweite 10 s, Wischsperre oben/unten Mittel', ['Sprungweite', '10 s', False] in m and ['Wischsperre oben', 'Mittel', False] in m and ['Wischsperre unten', 'Mittel', False] in m, m)
     # Design: Glas ↔ Schlicht (nur Milchglas, keine Glaskante/Glanz/Lupe) – wirkt sofort, in allen Browsern
     dz = lambda: pg.evaluate('''() => { const e = %s.querySelector("button[aria-label=Schließen]"), m = %s.querySelector(".vmenu");
         return [%s.host.classList.contains("flat"), getComputedStyle(e, "::before").display, getComputedStyle(e).backdropFilter, getComputedStyle(m, "::after").display, e.style.getPropertyValue("--lens")]; }''' % (R, R, R))

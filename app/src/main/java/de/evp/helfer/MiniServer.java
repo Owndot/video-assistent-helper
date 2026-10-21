@@ -43,10 +43,24 @@ public class MiniServer {
     }
 
     /** Koppel-Seite (ohne Schlüssel abrufbar, enthält ihn aber nicht – er steht nur im #-Teil der Adresse im Browser) */
-    static final String PAIR_HTML = "<!doctype html><html><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">"
-            + "<title>Video-Assistent verbinden</title></head><body style=\"font:17px/1.4 system-ui,sans-serif;margin:0;padding:32px 22px;background:#16181d;color:#eee\">"
-            + "<h2 style=\"margin:0 0 12px\">Video-Assistent Helfer</h2><p id=evp-pair>Das Userscript verbindet sich gerade … Erscheint hier nach ein paar Sekunden"
-            + " nichts, ist Violentmonkey in diesem Browser nicht aktiv oder das Skript zu alt (ab 13.5).</p></body></html>";
+    static String pairHtml(boolean de) {
+        return "<!doctype html><html lang=" + (de ? "de" : "en") + "><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">"
+            + "<title>" + (de ? "Video-Assistent verbinden" : "Connect Video Assistant") + "</title></head>"
+            + "<body style=\"font:17px/1.4 system-ui,sans-serif;margin:0;padding:32px 22px;background:#16181d;color:#eee\">"
+            + "<h2 style=\"margin:0 0 12px\">" + (de ? "Video-Assistent Helper" : "Video Assistant Helper") + "</h2><p id=evp-pair>"
+            + (de ? "Das Userscript verbindet sich gerade … Erscheint hier nach ein paar Sekunden nichts, ist Violentmonkey in diesem Browser nicht aktiv oder das Skript zu alt (ab 13.5)."
+                  : "The userscript is connecting … If nothing appears here after a few seconds, Violentmonkey isn't active in this browser or the script is too old (13.5 or newer needed).")
+            + "</p></body></html>";
+    }
+
+    /** Nur Anfragen an 127.0.0.1/localhost (Schutz gegen „DNS-Rebinding“: eine Webseite, deren Name auf 127.0.0.1 zeigt) */
+    static boolean hostOk(String host) {
+        if (host == null) return true;   // HTTP/1.0 ohne Host-Kopf
+        String h = host.trim().toLowerCase(Locale.ROOT);
+        int c = h.lastIndexOf(':');
+        if (c > 0 && h.indexOf(']') < c) h = h.substring(0, c);
+        return h.equals("127.0.0.1") || h.equals("localhost");
+    }
 
     public void start() {
         Thread t = new Thread(() -> {
@@ -84,7 +98,7 @@ public class MiniServer {
             }
             String[] lines = new String(hb.toByteArray(), StandardCharsets.ISO_8859_1).split("\r?\n");
             if (lines.length == 0 || lines[0].isEmpty()) { s.close(); return; }
-            String k = null;
+            String k = null, host = null, lang = null;
             long clen = 0;
             for (int i = 1; i < lines.length; i++) {
                 String line = lines[i];
@@ -92,6 +106,8 @@ public class MiniServer {
                 if (c <= 0) continue;
                 String name = line.substring(0, c).trim();
                 if (name.equalsIgnoreCase("x-evp-key")) k = line.substring(c + 1).trim();
+                else if (name.equalsIgnoreCase("host")) host = line.substring(c + 1).trim();
+                else if (name.equalsIgnoreCase("accept-language")) lang = line.substring(c + 1).trim();
                 else if (name.equalsIgnoreCase("content-length")) { try { clen = Long.parseLong(line.substring(c + 1).trim()); } catch (Exception ignored) {} }
             }
             String[] parts = lines[0].split(" ");
@@ -101,7 +117,12 @@ public class MiniServer {
             int q = target.indexOf('?');
             if (q >= 0) { path = target.substring(0, q); query = target.substring(q + 1); }
             boolean post = "POST".equals(method) && "/push".equals(path);
-            if ("GET".equals(method) && "/pair".equals(path)) { reply(s, 200, PAIR_HTML, "text/html; charset=utf-8"); return; }
+            if (!hostOk(host)) { reply(s, 403, "{\"ok\":false}"); return; }
+            if ("GET".equals(method) && "/pair".equals(path)) {
+                boolean de = lang == null ? Tr.de() : lang.toLowerCase(Locale.ROOT).startsWith("de");
+                reply(s, 200, pairHtml(de), "text/html; charset=utf-8");
+                return;
+            }
             if (!("GET".equals(method) || post) || k == null || !keyOk.test(k)) { reply(s, 403, "{\"ok\":false}"); return; }
             Map<String, String> p = parseQuery(query);
             if (post) {

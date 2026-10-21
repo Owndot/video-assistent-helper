@@ -14,21 +14,21 @@ with sync_playwright() as p:
     check('⋮ oben rechts, Untertitel-Knopf unten (Drehen bleibt außen)', lay[0] and lay[1] and lay[2][-1] == 'Drehen' and lay[2][-2] == 'Untertitel', lay)
     subsm(pg); pick(pg, 'Deutsch'); time.sleep(0.5)
     check('Untertitel an: Knopf leuchtet', pg.evaluate('() => %s.querySelector("button[aria-label=Untertitel]").classList.contains("on")' % R))
-    # Hinweise: feste Stelle (wie die Gesten-Anzeige), nie unten über den Knöpfen
+    # Hinweise (16.3): eine Stelle UNTER dem Bild, mit Abstand – im selben Glas wie die Knöpfe
     ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Bildformat]").click()' % R); time.sleep(0.3)
-    pos = pg.evaluate('''() => { const r = %s, t = r.querySelector(".toast"), tb = t.getBoundingClientRect(), bot = r.querySelector(".vbot").getBoundingClientRect(), vid = r.querySelector(".vv");
-        const vr = vid.getBoundingClientRect(), sc = Math.min(vr.width / vid.videoWidth, vr.height / vid.videoHeight), top = vr.top + (vr.height - vid.videoHeight * sc) / 2;
-        return [t.parentElement.classList.contains("vp"), Math.round(tb.top), Math.round(tb.bottom), Math.round(bot.top), Math.round(top), t.style.top, r.querySelector(".vind").style.top]; }''' % R)
+    NOTE = '''() => { const r = %s, t = r.querySelector(".toast"), tb = t.getBoundingClientRect(), bot = r.querySelector(".vbot").getBoundingClientRect(), vid = r.querySelector(".vv");
+        const vr = vid.getBoundingClientRect(), fit = getComputedStyle(vid).objectFit, sc = Math.min(vr.width / vid.videoWidth, vr.height / vid.videoHeight);
+        const pb = fit === "contain" ? vr.top + (vr.height + vid.videoHeight * sc) / 2 : vr.bottom;
+        return [t.parentElement.classList.contains("vp"), Math.round(tb.top), Math.round(tb.bottom), Math.round(bot.top), Math.round(pb), t.textContent, t.classList.contains("g")]; }''' % R
+    pos = pg.evaluate(NOTE)
     print('   Hinweis:', pos)
-    # nach „Füllen“ füllt das Bild die Höhe → Hinweis an der festen Stelle der Gesten-Anzeige (obere Mitte)
-    check('Hinweis im Player an der Stelle der Gesten-Anzeige, nicht unten über den Knöpfen', pos[0] and pos[5] == pos[6] and pos[2] < pos[3] - 100 and pos[1] > 60, pos)
+    # „Füllen“: Bild füllt den Bildschirm → Hinweis knapp über der unteren Leiste
+    check('Füllen: Hinweis knapp über der unteren Leiste, im Glas der Knöpfe', pos[0] and pos[6] and pos[3] - 30 <= pos[2] <= pos[3] - 10, pos)
     for _ in range(2):   # → Strecken → Original (Bild mit schwarzen Rändern)
         ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Bildformat]").click()' % R); time.sleep(0.35)
     time.sleep(0.3)
-    pos2 = pg.evaluate('''() => { const r = %s, t = r.querySelector(".toast"), tb = t.getBoundingClientRect(), vid = r.querySelector(".vv");
-        const vr = vid.getBoundingClientRect(), sc = Math.min(vr.width / vid.videoWidth, vr.height / vid.videoHeight), top = vr.top + (vr.height - vid.videoHeight * sc) / 2;
-        return [t.textContent, Math.round(tb.top), Math.round(tb.bottom), Math.round(top)]; }''' % R)
-    check('Original: Hinweis direkt über der Oberkante des Bildes', pos2[0] == 'Original' and pos2[2] <= pos2[3] + 6 and pos2[3] - pos2[2] < 80, pos2)
+    pos2 = pg.evaluate(NOTE)
+    check('Original: Hinweis mit Abstand unter der Unterkante des Bildes', pos2[5] == 'Original' and pos2[4] + 8 <= pos2[1] <= pos2[4] + 20, pos2)
     pg.evaluate('() => %s.querySelector("button[aria-label=Bildformat]").click()' % R); time.sleep(0.2)
     pg.evaluate('() => %s.querySelector("button[aria-label=Bildformat]").click()' % R); time.sleep(0.5)
     # Hochwischen über die Zeitleiste (Android-Geste) spult nicht – Ziehen zur Seite schon
@@ -49,6 +49,24 @@ with sync_playwright() as p:
     # wie Samsung: Zeitleiste über den Knöpfen (Knöpfe liegen zwischen Leiste und Android-Wischgeste)
     lay2 = pg.evaluate('() => { const r = %s; return [r.querySelector(".vrow").getBoundingClientRect().bottom, r.querySelector(".vhead").getBoundingClientRect().top]; }' % R)
     check('Zeitleiste über der Knopfreihe', lay2[0] <= lay2[1] + 1, lay2)
+    # Teilen: Link zum Video (hier die Seite selbst), mit Titel
+    pg.evaluate('() => { window.__shared = []; Object.defineProperty(navigator, "share", { configurable: true, value: (d) => { window.__shared.push(d); return Promise.resolve(); } }); }')
+    ctl(pg); pg.evaluate('() => %s.querySelector(".vcluster button[aria-label=\'Link teilen\']").click()' % R); time.sleep(0.5)
+    sh = pg.evaluate('() => window.__shared')
+    check('Teilen-Knopf: teilt Link und Titel', len(sh) == 1 and sh[0]['url'].endswith('/subs.html') and sh[0].get('title'), sh)
+    # ohne Teilen-Menü (oder abgelehnt): Link wird kopiert
+    pg.evaluate('() => { Object.defineProperty(navigator, "share", { configurable: true, value: undefined }); window.__copied = null; navigator.clipboard.writeText = (t) => { window.__copied = t; return Promise.resolve(); }; }')
+    ctl(pg); pg.evaluate('() => %s.querySelector(".vcluster button[aria-label=\'Link teilen\']").click()' % R); time.sleep(0.5)
+    cp = pg.evaluate('() => [window.__copied, %s.querySelector(".toast").textContent]' % R)
+    check('… ohne Teilen-Menü: Link kopiert', cp[0] and cp[0].endswith('/subs.html') and cp[1] == 'Link kopiert', cp)
+    # Einstellungen: Wischsperre mit Stufe in Worten und kurzer Erklärung – Hinweis ÜBER dem offenen Menü
+    more(pg); pick(pg, 'Einstellungen'); time.sleep(0.3)
+    pick(pg, 'Wischsperre oben'); time.sleep(0.4)
+    ws = pg.evaluate('''() => { const r = %s, it = Array.from(r.querySelectorAll(".vmenu.on .vmi")).find((e) => e.textContent.startsWith("Wischsperre oben")), t = r.querySelector(".toast");
+        return [it ? it.textContent : "", t.textContent, Math.round(t.getBoundingClientRect().bottom), Math.round(r.querySelector(".vmenu.on").getBoundingClientRect().top)]; }''' % R)
+    check('Wischsperre oben: Stufe in Worten, Erklärung über dem Menü', ws[0] == 'Wischsperre obenBreit' and ws[1] == 'Oberste 20 %: kein Wischen für Helligkeit/Lautstärke' and ws[2] <= ws[3], ws)
+    for _ in range(4): pick(pg, 'Wischsperre oben'); time.sleep(0.15)   # zurück auf Mittel (15 %)
+    pg.evaluate('() => { %s.querySelector(".vmenu").classList.remove("on"); %s.querySelector(".vp").classList.remove("menu"); }' % (R, R)); time.sleep(0.3)
     # Sprache per Einstellung: English (gilt ab dem nächsten Öffnen)
     more(pg); pick(pg, 'Einstellungen'); pick(pg, 'Sprache'); pick(pg, 'Sprache')
     check('Einstellung „Sprache“: Auto → Deutsch → English (Menü sofort englisch)', ['Language', 'English', False] in items(pg), items(pg))
