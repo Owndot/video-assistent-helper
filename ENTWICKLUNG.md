@@ -108,7 +108,7 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_e2e.py`, `test_pair.py` | **echter** Java-Server-Kern + Browser: Laden über die Sitzung, Cookies nur an die eigene Seite, Koppeln |
 | `test_embed.py`, `test_nest.py` | eingebettete / verschachtelte Fenster |
 | `test_mirror.py`, `test_fb*.py`, `test_ig.py`, `test_tt.py` | Facebook-Spiegel, Instagram, TikTok (nachgebaut) |
-| `test_topguard.py`, `test_idle.py` | gesperrter oberer Rand, sparsamer Takt ohne Video |
+| `test_topguard.py`, `test_idle.py` | gesperrter oberer/unterer Rand, sparsamer Takt ohne Video |
 | `test_pixel.py` | sieht man wirklich etwas? Ambient-Licht im Rand, Vorschaubild = echtes Bild an der Stelle (auch nach 13 s) |
 
 Bekannt: `test_tt.py` besteht 2 von 3 (TikTok liefert ohne Anmeldung keine Video-ID) – kein Fehler.
@@ -185,3 +185,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 13.5 | eigener Schlüssel + Koppeln, Cookies nur an die eigene Seite, sparsamer Takt |
 | 13.6 | Firefox: eingebettete Player, Facebook-Spiegel (Ton, Neuladen, Standbild), Seiten-Abfragen; Tests in beiden Browsern |
 | 13.7 | Firefox-Handy: Ambient-Licht und Spul-Vorschau ohne Kopieren von Videobildern; Pixel-Test |
+| 13.8 | auch unterer Rand ohne Helligkeit/Lautstärke (Home-Wischgeste) |

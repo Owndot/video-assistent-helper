@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      13.7
+// @version      13.8
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -58,6 +58,7 @@
     resumeAfterClose: true,   // nach dem Schließen des Players läuft das Video auf der Seite weiter
     holdSpeed: 2,             // lange ins Video drücken = so viel schneller, solange du hältst
     topGuard: 0.15,           // oberer Rand (Anteil der Höhe): hier starten keine Helligkeits-/Lautstärke-Gesten (Schnelleinstellungen)
+    bottomGuard: 0.15,        // unterer Rand: ebenso (Home-Wischgeste von Android)
     // Helfer-App "Video-Assistent Helfer" (eigene APK): Läuft sie, steuern die Wischgesten die ECHTE Helligkeit und
     // Medienlautstärke des Handys. Läuft sie nicht, regelt der Player wie bisher nur das Video. false = nie fragen.
     systemHelper: true,
@@ -3590,7 +3591,9 @@
       const edge = e.clientX < 28 || e.clientX > Wd - 28;
       // oben (15 % der Höhe, mindestens 48 Pixel) zieht man die Schnelleinstellungen herunter – dort keine Helligkeit/Lautstärke
       const Hd = wrap.clientHeight || innerHeight;
-      const top = e.clientY < Math.max(Hd * CONFIG.topGuard, 48);
+      // unten (ebenso 15 %) beginnt die Home-Wischgeste von Android – dort ebenfalls nicht
+      const top = e.clientY < Math.max(Hd * CONFIG.topGuard, 48) ||
+        e.clientY > Hd - Math.max(Hd * (CONFIG.bottomGuard == null ? 0.15 : CONFIG.bottomGuard), 48);
       g = { x: e.clientX, y: e.clientY, t: Date.now(), mode: '', time: m.currentTime, vol: st.level, bright: st.bright, delta: 0, edge: edge, top: top, holdTimer: 0 };
       // Lange drücken = schneller, solange gedrückt (wie Just Player)
       const gg = g;
@@ -4254,7 +4257,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 13.7',
+      'Video-Assistent 13.8',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

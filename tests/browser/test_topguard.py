@@ -27,8 +27,17 @@ with sync_playwright() as p:
         check('%dx%d: ganz oben links runterziehen – Helligkeit bleibt' % (W, H), abs(dim() - d0) < 0.001, [d0, dim()])
         v0 = vol(); swipe(W - 70, zone + 30, zone + 160)
         check('%dx%d: knapp darunter – Lautstärke ändert sich' % (W, H), vol() < v0 - 0.05, [v0, vol()])
+        # unten (Home-Wischgeste): Hochwischen vom unteren Rand ändert nichts
+        v0 = vol(); swipe(W - 70, H - 15, H - 15 - 140)
+        check('%dx%d: unten (%d px) hochwischen – Lautstärke bleibt' % (W, H, zone), abs(vol() - v0) < 0.001, [v0, vol()])
+        swipe(70, zone + 20, zone + 120)                      # erst etwas abdunkeln …
+        d0 = dim(); swipe(70, H - 10, H - 10 - 140)           # … dann vom unteren Rand hoch
+        check('%dx%d: unten links hochwischen – Helligkeit bleibt' % (W, H), abs(dim() - d0) < 0.001 and d0 > 0.01, [d0, dim()])
+        v0 = vol(); swipe(W - 70, H - zone - 30, H - zone - 130)
+        check('%dx%d: knapp darüber – Lautstärke ändert sich' % (W, H), vol() > v0 + 0.05, [v0, vol()])
         # zurück auf voll
-        swipe(W - 70, H - 30, zone + 10)
+        swipe(W - 70, H - zone - 10, zone + 10)
+        swipe(70, H - zone - 10, zone + 10)
     print('Fehler der Seite:', errs)
     print('ERGEBNIS: %d von %d' % (sum(1 for _, o in results if o), len(results)))
     b.close()

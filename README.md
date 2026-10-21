@@ -18,7 +18,7 @@ Der Player funktioniert auch **ohne** Helfer-App – dann regeln die Gesten nur 
 - Knopf „Player“ unter jedem laufenden Video (verschiebbar) → eigener Vollbild-Player über der Seite
 - Design im Stil von iOS/Samsung: Glasflächen mit feinem Rand und Wellen-/Lupen-Effekt, Ambient-Licht in den Rändern
 - Wischen: **links** Helligkeit, **rechts** Lautstärke, **waagerecht** spulen (mit Vorschaubild)
-  - oberer Rand (15 %) gesperrt, damit das Herunterziehen der Schnelleinstellungen nichts verstellt
+  - oberer und unterer Rand (je 15 %) gesperrt, damit Schnelleinstellungen und die Home-Wischgeste nichts verstellen
   - ganz unten bei der Helligkeit **weiterwischen = Auto** (automatische Helligkeit des Handys)
 - Doppeltippen links/rechts = ±10 s (mehrfach = 20, 30 … s), lange drücken = 2× schneller
 - Zwei Finger = zoomen, Bildformate (Original, Füllen, Strecken, 16:9, 4:3, 21:9), Qualität wählen
@@ -81,7 +81,7 @@ Unterschiede zu Vivaldi:
 | `startFullscreen` | `true` | Player im Vollbild öffnen (`false` = ohne Browser-Hinweis, aber mit Statusleiste) |
 | `lensGlass` | `true` | Wellen-/Lupen-Glas (`false` = einfaches Milchglas, spart etwas Grafikleistung) |
 | `ambient` / `progressLine` | `true` | Ambient-Licht / Fortschrittslinie (auch im Format-Menü umschaltbar) |
-| `topGuard` | `0.15` | oberer Bereich ohne Helligkeits-/Lautstärke-Gesten (Anteil der Höhe) |
+| `topGuard` / `bottomGuard` | `0.15` | oberer / unterer Bereich ohne Helligkeits-/Lautstärke-Gesten (Anteil der Höhe) |
 | `holdSpeed` | `2` | Tempo beim langen Drücken |
 | `systemHelper` | `true` | Helfer-App benutzen, wenn sie läuft |
 | `downloader` | `'ytdlnis'` | `'share'` = Teilen-Menü statt direkt YTDLnis |
