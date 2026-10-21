@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      15.1
+// @version      15.2
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -1560,8 +1560,7 @@
  -webkit-backdrop-filter:blur(22px) saturate(1.7) brightness(1.06)!important;backdrop-filter:blur(22px) saturate(1.7) brightness(1.06)!important;
  box-shadow:0 2px 14px rgba(0,0,0,.16)!important}
 :host(.flat) .g::before,:host(.flat) .g::after,:host(.flat) .pill::before,:host(.flat) .pill::after,:host(.flat) .toast::before,:host(.flat) .toast::after{display:none!important}
-/* Untertitel im schlichten Design: helles Milchglas, Hintergrund dahinter etwas abgedunkelt (Schrift bleibt lesbar) */
-:host(.flat) .vsub span{background:rgba(255,255,255,.14);-webkit-backdrop-filter:blur(16px) saturate(1.6) brightness(.8);backdrop-filter:blur(16px) saturate(1.6) brightness(.8);box-shadow:0 2px 10px rgba(0,0,0,.14)}
+
 :host(.flat) .vb.g:active,:host(.flat) .vchip:active{background:rgba(255,255,255,.32)!important}
 /* Play/±10 mitten im Bild: zurückhaltend – das Video scheint deutlich durch, das Symbol trägt */
 :host(.flat) .vmid .g{background:rgba(255,255,255,.05)!important;-webkit-backdrop-filter:blur(2.5px) saturate(1.1)!important;backdrop-filter:blur(2.5px) saturate(1.1)!important;box-shadow:0 1px 6px rgba(0,0,0,.08)!important}
@@ -2115,12 +2114,10 @@
 .vv.vzan{transition:transform .25s cubic-bezier(.215,.61,.355,1)}
 /* Untertitel: über dem Bild, unter den Bedienelementen; rücken über die Leisten, wenn die sichtbar sind */
 .vsub{position:absolute;left:5%;right:5%;bottom:calc(26px + var(--evp-sb,env(safe-area-inset-bottom,0px)));text-align:center;pointer-events:none;white-space:pre-line;
- font:600 19px/1.32 var(--font);color:#fff;text-shadow:0 0 2px #000,0 1px 3px #000,0 0 8px rgba(0,0,0,.7);transition:bottom .25s ease,top .25s ease}
+ font:600 19px/1.32 var(--font);color:#fff;text-shadow:0 0 1.5px #000,0 0 1.5px #000,1px 1px 1px #000,-1px -1px 1px #000,1px -1px 1px #000,-1px 1px 1px #000,0 2px 6px rgba(0,0,0,.6);transition:bottom .25s ease,top .25s ease}
 .vsub[data-size="s"]{font-size:15px}.vsub[data-size="l"]{font-size:25px}
-/* jede Zeile eine eigene Fläche im Stil des Designs (Glas: dunkles Glas mit feiner Kante) */
-.vsub span{display:inline-block;margin:1px 0;padding:2px 10px;border-radius:9px;background:rgba(18,20,28,.3);
- -webkit-backdrop-filter:blur(10px) saturate(1.35) brightness(.82);backdrop-filter:blur(10px) saturate(1.35) brightness(.82);
- box-shadow:inset 0 0 0 .7px rgba(255,255,255,.26),inset 0 1px 0 rgba(255,255,255,.16),0 2px 10px rgba(0,0,0,.18)}
+/* Untertitel wie in üblichen Videoplayern: nur Schrift – weiß mit dunkler Kontur, ohne Fläche (in beiden Designs) */
+.vsub span{display:inline-block;margin:1px 0;padding:0 4px}
 /* Standbild: kurzer Blitz */
 .vp.flash::after{content:"";position:absolute;inset:0;background:#fff;opacity:0;animation:vflash .35s ease;pointer-events:none;z-index:9}
 @keyframes vflash{0%{opacity:.55}100%{opacity:0}}
@@ -4918,7 +4915,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 15.1',
+      'Video-Assistent 15.2',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

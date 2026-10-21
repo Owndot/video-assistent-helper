@@ -158,7 +158,7 @@ Benachrichtigungen) – das prüft nur das Handy.
 - **Speicher:** `store.get/set` = `GM_getValue/GM_setValue` (ersatzweise `localStorage` `evp-s-…`, so in den Tests).
   `settings` (nur die Schlüssel in `SETTING_KEYS`) überschreibt `CONFIG` beim Start. (Weiterschauen wurde in 15.0
   entfernt – alte `resume`-Daten löscht das Skript einmalig.)
-- **Untertitel** zeichnet der Player selbst (`.vsub`, nur Text). hls.js liefert Zeilen nur an eine eingeschaltete Spur
+- **Untertitel** zeichnet der Player selbst (`.vsub`, nur Text – weiß mit Kontur, ohne Fläche). hls.js liefert Zeilen nur an eine eingeschaltete Spur
   → `subtitleDisplay` an, Spur aber auf `hidden`; hls.js hängt außerdem einen leeren `<track src="data:,WEBVTT">` an
   (ignorieren).
 - **Untertitel der Seite** (`findPageSubs`, erst beim Öffnen des Menüs): URLs mit Untertitel-Merkmal aus `innerHTML`
@@ -218,3 +218,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 14.9 | Schlicht: Play/±10 zurückhaltender (Video scheint durch) |
 | 15.0 | Hinweise und Untertitel im Stil des gewählten Designs; Weiterschauen entfernt |
 | 15.1 | Schlicht: Play/±10 fast durchsichtig |
+| 15.2 | Untertitel wie in üblichen Playern: nur Schrift mit Kontur, ohne Fläche |
