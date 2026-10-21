@@ -19,6 +19,7 @@ with sync_playwright() as p:
     def swipe(x, y0, y1):
         # Leisten ausblenden: auf einem Knopf startet absichtlich keine Geste
         page.evaluate('() => %s.querySelector(".vp").classList.remove("ctl")' % R); time.sleep(0.25)
+        page.mouse.move(W / 2, H / 2); page.mouse.up(); time.sleep(0.15)   # Maus-Nachbildung sicher „losgelassen“
         page.mouse.move(x, y0); time.sleep(0.1); page.mouse.down(); page.mouse.move(x, y1, steps=8); page.mouse.up(); time.sleep(0.5)
     for (W, H) in ((400, 800), (800, 400)):
         page.set_viewport_size({'width': W, 'height': H}); time.sleep(0.8)
