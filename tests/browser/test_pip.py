@@ -23,6 +23,7 @@ with sync_playwright() as p:
     chips = page.evaluate('() => Array.from(%s.querySelectorAll(".vtools .vchip")).filter(c => !c.hidden).map(c => { const r = c.getBoundingClientRect(); const s = c.querySelector("span").getBoundingClientRect(); return [Math.round(r.width), s.width]; })' % R)
     check('Werkzeuge nur als Symbole', all(w <= 50 and sw <= 1 for w, sw in chips), chips)
     page.screenshot(path=OUT + '/shot_icons.png')
+    page.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R); time.sleep(0.2)   # Leisten sicher sichtbar (langsamer Rechner)
     page.locator('button[aria-label="Bild-in-Bild"]').click(); time.sleep(1.5)
     st = page.evaluate('() => [!!%s.querySelector(".vp"), !!document.pictureInPictureElement, %s.querySelector(".toast").classList.contains("on"), %s.querySelector(".toast").parentNode.className]' % (R, R, R))
     check('Bild-in-Bild: Player bleibt offen', st[0], st)
