@@ -13,8 +13,8 @@ with sync_playwright() as p:
         pg.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(1)
         pg.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
         pg.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.currentTime > 1; }' % R, timeout=20000); time.sleep(1)
-        for menu in ['Qualität', 'Bildformat']:
-            pg.evaluate('(l) => { %s.querySelector(".vp").classList.add("ctl"); %s.querySelector("button[aria-label=" + l + "]").click(); }' % (R, R), menu); time.sleep(0.4)
+        for menu in ['Qualität', 'Einstellungen']:
+            pg.evaluate('(l) => { const r = %s; r.querySelector(".vp").classList.add("ctl"); if (l === "Einstellungen") { r.querySelector("button[aria-label=Mehr]").click(); Array.from(r.querySelectorAll(".vmenu .vmi")).find(x => x.firstChild.textContent === "Einstellungen").click(); } else r.querySelector("button[aria-label=" + l + "]").click(); }' % R, menu); time.sleep(0.4)
             st = lambda: pg.evaluate('() => { const l = %s.querySelector(".vmlist"); return [l.classList.contains("mt"), l.classList.contains("mb"), l.scrollHeight > l.clientHeight + 1]; }' % R)
             a = st()
             check('%s %s ganz oben: oben KEIN Auslaufen' % (tag, menu), not a[0] and (a[1] == a[2]), a)

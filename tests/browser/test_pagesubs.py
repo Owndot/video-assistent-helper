@@ -4,7 +4,7 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 import time
 exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])
 def subs_menu(pg):
-    more(pg); pick(pg, 'Untertitel')
+    subsm(pg)
     try: pg.wait_for_function('() => !Array.from(%s.querySelectorAll(".vmenu.on .vmi")).some(b => /Suche Untertitel/.test(b.textContent))' % R, timeout=12000)
     except Exception: pass
     time.sleep(0.3); return items(pg)

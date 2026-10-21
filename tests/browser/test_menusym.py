@@ -14,8 +14,8 @@ with sync_playwright() as p:
         pg.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
         pg.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.currentTime > 1; }' % R, timeout=20000)
         time.sleep(1.2)
-        for menu in ['Bildformat', 'Qualität']:
-            pg.evaluate('(l) => { %s.querySelector(".vp").classList.add("ctl"); %s.querySelector("button[aria-label=" + l + "]").click(); }' % (R, R), menu); time.sleep(0.5)
+        for menu in ['Einstellungen', 'Qualität']:
+            pg.evaluate('(l) => { const r = %s; r.querySelector(".vp").classList.add("ctl"); if (l === "Einstellungen") { r.querySelector("button[aria-label=Mehr]").click(); Array.from(r.querySelectorAll(".vmenu .vmi")).find(x => x.firstChild.textContent === "Einstellungen").click(); } else r.querySelector("button[aria-label=" + l + "]").click(); }' % R, menu); time.sleep(0.5)
             m = pg.evaluate('''() => { const r = %s; const mb = r.querySelector(".vmenu").getBoundingClientRect();
                 const rows = Array.from(r.querySelectorAll(".vmenu .vmi")).map(b => { const s = b.querySelector("small"); return s ? Math.round(b.getBoundingClientRect().right - s.getBoundingClientRect().right) : null; }).filter(x => x !== null);
                 const lab = Array.from(r.querySelectorAll(".vmenu .vmi")).map(b => { const rg = document.createRange(); rg.selectNodeContents(b.firstChild); return Math.round(rg.getBoundingClientRect().left - b.getBoundingClientRect().left); });

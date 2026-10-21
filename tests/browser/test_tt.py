@@ -56,8 +56,10 @@ def run(dur, action):
 ok = []
 POST = 'https://www.tiktok.com/@%s/video/%s' % (USER, VID)
 r, _ = run(30, 'dl')
-print('Download  -> YTDLnis bekommt:', r[1])
-ok.append(r[1] == [POST])
+# seit 13.2 direkt an YTDLnis (kein Teilen-Menü mehr): Android-Intent mit der Videoseite für die App
+yt = [i for i in r[0] if 'package=com.deniscerri.ytdl' in i and ('/@%s/video/%s' % (USER, VID)) in i]
+print('Download  -> direkt an YTDLnis:', (yt[0][:90] + '…') if yt else '-', '| Teilen:', r[1])
+ok.append(bool(yt) and not r[1])
 r, seen = run(30, 'ext')
 print('Teilen    -> VLC bekommt:', (r[0][0][:80] + '…') if r[0] else '-', '| Videoseite geholt:', seen[:1])
 ok.append(bool(r[0]) and 'oHI' in r[0][0])

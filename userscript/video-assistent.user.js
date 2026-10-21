@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      15.4
+// @version      16.0
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -62,6 +62,7 @@
     skipSeconds: 10,          // Doppeltipp links/rechts und die Sprung-Knöpfe: so viele Sekunden
     subSize: 'm',             // Untertitel: 's' klein, 'm' mittel, 'l' groß
     subHigh: false,           // Untertitel oben im Bild statt unten (z. B. wenn das Video eigene Texte unten hat)
+    language: 'auto',         // Sprache der Oberfläche: 'auto' (wie der Browser), 'de' oder 'en'
     // Helfer-App "Video-Assistent Helfer" (eigene APK): Läuft sie, steuern die Wischgesten die ECHTE Helligkeit und
     // Medienlautstärke des Handys. Läuft sie nicht, regelt der Player wie bisher nur das Video. false = nie fragen.
     systemHelper: true,
@@ -109,7 +110,7 @@
   };
   // Eigene Einstellungen (im Player: ⋯ → Einstellungen) gelten vor den Werten oben und überstehen Updates des Skripts
   const SETTING_KEYS = ['startFullscreen', 'lensGlass', 'ambient', 'progressLine', 'holdSpeed', 'topGuard', 'bottomGuard',
-    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh'];
+    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh', 'language'];
   const CONFIG_DEFAULT = {};
   SETTING_KEYS.forEach((k) => { CONFIG_DEFAULT[k] = CONFIG[k]; });
   const userSettings = () => { const o = store.get('settings', {}); return o && typeof o === 'object' ? o : {}; };
@@ -119,6 +120,88 @@
     const o = userSettings(); o[k] = v; store.set('settings', o);
   }
   function resetSettings() { store.set('settings', {}); SETTING_KEYS.forEach((k) => { CONFIG[k] = CONFIG_DEFAULT[k]; }); }
+
+  // ----- Sprache: Deutsch / English (Einstellungen → Sprache; „Auto“ = Sprache des Browsers) -----
+  // Alle Texte stehen im Skript auf Deutsch; tr() übersetzt sie an den Stellen, durch die alles läuft (Hinweise,
+  // Anzeigen, Menüs, Beschriftungen). Zusammengesetzte Texte über Muster bzw. Teil für Teil (getrennt durch „ – “).
+  const UI_EN = () => (CONFIG.language === 'en' ? true : CONFIG.language === 'de' ? false : !/^de\b/i.test(navigator.language || ''));
+  const EN = {
+    // Knöpfe & Bedienung
+    'Im Videoplayer öffnen': 'Open in video player', 'Herunterladen (z. B. mit YTDLnis)': 'Download (e.g. with YTDLnis)',
+    'In externer App öffnen': 'Open in external app', 'Schließen': 'Close', 'Wiedergabe': 'Play', 'Pause': 'Pause',
+    'Geschwindigkeit': 'Speed', 'Bild-in-Bild': 'Picture-in-picture', 'Qualität': 'Quality', 'Bildformat': 'Aspect ratio',
+    'Drehen': 'Rotate', 'Sperren': 'Lock', 'Bedienung sperren': 'Lock controls', 'Entsperren': 'Unlock', 'Mehr': 'More',
+    'Untertitel': 'Subtitles', 'Position': 'Position', 'Format': 'Format', 'Auto': 'Auto', 'Stufe': 'Level',
+    'Weiterschauen': 'Resume',
+    // Menüs
+    'Einstellungen': 'Settings', 'Tonspur': 'Audio track', 'Standbild speichern': 'Save snapshot', 'Aus': 'Off', 'An': 'On',
+    'aus': 'off', 'an': 'on', 'Datei laden …': 'Load file …', '.srt, .vtt oder .ttml vom Handy': '.srt, .vtt or .ttml from your phone',
+    'Größe': 'Size', 'klein': 'small', 'mittel': 'medium', 'groß': 'large', 'Lage': 'Position', 'unten im Bild': 'bottom of picture',
+    'oben im Bild': 'top of picture', 'Früher zeigen': 'Show earlier', 'Später zeigen': 'Show later', 'eigene Datei': 'own file',
+    'von der Seite': 'from the page', 'Suche Untertitel der Seite …': 'Looking for subtitles on the page …',
+    'Automatisch': 'Automatic', 'passt sich der Verbindung an': 'adapts to your connection', 'Original': 'Original',
+    'Füllen': 'Fill', 'Strecken': 'Stretch', 'Zoom zurückgesetzt': 'Zoom reset',
+    // Einstellungen (kurz)
+    'Design': 'Design', 'Glas': 'Glass', 'Schlicht': 'Plain', 'Vollbild': 'Full screen', 'Ambient': 'Ambient',
+    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Rand oben': 'Top edge', 'Rand unten': 'Bottom edge',
+    'Auto-Drehen': 'Auto-rotate', 'Helfer-App': 'Helper app', 'Download': 'Download', 'Teilen': 'Share', 'Sprache': 'Language',
+    'Zurücksetzen': 'Reset', 'Deutsch': 'Deutsch', 'English': 'English',
+    // Hinweise
+    'Einstellungen zurückgesetzt': 'Settings reset', 'Gilt ab dem nächsten Öffnen des Players': 'Applies the next time the player opens',
+    'Untertitel werden geladen …': 'Loading subtitles …', 'Diese Untertitel lassen sich nicht laden': 'These subtitles can’t be loaded',
+    'Keine Untertitel in dieser Datei gefunden': 'No subtitles found in this file', 'Noch kein Bild da': 'No picture yet',
+    'Diese Seite erlaubt kein Standbild': 'This site doesn’t allow snapshots',
+    'Diese Seite erlaubt kein Standbild (Videoserver sperrt es)': 'This site doesn’t allow snapshots (video server blocks it)',
+    'In Firefox auf dem Handy leider nicht möglich': 'Not possible in Firefox on mobile, sorry', 'Kein Bild bekommen': 'Couldn’t get a picture',
+    'Standbild gespeichert (Downloads)': 'Snapshot saved (Downloads)', 'Bild-in-Bild ist hier nicht möglich': 'Picture-in-picture isn’t possible here',
+    'Drehen ist hier nicht möglich – dreh das Handy mit aktivierter Auto-Drehung': 'Rotating isn’t possible here – turn your phone with auto-rotate on',
+    'Diese Qualität gehörte zu einem anderen Video': 'This quality belonged to another video',
+    'Dieses Video lässt sich hier nicht im eigenen Player zeigen': 'This video can’t be shown in the player here',
+    'Dieses Video gibt es hier nur mit getrennter Bild- und Tonspur': 'This video only exists with separate video and audio here',
+    'Bereite Video vor …': 'Preparing video …', 'Erkenne Video …': 'Detecting video …', 'Bereite Download vor …': 'Preparing download …',
+    'Download wird vorbereitet …': 'Preparing download …', 'Suche die Videodatei …': 'Looking for the video file …',
+    'Suche MP4 mit Ton …': 'Looking for MP4 with sound …', 'Suche HD-Version …': 'Looking for HD version …',
+    'Wird im Videoplayer geöffnet (Weiterleitung aufgelöst) …': 'Opening in video player (redirect resolved) …',
+    'Die Seite sperrt den Download': 'The site blocks the download', 'Download des Browsers': 'Browser download',
+    'Download läuft im Browser – du kannst die Seite verlassen': 'Downloading in the browser – you can leave the page',
+    'Download läuft – siehe Benachrichtigung': 'Downloading – see notification', 'Der Server lehnt den Helfer ab': 'The server rejects the helper',
+    'Für Streams wird die Helfer-App gebraucht': 'Streams need the helper app', 'Für dieses Video gibt es keine Datei zum Herunterladen': 'There’s no file to download for this video',
+    'Für dieses Video gibt es keine Datei-Adresse': 'There’s no file address for this video', 'Helfer konnte den Download nicht starten': 'The helper couldn’t start the download',
+    'Helfer lädt den Stream – Fortschritt in der Benachrichtigung': 'The helper is downloading the stream – progress in the notification',
+    'Server verlangt die Browser-Sitzung': 'The server needs the browser session',
+    'Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen': 'No link to this video found – open the post and try again',
+    'Kein passendes Video gefunden – kurz laufen lassen und nochmal tippen': 'No matching video found – let it play briefly and tap again',
+    'Link kopiert – in YTDLnis einfügen': 'Link copied – paste it into YTDLnis', 'Link kopiert': 'Link copied', 'Link wird geteilt': 'sharing the link',
+    'klappt nicht? Nochmal tippen': 'not working? Tap again', 'Neuer Tab wurde blockiert – Pop-ups für diese Seite erlauben': 'New tab was blocked – allow pop-ups for this site',
+    'Videodatei gefunden': 'Video file found', 'Loslassen, um die Diagnose zu kopieren': 'Release to copy the diagnostics', 'Diagnose kopiert': 'Diagnostics copied',
+    // Download-Menü
+    'Mit dem Helfer': 'With the helper', 'Download-Manager': 'Download manager', 'Stream → MP4': 'Stream → MP4',
+    'Über den Browser laden': 'Load via the browser', 'für geschützte Seiten · Seite offen lassen': 'for protected sites · keep the page open',
+    'Mit YTDLnis': 'With YTDLnis', 'direkt öffnen': 'open directly', 'Im Browser speichern': 'Save in the browser',
+    'Im Browser öffnen': 'Open in the browser', 'dort ⋮ → Herunterladen': 'then ⋮ → Download', 'Hier speichern': 'Save here',
+    'Player bis zum Ende offen lassen': 'keep the player open until it’s done', 'Teilen …': 'Share …', 'an eine andere App': 'to another app',
+    'lädt über den Browser, Seite offen lassen': 'loading via the browser, keep the page open',
+    'Im Player öffnen': 'Open in player', 'Im Player öffnen (HD)': 'Open in player (HD)', 'Im Player öffnen (Full HD)': 'Open in player (Full HD)',
+    'Player · HD': 'Player · HD', 'Player · Full HD': 'Player · Full HD', 'Diagnose anzeigen': 'Show diagnostics',
+    'links': 'left', 'rechts': 'right',
+  };
+  const EN_RX = [
+    [/^Untertitel: (.+)$/, (m) => 'Subtitles: ' + m[1]], [/^Tonspur: (.+)$/, (m) => 'Audio: ' + m[1]],
+    [/^(\d+) s zurück$/, (m) => m[1] + ' s back'], [/^(\d+) s vor$/, (m) => m[1] + ' s forward'],
+    [/^([\d,.]+)× schneller$/, (m) => m[1].replace(',', '.') + '× faster'], [/^Verschiebung (.+)$/, (m) => 'Offset ' + m[1].replace(',', '.')],
+    [/^Position gespeichert \((links|rechts)\)$/, (m) => 'Position saved (' + (m[1] === 'links' ? 'left' : 'right') + ')'],
+    [/^Spur (\d+)$/, (m) => 'Track ' + m[1]], [/^Seite (\d+)$/, (m) => 'Page ' + m[1]], [/^Stufe (\d+)$/, (m) => 'Level ' + m[1]],
+    [/^Quelle (\d+)\/(\d+)$/, (m) => 'Source ' + m[1] + '/' + m[2]], [/^(Lautstärke|Helligkeit) (\d+) %$/, (m) => (m[1] === 'Lautstärke' ? 'Volume ' : 'Brightness ') + m[2] + ' %'],
+    [/^Länge passt nicht \((.+) s statt (.+) s\)$/, (m) => 'length doesn’t match (' + m[1] + ' s instead of ' + m[2] + ' s)'],
+    [/^Keine Videodatei( mit Ton)? gefunden \((.*)\)$/, (m) => 'No video file' + (m[1] ? ' with sound' : '') + ' found (' + tr(m[2]) + ')'],
+  ];
+  function tr(x) {
+    if (typeof x !== 'string' || !x || !UI_EN()) return x;
+    if (Object.prototype.hasOwnProperty.call(EN, x)) return EN[x];
+    for (let i = 0; i < EN_RX.length; i++) { const m = EN_RX[i][0].exec(x); if (m) return EN_RX[i][1](m); }
+    if (x.indexOf(' – ') > 0) return x.split(' – ').map(tr).join(' – ');
+    return x;
+  }
   // Weiterschauen gibt es nicht mehr – früher gemerkte Stellen einmalig löschen
   try { const old = store.get('resume', null); if (old && typeof old === 'object' && Object.keys(old).length) store.set('resume', {}); } catch (e) {}
   const SKIP = () => ([5, 10, 15, 30].indexOf(+CONFIG.skipSeconds) >= 0 ? +CONFIG.skipSeconds : 10);
@@ -1573,9 +1656,9 @@
     const el = document.createElement(tag);
     if (props) for (const k in props) {
       if (k === 'class') el.className = props[k];
-      else el.setAttribute(k, props[k]);
+      else el.setAttribute(k, k === 'aria-label' || k === 'title' ? tr(props[k]) : props[k]);
     }
-    for (let i = 2; i < arguments.length; i++) { const c = arguments[i]; if (c != null) el.append(c); }
+    for (let i = 2; i < arguments.length; i++) { const c = arguments[i]; if (c != null) el.append(typeof c === 'string' ? tr(c) : c); }
     return el;
   }
   function icon(d) {
@@ -1908,7 +1991,13 @@
 
   function toast(msg) {
     ui();
-    toastEl.textContent = msg;
+    // im Player: eine feste Stelle für alle Hinweise (oben mittig) – die Gesten-Anzeige macht so lange Platz
+    const pw = toastEl.parentElement;
+    if (pw && pw.classList && pw.classList.contains('vp')) {
+      const ind = pw.querySelector('.vind'); if (ind) ind.classList.remove('on');
+      toastEl.style.top = vp && vp.notePos ? vp.notePos() : '';
+    } else toastEl.style.top = '';
+    toastEl.textContent = tr(msg);
     toastEl.classList.add('on');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toastEl.classList.remove('on'), 2400);
@@ -2103,6 +2192,7 @@
     fit: 'M19 12h-2v3h-3v2h5v-5zM7 9h3V7H5v5h2V9zm14-6H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16.01H3V4.99h18v14.02z',
     rotate: 'M16.48 2.52c3.27 1.55 5.61 4.72 5.97 8.48h1.5C23.44 4.84 18.29 0 12 0l-.66.03 3.81 3.81 1.33-1.32zm-6.25-.77c-.59-.59-1.54-.59-2.12 0L1.75 8.11c-.59.59-.59 1.54 0 2.12l12.02 12.02c.59.59 1.54.59 2.12 0l6.36-6.36c.59-.59.59-1.54 0-2.12L10.23 1.75zm4.6 19.44L2.81 9.17l6.36-6.36 12.02 12.02-6.36 6.36zm-7.31.29C4.25 19.94 1.91 16.76 1.55 13H.05C.56 19.16 5.71 24 12 24l.66-.03-3.81-3.81-1.33 1.32z',
     lock: 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z',
+    cc: 'M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z',
     hd: 'M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 11H9.5v-2h-2v2H6V9h1.5v2.5h2V9H11v6zm7-1c0 .55-.45 1-1 1h-.75v1.5h-1.5V15H14c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v4zm-3.5-.5h2v-3h-2v3z',
     vol: 'M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z',
     mute: 'M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z',
@@ -2112,6 +2202,10 @@
 .vp{--glass:rgba(255,255,255,.13);--edge1:rgba(255,255,255,.6);--edge2:rgba(255,255,255,.06);--sub:rgba(255,255,255,.74);--ice:#9BE7FF;--trk:rgba(255,255,255,.25);
  position:fixed;inset:0;background:#000;z-index:2147483647;touch-action:none;color:#fff;font:15px/1.2 var(--font);-webkit-user-select:none;user-select:none;overflow:hidden;overflow:clip;-webkit-tap-highlight-color:transparent}
 .vv.vzan{transition:transform .25s cubic-bezier(.215,.61,.355,1)}
+/* Hinweise im Player: immer an derselben Stelle – oben mittig unter der Kopfleiste (wie die Gesten-Anzeige) */
+.vp .toast{position:absolute;top:calc(74px + var(--evp-st,env(safe-area-inset-top,0px)));bottom:auto;transform:translate(-50%,-8px);
+ max-width:calc(100% - 40px);text-align:center;z-index:7;pointer-events:none}
+.vp .toast.on{transform:translate(-50%,0)}
 /* Untertitel: über dem Bild, unter den Bedienelementen; rücken über die Leisten, wenn die sichtbar sind */
 .vsub{position:absolute;left:5%;right:5%;bottom:calc(26px + var(--evp-sb,env(safe-area-inset-bottom,0px)));text-align:center;pointer-events:none;white-space:pre-line;
  font:500 20px/1.34 var(--font);letter-spacing:.035em;word-spacing:.08em;color:#fff;
@@ -2444,7 +2538,8 @@
     const bFit = chip(P.fit, 'Format', 'Bildformat');
     const bRot = chip(P.rotate, 'Drehen', 'Drehen');
     const bLock = chip(P.lock, 'Sperren', 'Bedienung sperren');
-    const bMore = ib(I.more, 'Mehr', 'vtool');   // Untertitel, Tonspur, Standbild, Einstellungen
+    const bMore = ib(I.more, 'Mehr');   // oben rechts: Tonspur, Standbild, Einstellungen
+    const bSubs = chip(P.cc, 'Untertitel', 'Untertitel');   // unten: Untertitel (leuchtet, wenn an)
     const subEl = h('div', { class: 'vsub', 'aria-live': 'polite' });
     const bUnlock = ib(P.lock, 'Entsperren', 'vunlock g');
     const menu = h('div', { class: 'vmenu g', role: 'menu' });
@@ -2452,9 +2547,9 @@
     wrap.append(amb, vid, dimEl, subEl, gest, spin,
       h('div', { class: 'vchrome' },
         h('div', { class: 'vscrim' }),
-        h('div', { class: 'vtop' }, bClose, title, h('div', { class: 'vcluster g ia' }, bDl, bExt, bSpeed)),
+        h('div', { class: 'vtop' }, bClose, title, h('div', { class: 'vcluster g ia' }, bDl, bExt, bSpeed, bMore)),
         h('div', { class: 'vmid' }, bBack, bPlay, bFwd),
-        h('div', { class: 'vbot ia' }, h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bPip, bQual, bFit, bMore, bRot)), h('div', { class: 'vrow' }, tCur, bar, tDur))),
+        h('div', { class: 'vbot ia' }, h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bPip, bQual, bFit, bSubs, bRot)), h('div', { class: 'vrow' }, tCur, bar, tDur))),
       ind, side, seekBox, sfxL, sfxR, mini, menu, bUnlock);
     root.append(wrap);
     // Lupen-Glas für alle Glasflächen (Größe kommt erst nach dem Einblenden; ändert sie sich, wird neu berechnet)
@@ -2613,9 +2708,11 @@
       const top = ct >= 120 ? ct - 60 : H / 2 - 150;
       ind.style.top = Math.max(76, Math.round(top)) + 'px';
     }
+    st.notePos = () => { placeInd(); return ind.style.top; };   // dieselbe Stelle für Hinweise (toast)
     const showInd = (t, lvl, stay) => {
+      if (toastEl) toastEl.classList.remove('on');   // gleiche Stelle wie die Hinweise – nie beide übereinander
       placeInd();
-      indTxt.textContent = t;
+      indTxt.textContent = tr(t);
       ind.classList.add('on');
       clearTimeout(indTimer);
       if (!stay) indTimer = setTimeout(() => ind.classList.remove('on'), 800);
@@ -2671,7 +2768,7 @@
       sideMark.style.bottom = (100 / max).toFixed(1) + '%';
       sideTxt.textContent = txt != null ? txt : Math.round(lvl * 100) + '%';
       setIcon(sideIco, kind === 'vol' ? (lvl < 0.005 ? P.mute : P.vol) : P.sun);
-      side.setAttribute('aria-label', (kind === 'vol' ? 'Lautstärke ' : 'Helligkeit ') + Math.round(lvl * 100) + ' %');
+      side.setAttribute('aria-label', tr((kind === 'vol' ? 'Lautstärke ' : 'Helligkeit ') + Math.round(lvl * 100) + ' %'));
       clearTimeout(sideTimer);
       sideTimer = setTimeout(() => side.classList.remove('on'), 900);
     };
@@ -3346,10 +3443,10 @@
       const oldTop = old ? old.scrollTop : 0;
       menu.textContent = '';
       const list = h('div', { class: 'vmlist' });
-      menu.append(h('div', { class: 'vmh' }, head), list);
+      menu.append(h('div', { class: 'vmh' }, head), list);   // (h übersetzt die Texte)
       items.forEach((it) => {
         const b = h('button', { class: 'vmi' + (it.cur ? ' cur' : ''), role: 'menuitemradio', 'aria-checked': it.cur ? 'true' : 'false' },
-          it.label, it.sub ? h('small', null, it.sub) : null);
+          String(it.label), it.sub ? h('small', null, String(it.sub)) : null);
         b.addEventListener('click', (e) => { stop(e); if (!it.stay) closeMenu(); it.fn(); });
         list.append(b);
       });
@@ -3368,26 +3465,16 @@
     st.closeMenu = closeMenu;
 
     // ----- Bildformat & Zoom -----
-    const ASPECTS = [
-      { k: 'contain', label: 'Original', sub: 'ganzes Bild' },
-      { k: 'cover', label: 'Bildschirm füllen', sub: 'Ränder abgeschnitten' },
-      { k: 'fill', label: 'Strecken' },
-      { k: '16:9', label: '16:9' },
-      { k: '4:3', label: '4:3' },
-      { k: '21:9', label: '21:9', sub: 'Kino' },
-    ];
+    // Jeder Tipp schaltet weiter (wie bei Samsung): Original → Füllen → Strecken → Original. Gezoomt: erst zurück auf 1×.
+    const FITS = [{ k: 'contain', label: 'Original' }, { k: 'cover', label: 'Füllen' }, { k: 'fill', label: 'Strecken' }];
     on(bFit, () => {
-      const items = ASPECTS.map((a) => ({
-        label: a.label, sub: a.sub, cur: st.aspect === a.k && st.zoom <= 1.001,
-        fn: () => { st.aspect = a.k; st.zoom = 1; st.panX = st.panY = 0; layoutVideo(); bFit.classList.toggle('on', a.k !== 'contain'); },
-      }));
-      if (st.zoom > 1.001) items.push({ label: 'Zoom zurücksetzen', sub: st.zoom.toFixed(1).replace('.', ',') + '×', cur: false, fn: () => { st.zoom = 1; st.panX = st.panY = 0; layoutVideo(); } });
-      items.push({ label: 'Ambient-Modus', sub: ambOn ? 'an' : 'aus', cur: false,
-        fn: () => { setAmbient(!ambOn, true); } });
-      const lineOn = !wrap.classList.contains('nomini');
-      items.push({ label: 'Fortschrittslinie', sub: lineOn ? 'an' : 'aus', cur: false,
-        fn: () => { wrap.classList.toggle('nomini', lineOn); setSetting('progressLine', !lineOn); try { localStorage.removeItem('evp-line'); } catch (e) {} } });
-      openMenu('Bildformat', items);
+      let i = FITS.findIndex((a) => a.k === st.aspect);
+      if (st.zoom > 1.001 && st.aspect === 'contain') i = FITS.length - 1;   // aus dem Zoom: zurück zu Original
+      const a = FITS[(i + 1) % FITS.length];
+      st.aspect = a.k; st.zoom = 1; st.panX = st.panY = 0; st.tapZoomed = false;
+      zoomTo(1, 0, 0);
+      bFit.classList.toggle('on', a.k !== 'contain');
+      toast(a.label);
     });
 
     // ----- Qualität -----
@@ -3442,49 +3529,54 @@
 
     // ===== ⋯ Mehr: Untertitel, Tonspur, Standbild, Einstellungen =====
     on(bMore, () => openMore());
+    on(bSubs, () => openSubs());
     function openMore() {
-      const items = [{ label: 'Untertitel', sub: subs.cur ? subs.cur.label : 'aus', fn: openSubs }];
+      const items = [{ label: 'Einstellungen', fn: () => openSettings(false) }];
       const at = audioItems();
       if (at.length > 1) items.push({ label: 'Tonspur', sub: (at.find((x) => x.cur) || {}).label || '', fn: () => openMenu('Tonspur', at) });
-      items.push({ label: 'Standbild speichern', sub: 'aktuelles Bild als Foto', fn: snapshot });
-      items.push({ label: 'Einstellungen', sub: 'gelten für alle Seiten', fn: () => openSettings(false) });
+      items.push({ label: 'Standbild speichern', fn: snapshot });
       openMenu('Mehr', items);
     }
 
     // ----- Einstellungen (dauerhaft gespeichert, überstehen Updates) -----
     function openSettings(keep) {
-      const yn = (b) => (b ? 'an' : 'aus');
-      const pct = (v) => (+v > 0 ? Math.round(+v * 100) + ' %' : 'aus');
+      const yn = (b) => (b ? 'An' : 'Aus');
+      const pct = (v) => (+v > 0 ? Math.round(+v * 100) + ' %' : 'Aus');
       const next = (k, list) => { const i = list.indexOf(CONFIG[k]); setSetting(k, list[(i + 1) % list.length]); };
       const it = (label, sub, fn) => ({ label: label, sub: sub, stay: true, fn: () => { fn(); openSettings(true); } });
+      const lineOn = !wrap.classList.contains('nomini');
       const items = [
-        it('Im Vollbild starten', yn(CONFIG.startFullscreen), () => setSetting('startFullscreen', !CONFIG.startFullscreen)),
-        it('Doppeltipp springt', SKIP() + ' s', () => {
+        it('Design', CONFIG.lensGlass !== false ? 'Glas' : 'Schlicht', () => setLens(CONFIG.lensGlass === false)),
+        it('Ambient', yn(ambOn), () => setAmbient(!ambOn, true)),
+        it('Fortschrittslinie', yn(lineOn), () => {
+          wrap.classList.toggle('nomini', lineOn); setSetting('progressLine', !lineOn);
+          try { localStorage.removeItem('evp-line'); } catch (e) {}
+        }),
+        it('Vollbild', yn(CONFIG.startFullscreen), () => setSetting('startFullscreen', !CONFIG.startFullscreen)),
+        it('Sprungweite', SKIP() + ' s', () => {
           next('skipSeconds', [5, 10, 15, 30]);
           [bFwd, bBack].forEach((b) => { const x = b.querySelector('text'); if (x) x.textContent = String(SKIP()); });
           [sfxL, sfxR].forEach((e) => { if (e.lab) e.lab.textContent = String(SKIP()); });
-          bBack.setAttribute('aria-label', SKIP() + ' s zurück'); bFwd.setAttribute('aria-label', SKIP() + ' s vor');
+          bBack.setAttribute('aria-label', tr(SKIP() + ' s zurück')); bFwd.setAttribute('aria-label', tr(SKIP() + ' s vor'));
         }),
-        it('Lange drücken', String(CONFIG.holdSpeed).replace('.', ',') + '× schneller', () => next('holdSpeed', [1.5, 2, 3])),
-        it('Oberer Rand gesperrt', pct(CONFIG.topGuard), () => next('topGuard', [0, 0.1, 0.15, 0.2, 0.25])),
-        it('Unterer Rand gesperrt', pct(CONFIG.bottomGuard), () => next('bottomGuard', [0, 0.1, 0.15, 0.2, 0.25])),
-        it('Ambient-Modus', yn(ambOn), () => setAmbient(!ambOn, true)),
-        it('Fortschrittslinie', yn(!wrap.classList.contains('nomini')), () => {
-          const on = wrap.classList.contains('nomini'); wrap.classList.toggle('nomini', !on); setSetting('progressLine', on);
-          try { localStorage.removeItem('evp-line'); } catch (e) {}
+        it('Halten', String(CONFIG.holdSpeed).replace('.', UI_EN() ? '.' : ',') + '×', () => next('holdSpeed', [1.5, 2, 3])),
+        it('Rand oben', pct(CONFIG.topGuard), () => next('topGuard', [0, 0.1, 0.15, 0.2, 0.25])),
+        it('Rand unten', pct(CONFIG.bottomGuard), () => next('bottomGuard', [0, 0.1, 0.15, 0.2, 0.25])),
+        it('Auto-Drehen', yn(CONFIG.autoRotate), () => setSetting('autoRotate', !CONFIG.autoRotate)),
+        it('Download', CONFIG.downloader === 'share' ? 'Teilen' : 'YTDLnis', () => setSetting('downloader', CONFIG.downloader === 'share' ? 'ytdlnis' : 'share')),
+        it('Helfer-App', yn(CONFIG.systemHelper !== false), () => { setSetting('systemHelper', CONFIG.systemHelper === false); toast('Gilt ab dem nächsten Öffnen des Players'); }),
+        it('Sprache', { de: 'Deutsch', en: 'English' }[CONFIG.language] || 'Auto', () => {
+          next('language', ['auto', 'de', 'en']);
+          toast('Gilt ab dem nächsten Öffnen des Players');
         }),
-      ];
-      items.push(it('Design', CONFIG.lensGlass !== false ? (LENS_CAN ? 'Glas mit Lupe' : 'Glas') : 'Schlicht (Milchglas)', () => setLens(CONFIG.lensGlass === false)));
-      items.push(
-        it('Helfer-App benutzen', yn(CONFIG.systemHelper !== false), () => { setSetting('systemHelper', CONFIG.systemHelper === false); toast('Gilt ab dem nächsten Öffnen des Players'); }),
-        it('Herunterladen', CONFIG.downloader === 'share' ? 'Teilen-Menü' : 'direkt mit YTDLnis', () => setSetting('downloader', CONFIG.downloader === 'share' ? 'ytdlnis' : 'share')),
-        it('Querformat-Videos drehen', CONFIG.autoRotate ? 'automatisch' : 'nur per Knopf', () => setSetting('autoRotate', !CONFIG.autoRotate)),
-        it('Alles zurücksetzen', 'Standardwerte', () => {
+        it('Zurücksetzen', '', () => {
           resetSettings();
           setAmbient(CONFIG.ambient !== false, false);
           wrap.classList.toggle('nomini', CONFIG.progressLine === false);
+          setLens(CONFIG.lensGlass !== false);
           toast('Einstellungen zurückgesetzt');
-        }));
+        }),
+      ];
       openMenu('Einstellungen', items, keep);
     }
 
@@ -3682,6 +3774,7 @@
       } else if (subs.tt && subs.ttWas != null) { try { subs.tt.mode = subs.ttWas; } catch (e) {} }
       subs.cur = null; subs.cues = null; subs.tt = null; subs.ttWas = null; subs.last = '';
       subEl.textContent = '';
+      bSubs.classList.remove('on');
     }
     st.cleanup.push(() => subStop());
     function subStart(src, cues, tt) {
@@ -3689,6 +3782,7 @@
       subs.cur = src; subs.cues = cues || null;
       if (tt) { subs.tt = tt; subs.ttWas = tt.mode; try { tt.mode = 'hidden'; } catch (e) {} }
       subs.timer = setInterval(subTick, 150);
+      bSubs.classList.add('on');
       subTick();
     }
     function gmText(u) {
@@ -3996,14 +4090,30 @@
     })();
 
     // Fortschrittsbalken
-    bar.addEventListener('pointerdown', (e) => { stop(e); st.barDrag = true; clearTimeout(st.hideTimer); pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid(); });
+    // Hochwischen über die Leiste (Android-Geste: Startbildschirm/Menü) ist kein Spulen: geht die Bewegung eher nach
+    // oben als zur Seite, springt die Leiste zurück und es wird nicht gespult
+    let barG = null;
+    const barBack = () => { const m = M(); if (isFinite(m.duration) && m.duration > 0) { bar.value = String(Math.round(m.currentTime / m.duration * 1000)); paintBar(bar.value / 1000); tCur.textContent = fmtTime(m.currentTime); } };
+    bar.addEventListener('pointerdown', (e) => {
+      stop(e); st.barDrag = true; clearTimeout(st.hideTimer);
+      barG = { x: e.clientX, y: e.clientY, off: false };
+      pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid();
+    });
+    bar.addEventListener('pointermove', (e) => {
+      if (!barG || barG.off) return;
+      const dx = e.clientX - barG.x, dy = e.clientY - barG.y;
+      if (-dy > 12 && -dy > Math.abs(dx) * 1.2) { barG.off = true; st.barDrag = false; prevHide(); barBack(); }
+    });
     bar.addEventListener('input', () => {
+      if (barG && barG.off) { barBack(); return; }
       const m = M();
       if (isFinite(m.duration)) tCur.textContent = fmtTime(bar.value / 1000 * m.duration);
       paintBar(bar.value / 1000);
       prevShow(bar.value / 1000);
     });
     bar.addEventListener('change', () => {
+      if (barG && barG.off) { barG = null; barBack(); scheduleHide(); return; }   // war Hochwischen, kein Spulen
+      barG = null;
       const m = M();
       st.userSeekAt = Date.now();
       if (isFinite(m.duration)) { try { m.currentTime = bar.value / 1000 * m.duration; } catch (e) {} }
@@ -4615,7 +4725,7 @@
     st.cleanup.forEach((f) => { try { f(); } catch (e) {} });
     // Mit ✕ geschlossen: unseren Verlaufseintrag wieder entfernen, damit "Zurück" danach normal funktioniert
     if (st.histPushed) { try { history.back(); } catch (e) {} }
-    if (toastEl && root) root.append(toastEl);
+    if (toastEl && root) { root.append(toastEl); toastEl.style.top = ''; }
     st.wrap.remove();
   }
 
@@ -4920,7 +5030,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 15.4',
+      'Video-Assistent 16.0',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

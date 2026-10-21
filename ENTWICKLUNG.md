@@ -110,7 +110,8 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_mirror.py`, `test_fb*.py`, `test_ig.py`, `test_tt.py` | Facebook-Spiegel, Instagram, TikTok (nachgebaut) |
 | `test_topguard.py`, `test_idle.py` | gesperrter oberer/unterer Rand, sparsamer Takt ohne Video |
 | `test_tapzoom.py` | Doppeltipp-Zoom: füllt hochkant, Richtung zum Finger, 3× quer, Verschieben, Gummiband, Schwung, Drehen |
-| `test_extras.py` | ⋯ Mehr: Untertitel (Seite, .srt/.vtt, Datei, Stream, Lage), Tonspur, Standbild, Einstellungen, Design, Media Session |
+| `test_extras.py` | Untertitel (Seite, .srt/.vtt, Datei, Stream, Lage), ⋮ Mehr: Tonspur, Standbild, Einstellungen, Design, Media Session |
+| `test_ui.py` | Aufteilung (⋮ oben, CC unten), Hinweis-Lage, Zeitleiste beim Hochwischen, Sprache Deutsch/Englisch |
 | `test_pagesubs.py` | Untertitel nur in den Seitendaten (ARD-artig, EBU-TT ab 10:00:00), in nachgeladener Konfiguration (ZDF-artig, TTML), vom Seiten-Player geladen |
 | `test_pixel.py` | sieht man wirklich etwas? Ambient-Licht im Rand, Vorschaubild = echtes Bild an der Stelle (auch nach 13 s) |
 
@@ -127,6 +128,9 @@ Nicht am Rechner testbar: alles mit Android-Klassen (Overlay-Helligkeit, `MediaM
 Benachrichtigungen) – das prüft nur das Handy.
 
 ## 6. Stolperfallen (schon gelöst – nicht wieder einbauen)
+
+- Sprache: alle sichtbaren Texte bleiben im Code deutsch und laufen durch `tr()` (in `h()`, `toast()`, `showInd()`,
+  Menüs). Neue Texte → Eintrag in `EN` (oder Muster in `EN_RX`). Tests laufen mit `locale de-DE` (pwshim.py).
 
 - **Erzwungener Dunkelmodus** (Vivaldi „Dunkle Webseiten“) färbt helles Glas dunkel. Lösung: helle Teile dunkel
   zeichnen und mit `filter: invert(1)` umdrehen (`color-scheme: only light` reicht in Chromium nicht).
@@ -221,3 +225,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 15.2 | Untertitel wie in üblichen Playern: nur Schrift mit Kontur, ohne Fläche |
 | 15.3 | Untertitel wie Fernseh-/Streaming-Untertitel: mittlere Stärke, Haarlinien-Kontur, mehr Buchstabenabstand |
 | 15.4 | Untertitel-Schriftgröße nach Bildhöhe (≈ 5 %, 14–28 px) – hochkant wie quer |
+| 16.0 | Neue Aufteilung: ⋮ Mehr oben rechts, CC-Knopf unten, Bildformat wechselt je Tippen (Original/Füllen/Strecken), kurze Einstellungen inkl. Ambient/Fortschrittslinie; Deutsch/Englisch (`language`, `tr()`); Hinweise an einer Stelle (`notePos`); Zeitleiste: Hochwischen spult nicht |

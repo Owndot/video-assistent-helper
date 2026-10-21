@@ -23,18 +23,24 @@ Der Player funktioniert auch **ohne** Helfer-App – dann regeln die Gesten nur 
 - Doppeltippen links/rechts = ±10 s (mehrfach = 20, 30 … s), lange drücken = 2× schneller
 - Doppeltippen in der Mitte (wie Telegram): 3× Zoom um die getippte Stelle (hochkant bildschirmfüllend), noch einmal
   = ganzes Bild; im Zoom verschiebt **ein Finger** das Bild (mit Schwung, federt an der Kante zurück)
-- Zwei Finger = zoomen, Bildformate (Original, Füllen, Strecken, 16:9, 4:3, 21:9), Qualität wählen
+- Zwei Finger = zoomen; Bildformat-Knopf wechselt bei jedem Tippen Original → Füllen → Strecken (wie Samsung); Qualität wählen
 - Sperre (entsperren: 1 s halten oder doppeltippen), Bild-in-Bild, Drehen, Geschwindigkeit
 - dünne Fortschrittslinie, wenn die Leisten ausgeblendet sind; am Ende anhalten statt endlos schleifen
+- Zeitleiste: nach oben wischen (Android-Geste) spult nicht – nur seitlich ziehen spult
+- alle Hinweise erscheinen an einer Stelle oben im Bild (nicht unten über den Leisten)
+- **Untertitel-Knopf (CC)** unten in der Leiste: von der Seite (auch wenn die Seite sie mit ihrem eigenen Player zeigt,
+  z. B. ARD/ZDF-Mediathek), aus dem Stream oder eigene `.srt`/`.vtt`/`.ttml`-Datei vom Handy; Größe, Lage (unten/oben
+  **im Bild**) und Verschiebung (früher/später)
 
-**⋯ Mehr** (Knopf unten rechts im Player)
-- **Untertitel**: von der Seite (auch wenn die Seite sie mit ihrem eigenen Player zeigt, z. B. ARD/ZDF-Mediathek –
-  das Skript sucht sie beim Öffnen des Menüs), aus dem Stream oder eigene `.srt`/`.vtt`/`.ttml`-Datei vom Handy;
-  Größe, Lage (unten/oben **im Bild** – auch bei Querformat-Videos hochkant) und Verschiebung (früher/später)
+**⋮ Mehr** (oben rechts im Player)
+- **Einstellungen** – kurz wie in einer Einstellungs-App: Design (Glas/Schlicht), Ambient, Fortschrittslinie, Vollbild,
+  Sprungweite, Halten, Rand oben/unten, Auto-Drehen, Download, Helfer-App, **Sprache** (Auto/Deutsch/English),
+  Zurücksetzen – gelten für alle Seiten und **überstehen Updates**
 - **Tonspur** (Sprache) bei Streams mit mehreren Tonspuren
 - **Standbild speichern** (JPG in Downloads) – wo die Seite es zulässt, nicht in Firefox auf dem Handy
-- **Einstellungen**: Vollbild, Sprungweite (5/10/15/30 s), Tempo beim Halten, Randsperren, Ambient,
-  Fortschrittslinie, **Design** (Glas mit Lupe oder Schlicht = nur Milchglas), Helfer-App, Download-Weg, Drehen – gelten für alle Seiten und **überstehen Updates**
+
+**Sprache / Language**: Deutsch oder Englisch, automatisch nach Browsersprache (in den Einstellungen umstellbar).
+The interface is available in English and German – it follows the browser language by default.
 
 **Benachrichtigung & Sperrbildschirm**: Titel, Play/Pause, Springen und Position – auch Kopfhörer-Tasten.
 

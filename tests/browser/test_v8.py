@@ -102,19 +102,15 @@ with sync_playwright() as p:
     tw = page.evaluate('() => { const t = %s.querySelector(".vtitle"); const c = %s.querySelector(".vcluster"); return [t.getBoundingClientRect().width, t.querySelector("span").scrollWidth, c.getBoundingClientRect().right]; }' % (R, R))
     check('Titel nur so breit wie der Text', tw[0] <= tw[1] + 30, tw)
 
-    # Bildformat-Menü: 4:3 wählen
+    # Bildformat: jeder Tipp schaltet weiter (Original → Füllen → Strecken → Original), mit Hinweis
     time.sleep(1.0)
-    if not page.evaluate('() => %s.querySelector(".vp").classList.contains("ctl")' % R):
-        page.mouse.click(200, 300); time.sleep(0.5)
-    page.locator('button[aria-label="Bildformat"]').click(); time.sleep(0.4)
+    fit = lambda: page.evaluate('() => [%s.querySelector(".vv").style.objectFit, %s.querySelector(".toast").textContent]' % (R, R))
+    seq = []
+    for _ in range(3):
+        page.evaluate('() => { %s.querySelector(".vp").classList.add("ctl"); %s.querySelector("button[aria-label=Bildformat]").click(); }' % (R, R)); time.sleep(0.35)
+        seq.append(fit())
     page.screenshot(path=OUT + '/shot_menu_format.png')
-    items = page.evaluate('() => Array.from(%s.querySelectorAll(".vmenu .vmi")).map(b => b.firstChild.textContent)' % R)
-    check('Bildformat-Menü zeigt die Formate', '16:9' in items and '4:3' in items and 'Original' in items, items)
-    page.evaluate('() => Array.from(%s.querySelectorAll(".vmenu .vmi")).find(b => b.firstChild.textContent === "4:3").click()' % R)
-    time.sleep(0.4)
-    sz = page.evaluate('() => { const v = %s.querySelector(".vv"); return [parseFloat(v.style.width), parseFloat(v.style.height), v.style.objectFit]; }' % R)
-    check('4:3 setzt das Seitenverhältnis', abs(sz[0] / sz[1] - 4 / 3) < 0.02 and sz[2] == 'fill', sz)
-
+    check('Bildformat: Tipp schaltet Füllen → Strecken → Original (ohne Menü)', [x[0] for x in seq] == ['cover', 'fill', 'contain'] and [x[1] for x in seq] == ['Füllen', 'Strecken', 'Original'] and not page.evaluate('() => %s.querySelector(".vmenu").classList.contains("on")' % R), seq)
     # Zwei-Finger-Zoom (per Zeiger-Ereignisse nachgestellt)
     page.evaluate('''() => {
       const g = %s.querySelector(".vgest");

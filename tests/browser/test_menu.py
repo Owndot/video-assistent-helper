@@ -12,7 +12,7 @@ with sync_playwright() as p:
     pg.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(1)
     pg.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
     pg.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.currentTime > 1; }' % R, timeout=15000)
-    pg.evaluate('() => { %s.querySelector(".vp").classList.add("ctl"); %s.querySelector("button[aria-label=Bildformat]").click(); }' % (R, R)); time.sleep(0.5)
+    pg.evaluate('() => %s' % ("""(() => { const r = %s; r.querySelector(".vp").classList.add("ctl"); r.querySelector("button[aria-label=Mehr]").click(); const b = Array.from(r.querySelectorAll(".vmenu .vmi")).find(x => x.firstChild.textContent === "Einstellungen"); if (b) b.click(); })()""" % R)); time.sleep(0.5)
     m = pg.evaluate('() => { const r = %s.querySelector(".vmenu").getBoundingClientRect(); return [Math.round(r.left), Math.round(innerWidth - r.right), Math.round(r.top), Math.round(innerHeight - r.bottom), Math.round(r.width)]; }' % R)
     # volle Höhe nur, wenn der Inhalt so hoch ist (Schriftmaße unterscheiden sich je Browser) – sonst mittig
     fit = pg.evaluate('() => { const l = %s.querySelector(".vmlist"); return [l.scrollHeight, l.clientHeight, l.querySelectorAll(".vmi").length]; }' % R)
@@ -20,7 +20,7 @@ with sync_playwright() as p:
     scrollable = fit[0] > fit[1] + 1
     check('Querformat: Menü als Leiste rechts über die volle Höhe', m[1] <= 20 and m[4] <= 380 and abs(m[2] - m[3]) <= 2 and (m[2] <= 20 or not scrollable), m)
     items = pg.evaluate('() => Array.from(%s.querySelectorAll(".vmenu .vmi")).map(b => b.firstChild.textContent + "=" + (b.querySelector("small") ? b.querySelector("small").textContent : ""))' % R)
-    check('Format-Menü hat "Fortschrittslinie" mit an/aus', 'Fortschrittslinie=an' in items and 'Ambient-Modus=an' in items, items[-2:])
+    check('Einstellungen: "Fortschrittslinie" und "Ambient" mit An/Aus', 'Fortschrittslinie=An' in items and 'Ambient=An' in items, items)
     pg.screenshot(path=OUT + '/menu_land_top.png')
     sc = pg.evaluate('() => { const l = %s.querySelector(".vmlist"), m = %s.querySelector(".vmenu"); l.scrollTop = 400; const r0 = m.getBoundingClientRect(); return [l.scrollTop > 0, m.scrollTop, Math.round(r0.top)]; }' % (R, R)); time.sleep(0.3)
     pg.screenshot(path=OUT + '/menu_land_scroll.png')

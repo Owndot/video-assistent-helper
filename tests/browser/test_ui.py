@@ -1,0 +1,73 @@
+import pwshim  # BROWSER=firefox → Tests in Firefox
+# Neue Aufteilung (16.0): ⋮ oben rechts, Untertitel-Knopf unten, Hinweise an einer festen Stelle, Hochwischen über
+# die Zeitleiste spult nicht, Oberfläche Deutsch/Englisch (automatisch nach Browsersprache oder per Einstellung).
+import time
+exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])
+with sync_playwright() as p:
+    b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
+    ctx = b.new_context(viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True, device_scale_factor=2)
+    ctx.add_init_script(PRE); ctx.add_init_script(HLS); ctx.add_init_script(SCRIPT)
+    pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
+    open_player(pg, 'subs.html')
+    lay = pg.evaluate('''() => { const r = %s; return [!!r.querySelector(".vcluster button[aria-label=Mehr]"), !!r.querySelector(".vtools button[aria-label=Untertitel]"),
+        Array.from(r.querySelectorAll(".vtools button")).map(b => b.getAttribute("aria-label"))]; }''' % R)
+    check('⋮ oben rechts, Untertitel-Knopf unten (Drehen bleibt außen)', lay[0] and lay[1] and lay[2][-1] == 'Drehen' and lay[2][-2] == 'Untertitel', lay)
+    subsm(pg); pick(pg, 'Deutsch'); time.sleep(0.5)
+    check('Untertitel an: Knopf leuchtet', pg.evaluate('() => %s.querySelector("button[aria-label=Untertitel]").classList.contains("on")' % R))
+    # Hinweise: feste Stelle (wie die Gesten-Anzeige), nie unten über den Knöpfen
+    ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Bildformat]").click()' % R); time.sleep(0.3)
+    pos = pg.evaluate('''() => { const r = %s, t = r.querySelector(".toast"), tb = t.getBoundingClientRect(), bot = r.querySelector(".vbot").getBoundingClientRect(), vid = r.querySelector(".vv");
+        const vr = vid.getBoundingClientRect(), sc = Math.min(vr.width / vid.videoWidth, vr.height / vid.videoHeight), top = vr.top + (vr.height - vid.videoHeight * sc) / 2;
+        return [t.parentElement.classList.contains("vp"), Math.round(tb.top), Math.round(tb.bottom), Math.round(bot.top), Math.round(top), t.style.top]; }''' % R)
+    print('   Hinweis:', pos)
+    check('Hinweis im Player über dem Bild, nicht unten über den Knöpfen', pos[0] and pos[2] < pos[3] - 100 and pos[2] <= pos[4] + 6 and pos[1] > 60, pos)
+    pg.evaluate('() => %s.querySelector("button[aria-label=Bildformat]").click()' % R); time.sleep(0.2)
+    pg.evaluate('() => %s.querySelector("button[aria-label=Bildformat]").click()' % R); time.sleep(0.5)
+    # Hochwischen über die Zeitleiste (Android-Geste) spult nicht – Ziehen zur Seite schon
+    pg.evaluate('() => { const v = %s.querySelector(".vv"); v.pause(); v.currentTime = 20; }' % R); time.sleep(0.5); ctl(pg)
+    br = pg.evaluate('() => { const r = %s.querySelector(".vbar").getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; }' % R)
+    y = br[1] + br[3] / 2
+    pg.mouse.move(br[0] + br[2] * 0.85, y); pg.mouse.down(); pg.mouse.move(br[0] + br[2] * 0.85, y - 70, steps=8); pg.mouse.up(); time.sleep(0.6)
+    t1 = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
+    check('Hochwischen über die Zeitleiste: Stelle bleibt', abs(t1 - 20) < 1, round(t1, 1))
+    ctl(pg); pg.mouse.move(br[0] + br[2] * 0.3, y); pg.mouse.down(); pg.mouse.move(br[0] + br[2] * 0.6, y, steps=8); pg.mouse.up(); time.sleep(0.6)
+    t2 = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
+    check('zur Seite ziehen: spult weiter normal', abs(t2 - 0.6 * 60) < 3, round(t2, 1))
+    # Sprache per Einstellung: English (gilt ab dem nächsten Öffnen)
+    more(pg); pick(pg, 'Einstellungen'); pick(pg, 'Sprache'); pick(pg, 'Sprache')
+    check('Einstellung „Sprache“: Auto → Deutsch → English (Menü sofort englisch)', ['Language', 'English', False] in items(pg), items(pg))
+    pg.evaluate('() => { %s.querySelector(".vmenu").classList.remove("on"); %s.querySelector(".vp").classList.remove("menu"); }' % (R, R))
+    ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.6)
+    pg.evaluate('() => %s.querySelector(".pill .pb:not(.dl)").click()' % R)   # Knopf auf der Seite (Beschriftung ab Neuladen)
+    pg.wait_for_function('() => %s.querySelector(".vv")' % R, timeout=15000); time.sleep(0.8)
+    ctl(pg)
+    en = pg.evaluate('() => Array.from(%s.querySelectorAll(".vp button[aria-label]")).map(b => b.getAttribute("aria-label"))' % R)
+    check('nach Umschalten: Knöpfe englisch', all(x in en for x in ['Close', 'More', 'Subtitles', 'Rotate', 'Aspect ratio']), en)
+    pg.evaluate('() => { const r = %s; r.querySelector("button[aria-label=More]").click(); Array.from(r.querySelectorAll(".vmenu .vmi")).find(x => x.firstChild.textContent === "Settings").click(); }' % R); time.sleep(0.4)
+    m = items(pg)
+    check('Einstellungen englisch und kurz', [x[0] for x in m][:4] == ['Design', 'Ambient', 'Progress line', 'Full screen'] and ['Skip', '10 s', False] in m and ['Language', 'English', False] in m, m)
+    # zurück auf Auto
+    pick(pg, 'Language')
+    ctx.close()
+    # Englischer Browser: alles automatisch englisch
+    ctx = b.new_context(viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True, device_scale_factor=2, locale='en-US')
+    ctx.add_init_script(PRE); ctx.add_init_script(HLS); ctx.add_init_script(SCRIPT)
+    pg = ctx.new_page(); pg.on('pageerror', lambda e: errs.append(str(e)))
+    pg.goto(B + 'subs.html'); pg.wait_for_function('document.getElementById("v").currentTime > 0.5', timeout=20000)
+    pg.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(0.9)
+    has = pg.evaluate('() => !!%s.querySelector("button[aria-label=\'Open in video player\']")' % R)
+    check('englischer Browser: Knopf auf der Seite englisch', has)
+    pg.evaluate('() => %s.querySelector("button[aria-label=\'Open in video player\']").click()' % R)
+    pg.wait_for_function('() => %s.querySelector(".vv") && isFinite(%s.querySelector(".vv").duration)' % (R, R), timeout=15000); time.sleep(0.6)
+    ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Subtitles]").click()' % R); time.sleep(0.35)
+    m = items(pg)
+    check('Untertitel-Menü englisch', [x[0] for x in m][:2] == ['Off', 'Deutsch'] and 'Load file …' in [x[0] for x in m] and ['Size', 'medium', False] in m, m)
+    pick(pg, 'English'); time.sleep(0.6)
+    t = pg.evaluate('() => %s.querySelector(".toast").textContent' % R)
+    check('Hinweis englisch', t == 'Subtitles: English', t)
+    ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=\'Aspect ratio\']").click()' % R); time.sleep(0.3)
+    check('Bildformat-Hinweis englisch', pg.evaluate('() => %s.querySelector(".toast").textContent' % R) == 'Fill')
+    check('keine Fehler', not errs, errs)
+    b.close()
+srv.shutdown()
+print('ERGEBNIS: %d von %d' % (sum(results), len(results)))

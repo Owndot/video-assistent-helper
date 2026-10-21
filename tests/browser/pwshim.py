@@ -4,6 +4,13 @@
 import os, sys
 import playwright.sync_api as _pw
 
+# Die Tests prüfen die deutsche Oberfläche: Browsersprache Deutsch, falls ein Test nichts anderes sagt (locale=…)
+if not getattr(_pw, '_evp_de', False):
+    _nc, _np = _pw.Browser.new_context, _pw.Browser.new_page
+    _pw.Browser.new_context = lambda self, **kw: _nc(self, **dict({'locale': 'de-DE'}, **kw))
+    _pw.Browser.new_page = lambda self, **kw: _np(self, **dict({'locale': 'de-DE'}, **kw))
+    _pw._evp_de = True
+
 if os.environ.get('BROWSER', '').lower() == 'firefox' and not getattr(_pw, '_evp_ff', False):
     _orig = _pw.sync_playwright
     FF_PREFS = {
