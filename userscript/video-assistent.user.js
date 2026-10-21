@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      15.2
+// @version      15.3
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -2114,7 +2114,7 @@
 .vv.vzan{transition:transform .25s cubic-bezier(.215,.61,.355,1)}
 /* Untertitel: über dem Bild, unter den Bedienelementen; rücken über die Leisten, wenn die sichtbar sind */
 .vsub{position:absolute;left:5%;right:5%;bottom:calc(26px + var(--evp-sb,env(safe-area-inset-bottom,0px)));text-align:center;pointer-events:none;white-space:pre-line;
- font:600 19px/1.32 var(--font);color:#fff;text-shadow:0 0 1.5px #000,0 0 1.5px #000,1px 1px 1px #000,-1px -1px 1px #000,1px -1px 1px #000,-1px 1px 1px #000,0 2px 6px rgba(0,0,0,.6);transition:bottom .25s ease,top .25s ease}
+ font:600 19px/1.34 var(--font);letter-spacing:.045em;color:#fff;text-shadow:0 0 1px rgba(0,0,0,.95),0 0 1px rgba(0,0,0,.95),0 1px 3px rgba(0,0,0,.55);transition:bottom .25s ease,top .25s ease}
 .vsub[data-size="s"]{font-size:15px}.vsub[data-size="l"]{font-size:25px}
 /* Untertitel wie in üblichen Videoplayern: nur Schrift – weiß mit dunkler Kontur, ohne Fläche (in beiden Designs) */
 .vsub span{display:inline-block;margin:1px 0;padding:0 4px}
@@ -4915,7 +4915,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 15.2',
+      'Video-Assistent 15.3',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
