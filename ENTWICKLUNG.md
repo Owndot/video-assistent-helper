@@ -115,7 +115,7 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_pixel.py` | sieht man wirklich etwas? Ambient-Licht im Rand, Vorschaubild = echtes Bild an der Stelle (auch nach 13 s) |
 
 Bekannt: `test_tt.py` besteht 2 von 3 (TikTok liefert ohne Anmeldung keine Video-ID) – kein Fehler.
-`test_sfx2.py` schwankt gelegentlich um eine Prüfung (Zeitverhalten, auch in alten Versionen).
+Tests tippen „fingerschnell“ (`click(force=True)`), sonst wartet Playwright, bis federnde Knöpfe stillstehen.
 `test_ffcap.py` / `test_ffdiag.py` sind Untersuchungen (Spiegeln, Zeiger-Ereignisse) ohne Bestanden/Fehler.
 
 **Java-Tests** (`tests/java`, braucht JDK 17, ffmpeg, openssl):
