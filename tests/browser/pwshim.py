@@ -26,7 +26,9 @@ if os.environ.get('BROWSER', '').lower() == 'firefox' and not getattr(_pw, '_evp
     FAKE_FS_JS = r'''(() => {
       let fe = null;
       const fire = () => { try { document.dispatchEvent(new Event('fullscreenchange', { bubbles: true })); } catch (e) {} };
-      Object.defineProperty(Document.prototype, 'fullscreenElement', { configurable: true, get() { return fe; } });
+      // wie echte Browser: ein Element im Shadow-DOM erscheint für die Seite als sein Gastgeber-Element
+      const outer = (e) => { while (e && e.getRootNode && e.getRootNode() !== document && e.getRootNode().host) e = e.getRootNode().host; return e; };
+      Object.defineProperty(Document.prototype, 'fullscreenElement', { configurable: true, get() { return outer(fe); } });
       Object.defineProperty(Document.prototype, 'fullscreenEnabled', { configurable: true, get() { return true; } });
       Element.prototype.requestFullscreen = function () { fe = this; setTimeout(fire, 0); return Promise.resolve(); };
       Document.prototype.exitFullscreen = function () {
