@@ -26,7 +26,8 @@ Der Player funktioniert auch **ohne** Helfer-App – dann regeln die Gesten nur 
 - Zwei Finger = zoomen; Bildformat-Knopf wechselt bei jedem Tippen Original → Füllen → Strecken (wie Samsung); Qualität wählen
 - Sperre (entsperren: 1 s halten oder doppeltippen), Bild-in-Bild, Drehen, Geschwindigkeit
 - dünne Fortschrittslinie, wenn die Leisten ausgeblendet sind; am Ende anhalten statt endlos schleifen
-- Zeitleiste: nach oben wischen (Android-Geste) spult nicht – nur seitlich ziehen spult
+- Zeitleiste wie bei Samsung über der Knopfreihe (die Android-Wischgeste trifft die Knöpfe, nicht die Leiste), großer Kreis;
+  deutlich nach oben wischen spult nicht – Halten und seitlich ziehen spult
 - alle Hinweise erscheinen an einer Stelle oben im Bild (nicht unten über den Leisten)
 - **Untertitel-Knopf (CC)** unten in der Leiste: von der Seite (auch wenn die Seite sie mit ihrem eigenen Player zeigt,
   z. B. ARD/ZDF-Mediathek), aus dem Stream oder eigene `.srt`/`.vtt`/`.ttml`-Datei vom Handy; Größe, Lage (unten/oben

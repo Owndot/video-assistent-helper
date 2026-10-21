@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      16.0
+// @version      16.1
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -2270,8 +2270,9 @@
 .vskip .arc{fill:none !important;stroke:#fff;stroke-width:1.9;stroke-linecap:round}
 .vskip text{fill:#fff;font:700 8px var(--font)}
 .vbot{position:absolute;left:16px;right:16px;bottom:calc(10px + var(--evp-sb,env(safe-area-inset-bottom,0px)));transition:opacity .2s}
-/* Unten: Sperren allein links (nicht aus Versehen), oft Gebrauchtes rechts, Drehen ganz außen am Daumen */
-.vhead{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:6px}
+/* Unten (wie Samsung): Zeitleiste oben, darunter die Knöpfe – zwischen Leiste und Android-Wischgeste liegen die Knöpfe.
+   Sperren allein links (nicht aus Versehen), oft Gebrauchtes rechts, Drehen ganz außen am Daumen */
+.vhead{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-top:4px}
 .vtools.solo{width:46px;padding:0;justify-content:center}
 .vtools .vtool{z-index:1}
 .vtools .vtool svg{width:22px;height:22px}
@@ -2286,14 +2287,14 @@
 .vchip.on svg{fill:var(--ice)}
 .vchip[hidden]{display:none}
 .vtime{font:600 12px var(--font);font-variant-numeric:tabular-nums;color:var(--sub);min-width:40px;text-align:center}
-.vbar{flex:1;-webkit-appearance:none;appearance:none;height:30px;background:transparent;margin:0;cursor:pointer;filter:invert(1);--trk:rgba(0,0,0,.25)}
+.vbar{flex:1;-webkit-appearance:none;appearance:none;height:38px;background:transparent;margin:0;cursor:pointer;filter:invert(1);--trk:rgba(0,0,0,.25)}
 .vbar::-webkit-slider-runnable-track{height:5px;border-radius:3px;background:var(--trk);transition:height .18s ease}
 .vbar:active::-webkit-slider-runnable-track{height:9px;border-radius:5px}
 .vbar::-moz-range-track{height:5px;border-radius:3px;background:var(--trk)}
-.vbar::-webkit-slider-thumb{-webkit-appearance:none;margin-top:-4.5px;width:14px;height:14px;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(.78);transition:transform .2s cubic-bezier(.34,1.56,.64,1),margin .18s ease}
-.vbar::-moz-range-thumb{width:14px;height:14px;border:0;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(.78)}
-.vbar:active::-moz-range-thumb{transform:scale(1.3)}
-.vbar:active::-webkit-slider-thumb{transform:scale(1.3);margin-top:-2.5px}
+.vbar::-webkit-slider-thumb{-webkit-appearance:none;margin-top:-6.5px;width:18px;height:18px;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1);transition:transform .2s cubic-bezier(.34,1.56,.64,1),margin .18s ease}
+.vbar::-moz-range-thumb{width:18px;height:18px;border:0;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1)}
+.vbar:active::-moz-range-thumb{transform:scale(1.2)}
+.vbar:active::-webkit-slider-thumb{transform:scale(1.2);margin-top:-4.5px}
 .vind{position:absolute;left:50%;top:calc(72px + var(--evp-st,env(safe-area-inset-top,0px)));transform:translate(-50%,-8px) scale(.96);display:flex;align-items:center;gap:12px;height:46px;padding:0 20px;border-radius:23px;font:650 15px var(--font);opacity:0;transition:opacity .16s ease,transform .16s ease;pointer-events:none;white-space:nowrap;z-index:3}
 .vind span{position:relative;z-index:1}
 .vind.on{opacity:1;transform:translate(-50%,0) scale(1)}
@@ -2549,7 +2550,7 @@
         h('div', { class: 'vscrim' }),
         h('div', { class: 'vtop' }, bClose, title, h('div', { class: 'vcluster g ia' }, bDl, bExt, bSpeed, bMore)),
         h('div', { class: 'vmid' }, bBack, bPlay, bFwd),
-        h('div', { class: 'vbot ia' }, h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bPip, bQual, bFit, bSubs, bRot)), h('div', { class: 'vrow' }, tCur, bar, tDur))),
+        h('div', { class: 'vbot ia' }, h('div', { class: 'vrow' }, tCur, bar, tDur), h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bPip, bQual, bFit, bSubs, bRot)))),
       ind, side, seekBox, sfxL, sfxR, mini, menu, bUnlock);
     root.append(wrap);
     // Lupen-Glas für alle Glasflächen (Größe kommt erst nach dem Einblenden; ändert sie sich, wird neu berechnet)
@@ -4090,19 +4091,25 @@
     })();
 
     // Fortschrittsbalken
-    // Hochwischen über die Leiste (Android-Geste: Startbildschirm/Menü) ist kein Spulen: geht die Bewegung eher nach
-    // oben als zur Seite, springt die Leiste zurück und es wird nicht gespult
+    // Hochwischen über die Leiste (Android-Geste: Startbildschirm/Menü) ist kein Spulen. Mild, damit Halten und Ziehen
+    // gut geht: sobald der Finger ~10 px zur Seite zieht, gilt es als Spulen (wird nie mehr abgebrochen). Nur deutlich
+    // nach oben (40 px) bei kaum seitlicher Bewegung – oder wenn Android die Geste übernimmt (pointercancel) – springt
+    // die Leiste zurück
     let barG = null;
     const barBack = () => { const m = M(); if (isFinite(m.duration) && m.duration > 0) { bar.value = String(Math.round(m.currentTime / m.duration * 1000)); paintBar(bar.value / 1000); tCur.textContent = fmtTime(m.currentTime); } };
     bar.addEventListener('pointerdown', (e) => {
       stop(e); st.barDrag = true; clearTimeout(st.hideTimer);
-      barG = { x: e.clientX, y: e.clientY, off: false };
+      barG = { x: e.clientX, y: e.clientY, off: false, lock: false };
       pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid();
     });
     bar.addEventListener('pointermove', (e) => {
-      if (!barG || barG.off) return;
+      if (!barG || barG.off || barG.lock) return;
       const dx = e.clientX - barG.x, dy = e.clientY - barG.y;
-      if (-dy > 12 && -dy > Math.abs(dx) * 1.2) { barG.off = true; st.barDrag = false; prevHide(); barBack(); }
+      if (Math.abs(dx) > 10) { barG.lock = true; return; }
+      if (-dy > 40 && Math.abs(dx) < 16) { barG.off = true; st.barDrag = false; prevHide(); barBack(); }
+    });
+    bar.addEventListener('pointercancel', () => {   // Android hat die Wischgeste übernommen
+      if (barG && !barG.lock && !barG.off) { barG.off = true; st.barDrag = false; barBack(); setTimeout(() => { if (barG && barG.off) { barG = null; barBack(); scheduleHide(); } }, 120); }
     });
     bar.addEventListener('input', () => {
       if (barG && barG.off) { barBack(); return; }
@@ -5030,7 +5037,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 16.0',
+      'Video-Assistent 16.1',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
