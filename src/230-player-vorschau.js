@@ -25,21 +25,34 @@
       if (pvs.hls) { try { pvs.hls.destroy(); } catch (e) {} }
       pvs.hls = null; pvs.src = ''; pvs.key = ''; pvs.want = -1; pvs.lastWant = -1; pvs.busy = false; pvs.grid = []; pvs.gridOn = false; pvs.userDone = false;
       clearInterval(pvs.wd); clearTimeout(pvs.settle); pvs.target = -1; pvs.retried = -1;
-      thumbs.clear(); bucket = 0;
+      // gemerkte Bilder gehören zum Video, nicht zur Quelle der Vorschau – sie bleiben (auch bei anderer Qualität)
       prev.classList.remove('img', 'live');
       try { pv.removeAttribute('src'); pv.load(); } catch (e) {}
     }
     st.cleanup.push(prevReset);
+    st.cleanup.push(() => { thumbs.clear(); bucket = 0; });
     // Kleinste Qualität desselben Videos (lädt viel schneller); Streams nutzen ohnehin die kleinste Stufe
     function previewSrc() {
+      if (st.mode === 'capture') return capSrc();
       if (st.hls) return st.cur;
       const curRes = st.srcRes[st.cur] || 0;
       const low = st.sources.filter((u) => (st.srcRes[u] || 0) >= 144).sort((x, y) => st.srcRes[x] - st.srcRes[y])[0];
       return low && curRes && st.srcRes[low] < curRes ? low : st.cur;
     }
+    // Gespiegeltes Video (Facebook): Die Seite nennt oft eine fertige MP4-Datei zu diesem Video – die nimmt die
+    // Vorschau (kleinste zuerst). Gilt nur, wenn ihre Länge zum laufenden Video passt (sonst ein anderes Video).
+    function capCands() {
+      if (!META || !orig) return [];
+      try { const ids = [], e = metaFor(orig, ids); return e ? [e.sd, e.hd].filter((u, i, a) => u && a.indexOf(u) === i) : []; } catch (e) { return []; }
+    }
+    function capSrc() {
+      // Seitendaten kommen oft erst nach und nach: leere Liste nach ein paar Sekunden neu suchen
+      if (st.capList == null || (!st.capList.length && Date.now() - (st.capAt || 0) > 3000)) { st.capList = capCands(); st.capAt = Date.now(); st.capIdx = 0; }
+      return st.capList[st.capIdx || 0] || '';
+    }
     function prevLoad() {
-      const key = st.mode === 'own' ? st.cur : '';
-      if (!key) { prev.classList.add('noimg'); return false; }   // nur abgefilmt: keine eigene Quelle → nur die Zeit
+      const key = st.mode === 'own' ? st.cur : st.mode === 'capture' ? capSrc() : '';
+      if (!key) { prev.classList.add('noimg'); return false; }   // keine zweite Quelle → gemerkte Bilder und die Zeit
       prev.classList.remove('noimg');
       if (pvs.key === key) return true;
       prevReset();
@@ -63,28 +76,32 @@
       return [176, Math.max(40, Math.min(320, Math.round(176 * vh / vw)))];
     }
     // aktuelles Bild eines Videos merken (Vorschau-Video oder – kostenlos – das laufende Video selbst)
-    function snap(v) {
+    function snap(v, at) {
       v = v || pv;
       if (!(v.videoWidth > 0)) return null;
+      const tt = at == null ? v.currentTime : at;
       const d = thumbDims(v);
       const c = document.createElement('canvas');
       c.width = d[0]; c.height = d[1];
       try { c.getContext('2d').drawImage(v, 0, 0, d[0], d[1]); } catch (e) { return null; }
-      const k = Math.round(v.currentTime / bucketFor());
-      thumbs.delete(k); thumbs.set(k, { c: c, t: v.currentTime });
+      const k = Math.round(tt / bucketFor());
+      thumbs.delete(k); thumbs.set(k, { c: c, t: tt });
       if (thumbs.size > 180) thumbs.delete(thumbs.keys().next().value);   // ~12 MB höchstens
       return c;
     }
     // Beim Anschauen nebenbei Bilder merken (je Fach eins, höchstens jede Sekunde): Gesehenes erscheint beim Spulen sofort
     let mainSnapAt = 0;
     const mainSnap = () => {
-      if (FF_MOBILE || st.mode !== 'own' || vid.readyState < 2 || vid.seeking || prev.classList.contains('on')) return;
+      if (FF_MOBILE || (st.mode !== 'own' && st.mode !== 'capture') || vid.readyState < 2 || prev.classList.contains('on')) return;
+      const m = M();   // beim Spiegeln zählt die Zeit des Originals (das gespiegelte Bild hat keine eigene)
+      if (m.seeking || !isFinite(m.duration)) return;
       const now = Date.now();
-      if (now - mainSnapAt < 1000 || thumbs.has(Math.round(vid.currentTime / bucketFor()))) return;
+      if (now - mainSnapAt < 1000 || thumbs.has(Math.round(m.currentTime / bucketFor()))) return;
       mainSnapAt = now;
-      snap(vid);
+      snap(vid, m.currentTime);
     };
     vid.addEventListener('timeupdate', mainSnap);
+    if (orig) { orig.addEventListener('timeupdate', mainSnap); st.cleanup.push(() => orig.removeEventListener('timeupdate', mainSnap)); }
     vid.addEventListener('seeked', () => setTimeout(mainSnap, 120));
     // Zeigen, wenn es näher an der Fingerstelle liegt als das bisher gezeigte Bild (oder noch keins da ist)
     function better(t) {
@@ -166,7 +183,13 @@
       pvs.busy = false;
       // Kleinere Qualität gewählt, aber andere Länge? Dann lieber die laufende Quelle nehmen
       const md = M().duration;
-      if (pvs.src !== st.cur && isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > 3) {
+      if (st.mode === 'capture') {
+        // andere Länge = anderes Video → nächste Adresse, sonst ohne zweite Quelle weiter (nur gemerkte Bilder)
+        if (isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > 2) {
+          st.capIdx = (st.capIdx || 0) + 1; prevReset(); prevLoad();
+          return;
+        }
+      } else if (pvs.src !== st.cur && isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > 3) {
         const key = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = key; return;
       }
       bucketFor();
@@ -192,7 +215,10 @@
       }
       pump();
     }
-    pv.addEventListener('error', () => { prev.classList.add('noimg'); });
+    pv.addEventListener('error', () => {
+      if (st.mode === 'capture' && st.capList && (st.capIdx || 0) + 1 < st.capList.length) { st.capIdx = (st.capIdx || 0) + 1; prevReset(); prevLoad(); return; }
+      prev.classList.add('noimg');
+    });
     // Streams: Raster gleich nach dem Start vorholen (kleinste Stufe, wenig Daten)
     // Vorwärmen nach dem Start: Streams holen gleich das Raster (kleinste Stufe, wenig Daten),
     // Dateien nur ihr Inhaltsverzeichnis (wenige KB) – dann wartet auch das erste Ziehen nicht darauf
@@ -206,11 +232,15 @@
       if (!isFinite(d) || d <= 0) return;
       const t = p * d;
       pvTime.textContent = fmtTime(t);
-      const img = prevLoad() && !prev.classList.contains('noimg');
-      if (img) {
-        pvs.lastWant = t;
-        const n = nearest(t);
-        if (n && better(n[1])) paint(n[0], n[1]);   // sofort das nächstgelegene gemerkte Bild …
+      const src = prevLoad() && !prev.classList.contains('noimg');
+      pvs.lastWant = t;
+      const n = nearest(t);
+      // ohne zweite Quelle: nur ein gemerktes Bild, das wirklich nah dran ist (sonst lieber nur die Zeit)
+      const near = n && (src || Math.abs(n[1] - t) <= Math.max(3, bucketFor() * 2));
+      const img = src || !!near;
+      if (near && better(n[1])) paint(n[0], n[1]);   // sofort das nächstgelegene gemerkte Bild …
+      else if (!src) prev.classList.remove('img');
+      if (src) {
         prevSeek(t);                                // … und die genaue Stelle nachschärfen
         if (pv.readyState >= 1) startGrid(); else pvs.autoGrid = true;
       }

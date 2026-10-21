@@ -29,7 +29,8 @@ Der Player funktioniert auch **ohne** Helper-App – dann regeln die Gesten nur 
 - **In eine andere App wechseln** schließt den Player nicht (nur die Zurück-Taste); zurück im Browser holt ein Tipp
   das Vollbild zurück. Einstellung **Beim Verlassen**: Weiter oder Anhalten
 - **Bild-in-Bild:** ✕ im kleinen Fenster hält das Video an, „Vollbild“ bringt dich zurück in den Vollbild-Player
-- Spul-Vorschau: schon Angeschautes erscheint sofort (Bilder werden beim Abspielen nebenbei gemerkt)
+- Spul-Vorschau: schon Angeschautes erscheint sofort (Bilder werden beim Abspielen nebenbei gemerkt); auf Facebook mit der
+  fertigen Datei aus den Seitendaten (wenn es sie gibt), sonst für schon Angeschautes
 - dünne Fortschrittslinie, wenn die Leisten ausgeblendet sind; am Ende anhalten statt endlos schleifen
 - Zeitleiste wie bei Samsung über der Knopfreihe (die Android-Wischgeste trifft die Knöpfe, nicht die Leiste), großer Kreis;
   deutlich nach oben wischen spult nicht – Halten und seitlich ziehen spult
