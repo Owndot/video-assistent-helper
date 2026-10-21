@@ -34,7 +34,7 @@ with sync_playwright() as p:
     # ---------- Untertitel von der Seite ----------
     open_player(pg, 'subs.html')
     more(pg); m = items(pg)
-    check('Mehr (oben rechts): Teilen, Standbild, Einstellungen (keine Tonspur bei einer Spur)', [x[0] for x in m if x[0] not in ('In App öffnen', 'Qualität')] == ['Link teilen', 'Standbild speichern', 'Einstellungen'], m)
+    check('Mehr (oben rechts): Teilen, Standbild, Einstellungen (keine Tonspur bei einer Spur)', [x[0] for x in m if x[0] not in ('In App öffnen', 'Qualität')] == ['Link teilen', 'Geschwindigkeit', 'Standbild speichern', 'Einstellungen'], m)
     subsm(pg); m = items(pg)
     check('Untertitel-Menü: Aus, Deutsch, English, Datei laden', [x[0] for x in m][:4] == ['Aus', 'Deutsch', 'English', 'Datei laden …'], m)
     pick(pg, 'Deutsch'); time.sleep(0.8)
