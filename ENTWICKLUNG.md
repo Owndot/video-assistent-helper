@@ -137,6 +137,9 @@ Benachrichtigungen) – das prüft nur das Handy.
   anschalten (180 ms / 900 ms).
 - **Verschiebungskarte:** die Steigung muss überall < 1 bleiben, sonst überschlägt sich das Bild (Text gespiegelt).
   Test immer über Text/Gitter – Streifen verdecken Fehler.
+- **Ein-/Ausblenden der Leisten** nie über `opacity` eines Vorfahren der Glasflächen: darunter rechnet Chrome
+  `backdrop-filter` erst nach dem Übergang (erst hell, dann dunkler). `.vchrome` schaltet nur `visibility`, jede
+  Fläche (`.g`, Titel, Zeitleiste, Abdunklung) blendet sich selbst ein.
 - **Video zentrieren ohne `transform`**: Android setzte die Verschiebung in eingebetteten Vollbild-Fenstern falsch
   um (Bild ¼ Höhe zu hoch). Jetzt `inset:0; margin:auto`.
 - **Player-Container `overflow: clip`** + Scroll zurücksetzen – sonst verschiebt das Ambient-Canvas alles.
@@ -210,3 +213,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 14.5 | Querformat, Untertitel oben: direkt unter Titel/Knöpfen (gemessen) |
 | 14.6 | Glas-Einstellung wirkt sofort (Wellen/Lupe ↔ Milchglas, `setLens`) |
 | 14.7 | Design-Wahl: Glas ↔ Schlicht (`:host(.flat)` – nur Milchglas, ohne Kante/Glanz/Lupe, überall) |
+| 14.8 | Schlicht hell wie One UI; Leisten blenden je Fläche ein (kein „erst hell, dann dunkel“) |

@@ -27,7 +27,9 @@ with sync_playwright() as p:
     # +10-Knopf zweimal schnell
     pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R)
     t0 = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
-    pg.locator('button[aria-label="10 s vor"]').click(); time.sleep(0.15); pg.locator('button[aria-label="10 s vor"]').click(); time.sleep(0.15)
+    # so schnell wie ein Finger (Playwrights .click() wartet sonst, bis der Knopf nicht mehr federt – dann ist die Serie vorbei)
+    tap = lambda: pg.locator('button[aria-label="10 s vor"]').click(force=True, no_wait_after=True)
+    tap(); time.sleep(0.15); tap(); time.sleep(0.15)
     a = st(); t1 = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
     check('+10-Knopf zweimal schnell: zählt 20, springt 20 s', a['zahl'] == '20' and a['knopf'] and abs(t1 - t0 - 20) < 1.5, [a['zahl'], round(t1 - t0, 1)])
     time.sleep(1.0)

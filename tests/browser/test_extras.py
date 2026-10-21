@@ -105,7 +105,7 @@ with sync_playwright() as p:
     dz = lambda: pg.evaluate('''() => { const e = %s.querySelector("button[aria-label=Schließen]"), m = %s.querySelector(".vmenu");
         return [%s.host.classList.contains("flat"), getComputedStyle(e, "::before").display, getComputedStyle(e).backdropFilter, getComputedStyle(m, "::after").display, e.style.getPropertyValue("--lens")]; }''' % (R, R, R))
     d0 = dz(); pick(pg, 'Design'); time.sleep(0.3); d1 = dz()
-    check('Design → Schlicht: überall Milchglas, ohne Kante/Glanz/Lupe', (not d0[0]) and d1[0] and d1[1] == 'none' and d1[3] == 'none' and 'blur(20px)' in d1[2] and 'url(' not in d1[2] and d1[4] == '', [d0, d1])
+    check('Design → Schlicht: überall Milchglas, ohne Kante/Glanz/Lupe', (not d0[0]) and d1[0] and d1[1] == 'none' and d1[3] == 'none' and 'blur(22px)' in d1[2] and 'url(' not in d1[2] and d1[4] == '', [d0, d1])
     check('Design-Eintrag zeigt „Schlicht (Milchglas)“', ['Design', 'Schlicht (Milchglas)', False] in items(pg), items(pg))
     pick(pg, 'Design'); time.sleep(0.3); d2 = dz()
     check('Design → Glas: Kante zurück', (not d2[0]) and d2[1] != 'none', d2)

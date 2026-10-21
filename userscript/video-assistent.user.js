@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      14.7
+// @version      14.8
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -1553,13 +1553,17 @@
 .toast::before{border:1px solid rgba(0,0,0,.62);z-index:0}
 .toast::after{background:linear-gradient(155deg,rgba(0,0,0,.34),rgba(0,0,0,.14) 45%,rgba(0,0,0,.2));box-shadow:0 0 24px rgba(0,0,0,.18),inset 0 1px 1px rgba(0,0,0,.7)}
 .toast.on{opacity:1;transform:translate(-50%,0)}
-/* Design „Schlicht“ (Einstellungen → Design): überall nur Milchglas – keine Glaskante, kein Glanz, keine Lupe */
-:host(.flat) .g,:host(.flat) .vb.g,:host(.flat) .pill,:host(.flat) .toast{background:rgba(22,24,30,.5)!important;
- -webkit-backdrop-filter:blur(20px) saturate(1.25)!important;backdrop-filter:blur(20px) saturate(1.25)!important;box-shadow:0 4px 18px rgba(0,0,0,.25)!important}
+/* Design „Schlicht“ (Einstellungen → Design): helles Milchglas wie Android One UI – keine Glaskante, kein Glanz,
+   keine Lupe; das Bild dahinter scheint hell und farbig durch, Schrift/Symbole mit leichtem Schatten gut lesbar */
+:host(.flat) .g,:host(.flat) .vb.g,:host(.flat) .pill,:host(.flat) .toast{background:rgba(255,255,255,.17)!important;
+ -webkit-backdrop-filter:blur(22px) saturate(1.7) brightness(1.06)!important;backdrop-filter:blur(22px) saturate(1.7) brightness(1.06)!important;
+ box-shadow:0 2px 14px rgba(0,0,0,.16)!important}
 :host(.flat) .g::before,:host(.flat) .g::after,:host(.flat) .pill::before,:host(.flat) .pill::after{display:none!important}
-:host(.flat) .vb.g:active{background:rgba(70,74,88,.6)!important}
-:host(.flat) .vmid .g{background:rgba(22,24,30,.42)!important}
-:host(.flat) .vmenu{background:rgba(22,24,30,.66)!important}`;
+:host(.flat) .vb.g:active,:host(.flat) .vchip:active{background:rgba(255,255,255,.32)!important}
+:host(.flat) .vmid .g{background:rgba(255,255,255,.2)!important}
+:host(.flat) .vmenu{background:rgba(72,74,84,.46)!important;-webkit-backdrop-filter:blur(30px) saturate(1.6) brightness(1.04)!important;backdrop-filter:blur(30px) saturate(1.6) brightness(1.04)!important}
+:host(.flat) .vmi,:host(.flat) .vmh,:host(.flat) .toast{text-shadow:0 1px 2px rgba(0,0,0,.4)}
+:host(.flat) .vside{background:rgba(255,255,255,.17)!important}`;
 
   function h(tag, props) {
     const el = document.createElement(tag);
@@ -2133,9 +2137,14 @@
 .g::after{content:"";position:absolute;inset:0;border-radius:inherit;filter:invert(1);background:radial-gradient(85% 55% at 24% 0%,rgba(0,0,0,.13),rgba(0,0,0,0) 60%),radial-gradient(55% 45% at 80% 108%,rgba(0,0,0,.07),rgba(0,0,0,0) 65%),linear-gradient(180deg,rgba(0,0,0,.06),rgba(0,0,0,.015) 50%,rgba(0,0,0,.04));box-shadow:inset 0 1px 0 rgba(0,0,0,.20),inset 0 -1px 0 rgba(0,0,0,.05),inset 0 0 12px rgba(0,0,0,.05);pointer-events:none;transition:opacity .2s ease}
 /* Antippen: das Glas leuchtet kurz auf und federt (wie bei Apple) */
 .vb.g:active{transform:scale(.92);-webkit-backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.6) brightness(1.5);backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.6) brightness(1.5)}
-.vchrome{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .22s ease}
+/* Ein-/Ausblenden: nicht die ganze Leiste halb durchsichtig machen – darunter rechnet Chrome den Milchglas-Effekt
+   erst am Ende (erst hell, dann plötzlich dunkler). Jede Fläche blendet sich selbst ein, der Effekt ist sofort da. */
+.vchrome{position:absolute;inset:0;pointer-events:none;visibility:hidden;transition:visibility 0s linear .22s}
+.vchrome .g{opacity:0;transition:opacity .22s ease,transform .32s cubic-bezier(.34,1.56,.64,1)}
+.vchrome .vtitle,.vchrome .vrow,.vchrome .vscrim{opacity:0;transition:opacity .22s ease}
+.vp.ctl .vchrome .g,.vp.ctl .vchrome .vtitle,.vp.ctl .vchrome .vrow,.vp.ctl .vchrome .vscrim{opacity:1}
 .vscrim{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.34) 0,rgba(0,0,0,0) 20%,rgba(0,0,0,0) 58%,rgba(0,0,0,.5) 100%);pointer-events:none}
-.vp.ctl .vchrome{opacity:1}
+.vp.ctl .vchrome{visibility:visible;transition:visibility 0s}
 .vp.ctl .vchrome .vb,.vp.ctl .vchrome .ia{pointer-events:auto}
 .vp.locked .vchrome{opacity:0 !important}
 .vp.locked .vchrome *{pointer-events:none !important}
@@ -4960,7 +4969,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 14.7',
+      'Video-Assistent 14.8',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
