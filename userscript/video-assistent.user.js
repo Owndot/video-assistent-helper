@@ -2114,8 +2114,9 @@
 .vv.vzan{transition:transform .25s cubic-bezier(.215,.61,.355,1)}
 /* Untertitel: über dem Bild, unter den Bedienelementen; rücken über die Leisten, wenn die sichtbar sind */
 .vsub{position:absolute;left:5%;right:5%;bottom:calc(26px + var(--evp-sb,env(safe-area-inset-bottom,0px)));text-align:center;pointer-events:none;white-space:pre-line;
- font:600 19px/1.34 var(--font);letter-spacing:.045em;color:#fff;text-shadow:0 0 1px rgba(0,0,0,.95),0 0 1px rgba(0,0,0,.95),0 1px 3px rgba(0,0,0,.55);transition:bottom .25s ease,top .25s ease}
-.vsub[data-size="s"]{font-size:15px}.vsub[data-size="l"]{font-size:25px}
+ font:500 20px/1.34 var(--font);letter-spacing:.035em;word-spacing:.08em;color:#fff;
+ text-shadow:0.7px 0px 0 rgba(0,0,0,.92),-0.7px 0px 0 rgba(0,0,0,.92),0px 0.7px 0 rgba(0,0,0,.92),0px -0.7px 0 rgba(0,0,0,.92),0.5px 0.5px 0 rgba(0,0,0,.92),-0.5px 0.5px 0 rgba(0,0,0,.92),0.5px -0.5px 0 rgba(0,0,0,.92),-0.5px -0.5px 0 rgba(0,0,0,.92),0 1px 4px rgba(0,0,0,.5);-webkit-font-smoothing:antialiased;transition:bottom .25s ease,top .25s ease}
+.vsub[data-size="s"]{font-size:16px}.vsub[data-size="l"]{font-size:26px}
 /* Untertitel wie in üblichen Videoplayern: nur Schrift – weiß mit dunkler Kontur, ohne Fläche (in beiden Designs) */
 .vsub span{display:inline-block;margin:1px 0;padding:0 4px}
 /* Standbild: kurzer Blitz */

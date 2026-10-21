@@ -49,7 +49,7 @@ with sync_playwright() as p:
     check('hochkant: Untertitel unten IM Bild', pl[1] - 40 < pl[3] <= pl[1] and pl[2] > pl[0], pl)
     more(pg); pick(pg, 'Untertitel'); pick(pg, 'Größe')
     sz = pg.evaluate('() => [%s.querySelector(".vsub").dataset.size, getComputedStyle(%s.querySelector(".vsub")).fontSize]' % (R, R))
-    check('Größe umschalten (bleibt im Menü)', sz[0] == 'l' and sz[1] == '25px' and pg.evaluate('() => %s.querySelector(".vmenu").classList.contains("on")' % R), sz)
+    check('Größe umschalten (bleibt im Menü)', sz[0] == 'l' and sz[1] == '26px' and pg.evaluate('() => %s.querySelector(".vmenu").classList.contains("on")' % R), sz)
     pick(pg, 'Lage')
     check('Lage: oben', pg.evaluate('() => %s.querySelector(".vsub").classList.contains("hi")' % R))
     pg.evaluate('() => %s.querySelector(".vp").click()' % R); sub_at(pg, 7.5); pl = place()
