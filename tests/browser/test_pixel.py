@@ -43,7 +43,11 @@ with sync_playwright() as p:
         pg.screenshot(path=OUT + '/pix_amb_an_%s.png' % tag)
         a_on = band(OUT + '/pix_amb_an_%s.png' % tag, box)
         ac = pg.evaluate('() => (%s)(%s.querySelector(".vamb"))' % (STATS, R))
-        print('   %s Ambient-Element: %s' % (tag, pg.evaluate('() => %s.querySelector(".vamb").tagName' % R)))
+        at = pg.evaluate('() => %s.querySelector(".vamb").tagName' % R)
+        print('   %s Ambient-Element: %s' % (tag, at))
+        import os
+        if os.environ.get('BROWSER', '').lower() == 'firefox':
+            check(tag + ': Firefox nutzt den Handy-Weg (Ambient als Video)', at == 'VIDEO', at)
         pg.evaluate('() => %s.querySelector(".vp").classList.remove("amb")' % R); time.sleep(1.2)
         pg.screenshot(path=OUT + '/pix_amb_aus_%s.png' % tag)
         a_off = band(OUT + '/pix_amb_aus_%s.png' % tag, box)
@@ -67,6 +71,8 @@ with sync_playwright() as p:
         check(tag + ': Vorschaubild passt zur Stelle', d1 < 12, d1)
         pg.evaluate('() => %s.querySelector(".vv").play()' % R)
         print('   %s Vorschau: Video bereit %s, Zeit %s, Breite %s, Bild-Flag %s, Vorschau-Video %s, gezeigtes Bild %s' % (tag, *pv))
+        if os.environ.get('BROWSER', '').lower() == 'firefox':
+            check(tag + ': Firefox zeigt das Vorschau-Video direkt', pg.evaluate('() => %s.querySelector(".vprev").classList.contains("live")' % R))
         check(tag + ': Vorschau zeigt ein echtes Bild', pv[3] and len(pv[5]) == 2 and pv[5][0] > 8 and pv[5][1] > 4, pv[5])
         # Nach längerem Zuschauen (Firefox hält unsichtbare Videos nach ~10 s an): noch einmal an eine neue Stelle
         time.sleep(13)
@@ -75,6 +81,7 @@ with sync_playwright() as p:
         pg.mouse.move(br[0] + br[2] * 0.15, y); pg.mouse.down(); pg.mouse.move(br[0] + br[2] * 0.33, y, steps=8)
         time.sleep(1.5)
         pv2 = pg.evaluate('() => { const pr = %s.querySelector(".vprev"), v = pr.querySelector("video"); return [v.readyState, v.currentTime.toFixed(1), pr.dataset.t, (%s)(v), (%s)(pr.classList.contains("live") ? v : pr.querySelector("canvas"))]; }' % (R, STATS, STATS))
+        want2 = pg.evaluate('() => %s.querySelector(".vbar").value / 1000 * %s.querySelector(".vv").duration' % (R, R))
         pg.screenshot(path=OUT + '/pix_prev_spaet_%s.png' % tag)
         d2 = same_frame(pg, float(pv2[1]))
         pg.mouse.up()
@@ -82,7 +89,7 @@ with sync_playwright() as p:
         check(tag + ': nach 13 s Vorschaubild passt zur Stelle', d2 < 12, d2)
         print('   %s nach 13 s: Ambient %s · Vorschau bereit %s, Zeit %s, gezeigt bei %s, Vorschau-Video %s, gezeigtes Bild %s' % (tag, a2, *pv2))
         check(tag + ': nach 13 s Ambient-Bild hat Inhalt', len(a2) == 2 and a2[0] > 8, a2)
-        check(tag + ': nach 13 s Vorschau an der neuen Stelle', pv2[2] is not None and abs(float(pv2[2]) - float(pv2[1])) < 3 and float(pv2[1]) < float(pv[1]) - 5 and len(pv2[4]) == 2 and pv2[4][1] > 4, pv2)
+        check(tag + ': nach 13 s Vorschau an der neuen Stelle', pv2[2] is not None and abs(float(pv2[2]) - float(pv2[1])) < 3 and abs(float(pv2[2]) - want2) < 3 and len(pv2[4]) == 2 and pv2[4][1] > 4, pv2)
         ctx.close()
     b.close()
 srv.shutdown()

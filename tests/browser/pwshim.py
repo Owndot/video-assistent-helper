@@ -34,6 +34,9 @@ if os.environ.get('BROWSER', '').lower() == 'firefox' and not getattr(_pw, '_evp
         fe = null; setTimeout(fire, 0); return Promise.resolve(); };
     })();'''
 
+    # Firefox wie auf dem Handy (Ambient/Vorschau ohne Kopieren von Videobildern) – Playwright meldet keinen Touchscreen
+    MOBILE_JS = "try { localStorage.setItem('evp-ffmobile', '1'); } catch (e) {}"
+
     class _Ctx:
         def __init__(s, c): s._c = c
         def __getattr__(s, n): return getattr(s._c, n)
@@ -45,10 +48,12 @@ if os.environ.get('BROWSER', '').lower() == 'firefox' and not getattr(_pw, '_evp
             return kw
         def new_context(s, **kw):
             c = s._b.new_context(**s._fix(kw))
+            c.add_init_script(MOBILE_JS)
             if FAKE_FS: c.add_init_script(FAKE_FS_JS)
             return c
         def new_page(s, **kw):
             pg = s._b.new_page(**s._fix(kw))
+            pg.add_init_script(MOBILE_JS)
             if FAKE_FS: pg.add_init_script(FAKE_FS_JS)
             return pg
         def __getattr__(s, n): return getattr(s._b, n)
