@@ -18,9 +18,17 @@ with sync_playwright() as p:
     ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Bildformat]").click()' % R); time.sleep(0.3)
     pos = pg.evaluate('''() => { const r = %s, t = r.querySelector(".toast"), tb = t.getBoundingClientRect(), bot = r.querySelector(".vbot").getBoundingClientRect(), vid = r.querySelector(".vv");
         const vr = vid.getBoundingClientRect(), sc = Math.min(vr.width / vid.videoWidth, vr.height / vid.videoHeight), top = vr.top + (vr.height - vid.videoHeight * sc) / 2;
-        return [t.parentElement.classList.contains("vp"), Math.round(tb.top), Math.round(tb.bottom), Math.round(bot.top), Math.round(top), t.style.top]; }''' % R)
+        return [t.parentElement.classList.contains("vp"), Math.round(tb.top), Math.round(tb.bottom), Math.round(bot.top), Math.round(top), t.style.top, r.querySelector(".vind").style.top]; }''' % R)
     print('   Hinweis:', pos)
-    check('Hinweis im Player über dem Bild, nicht unten über den Knöpfen', pos[0] and pos[2] < pos[3] - 100 and pos[2] <= pos[4] + 6 and pos[1] > 60, pos)
+    # nach „Füllen“ füllt das Bild die Höhe → Hinweis an der festen Stelle der Gesten-Anzeige (obere Mitte)
+    check('Hinweis im Player an der Stelle der Gesten-Anzeige, nicht unten über den Knöpfen', pos[0] and pos[5] == pos[6] and pos[2] < pos[3] - 100 and pos[1] > 60, pos)
+    for _ in range(2):   # → Strecken → Original (Bild mit schwarzen Rändern)
+        ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Bildformat]").click()' % R); time.sleep(0.35)
+    time.sleep(0.3)
+    pos2 = pg.evaluate('''() => { const r = %s, t = r.querySelector(".toast"), tb = t.getBoundingClientRect(), vid = r.querySelector(".vv");
+        const vr = vid.getBoundingClientRect(), sc = Math.min(vr.width / vid.videoWidth, vr.height / vid.videoHeight), top = vr.top + (vr.height - vid.videoHeight * sc) / 2;
+        return [t.textContent, Math.round(tb.top), Math.round(tb.bottom), Math.round(top)]; }''' % R)
+    check('Original: Hinweis direkt über der Oberkante des Bildes', pos2[0] == 'Original' and pos2[2] <= pos2[3] + 6 and pos2[3] - pos2[2] < 80, pos2)
     pg.evaluate('() => %s.querySelector("button[aria-label=Bildformat]").click()' % R); time.sleep(0.2)
     pg.evaluate('() => %s.querySelector("button[aria-label=Bildformat]").click()' % R); time.sleep(0.5)
     # Hochwischen über die Zeitleiste (Android-Geste) spult nicht – Ziehen zur Seite schon
