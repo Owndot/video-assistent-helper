@@ -168,7 +168,8 @@ Benachrichtigungen) – das prüft nur das Handy.
 - Kein Wellen-/Lupen-Glas (SVG-Filter in `backdrop-filter`) → Milchglas; `LENS_OK` prüft auf Chrome.
 - Testumgebung: Vollbild ohne `full-screen-api.ignore-widgets` springt auf Bildschirmgröße (1280 px); Größenänderung
   im Vollbild hängt → Tests mit `set_viewport_size` bekommen ein nachgebautes Vollbild; Firefox 142 erzeugt mit
-  `has_touch` bei Maus keine Zeiger-Ereignisse (nur bei Berührung). Schriftmaße weichen ab → Tests prüfen Lage,
+  `has_touch` bei Maus keine Zeiger-Ereignisse (nur bei Berührung). Desktop-Firefox legt einen eigenen Bild-im-Bild-Knopf über Videos, der Klicks
+  rechts abfängt, auch durch Overlays hindurch (in der Testweiche abgeschaltet, Android hat ihn nicht). Schriftmaße weichen ab → Tests prüfen Lage,
   nicht Pixelhöhen. GitHub-Protokolle sind aus der Entwicklungsumgebung nicht abrufbar → Ergebnis-Zweige.
 
 ## 7. Versionen (kurz)
