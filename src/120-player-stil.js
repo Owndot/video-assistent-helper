@@ -131,7 +131,7 @@
 .vprev.img .vpc{opacity:1}
 .vprev.live .vpv{opacity:1}
 .vprev.live .vpc{opacity:0}
-.vprev.noimg:not(.img) .vpbox{display:none}
+.vprev.noimg .vpbox{display:none}
 .vprev b{font:700 13px var(--font);font-variant-numeric:tabular-nums;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);padding:4px 10px;border-radius:12px;background:rgba(18,20,28,.5)}
 /* Spulen per Wischen: große, dünne Zeit mitten im Bild, darunter die Restzeit – nur Zahlen, kein Kasten */
 .vseek{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;color:#fff;pointer-events:none;opacity:0;transition:opacity .14s ease;z-index:3;white-space:nowrap;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      17.2
+// @version      17.3
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -2318,7 +2318,7 @@
 .vprev.img .vpc{opacity:1}
 .vprev.live .vpv{opacity:1}
 .vprev.live .vpc{opacity:0}
-.vprev.noimg:not(.img) .vpbox{display:none}
+.vprev.noimg .vpbox{display:none}
 .vprev b{font:700 13px var(--font);font-variant-numeric:tabular-nums;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);padding:4px 10px;border-radius:12px;background:rgba(18,20,28,.5)}
 /* Spulen per Wischen: große, dünne Zeit mitten im Bild, darunter die Restzeit – nur Zahlen, kein Kasten */
 .vseek{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;color:#fff;pointer-events:none;opacity:0;transition:opacity .14s ease;z-index:3;white-space:nowrap;
@@ -4213,8 +4213,7 @@
     }
     function prevLoad() {
       const key = st.mode === 'own' ? st.cur : '';
-      // gespiegelt (Facebook, Seiten ohne Adresse): keine zweite Quelle → gemerkte Bilder vom Anschauen und die Zeit
-      if (!key) { prev.classList.add('noimg'); return false; }
+      if (!key) { prev.classList.add('noimg'); return false; }   // gespiegelt (Facebook …): keine eigene Quelle → nur die Zeit
       prev.classList.remove('noimg');
       if (pvs.key === key) return true;
       prevReset();
@@ -4238,10 +4237,10 @@
       return [176, Math.max(40, Math.min(320, Math.round(176 * vh / vw)))];
     }
     // aktuelles Bild eines Videos merken (Vorschau-Video oder – kostenlos – das laufende Video selbst)
-    function snap(v, at) {
+    function snap(v) {
       v = v || pv;
       if (!(v.videoWidth > 0)) return null;
-      const tt = at == null ? v.currentTime : at;
+      const tt = v.currentTime;
       const d = thumbDims(v);
       const c = document.createElement('canvas');
       c.width = d[0]; c.height = d[1];
@@ -4254,16 +4253,13 @@
     // Beim Anschauen nebenbei Bilder merken (je Fach eins, höchstens jede Sekunde): Gesehenes erscheint beim Spulen sofort
     let mainSnapAt = 0;
     const mainSnap = () => {
-      if (FF_MOBILE || (st.mode !== 'own' && st.mode !== 'capture') || vid.readyState < 2 || prev.classList.contains('on')) return;
-      const m = M();   // beim Spiegeln zählt die Zeit des Originals (das gespiegelte Bild hat keine eigene)
-      if (m.seeking || !isFinite(m.duration)) return;
+      if (FF_MOBILE || st.mode !== 'own' || vid.readyState < 2 || vid.seeking || prev.classList.contains('on')) return;
       const now = Date.now();
-      if (now - mainSnapAt < 1000 || thumbs.has(Math.round(m.currentTime / bucketFor()))) return;
+      if (now - mainSnapAt < 1000 || thumbs.has(Math.round(vid.currentTime / bucketFor()))) return;
       mainSnapAt = now;
-      snap(vid, m.currentTime);
+      snap(vid);
     };
     vid.addEventListener('timeupdate', mainSnap);
-    if (orig) { orig.addEventListener('timeupdate', mainSnap); st.cleanup.push(() => orig.removeEventListener('timeupdate', mainSnap)); }
     vid.addEventListener('seeked', () => setTimeout(mainSnap, 120));
     // Zeigen, wenn es näher an der Fingerstelle liegt als das bisher gezeigte Bild (oder noch keins da ist)
     function better(t) {
@@ -4385,15 +4381,11 @@
       if (!isFinite(d) || d <= 0) return;
       const t = p * d;
       pvTime.textContent = fmtTime(t);
-      const src = prevLoad() && !prev.classList.contains('noimg');
-      pvs.lastWant = t;
-      const n = nearest(t);
-      // ohne zweite Quelle: nur ein gemerktes Bild, das wirklich nah dran ist (sonst lieber nur die Zeit)
-      const near = n && (src || Math.abs(n[1] - t) <= Math.max(3, bucketFor() * 2));
-      const img = src || !!near;
-      if (near && better(n[1])) paint(n[0], n[1]);   // sofort das nächstgelegene gemerkte Bild …
-      else if (!src) prev.classList.remove('img');
-      if (src) {
+      const img = prevLoad() && !prev.classList.contains('noimg');
+      if (img) {
+        pvs.lastWant = t;
+        const n = nearest(t);
+        if (n && better(n[1])) paint(n[0], n[1]);   // sofort das nächstgelegene gemerkte Bild …
         prevSeek(t);                                // … und die genaue Stelle nachschärfen
         if (pv.readyState >= 1) startGrid(); else pvs.autoGrid = true;
       }
@@ -5224,7 +5216,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 17.2',
+      'Video-Assistent 17.3',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

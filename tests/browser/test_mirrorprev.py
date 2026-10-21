@@ -1,7 +1,6 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Spul-Vorschau beim Spiegeln (Facebook und Seiten ohne Adresse, 17.2): keine zweite Quelle (auch nicht aus den
-# Seitendaten – auf Facebook zu unzuverlässig) → angeschaute Stellen zeigen ein beim Abspielen gemerktes Bild,
-# nie gesehene nur die Zeit. Firefox (Handy) kann keine Bilder kopieren: dort immer nur die Zeit.
+# Spul-Vorschau beim Spiegeln (Facebook und Seiten ohne Adresse, 17.3): keine zweite Quelle → ruhig nur die Zeit.
+# (17.1/17.2 zeigten für Angeschautes gemerkte Bilder – der Wechsel Bild ↔ nur Zeit flackerte beim Spulen.)
 import time, json
 exec(open('test_v8.py').read().split("results = []")[0])
 R = 'window.__evpRoot'; results = []
@@ -14,7 +13,7 @@ def page(u):
 <script type="application/json">{"video":{"id":"%s","playable_url":"%s"}}</script>
 <video id=v muted autoplay playsinline src="/data/clip.webm" style="width:100%%;display:block"></video>
 </body></html>''' % (A, u)
-HITS = [0]
+HITS = [0]; FLICK = [None]
 def fmt(t): t = int(t); return '%d:%02d' % (t // 60, t % 60)
 def run(cdn_body, tag):
     with sync_playwright() as p:
@@ -55,16 +54,23 @@ def run(cdn_body, tag):
             return r
         dur = pg.evaluate('() => document.getElementById("v").duration')
         far = drag(0.7); seen = drag(4.0 / dur)
+        # über Angeschautes und Neues hinweg ziehen: Vorschau darf nicht zwischen Bild und Zeit wechseln (Flackern)
+        pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R); time.sleep(0.2)
+        pg.mouse.move(X(0.02), y); pg.mouse.down(); looks = set()
+        for k in range(40):
+            pg.mouse.move(X(0.02 + 0.6 * k / 40), y); time.sleep(0.03)
+            looks.add(pg.evaluate('() => { const p = %s.querySelector(".vprev"); return p.classList.contains("img") + "/" + p.style.width; }' % R))
+        pg.mouse.up(); time.sleep(0.5)
+        FLICK[0] = sorted(looks)
         b.close()
     print('   %s: Spiegeln %s · weit %s · gesehen %s · Abrufe %d' % (tag, mirror, far, seen, len(hits)))
     HITS[0] = len(hits)
     return mirror, far, seen, dur, errs
 m, far, seen, dur, errs = run(CLIP, 'Seitendaten mit Datei')
-FF = __import__('os').environ.get('BROWSER', '').lower() == 'firefox'
 check('Spiegeln aktiv (Facebook)', m)
-check('nie gesehene Stelle: nur die Zeit (keine Datei aus den Seitendaten)', not far[0] and far[2] == fmt(0.7 * dur), far)
-if FF: check('Firefox (Handy): auch angeschaute Stelle nur mit Zeit', not seen[0], seen)
-else: check('angeschaute Stelle: gemerktes Bild vom Abspielen', seen[0] and abs(seen[1] - 4.0) < 2, seen)
+check('nie gesehene Stelle: nur die Zeit', not far[0] and far[2] == fmt(0.7 * dur), far)
+check('angeschaute Stelle: ebenso nur die Zeit (gleich aussehend)', not seen[0] and seen[2] in ('0:03', '0:04'), seen)
+check('über Angeschautes und Neues ziehen: kein Flackern (immer gleich)', len(FLICK[0]) == 1 and FLICK[0][0].startswith('false'), FLICK[0])
 check('Datei aus den Seitendaten wird nicht geladen', HITS[0] == 0, HITS)
 check('keine Fehler', not errs, errs)
 srv.shutdown()

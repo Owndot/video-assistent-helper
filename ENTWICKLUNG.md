@@ -124,7 +124,7 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_topguard.py`, `test_idle.py` | gesperrter oberer/unterer Rand, sparsamer Takt ohne Video |
 | `test_tapzoom.py` | Doppeltipp-Zoom: füllt hochkant, Richtung zum Finger, 3× quer, Verschieben, Gummiband, Schwung, Drehen |
 | `test_extras.py` | Untertitel (Seite, .srt/.vtt, Datei, Stream, Lage), ⋮ Mehr: Tonspur, Standbild, Einstellungen, Design, Media Session |
-| `test_mirrorprev.py` | Vorschau beim Spiegeln: angeschaute Stellen mit gemerktem Bild, sonst nur die Zeit |
+| `test_mirrorprev.py` | Vorschau beim Spiegeln: ruhig nur die Zeit, kein Flackern beim Ziehen |
 | `test_reelend.py` | Reels-Seite springt am Ende von selbst weiter: Player hält vorher an, beim Schließen bleibt man beim Reel |
 | `test_leave.py` | App-Wechsel (Fokus/verdeckt) ≠ Zurück-Taste, „Beim Verlassen“, Bild-in-Bild ✕/Vollbild |
 | `test_prevlag.py` | Messung: Zeit bis zur richtigen Vorschau nach dem Anhalten (`LAG=1.3` = schwaches Netz; mit 2. Datei = Vergleich) |
@@ -148,6 +148,7 @@ Benachrichtigungen) – das prüft nur das Handy.
 
 - Spul-Vorschau: einen langsamen Sprung des Vorschau-Videos **nie neu starten** (sonst wird er bei schwachem Netz nie
   fertig – 16.2-Fehler). Der Wächter greift nur, wenn der Sprung fertig ist, aber `seeked` fehlt (`!pv.seeking`).
+- Vorschau beim Spiegeln: KEINE gemerkten Bilder nur für angeschaute Stellen – der Wechsel Bild ↔ Zeit flackert.
 - Reels-Seiten reagieren auf `ended` (nächstes Reel). Gespiegelt daher kurz vor dem Ende anhalten (`nearEnd`, 40 ms)
   und beim Schließen am Ende das Original NICHT weiterspielen lassen.
 - Vollbild-Ende ist nur dann die Zurück-Taste, wenn die Seite dabei **sichtbar und im Fokus** bleibt – beim
@@ -259,3 +260,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 17.0 | Quelltext in `src/` (28 Teile, `tools/build.js`, CI prüft); Altlasten entfernt (Aufklapp-Knopf, feste Seitenverhältnisse, Weiterschauen-Aufräumen). Vorschau: Bilder aus dem laufenden Video, Finger vor Raster, Raster nahe am Finger, Wächter startet langsame Sprünge nicht mehr neu. Zoom: bei sichtbaren Leisten normale Gesten. App-Wechsel schließt den Player nicht; „Beim Verlassen“ (Weiter/Anhalten); Bild-in-Bild ✕ = Pause, „Vollbild“ = zurück in den Vollbild-Player |
 | 17.1 | Vorschau beim Spiegeln: gemerkte Bilder aus dem gespiegelten Bild; gemerkte Bilder bleiben beim Wechsel der Vorschau-Quelle |
 | 17.2 | Reels: gespiegeltes Original kurz VOR dem Ende anhalten (Seite springt nicht zum nächsten Reel), am Ende geschlossen = Original bleibt angehalten. Vorschau aus Facebook-Seitendaten wieder entfernt (zu unzuverlässig) |
+| 17.3 | Vorschau beim Spiegeln wieder nur die Zeit (gemerkte Bilder nur für Angeschautes flackerten beim Spulen: Bild ↔ Zeit) |
