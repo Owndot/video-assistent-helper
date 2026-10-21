@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      13.8
+// @version      13.9
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -2053,6 +2053,7 @@
   const VP_CSS = `
 .vp{--glass:rgba(255,255,255,.13);--edge1:rgba(255,255,255,.6);--edge2:rgba(255,255,255,.06);--sub:rgba(255,255,255,.74);--ice:#9BE7FF;--trk:rgba(255,255,255,.25);
  position:fixed;inset:0;background:#000;z-index:2147483647;touch-action:none;color:#fff;font:15px/1.2 var(--font);-webkit-user-select:none;user-select:none;overflow:hidden;overflow:clip;-webkit-tap-highlight-color:transparent}
+.vv.vzan{transition:transform .32s cubic-bezier(.2,.8,.2,1)}
 .vv{position:absolute;inset:0;margin:auto;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;object-position:50% 50%;background:transparent;transform-origin:50% 50%}
 /* Ambient-Modus: die Farben des Bildes leuchten weich in die schwarzen Ränder (wie bei YouTube) */
 .vamb{position:absolute;left:-12%;top:-12%;width:124%;height:124%;filter:blur(48px) saturate(1.45) brightness(.7);opacity:0;transition:opacity .8s ease;pointer-events:none;
@@ -2618,11 +2619,41 @@
       // brauchen eine berechnete Größe.
       vid.style.width = r ? w + 'px' : '100%';
       vid.style.height = r ? hh + 'px' : '100%';
-      const mx = Math.max(0, (w * st.zoom - W) / 2), my = Math.max(0, (hh * st.zoom - H) / 2);
+      // nur so weit verschieben, wie wirklich Bild ist (nicht in die schwarzen Ränder)
+      let cw = w, ch = hh;
+      if (fit === 'contain' && vid.videoWidth && vid.videoHeight) {
+        const sc = Math.min(w / vid.videoWidth, hh / vid.videoHeight);
+        cw = vid.videoWidth * sc; ch = vid.videoHeight * sc;
+      }
+      const mx = Math.max(0, (cw * st.zoom - W) / 2), my = Math.max(0, (ch * st.zoom - H) / 2);
       st.panX = clamp(st.panX, -mx, mx);
       st.panY = clamp(st.panY, -my, my);
       vid.style.transform = st.zoom > 1.001 ? 'translate(' + st.panX + 'px,' + st.panY + 'px) scale(' + st.zoom + ')' : '';
       if (st.holdCv && st.holdCv.isConnected) st.holdCv.style.cssText = vid.style.cssText + ';pointer-events:none';
+    }
+    // Doppeltipp in der Mitte (wie Samsung Internet): Video füllt den Bildschirm – zum Finger hin (die Stelle unter dem
+    // Finger bleibt dort), noch einmal = ganzes Bild. Füllt das Video schon fast alles, bleibt es bei Play/Pause.
+    function zoomTo(z, px, py) {
+      vid.classList.add('vzan');
+      clearTimeout(st.zanT);
+      st.zanT = setTimeout(() => vid.classList.remove('vzan'), 360);
+      st.zoom = z; st.panX = px; st.panY = py;
+      layoutVideo();
+    }
+    function tapZoom(x, y) {
+      if (st.zoom > 1.01) { st.tapZoomed = false; zoomTo(1, 0, 0); return true; }
+      const W = wrap.clientWidth || innerWidth, H = wrap.clientHeight || innerHeight;
+      const vw = vid.videoWidth, vh = vid.videoHeight;
+      if (st.aspect !== 'contain' || !vw || !vh) return false;
+      const sc = Math.min(W / vw, H / vh), cw = vw * sc, ch = vh * sc;
+      const z = Math.min(4, Math.max(W / cw, H / ch));
+      if (z < 1.12) return false;
+      const r = wrap.getBoundingClientRect();
+      const qx = x - r.left - W / 2, qy = y - r.top - H / 2;
+      const ux = clamp(qx, -cw / 2, cw / 2), uy = clamp(qy, -ch / 2, ch / 2);   // getippte Stelle im Bild
+      st.tapZoomed = true;
+      zoomTo(z, qx - ux * z, qy - uy * z);
+      return true;
     }
     const onLayout = () => { if (vp === st) layoutVideo(); };
     addEventListener('resize', onLayout);
@@ -3612,6 +3643,7 @@
         const a = Array.from(pts.values());
         pinch.d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
         st.zoom = clamp(pinch.z0 * pinch.d / pinch.d0, 1, 4);
+        st.tapZoomed = false;
         st.panX = pinch.px + ((a[0].x + a[1].x) / 2 - pinch.mx);
         st.panY = pinch.py + ((a[0].y + a[1].y) / 2 - pinch.my);
         layoutVideo();
@@ -3710,7 +3742,7 @@
           st.skipRun = { zone: zone, total: 10, until: now + 650 };
           showSkipFx(zone, 10);
         }
-        else togglePlay();
+        else if (!tapZoom(cur.x, cur.y)) togglePlay();
         return;
       }
       lastTapT = now;
@@ -3729,7 +3761,13 @@
     addEventListener('orientationchange', onTurn);
     try { screen.orientation && screen.orientation.addEventListener('change', onTurn); } catch (e) {}
     let lastAspect = innerWidth > innerHeight;
-    const onResize = () => { const a = innerWidth > innerHeight; if (a !== lastAspect) { lastAspect = a; lastTurn = Date.now(); } };
+    const onResize = () => {
+      const a = innerWidth > innerHeight;
+      if (a !== lastAspect) {
+        lastAspect = a; lastTurn = Date.now();
+        if (st.tapZoomed) { st.tapZoomed = false; st.zoom = 1; st.panX = st.panY = 0; layoutVideo(); }   // gedreht: Doppeltipp-Zoom aufheben
+      }
+    };
     addEventListener('resize', onResize);
     st.cleanup.push(() => {
       removeEventListener('orientationchange', onTurn);
@@ -4257,7 +4295,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 13.8',
+      'Video-Assistent 13.9',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

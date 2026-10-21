@@ -21,6 +21,8 @@ Der Player funktioniert auch **ohne** Helfer-App – dann regeln die Gesten nur 
   - oberer und unterer Rand (je 15 %) gesperrt, damit Schnelleinstellungen und die Home-Wischgeste nichts verstellen
   - ganz unten bei der Helligkeit **weiterwischen = Auto** (automatische Helligkeit des Handys)
 - Doppeltippen links/rechts = ±10 s (mehrfach = 20, 30 … s), lange drücken = 2× schneller
+- Doppeltippen in der Mitte (wie Samsung Internet): Querformat-Video hochkant füllt den Bildschirm – zum Finger hin,
+  noch einmal = ganzes Bild (füllt das Video schon alles: Play/Pause)
 - Zwei Finger = zoomen, Bildformate (Original, Füllen, Strecken, 16:9, 4:3, 21:9), Qualität wählen
 - Sperre (entsperren: 1 s halten oder doppeltippen), Bild-in-Bild, Drehen, Geschwindigkeit
 - dünne Fortschrittslinie, wenn die Leisten ausgeblendet sind; am Ende anhalten statt endlos schleifen
