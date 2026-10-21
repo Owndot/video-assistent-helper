@@ -56,6 +56,10 @@ with sync_playwright() as p:
     check('oben: Untertitel oben IM Bild', pl[0] <= pl[2] < pl[0] + 40, pl)
     pg.set_viewport_size({'width': 800, 'height': 400}); time.sleep(0.9); pl = place()
     check('quer (Bild füllt die Höhe): oben am Bildrand', 8 <= pl[2] < 45, pl)
+    pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R); time.sleep(0.5)
+    o1 = pg.evaluate('''() => { const s = %s.querySelector(".vsub span").getBoundingClientRect(); const t = Math.max(...Array.from(%s.querySelectorAll(".vtop > *")).map(e => e.getBoundingClientRect().bottom)); return [Math.round(s.top), Math.round(t)]; }''' % (R, R))
+    print('   quer oben: mit Leisten ab', o1[0], '| Titel/Knöpfe bis', o1[1])
+    check('quer oben: Leisten an – direkt unter Titel/Knöpfen', o1[1] <= o1[0] <= o1[1] + 12, o1)
     # quer + unten: Leisten einblenden lässt die Untertitel (fast) an ihrer Stelle – nur über die Zeitleiste
     more(pg); pick(pg, 'Untertitel'); pick(pg, 'Lage'); pg.evaluate('() => %s.querySelector(".vp").click()' % R)
     sub_at(pg, 7.5); a0 = place()
