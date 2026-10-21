@@ -63,6 +63,10 @@ check('… und angeschaute Stellen', seen[0] and abs(seen[1] - 4.0) < 2, seen)
 check('keine Fehler', not errs, errs)
 m, far, seen, dur, errs = run(CLIP2, 'andere Länge')
 check('Datei mit anderer Länge (anderes Video): nicht benutzt – weite Stelle ohne Bild', not far[0] or (far[1] is not None and abs(far[1] - 0.7 * dur) > 10 and False), far)
-check('… angeschaute Stelle trotzdem mit gemerktem Bild', seen[0] and abs(seen[1] - 4.0) < 3, seen)
+if __import__('os').environ.get('BROWSER', '').lower() == 'firefox':
+    # Firefox auf dem Handy kann keine Bilder aus Videos kopieren – dort gibt es ohne zweite Quelle nur die Zeit
+    check('… Firefox (Handy): ohne zweite Quelle nur die Zeit', not seen[0], seen)
+else:
+    check('… angeschaute Stelle trotzdem mit gemerktem Bild', seen[0] and abs(seen[1] - 4.0) < 3, seen)
 srv.shutdown()
 print('ERGEBNIS: %d von %d' % (sum(results), len(results)))
