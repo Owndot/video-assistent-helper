@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      14.3
+// @version      14.4
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -3666,7 +3666,14 @@
         subEl.style.top = 'max(' + Math.round(top + pad) + 'px, calc(' + (ctlOn ? 82 : 12) + 'px + var(--evp-st,env(safe-area-inset-top,0px))))';
       } else {
         subEl.style.top = 'auto';
-        subEl.style.bottom = 'max(' + Math.round(H - bot + pad) + 'px, calc(' + (ctlOn ? 150 : 26) + 'px + var(--evp-sb,env(safe-area-inset-bottom,0px))))';
+        // Querformat: die Knöpfe sitzen dort links/rechts in den Ecken – nur über die Zeitleiste ganz unten rücken,
+        // damit die Untertitel beim Einblenden der Leisten nicht in die Bildmitte springen
+        const row = ctlOn && b[2] > H ? wrap.querySelector('.vrow') : null;
+        let rowTop = -1;
+        if (row) { let y = 0; for (let e = row; e && e !== wrap; e = e.offsetParent) y += e.offsetTop; rowTop = y; }   // ohne Einblend-Animation
+        subEl.style.bottom = rowTop > 0
+          ? Math.round(Math.max(H - bot + pad, H - rowTop + 4)) + 'px'
+          : 'max(' + Math.round(H - bot + pad) + 'px, calc(' + (ctlOn ? 150 : 26) + 'px + var(--evp-sb,env(safe-area-inset-bottom,0px))))';
       }
     }
     st.subPlace = subPlace;
@@ -4930,7 +4937,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 14.3',
+      'Video-Assistent 14.4',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
