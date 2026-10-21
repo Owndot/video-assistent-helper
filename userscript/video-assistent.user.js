@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      14.9
+// @version      15.0
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -60,7 +60,6 @@
     topGuard: 0.15,           // oberer Rand (Anteil der Höhe): hier starten keine Helligkeits-/Lautstärke-Gesten (Schnelleinstellungen)
     bottomGuard: 0.15,        // unterer Rand: ebenso (Home-Wischgeste von Android)
     skipSeconds: 10,          // Doppeltipp links/rechts und die Sprung-Knöpfe: so viele Sekunden
-    resumePlayback: true,     // Weiterschauen: Stelle pro Video merken (ab 3 Minuten Länge) und beim Öffnen anbieten
     subSize: 'm',             // Untertitel: 's' klein, 'm' mittel, 'l' groß
     subHigh: false,           // Untertitel oben im Bild statt unten (z. B. wenn das Video eigene Texte unten hat)
     // Helfer-App "Video-Assistent Helfer" (eigene APK): Läuft sie, steuern die Wischgesten die ECHTE Helligkeit und
@@ -110,7 +109,7 @@
   };
   // Eigene Einstellungen (im Player: ⋯ → Einstellungen) gelten vor den Werten oben und überstehen Updates des Skripts
   const SETTING_KEYS = ['startFullscreen', 'lensGlass', 'ambient', 'progressLine', 'holdSpeed', 'topGuard', 'bottomGuard',
-    'skipSeconds', 'resumePlayback', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh'];
+    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh'];
   const CONFIG_DEFAULT = {};
   SETTING_KEYS.forEach((k) => { CONFIG_DEFAULT[k] = CONFIG[k]; });
   const userSettings = () => { const o = store.get('settings', {}); return o && typeof o === 'object' ? o : {}; };
@@ -120,6 +119,8 @@
     const o = userSettings(); o[k] = v; store.set('settings', o);
   }
   function resetSettings() { store.set('settings', {}); SETTING_KEYS.forEach((k) => { CONFIG[k] = CONFIG_DEFAULT[k]; }); }
+  // Weiterschauen gibt es nicht mehr – früher gemerkte Stellen einmalig löschen
+  try { const old = store.get('resume', null); if (old && typeof old === 'object' && Object.keys(old).length) store.set('resume', {}); } catch (e) {}
   const SKIP = () => ([5, 10, 15, 30].indexOf(+CONFIG.skipSeconds) >= 0 ? +CONFIG.skipSeconds : 10);
   // =================================================
 
@@ -1558,7 +1559,9 @@
 :host(.flat) .g,:host(.flat) .vb.g,:host(.flat) .pill,:host(.flat) .toast{background:rgba(255,255,255,.17)!important;
  -webkit-backdrop-filter:blur(22px) saturate(1.7) brightness(1.06)!important;backdrop-filter:blur(22px) saturate(1.7) brightness(1.06)!important;
  box-shadow:0 2px 14px rgba(0,0,0,.16)!important}
-:host(.flat) .g::before,:host(.flat) .g::after,:host(.flat) .pill::before,:host(.flat) .pill::after{display:none!important}
+:host(.flat) .g::before,:host(.flat) .g::after,:host(.flat) .pill::before,:host(.flat) .pill::after,:host(.flat) .toast::before,:host(.flat) .toast::after{display:none!important}
+/* Untertitel im schlichten Design: helles Milchglas, Hintergrund dahinter etwas abgedunkelt (Schrift bleibt lesbar) */
+:host(.flat) .vsub span{background:rgba(255,255,255,.14);-webkit-backdrop-filter:blur(16px) saturate(1.6) brightness(.8);backdrop-filter:blur(16px) saturate(1.6) brightness(.8);box-shadow:0 2px 10px rgba(0,0,0,.14)}
 :host(.flat) .vb.g:active,:host(.flat) .vchip:active{background:rgba(255,255,255,.32)!important}
 /* Play/±10 mitten im Bild: zurückhaltend – das Video scheint deutlich durch, das Symbol trägt */
 :host(.flat) .vmid .g{background:rgba(255,255,255,.09)!important;-webkit-backdrop-filter:blur(7px) saturate(1.3)!important;backdrop-filter:blur(7px) saturate(1.3)!important;box-shadow:0 1px 8px rgba(0,0,0,.12)!important}
@@ -2114,12 +2117,10 @@
 .vsub{position:absolute;left:5%;right:5%;bottom:calc(26px + var(--evp-sb,env(safe-area-inset-bottom,0px)));text-align:center;pointer-events:none;white-space:pre-line;
  font:600 19px/1.32 var(--font);color:#fff;text-shadow:0 0 2px #000,0 1px 3px #000,0 0 8px rgba(0,0,0,.7);transition:bottom .25s ease,top .25s ease}
 .vsub[data-size="s"]{font-size:15px}.vsub[data-size="l"]{font-size:25px}
-.vsub span{background:rgba(0,0,0,.42);padding:2px 9px;border-radius:7px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
-/* Weiterschauen-Knopf */
-.vresume{position:absolute;left:50%;top:calc(76px + var(--evp-st,env(safe-area-inset-top,0px)));transform:translate(-50%,-8px);opacity:0;pointer-events:none;
- display:flex;align-items:center;gap:6px;padding:9px 16px 9px 12px;border:0;border-radius:22px;color:#fff;font:600 14px var(--font);cursor:pointer;transition:opacity .25s ease,transform .3s ease;z-index:6}
-.vresume.on{opacity:1;transform:translate(-50%,0);pointer-events:auto}
-.vresume svg{width:18px;height:18px;fill:currentColor}
+/* jede Zeile eine eigene Fläche im Stil des Designs (Glas: dunkles Glas mit feiner Kante) */
+.vsub span{display:inline-block;margin:1px 0;padding:2px 10px;border-radius:9px;background:rgba(18,20,28,.3);
+ -webkit-backdrop-filter:blur(10px) saturate(1.35) brightness(.82);backdrop-filter:blur(10px) saturate(1.35) brightness(.82);
+ box-shadow:inset 0 0 0 .7px rgba(255,255,255,.26),inset 0 1px 0 rgba(255,255,255,.16),0 2px 10px rgba(0,0,0,.18)}
 /* Standbild: kurzer Blitz */
 .vp.flash::after{content:"";position:absolute;inset:0;background:#fff;opacity:0;animation:vflash .35s ease;pointer-events:none;z-index:9}
 @keyframes vflash{0%{opacity:.55}100%{opacity:0}}
@@ -3469,7 +3470,6 @@
         it('Lange drücken', String(CONFIG.holdSpeed).replace('.', ',') + '× schneller', () => next('holdSpeed', [1.5, 2, 3])),
         it('Oberer Rand gesperrt', pct(CONFIG.topGuard), () => next('topGuard', [0, 0.1, 0.15, 0.2, 0.25])),
         it('Unterer Rand gesperrt', pct(CONFIG.bottomGuard), () => next('bottomGuard', [0, 0.1, 0.15, 0.2, 0.25])),
-        it('Weiterschauen', yn(CONFIG.resumePlayback !== false), () => setSetting('resumePlayback', CONFIG.resumePlayback === false)),
         it('Ambient-Modus', yn(ambOn), () => setAmbient(!ambOn, true)),
         it('Fortschrittslinie', yn(!wrap.classList.contains('nomini')), () => {
           const on = wrap.classList.contains('nomini'); wrap.classList.toggle('nomini', !on); setSetting('progressLine', on);
@@ -3489,55 +3489,6 @@
         }));
       openMenu('Einstellungen', items, keep);
     }
-
-    // ----- Weiterschauen: Stelle pro Video merken (Seite + Länge), höchstens 200 Videos -----
-    const RES_MIN = 180;
-    function resKey() {
-      const m = M(), d = m.duration;
-      if (!isFinite(d) || d < RES_MIN) return '';
-      return location.href.split('#')[0] + '|' + Math.round(d);
-    }
-    let resLast = 0;
-    function resSave(force) {
-      if (CONFIG.resumePlayback === false || vp !== st) return;
-      const now = Date.now();
-      if (!force && now - resLast < 10000) return;
-      const k = resKey();
-      if (!k) return;
-      resLast = now;
-      const m = M(), t = m.currentTime, d = m.duration;
-      const map = store.get('resume', {}) || {};
-      if (t < 30 || t > d - 30) { if (!map[k]) return; delete map[k]; }   // am Anfang/Ende: nichts (mehr) merken
-      else map[k] = [Math.round(t), now];
-      const keys = Object.keys(map);
-      if (keys.length > 200) keys.sort((a, b) => map[a][1] - map[b][1]).slice(0, keys.length - 200).forEach((x) => delete map[x]);
-      store.set('resume', map);
-    }
-    const resChip = h('button', { class: 'vresume g', 'aria-label': 'Weiterschauen' });
-    wrap.append(resChip);
-    let resOffered = false, resTimer = 0;
-    function resOffer() {
-      if (resOffered || CONFIG.resumePlayback === false || vp !== st) return;
-      const k = resKey();
-      if (!k) return;
-      resOffered = true;
-      const e = (store.get('resume', {}) || {})[k];
-      const m = M();
-      if (!e || e[0] < 30 || Math.abs(m.currentTime - e[0]) < 15) return;
-      resChip.textContent = '';
-      resChip.append(icon(P.play), h('span', null, 'Weiter ab ' + fmtTime(e[0])));
-      resChip.classList.add('on');
-      resChip.onclick = (ev) => {
-        stop(ev); resChip.classList.remove('on');
-        st.userSeekAt = Date.now(); st.endHold = false;
-        try { m.currentTime = e[0]; } catch (er) {}
-        if (m.paused) m.play().catch(() => {});
-        toast('Weiter ab ' + fmtTime(e[0]));
-      };
-      clearTimeout(resTimer);
-      resTimer = setTimeout(() => resChip.classList.remove('on'), 9000);
-    }
-    ['pointerdown', 'pointerup', 'click'].forEach((t) => resChip.addEventListener(t, (ev) => ev.stopPropagation()));
 
     // ----- Benachrichtigung & Sperrbildschirm (Media Session): Titel, Play/Pause, Springen, Position -----
     const MS = navigator.mediaSession || null;
@@ -3578,17 +3529,13 @@
     const onMedia = (ev) => {
       if (vp !== st) return;
       if (ev.target !== M()) return;
-      if (ev.type === 'loadedmetadata' || ev.type === 'durationchange') { resOffer(); msMeta(); }
-      if (ev.type === 'pause' || ev.type === 'seeked') resSave(true);
-      else if (ev.type === 'timeupdate') { resSave(false); if (!resOffered) resOffer(); }
-      if (ev.type !== 'timeupdate') msPos();
+      if (ev.type === 'loadedmetadata' || ev.type === 'durationchange') msMeta();
+      msPos();
     };
-    const MEDIA_EV = ['play', 'pause', 'seeked', 'ratechange', 'loadedmetadata', 'durationchange', 'timeupdate'];
+    const MEDIA_EV = ['play', 'pause', 'seeked', 'ratechange', 'loadedmetadata', 'durationchange'];
     MEDIA_EV.forEach((t) => { vid.addEventListener(t, onMedia); orig.addEventListener(t, onMedia); });
-    st.beforeClose = () => resSave(true);
     st.cleanup.push(() => {
       MEDIA_EV.forEach((t) => { vid.removeEventListener(t, onMedia); orig.removeEventListener(t, onMedia); });
-      clearTimeout(resTimer);
     });
 
     // ----- Untertitel: von der Seite (<track>), aus dem Stream (HLS) oder eigene Datei (.srt/.vtt) -----
@@ -3677,7 +3624,8 @@
       if (x === subs.last) return;
       subs.last = x;
       subEl.textContent = '';
-      if (x) subEl.append(h('span', null, x));
+      // jede Zeile eine eigene Fläche; der Zeilenumbruch bleibt als Text (pre-line) erhalten
+      if (x) x.split('\n').forEach((l, i) => { if (i) subEl.append('\n'); subEl.append(h('span', null, l)); });
     }
     // Lage am SICHTBAREN Bild (nicht am Bildschirmrand): unten knapp über der Unterkante des Bildes, oben knapp unter
     // der Oberkante – bei Querformat-Videos hochkant also im Bild statt ganz unten. Eingeblendete Leisten verdecken nie.
@@ -4631,7 +4579,6 @@
   function closePlayer() {
     const st = vp;
     if (!st) return;
-    try { if (st.beforeClose) st.beforeClose(); } catch (e) {}   // z. B. Stelle fürs Weiterschauen merken (vor dem Abbau)
     vp = null;
     // Kleines Fenster (Bild-in-Bild) gleich mitschließen – sonst bliebe es pausiert und tot stehen
     try {
@@ -4971,7 +4918,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 14.9',
+      'Video-Assistent 15.0',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

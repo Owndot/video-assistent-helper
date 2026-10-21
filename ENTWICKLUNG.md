@@ -110,7 +110,7 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_mirror.py`, `test_fb*.py`, `test_ig.py`, `test_tt.py` | Facebook-Spiegel, Instagram, TikTok (nachgebaut) |
 | `test_topguard.py`, `test_idle.py` | gesperrter oberer/unterer Rand, sparsamer Takt ohne Video |
 | `test_tapzoom.py` | Doppeltipp-Zoom: füllt hochkant, Richtung zum Finger, 3× quer, Verschieben, Gummiband, Schwung, Drehen |
-| `test_extras.py` | ⋯ Mehr: Untertitel (Seite, .srt/.vtt, Datei, Stream), Tonspur, Standbild, Einstellungen, Weiterschauen, Media Session |
+| `test_extras.py` | ⋯ Mehr: Untertitel (Seite, .srt/.vtt, Datei, Stream, Lage), Tonspur, Standbild, Einstellungen, Design, Media Session |
 | `test_pagesubs.py` | Untertitel nur in den Seitendaten (ARD-artig, EBU-TT ab 10:00:00), in nachgeladener Konfiguration (ZDF-artig, TTML), vom Seiten-Player geladen |
 | `test_pixel.py` | sieht man wirklich etwas? Ambient-Licht im Rand, Vorschaubild = echtes Bild an der Stelle (auch nach 13 s) |
 
@@ -156,7 +156,8 @@ Benachrichtigungen) – das prüft nur das Handy.
 - **Vollbild-Hinweis des Browsers** lässt sich nicht abschalten (weder Seite noch ADB) – nur `startFullscreen: false`.
 
 - **Speicher:** `store.get/set` = `GM_getValue/GM_setValue` (ersatzweise `localStorage` `evp-s-…`, so in den Tests).
-  `settings` (nur die Schlüssel in `SETTING_KEYS`) überschreibt `CONFIG` beim Start; `resume` = {Seite|Länge: [Sekunde, Zeit]}.
+  `settings` (nur die Schlüssel in `SETTING_KEYS`) überschreibt `CONFIG` beim Start. (Weiterschauen wurde in 15.0
+  entfernt – alte `resume`-Daten löscht das Skript einmalig.)
 - **Untertitel** zeichnet der Player selbst (`.vsub`, nur Text). hls.js liefert Zeilen nur an eine eingeschaltete Spur
   → `subtitleDisplay` an, Spur aber auf `hidden`; hls.js hängt außerdem einen leeren `<track src="data:,WEBVTT">` an
   (ignorieren).
@@ -215,3 +216,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 14.7 | Design-Wahl: Glas ↔ Schlicht (`:host(.flat)` – nur Milchglas, ohne Kante/Glanz/Lupe, überall) |
 | 14.8 | Schlicht hell wie One UI; Leisten blenden je Fläche ein (kein „erst hell, dann dunkel“) |
 | 14.9 | Schlicht: Play/±10 zurückhaltender (Video scheint durch) |
+| 15.0 | Hinweise und Untertitel im Stil des gewählten Designs; Weiterschauen entfernt |

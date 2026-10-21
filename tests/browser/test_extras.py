@@ -1,6 +1,6 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
 # Neue Funktionen unter ⋯ (Mehr): Untertitel (Seite, Datei, Stream), Tonspur, Einstellungen (dauerhaft),
-# Weiterschauen, Benachrichtigung (Media Session) und Standbild.
+# Benachrichtigung (Media Session) und Standbild.
 import time, os, json
 exec(open('test_v8.py').read().split("results = []")[0])
 R = 'window.__evpRoot'; results = []
@@ -125,21 +125,12 @@ with sync_playwright() as p:
     more(pg); pick(pg, 'Einstellungen'); pick(pg, 'Alles zurücksetzen')
     check('Alles zurücksetzen: wieder 10 s', ['Doppeltipp springt', '10 s', False] in items(pg))
     pg.evaluate('() => %s.querySelector(".vp").click()' % R)
-    # ---------- Weiterschauen ----------
+    # ---------- Weiterschauen gibt es nicht mehr ----------
     open_player(pg, 'long.html')
     pg.evaluate('() => { const v = %s.querySelector(".vv"); v.currentTime = 100; }' % R); time.sleep(0.8)
     pg.evaluate('() => %s.querySelector(".vv").pause()' % R); time.sleep(0.4)
-    ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.8)
-    rs = pg.evaluate('() => localStorage.getItem("evp-s-resume")')
-    check('Stelle gemerkt', rs and any(abs(v[0] - 100) < 3 for v in json.loads(rs).values()), rs)
-    pg.goto('about:blank'); open_player(pg, 'long.html')
-    pg.wait_for_function('() => %s.querySelector(".vresume.on")' % R, timeout=6000)
-    txt = pg.evaluate('() => %s.querySelector(".vresume").textContent' % R)
-    check('beim Öffnen: „Weiter ab 1:40“ (± 2 s)', txt in ('Weiter ab 1:40', 'Weiter ab 1:41', 'Weiter ab 1:42'), txt)
-    pg.evaluate('() => %s.querySelector(".vresume").click()' % R); time.sleep(0.8)
-    ct = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
-    check('Tippen: weiter an der Stelle', 99 < ct < 104, round(ct, 1))
-    check('kurze Videos (unter 3 min) werden nicht gemerkt', all('direct' not in k and 'subs' not in k for k in json.loads(pg.evaluate('() => localStorage.getItem("evp-s-resume")') or '{}')))
+    check('kein Weiterschauen: nichts gemerkt, kein Knopf, nicht im Menü', pg.evaluate('() => !localStorage.getItem("evp-s-resume") && !%s.querySelector(".vresume")' % R) and not any(x[0] == 'Weiterschauen' for x in (more(pg), pick(pg, 'Einstellungen'), items(pg))[2]))
+    pg.evaluate('() => { %s.querySelector(".vmenu").classList.remove("on"); %s.querySelector(".vp").classList.remove("menu"); }' % (R, R))
     ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.5)
     ms = pg.evaluate('() => navigator.mediaSession ? [navigator.mediaSession.metadata, navigator.mediaSession.playbackState] : null')
     check('Player zu: Benachrichtigung aufgeräumt', ms is None or (ms[0] is None and ms[1] == 'none'), ms)

@@ -33,11 +33,8 @@ Der Player funktioniert auch **ohne** Helfer-App – dann regeln die Gesten nur 
   Größe, Lage (unten/oben **im Bild** – auch bei Querformat-Videos hochkant) und Verschiebung (früher/später)
 - **Tonspur** (Sprache) bei Streams mit mehreren Tonspuren
 - **Standbild speichern** (JPG in Downloads) – wo die Seite es zulässt, nicht in Firefox auf dem Handy
-- **Einstellungen**: Vollbild, Sprungweite (5/10/15/30 s), Tempo beim Halten, Randsperren, Weiterschauen, Ambient,
+- **Einstellungen**: Vollbild, Sprungweite (5/10/15/30 s), Tempo beim Halten, Randsperren, Ambient,
   Fortschrittslinie, **Design** (Glas mit Lupe oder Schlicht = nur Milchglas), Helfer-App, Download-Weg, Drehen – gelten für alle Seiten und **überstehen Updates**
-
-**Weiterschauen**: bei Videos ab 3 Minuten merkt sich der Player die Stelle (bis zu 200 Videos) und bietet beim
-nächsten Öffnen „Weiter ab 12:34“ an.
 
 **Benachrichtigung & Sperrbildschirm**: Titel, Play/Pause, Springen und Position – auch Kopfhörer-Tasten.
 
@@ -103,7 +100,6 @@ Updates erhalten. Alle Werte stehen außerdem oben im Userscript (`CONFIG`, Stan
 | `topGuard` / `bottomGuard` | `0.15` | oberer / unterer Bereich ohne Helligkeits-/Lautstärke-Gesten (Anteil der Höhe) |
 | `holdSpeed` | `2` | Tempo beim langen Drücken |
 | `skipSeconds` | `10` | Sprungweite für Doppeltipp und ±-Knöpfe (5, 10, 15, 30) |
-| `resumePlayback` | `true` | Weiterschauen (Stelle merken ab 3 Minuten Länge) |
 | `subSize` / `subHigh` | `'m'` / `false` | Untertitel-Größe (`s`/`m`/`l`) und oben im Bild statt unten |
 | `systemHelper` | `true` | Helfer-App benutzen, wenn sie läuft |
 | `downloader` | `'ytdlnis'` | `'share'` = Teilen-Menü statt direkt YTDLnis |
