@@ -227,3 +227,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 15.4 | Untertitel-Schriftgröße nach Bildhöhe (≈ 5 %, 14–28 px) – hochkant wie quer |
 | 16.0 | Neue Aufteilung: ⋮ Mehr oben rechts, CC-Knopf unten, Bildformat wechselt je Tippen (Original/Füllen/Strecken), kurze Einstellungen inkl. Ambient/Fortschrittslinie; Deutsch/Englisch (`language`, `tr()`); Hinweise an einer Stelle (`notePos`); Zeitleiste: Hochwischen spult nicht |
 | 16.1 | Wie Samsung: Zeitleiste über der Knopfreihe (Knöpfe zwischen Leiste und Android-Geste), größerer Kreis; Hochwisch-Schutz mild (ab 10 px seitlich nie Abbruch, sonst erst 40 px hoch oder `pointercancel`) |
+| 16.2 | Spul-Vorschau: Wächter gegen hängende Sprünge (kein `seeked` bei Streams → nach 1,2 s neu fragen, Vorschau bleibt nicht stehen) |

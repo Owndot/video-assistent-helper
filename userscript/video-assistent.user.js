@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      16.1
+// @version      16.2
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -4232,6 +4232,14 @@
       if (t < 0) return;
       pvs.busy = true; pvs.kind = kind;
       try { pv.currentTime = t; } catch (e) { pvs.busy = false; }
+      // Wächter: kommt bei Streams kein „seeked“ (Sprung hängt), bleibt die Vorschau sonst stehen → aufgeben, neu fragen
+      clearTimeout(pvs.wd);
+      if (pvs.busy) pvs.wd = setTimeout(() => {
+        if (!pvs.busy) return;
+        pvs.busy = false;
+        if (kind === 'user' && prev.classList.contains('on') && pvs.want < 0 && pvs.lastWant >= 0) pvs.want = pvs.lastWant;
+        pump();
+      }, 1200);
     }
     function startGrid() {
       if (FF_MOBILE) return;   // dort keine gemerkten Bilder (lassen sich nicht kopieren) – das Video selbst zeigt die Stelle
@@ -4261,7 +4269,7 @@
       pump();
     });
     pv.addEventListener('seeked', () => {
-      pvs.busy = false;
+      pvs.busy = false; clearTimeout(pvs.wd);
       if (FF_MOBILE) {
         // Vorschau-Video direkt zeigen (statt eines kopierten Bildes)
         if (prev.classList.contains('on')) { prev.dataset.t = String(Math.round(pv.currentTime * 10) / 10); prev.classList.add('img', 'live'); }
@@ -5037,7 +5045,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 16.1',
+      'Video-Assistent 16.2',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

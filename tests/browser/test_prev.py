@@ -21,6 +21,9 @@ with sync_playwright() as p:
         pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R); time.sleep(0.3)
         br = pg.evaluate('() => { const r = %s.querySelector(".vbar").getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; }' % R)
         y = br[1] + br[3] / 2
+        if tag == 'Stream':   # hängender Sprung (kein „seeked“) – der Wächter muss die Vorschau trotzdem nachziehen
+            pg.evaluate('''() => { const pv = %s.querySelector(".vprev video"); let n = 0;
+                pv.addEventListener("seeked", (e) => { if (n++ < 3) e.stopImmediatePropagation(); }, true); }''' % R)
         pg.mouse.move(br[0] + br[2] * 0.1, y); pg.mouse.down()
         pg.mouse.move(br[0] + br[2] * 0.4, y, steps=6); pg.mouse.move(br[0] + br[2] * 0.7, y, steps=6)
         try:
