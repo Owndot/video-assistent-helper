@@ -23,28 +23,24 @@ with sync_playwright() as p:
     for (W, H) in ((400, 800), (800, 400)):
         page.set_viewport_size({'width': W, 'height': H}); time.sleep(0.8)
         zone = max(H * 0.15, 48)
-        page.evaluate('''() => { window.__wl = []; if (window.__wlOn) return; window.__wlOn = 1; ["pointerdown","pointerup","pointercancel","lostpointercapture","gotpointercapture"].forEach((t) => window.addEventListener(t, (e) => { const el = e.composedPath()[0]; window.__wl.push(t.replace("pointer","").slice(0,6) + "@" + Math.round(e.clientX) + "," + Math.round(e.clientY) + ":" + ((el && (el.className && el.className.baseVal === undefined ? el.className : el.tagName)) || "?")); }, true)); }''')
         v0 = vol(); swipe(W - 70, zone - 20, zone + 140)
         check('%dx%d: oben (%d px) runterziehen – Lautstärke bleibt' % (W, H, zone - 20), abs(vol() - v0) < 0.001, [v0, vol()])
         d0 = dim(); swipe(70, 10, 160)
         check('%dx%d: ganz oben links runterziehen – Helligkeit bleibt' % (W, H), abs(dim() - d0) < 0.001, [d0, dim()])
         v0 = vol(); swipe(W - 70, zone + 30, zone + 160)
         check('%dx%d: knapp darunter – Lautstärke ändert sich' % (W, H), vol() < v0 - 0.05, [v0, vol()])
-        # unten (Home-Wischgeste): Hochwischen vom unteren Rand ändert nichts
+        # unten (Home-Wischgeste): Hochwischen vom unteren Rand ändert nichts – knapp darüber schon
         v0 = vol(); swipe(W - 70, H - 15, H - 15 - 140)
         check('%dx%d: unten (%d px) hochwischen – Lautstärke bleibt' % (W, H, zone), abs(vol() - v0) < 0.001, [v0, vol()])
-        swipe(70, zone + 20, zone + 120)                      # erst etwas abdunkeln …
+        time.sleep(0.6)
+        v0 = vol(); swipe(W - 70, H - zone - 30, H - zone - 130)
+        check('%dx%d: knapp darüber – Lautstärke ändert sich' % (W, H), vol() > v0 + 0.05, [v0, vol()])
+        swipe(70, zone + 20, zone + 120)                      # etwas abdunkeln …
         d0 = dim(); swipe(70, H - 20, H - 20 - 140)           # … dann vom unteren Rand hoch
         check('%dx%d: unten links hochwischen – Helligkeit bleibt' % (W, H), abs(dim() - d0) < 0.001 and d0 > 0.01, [d0, dim()])
-        print('   Maße:', page.evaluate('(p) => { const w = %s.querySelector(".vp"); const e = %s.elementFromPoint ? %s.elementFromPoint(p[0], p[1]) : null; return [w.clientHeight, innerHeight, w.getBoundingClientRect().top, e ? e.className || e.tagName : null]; }' % (R, R, R), [W - 70, H - zone - 30]))
-        page.evaluate('''() => { window.__pl = []; const g = %s.querySelector(".vgest"); ["pointerdown","pointermove","pointerup","pointercancel"].forEach((t) => g.addEventListener(t, (e) => { if (window.__pl.length < 30) window.__pl.push(t[7] + Math.round(e.clientY) + (e.buttons ? "b" : "")); }, true)); }''' % R)
-        v0 = vol(); swipe(W - 70, H - zone - 30, H - zone - 130)
-        print('   Ereignisse:', page.evaluate('window.__pl.join(" ")'), '| Anzeige:', page.evaluate('() => [%s.querySelector(".vside").className, %s.querySelector(".vside b").textContent, %s.querySelector(".vind").textContent]' % (R, R, R)))
-        check('%dx%d: knapp darüber – Lautstärke ändert sich' % (W, H), vol() > v0 + 0.05, [v0, vol()])
         # zurück auf voll
         swipe(W - 70, H - zone - 10, zone + 10)
         swipe(70, H - zone - 10, zone + 10)
-        print('   Fenster-Ereignisse %dx%d:' % (W, H), page.evaluate('window.__wl.join(" | ")'))
     print('Fehler der Seite:', errs)
     print('ERGEBNIS: %d von %d' % (sum(1 for _, o in results if o), len(results)))
     b.close()
