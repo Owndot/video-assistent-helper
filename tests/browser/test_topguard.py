@@ -19,7 +19,7 @@ with sync_playwright() as p:
     def swipe(x, y0, y1):
         # Leisten ausblenden: auf einem Knopf startet absichtlich keine Geste
         page.evaluate('() => %s.querySelector(".vp").classList.remove("ctl")' % R); time.sleep(0.25)
-        page.mouse.move(x, y0); page.mouse.down(); page.mouse.move(x, y1, steps=8); page.mouse.up(); time.sleep(0.5)
+        page.mouse.move(x, y0); time.sleep(0.1); page.mouse.down(); page.mouse.move(x, y1, steps=8); page.mouse.up(); time.sleep(0.5)
     for (W, H) in ((400, 800), (800, 400)):
         page.set_viewport_size({'width': W, 'height': H}); time.sleep(0.8)
         zone = max(H * 0.15, 48)
@@ -33,7 +33,7 @@ with sync_playwright() as p:
         v0 = vol(); swipe(W - 70, H - 15, H - 15 - 140)
         check('%dx%d: unten (%d px) hochwischen – Lautstärke bleibt' % (W, H, zone), abs(vol() - v0) < 0.001, [v0, vol()])
         swipe(70, zone + 20, zone + 120)                      # erst etwas abdunkeln …
-        d0 = dim(); swipe(70, H - 10, H - 10 - 140)           # … dann vom unteren Rand hoch
+        d0 = dim(); swipe(70, H - 20, H - 20 - 140)           # … dann vom unteren Rand hoch
         check('%dx%d: unten links hochwischen – Helligkeit bleibt' % (W, H), abs(dim() - d0) < 0.001 and d0 > 0.01, [d0, dim()])
         print('   Maße:', page.evaluate('(p) => { const w = %s.querySelector(".vp"); const e = %s.elementFromPoint ? %s.elementFromPoint(p[0], p[1]) : null; return [w.clientHeight, innerHeight, w.getBoundingClientRect().top, e ? e.className || e.tagName : null]; }' % (R, R, R), [W - 70, H - zone - 30]))
         page.evaluate('''() => { window.__pl = []; const g = %s.querySelector(".vgest"); ["pointerdown","pointermove","pointerup","pointercancel"].forEach((t) => g.addEventListener(t, (e) => { if (window.__pl.length < 30) window.__pl.push(t[7] + Math.round(e.clientY) + (e.buttons ? "b" : "")); }, true)); }''' % R)
