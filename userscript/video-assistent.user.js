@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      16.5
+// @version      17.0
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -63,6 +63,7 @@
     subSize: 'm',             // Untertitel: 's' klein, 'm' mittel, 'l' groß
     subHigh: false,           // Untertitel oben im Bild statt unten (z. B. wenn das Video eigene Texte unten hat)
     language: 'auto',         // Sprache der Oberfläche: 'auto' (wie der Browser), 'de' oder 'en'
+    leaveAction: 'play',      // in eine andere App wechseln: 'play' = weiterlaufen lassen (wie der Browser es erlaubt), 'pause' = anhalten
     // Helfer-App "Video-Assistent Helfer" (eigene APK): Läuft sie, steuern die Wischgesten die ECHTE Helligkeit und
     // Medienlautstärke des Handys. Läuft sie nicht, regelt der Player wie bisher nur das Video. false = nie fragen.
     systemHelper: true,
@@ -110,7 +111,7 @@
   };
   // Eigene Einstellungen (im Player: ⋯ → Einstellungen) gelten vor den Werten oben und überstehen Updates des Skripts
   const SETTING_KEYS = ['startFullscreen', 'lensGlass', 'ambient', 'progressLine', 'holdSpeed', 'topGuard', 'bottomGuard',
-    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh', 'language'];
+    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh', 'language', 'leaveAction'];
   const CONFIG_DEFAULT = {};
   SETTING_KEYS.forEach((k) => { CONFIG_DEFAULT[k] = CONFIG[k]; });
   const userSettings = () => { const o = store.get('settings', {}); return o && typeof o === 'object' ? o : {}; };
@@ -128,11 +129,10 @@
   const EN = {
     // Knöpfe & Bedienung
     'Im Videoplayer öffnen': 'Open in video player', 'Herunterladen (z. B. mit YTDLnis)': 'Download (e.g. with YTDLnis)',
-    'In externer App öffnen': 'Open in external app', 'Schließen': 'Close', 'Wiedergabe': 'Play', 'Pause': 'Pause',
+    'In externer App öffnen': 'Open in external app', 'Schließen': 'Close', 'Wiedergabe': 'Play',
     'Geschwindigkeit': 'Speed', 'Bild-in-Bild': 'Picture-in-picture', 'Qualität': 'Quality', 'Bildformat': 'Aspect ratio',
     'Drehen': 'Rotate', 'Sperren': 'Lock', 'Bedienung sperren': 'Lock controls', 'Entsperren': 'Unlock', 'Mehr': 'More',
     'Untertitel': 'Subtitles', 'Position': 'Position', 'Format': 'Format', 'Auto': 'Auto', 'Stufe': 'Level',
-    'Weiterschauen': 'Resume',
     // Menüs
     'Einstellungen': 'Settings', 'Tonspur': 'Audio track', 'Standbild speichern': 'Save snapshot', 'Aus': 'Off', 'An': 'On',
     'aus': 'off', 'an': 'on', 'Datei laden …': 'Load file …', '.srt, .vtt oder .ttml vom Handy': '.srt, .vtt or .ttml from your phone',
@@ -140,11 +140,11 @@
     'oben im Bild': 'top of picture', 'Früher zeigen': 'Show earlier', 'Später zeigen': 'Show later', 'eigene Datei': 'own file',
     'von der Seite': 'from the page', 'Suche Untertitel der Seite …': 'Looking for subtitles on the page …',
     'Automatisch': 'Automatic', 'passt sich der Verbindung an': 'adapts to your connection', 'Original': 'Original',
-    'Füllen': 'Fill', 'Strecken': 'Stretch', 'Zoom zurückgesetzt': 'Zoom reset',
+    'Füllen': 'Fill', 'Strecken': 'Stretch',
     // Einstellungen (kurz)
     'Design': 'Design', 'Glas': 'Glass', 'Schlicht': 'Plain', 'Vollbild': 'Full screen', 'Ambient': 'Ambient',
     'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
-    'Link teilen': 'Share link', 'In App öffnen': 'Open in app', 'z. B. VLC': 'e.g. VLC', 'Link kopiert': 'Link copied', 'Kein Link zu diesem Video gefunden': 'No link to this video found',
+    'Link teilen': 'Share link', 'In App öffnen': 'Open in app', 'Beim Verlassen': 'When leaving', 'Weiter': 'Keep playing', 'Anhalten': 'Pause', 'Antippen für Vollbild': 'Tap for full screen', 'z. B. VLC': 'e.g. VLC', 'Link kopiert': 'Link copied', 'Kein Link zu diesem Video gefunden': 'No link to this video found',
     'Oben: Wischen bis ganz an den Rand': 'Top: swiping works right up to the edge', 'Unten: Wischen bis ganz an den Rand': 'Bottom: swiping works right down to the edge',
     '✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helper benutzen. Du kannst diese Seite schließen.': '✓ Connected. From now on only this script can use the helper. You can close this page.',
     'Verbinden hat nicht geklappt – läuft der Helper? In der App nochmal auf „Verbinden“ tippen.': 'Connecting failed – is the helper running? Tap “Connect” in the app again.',
@@ -208,8 +208,6 @@
     if (x.indexOf(' – ') > 0) return x.split(' – ').map(tr).join(' – ');
     return x;
   }
-  // Weiterschauen gibt es nicht mehr – früher gemerkte Stellen einmalig löschen
-  try { const old = store.get('resume', null); if (old && typeof old === 'object' && Object.keys(old).length) store.set('resume', {}); } catch (e) {}
   const SKIP = () => ([5, 10, 15, 30].indexOf(+CONFIG.skipSeconds) >= 0 ? +CONFIG.skipSeconds : 10);
   // =================================================
 
@@ -399,7 +397,6 @@
   const MEDIA_RE =/\.(m3u8|mpd|mp4|webm|mkv|mov|m4v)(\?|#|$)/i;
   const PLAYLIST_RE = /\.(m3u8|mpd)(\?|#|$)/i;
   const SEGMENT_RE = /(seg|chunk|frag|init)[-_]?\d*\.(mp4|m4s|ts)(\?|$)|[?&](bytestart|byteend|range)=/i;
-  const MASTER_RE = /(master|manifest|playlist)|\/index\.m3u8/i;
   // Haupt-Playlist (alle Qualitätsstufen) vor Unter-Playlists (eine Stufe) einordnen:
   // 1. "master" im Namen, 2. "manifest"/"playlist", 3. weniger tief verschachtelt (Haupt-Playlist liegt meist eine Ebene höher)
   function rankPlaylists(list) {
@@ -1728,7 +1725,6 @@
     const b = pill.querySelector('button[aria-label^="Im Videoplayer"]');
     if (b) b.title = hd ? (/Full/.test(t) ? 'Im Player öffnen (Full HD)' : 'Im Player öffnen (HD)') : 'Im Player öffnen';
   }
-  let collapseTimer = 0;
 
   // ---------- Position merken (pro Webseite) ----------
   let drag = null, dragPos = null, suppressClick = false;
@@ -1760,9 +1756,6 @@
     setTimeout(() => { if (pill) pill.classList.remove('snap'); }, 260);
     toast('Position gespeichert (' + (savedPos.side === 'left' ? 'links' : 'rechts') + ')');
   }
-  // (früher: kleiner Button, der sich aufklappt – jetzt immer gleich groß)
-  function expand() {}
-  function collapse() { clearTimeout(collapseTimer); }
 
   // ---------- Lupen-Glas (wie iOS 26 / macOS) ----------
   // Zu jeder Glasfläche (Größe + Rundung) eine Verschiebungskarte: am Rand wird das Bild dahinter nach innen
@@ -1931,7 +1924,6 @@
         drag.moved = true;
         clearTimeout(pressTimer);
         longPressed = false;
-        clearTimeout(collapseTimer);
         try { pill.setPointerCapture(e.pointerId); } catch (err) {}
         pill.classList.add('drag');
       }
@@ -1945,7 +1937,6 @@
         suppressClick = true;
         setTimeout(() => { suppressClick = false; }, 400);
         pill.classList.remove('drag');
-        if (!pill.classList.contains('mini')) expand();
       }
       drag = null;
       dragPos = null;
@@ -1957,7 +1948,6 @@
     // Kurz tippen = im Player öffnen · lange drücken = Diagnose kopieren
     btn.addEventListener('pointerdown', () => {
       longPressed = false;
-      if (pill.classList.contains('mini')) return;
       clearTimeout(pressTimer);
       pressTimer = setTimeout(() => { longPressed = true; toast('Loslassen, um die Diagnose zu kopieren'); }, 700);
     });
@@ -2054,13 +2044,13 @@
     ui();
     attachHost();
     if (pill && !pill.__lens) { pill.__lens = true; lensWatch(pill); }
-    if (v !== active) { collapse(); watchSize(v); }   // neues Video: wieder klein anfangen
+    if (v !== active) watchSize(v);   // neues Video: wieder klein anfangen
     active = v;
     pill.classList.add('on');
     schedulePlace();
   }
   function hidePill() {
-    if (pill) { pill.classList.remove('on'); collapse(); }
+    if (pill) pill.classList.remove('on');
   }
   function place() {
     if (!active || !pill || !pill.classList.contains('on')) return;
@@ -2809,23 +2799,14 @@
     };
     const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 
-    // Video im Player anordnen: Bildformat (Original/Füllen/Strecken/16:9 …), Zoom und Verschieben
+    // Video im Player anordnen: Bildformat (Original/Füllen/Strecken), Zoom und Verschieben
     function layoutVideo() {
-      const W = wrap.clientWidth || innerWidth, H = wrap.clientHeight || innerHeight;
-      let w = W, hh = H, fit = st.aspect;
-      const r = /^(\d+):(\d+)$/.exec(st.aspect);
-      if (r) {
-        const R = +r[1] / +r[2];
-        if (W / H > R) { hh = H; w = H * R; } else { w = W; hh = W / R; }
-        fit = 'fill';
-      }
-      vid.style.objectFit = fit;
+      vid.style.objectFit = st.aspect;
       // Mittig per CSS (an allen vier Seiten verankert, Rand "auto"): bleibt auch dann genau in der Mitte, wenn sich die
       // Höhe nachträglich ändert (Vollbild, Adressleiste ein/aus). Ohne Verschiebung per transform – die hat Android
-      // in eingebetteten Vollbild-Fenstern falsch umgesetzt (Bild saß zu weit oben). Nur feste Seitenverhältnisse
-      // brauchen eine berechnete Größe.
-      vid.style.width = r ? w + 'px' : '100%';
-      vid.style.height = r ? hh + 'px' : '100%';
+      // in eingebetteten Vollbild-Fenstern falsch umgesetzt (Bild saß zu weit oben).
+      vid.style.width = '100%';
+      vid.style.height = '100%';
       // nur so weit verschieben, wie wirklich Bild ist (nicht in die schwarzen Ränder) – beim Ziehen mit einem Finger
       // gibt es über die Kante hinaus mit Widerstand nach (wie Telegram) und federt beim Loslassen zurück
       if (!st.panFree) {
@@ -2840,9 +2821,7 @@
     // Sichtbares Bild bei 1× (ohne die schwarzen Ränder) und wie weit es sich bei Zoom z verschieben lässt
     function contentBox() {
       const W = wrap.clientWidth || innerWidth, H = wrap.clientHeight || innerHeight;
-      let w = W, hh = H;
-      const r = /^(\d+):(\d+)$/.exec(st.aspect);
-      if (r) { const R = +r[1] / +r[2]; if (W / H > R) { hh = H; w = H * R; } else { w = W; hh = W / R; } }
+      const w = W, hh = H;
       let cw = w, ch = hh;
       if (st.aspect === 'contain' && vid.videoWidth && vid.videoHeight) {
         const sc = Math.min(w / vid.videoWidth, hh / vid.videoHeight);
@@ -3624,6 +3603,7 @@
         it('Wischsperre oben', zone(CONFIG.topGuard), () => { next('topGuard', ZONES); zoneTip('topGuard', 'Oberste', 'Oben'); }),
         it('Wischsperre unten', zone(CONFIG.bottomGuard), () => { next('bottomGuard', ZONES); zoneTip('bottomGuard', 'Unterste', 'Unten'); }),
         it('Auto-Drehen', yn(CONFIG.autoRotate), () => setSetting('autoRotate', !CONFIG.autoRotate)),
+        it('Beim Verlassen', CONFIG.leaveAction === 'pause' ? 'Anhalten' : 'Weiter', () => setSetting('leaveAction', CONFIG.leaveAction === 'pause' ? 'play' : 'pause')),
         it('Download', CONFIG.downloader === 'share' ? 'Teilen' : 'YTDLnis', () => setSetting('downloader', CONFIG.downloader === 'share' ? 'ytdlnis' : 'share')),
         it('Helper-App', yn(CONFIG.systemHelper !== false), () => { setSetting('systemHelper', CONFIG.systemHelper === false); toast('Gilt ab dem nächsten Öffnen des Players'); }),
         it('Sprache', { de: 'Deutsch', en: 'English' }[CONFIG.language] || 'Auto', () => {
@@ -4207,12 +4187,17 @@
     const prev = h('div', { class: 'vprev', 'aria-hidden': 'true' }, pvBox, pvTime);
     wrap.append(prev);
     const pvs = { key: '', src: '', hls: null, want: -1, lastWant: -1, busy: false, kind: '', grid: [], gridOn: false, autoGrid: false, userDone: false };
-    const thumbs = new Map();   // Zeit-Fach -> kleines Bild
-    let bucket = 1;             // Fachbreite in Sekunden (≈ Länge / 300)
+    const thumbs = new Map();   // Zeit-Fach -> { c: kleines Bild, t: genaue Zeit }
+    let bucket = 0;             // Fachbreite in Sekunden (≈ Länge / 300), einmal pro Video festgelegt
+    const bucketFor = () => {
+      if (!bucket) { const d = isFinite(M().duration) && M().duration > 0 ? M().duration : pv.duration; if (isFinite(d) && d > 0) bucket = Math.max(0.5, d / 300); }
+      return bucket || 1;
+    };
     function prevReset() {
       if (pvs.hls) { try { pvs.hls.destroy(); } catch (e) {} }
       pvs.hls = null; pvs.src = ''; pvs.key = ''; pvs.want = -1; pvs.lastWant = -1; pvs.busy = false; pvs.grid = []; pvs.gridOn = false; pvs.userDone = false;
-      thumbs.clear();
+      clearInterval(pvs.wd); clearTimeout(pvs.settle); pvs.target = -1; pvs.retried = -1;
+      thumbs.clear(); bucket = 0;
       prev.classList.remove('img', 'live');
       try { pv.removeAttribute('src'); pv.load(); } catch (e) {}
     }
@@ -4245,21 +4230,34 @@
       }
       return true;
     }
-    function thumbDims() {
-      const vw = pv.videoWidth || 16, vh = pv.videoHeight || 9;
-      return [192, Math.max(40, Math.min(340, Math.round(192 * vh / vw)))];
+    function thumbDims(v) {
+      const vw = v.videoWidth || 16, vh = v.videoHeight || 9;
+      return [176, Math.max(40, Math.min(320, Math.round(176 * vh / vw)))];
     }
-    // aktuelles Bild des Vorschau-Videos merken
-    function snap() {
-      if (!(pv.videoWidth > 0)) return null;
-      const d = thumbDims();
+    // aktuelles Bild eines Videos merken (Vorschau-Video oder – kostenlos – das laufende Video selbst)
+    function snap(v) {
+      v = v || pv;
+      if (!(v.videoWidth > 0)) return null;
+      const d = thumbDims(v);
       const c = document.createElement('canvas');
       c.width = d[0]; c.height = d[1];
-      try { c.getContext('2d').drawImage(pv, 0, 0, d[0], d[1]); } catch (e) { return null; }
-      thumbs.set(Math.round(pv.currentTime / bucket), c);
-      if (thumbs.size > 160) thumbs.delete(thumbs.keys().next().value);
+      try { c.getContext('2d').drawImage(v, 0, 0, d[0], d[1]); } catch (e) { return null; }
+      const k = Math.round(v.currentTime / bucketFor());
+      thumbs.delete(k); thumbs.set(k, { c: c, t: v.currentTime });
+      if (thumbs.size > 180) thumbs.delete(thumbs.keys().next().value);   // ~12 MB höchstens
       return c;
     }
+    // Beim Anschauen nebenbei Bilder merken (je Fach eins, höchstens jede Sekunde): Gesehenes erscheint beim Spulen sofort
+    let mainSnapAt = 0;
+    const mainSnap = () => {
+      if (FF_MOBILE || st.mode !== 'own' || vid.readyState < 2 || vid.seeking || prev.classList.contains('on')) return;
+      const now = Date.now();
+      if (now - mainSnapAt < 1000 || thumbs.has(Math.round(vid.currentTime / bucketFor()))) return;
+      mainSnapAt = now;
+      snap(vid);
+    };
+    vid.addEventListener('timeupdate', mainSnap);
+    vid.addEventListener('seeked', () => setTimeout(mainSnap, 120));
     // Zeigen, wenn es näher an der Fingerstelle liegt als das bisher gezeigte Bild (oder noch keins da ist)
     function better(t) {
       if (!prev.classList.contains('img') || pvs.shownT == null) return true;
@@ -4274,32 +4272,44 @@
       prev.classList.add('img');
     }
     function nearest(t) {
-      const k = Math.round(t / bucket);
+      const k = Math.round(t / bucketFor());
       for (let i = 0; i <= 8; i++) {
-        if (thumbs.has(k + i)) return [thumbs.get(k + i), (k + i) * bucket];
-        if (i && thumbs.has(k - i)) return [thumbs.get(k - i), (k - i) * bucket];
+        if (thumbs.has(k + i)) { const x = thumbs.get(k + i); return [x.c, x.t]; }
+        if (i && thumbs.has(k - i)) { const x = thumbs.get(k - i); return [x.c, x.t]; }
       }
       return null;
     }
-    // Reihenfolge: zuerst die Fingerstelle, in Pausen das Raster
+    // Einen Sprung des Vorschau-Videos starten (bricht einen laufenden ab – der Browser meldet nur den letzten)
+    function seekTo(t, kind) {
+      pvs.busy = true; pvs.kind = kind; pvs.target = t; pvs.since = Date.now();
+      try { pv.currentTime = t; } catch (e) { pvs.busy = false; return; }
+      // Wächter: Ist der Sprung fertig, aber die Meldung („seeked“) kam nicht an (kommt bei Streams vor), selbst
+      // weitermachen. Ein langsamer Sprung (schwaches Netz, große Datei) wird NICHT neu gestartet – das würde ihn nie
+      // fertig werden lassen; erst nach 6 s ein einziger neuer Versuch.
+      clearInterval(pvs.wd);
+      pvs.wd = setInterval(() => {
+        if (!pvs.busy) { clearInterval(pvs.wd); return; }
+        if (!pv.seeking && pv.readyState >= 2 && Date.now() - pvs.since > 400) { clearInterval(pvs.wd); onSeeked(); return; }
+        if (Date.now() - pvs.since > 6000) {
+          clearInterval(pvs.wd); pvs.busy = false;
+          if (pvs.retried !== pvs.target && pvs.kind === 'user' && prev.classList.contains('on')) { pvs.retried = pvs.target; pvs.want = pvs.target; }
+          pump();
+        }
+      }, 400);
+    }
+    // Reihenfolge: zuerst die Fingerstelle, in Pausen das Raster – beim Spulen das Rasterbild nahe am Finger zuerst
     function pump() {
       if (pvs.busy || pv.readyState < 1) return;
       let t = -1, kind = '';
       if (pvs.want >= 0) { t = pvs.want; kind = 'user'; pvs.want = -1; }
       else {
-        while (pvs.grid.length && t < 0) { const g = pvs.grid.shift(); if (!thumbs.has(Math.round(g / bucket))) { t = g; kind = 'grid'; } }
+        if (prev.classList.contains('on') && pvs.lastWant >= 0 && pvs.grid.length > 1) {
+          pvs.grid.sort((a, b) => Math.abs(a - pvs.lastWant) - Math.abs(b - pvs.lastWant));
+        }
+        while (pvs.grid.length && t < 0) { const g = pvs.grid.shift(); if (!thumbs.has(Math.round(g / bucketFor()))) { t = g; kind = 'grid'; } }
       }
       if (t < 0) return;
-      pvs.busy = true; pvs.kind = kind;
-      try { pv.currentTime = t; } catch (e) { pvs.busy = false; }
-      // Wächter: kommt bei Streams kein „seeked“ (Sprung hängt), bleibt die Vorschau sonst stehen → aufgeben, neu fragen
-      clearTimeout(pvs.wd);
-      if (pvs.busy) pvs.wd = setTimeout(() => {
-        if (!pvs.busy) return;
-        pvs.busy = false;
-        if (kind === 'user' && prev.classList.contains('on') && pvs.want < 0 && pvs.lastWant >= 0) pvs.want = pvs.lastWant;
-        pump();
-      }, 1200);
+      seekTo(t, kind);
     }
     function startGrid() {
       if (FF_MOBILE) return;   // dort keine gemerkten Bilder (lassen sich nicht kopieren) – das Video selbst zeigt die Stelle
@@ -4315,7 +4325,14 @@
     }
     function prevSeek(t) {
       pvs.want = t; pvs.lastWant = t;
+      // Finger hat Vorrang: ein Rasterbild, das gerade lädt, wird abgebrochen (kommt später wieder dran)
+      if (pvs.busy && pvs.kind === 'grid') { pvs.grid.push(pvs.target); pvs.want = -1; seekTo(t, 'user'); return; }
       pump();
+      // Finger steht still, aber das Vorschau-Video lädt noch eine alte Stelle → gleich zur neuen springen
+      clearTimeout(pvs.settle);
+      pvs.settle = setTimeout(() => {
+        if (pvs.busy && pvs.want >= 0 && Math.abs(pvs.target - pvs.want) > bucketFor() * 1.5) { const w = pvs.want; pvs.want = -1; seekTo(w, 'user'); }
+      }, 160);
     }
     pv.addEventListener('loadedmetadata', () => {
       pvs.busy = false;
@@ -4324,12 +4341,13 @@
       if (pvs.src !== st.cur && isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > 3) {
         const key = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = key; return;
       }
-      if (isFinite(pv.duration) && pv.duration > 0) bucket = Math.max(0.5, pv.duration / 300);
+      bucketFor();
       if (pvs.autoGrid) startGrid();
       pump();
     });
-    pv.addEventListener('seeked', () => {
-      pvs.busy = false; clearTimeout(pvs.wd);
+    pv.addEventListener('seeked', () => { if (pvs.busy) onSeeked(); });
+    function onSeeked() {
+      pvs.busy = false; clearInterval(pvs.wd);
       if (FF_MOBILE) {
         // Vorschau-Video direkt zeigen (statt eines kopierten Bildes)
         if (prev.classList.contains('on')) { prev.dataset.t = String(Math.round(pv.currentTime * 10) / 10); prev.classList.add('img', 'live'); }
@@ -4345,7 +4363,7 @@
         else if (better(pv.currentTime)) paint(c, pv.currentTime);
       }
       pump();
-    });
+    }
     pv.addEventListener('error', () => { prev.classList.add('noimg'); });
     // Streams: Raster gleich nach dem Start vorholen (kleinste Stufe, wenig Daten)
     // Vorwärmen nach dem Start: Streams holen gleich das Raster (kleinste Stufe, wenig Daten),
@@ -4440,8 +4458,9 @@
         if (Math.abs(dx) < 14 && Math.abs(dy) < 14) return;
         clearTimeout(g.holdTimer);
         if (g.edge) { g.mode = 'none'; return; }
-        if (st.zoom > 1.01 && !g.top) {
-          // vergrößert: ein Finger verschiebt das Bild (wie Telegram) – Helligkeit/Lautstärke/Spulen erst wieder bei 1×
+        if (st.zoom > 1.01 && !g.top && !wrap.classList.contains('ctl')) {
+          // vergrößert und Leisten aus: ein Finger verschiebt das Bild (wie Telegram). Sind die Leisten zu sehen (einmal
+          // tippen), gelten die normalen Gesten – spulen, Helligkeit, Lautstärke – und der Bildausschnitt bleibt, wie er ist
           g.mode = 'pan'; g.px0 = st.panX; g.py0 = st.panY; g.vs = [];
           vid.classList.remove('vzan'); st.panFree = true;
         } else g.mode = Math.abs(dx) > Math.abs(dy) ? 'seek' : (g.top ? 'none' : (g.x > W / 2 ? 'vol' : 'bright'));
@@ -4584,6 +4603,58 @@
       removeEventListener('resize', onResize);
       try { screen.orientation && screen.orientation.removeEventListener('change', onTurn); } catch (e) {}
     });
+    // ----- App verlassen (Wischgeste, Übersicht, andere App) und Bild-in-Bild -----
+    // Android beendet beim Wechsel in eine andere App das Vollbild. Das ist KEIN „Zurück“: Der Player bleibt offen.
+    // Erkennen: Die Seite verliert den Fokus oder wird verdeckt – kurz vor oder nach dem Ende des Vollbilds.
+    let awayAt = 0;
+    const markAway = () => { awayAt = Date.now(); };
+    const awaySince = (t) => awayAt >= t - 800 || document.hidden || (!st.framed && !document.hasFocus());
+    const pauseAway = () => { const m = M(); if (!m.paused) { st.pausedAway = true; try { m.pause(); } catch (e) {} } };
+    const onVisAway = () => {
+      if (vp !== st) return;
+      if (document.hidden) {
+        markAway();
+        if (pipIsOurs(vid)) return;   // läuft im kleinen Fenster weiter – genau dafür ist es da
+        // kleines Fenster (Bild-in-Bild) gerade mit ✕ geschlossen → anhalten; sonst je nach Einstellung
+        const pipClosed = st.pipLeaveAt && Date.now() - st.pipLeaveAt < 1500;
+        if (pipClosed || CONFIG.leaveAction === 'pause') pauseAway();
+      } else {
+        markAway();
+        // zurück im Browser: Vollbild verloren? Der Browser erlaubt es nur nach einem Tipp – der nächste holt es zurück
+        if (CONFIG.startFullscreen && !isFs() && !pipIsOurs(vid)) {
+          st.fsLost = true;
+          if (st.pushHist) st.pushHist();   // Zurück-Taste schließt den Player (statt die Seite zu verlassen)
+          showControls();
+          setTimeout(() => { if (vp === st && !isFs()) toast('Antippen für Vollbild'); }, 400);
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', onVisAway);
+    addEventListener('blur', markAway);
+    addEventListener('pagehide', markAway);
+    st.cleanup.push(() => {
+      document.removeEventListener('visibilitychange', onVisAway);
+      removeEventListener('blur', markAway);
+      removeEventListener('pagehide', markAway);
+    });
+    // Bild-in-Bild verlassen: ✕ (Seite bleibt im Hintergrund) = anhalten; „Vollbild“/zurück zur App = Player im Vollbild
+    vid.addEventListener('leavepictureinpicture', () => {
+      st.pipLeaveAt = Date.now();
+      setTimeout(() => {
+        if (vp !== st) return;
+        if (document.hidden) { pauseAway(); return; }
+        if (CONFIG.startFullscreen && !isFs()) {
+          enterFs().then(() => {
+            if (vp !== st) return;
+            if (isFs()) { st.fsStart = true; st.fsLost = false; if (st.orient) lockO(st.orient); }
+            else { st.fsLost = true; if (st.pushHist) st.pushHist(); showControls(); toast('Antippen für Vollbild'); }
+          });
+        }
+      }, 300);
+    });
+    // Browser, die von selbst ins kleine Fenster wechseln können (beim Verlassen der App), fragen über die Media Session
+    try { if (navigator.mediaSession && document.pictureInPictureEnabled) navigator.mediaSession.setActionHandler('enterpictureinpicture', () => { vid.disablePictureInPicture = false; vid.requestPictureInPicture().catch(() => {}); }); } catch (e) {}
+    st.cleanup.push(() => { try { navigator.mediaSession.setActionHandler('enterpictureinpicture', null); } catch (e) {} });
     const onFs = () => {
       if (vp !== st || isFs()) return;
       const exitAt = Date.now(), turnBefore = lastTurn;
@@ -4624,8 +4695,16 @@
           if (st.pushHist) st.pushHist();   // ohne Vollbild: Zurück-Taste über den Verlauf abfangen (nicht auf Facebook/Instagram)
           return;
         }
-        // Im Vollbild gestartet: Vollbild verlassen (Zurück-Taste) = Player schließen
-        if (st.fsStart) { closePlayer(); return; }
+        // In eine andere App gewechselt (Fokus weg/Seite verdeckt)? Dann kein „Zurück“ – Player bleibt offen,
+        // beim Zurückkommen holt der nächste Tipp das Vollbild zurück
+        const keep = () => { st.fsStart = false; st.fsLost = true; if (st.pushHist) st.pushHist(); };
+        if (awaySince(exitAt)) { keep(); return; }
+        // Im Vollbild gestartet: Vollbild verlassen (Zurück-Taste) = Player schließen – nach einem kurzen zweiten Blick,
+        // falls die Meldung „Seite verdeckt“ beim App-Wechsel etwas später kommt
+        if (st.fsStart) {
+          setTimeout(() => { if (vp !== st || isFs()) return; if (awaySince(exitAt)) keep(); else closePlayer(); }, 350);
+          return;
+        }
         lockO('');
         st.orient = '';
       }, 400);
@@ -5016,7 +5095,6 @@
   }
 
   function onDownload(v, opts) {
-    collapse();
     const url = postUrlFor(v || active);
     if (!url) { toast('Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen'); return; }
     if (CONFIG.downloader !== 'share' && !opts) { toYtdlnis(url); return; }
@@ -5115,7 +5193,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 16.5',
+      'Video-Assistent 17.0',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

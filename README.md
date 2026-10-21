@@ -22,9 +22,14 @@ Der Player funktioniert auch **ohne** Helper-App – dann regeln die Gesten nur 
   - ganz unten bei der Helligkeit **weiterwischen = Auto** (automatische Helligkeit des Handys)
 - Doppeltippen links/rechts = ±10 s (mehrfach = 20, 30 … s), lange drücken = 2× schneller
 - Doppeltippen in der Mitte (wie Telegram): 3× Zoom um die getippte Stelle (hochkant bildschirmfüllend), noch einmal
-  = ganzes Bild; im Zoom verschiebt **ein Finger** das Bild (mit Schwung, federt an der Kante zurück)
+  = ganzes Bild; im Zoom verschiebt **ein Finger** das Bild (mit Schwung, federt an der Kante zurück) –
+  sind die Leisten zu sehen (einmal tippen), spult/regelt das Wischen wie gewohnt und der Ausschnitt bleibt
 - Zwei Finger = zoomen; Bildformat-Knopf wechselt bei jedem Tippen Original → Füllen → Strecken (wie Samsung); Qualität wählen
 - Sperre (entsperren: 1 s halten oder doppeltippen), Bild-in-Bild, Drehen, Geschwindigkeit
+- **In eine andere App wechseln** schließt den Player nicht (nur die Zurück-Taste); zurück im Browser holt ein Tipp
+  das Vollbild zurück. Einstellung **Beim Verlassen**: Weiter oder Anhalten
+- **Bild-in-Bild:** ✕ im kleinen Fenster hält das Video an, „Vollbild“ bringt dich zurück in den Vollbild-Player
+- Spul-Vorschau: schon Angeschautes erscheint sofort (Bilder werden beim Abspielen nebenbei gemerkt)
 - dünne Fortschrittslinie, wenn die Leisten ausgeblendet sind; am Ende anhalten statt endlos schleifen
 - Zeitleiste wie bei Samsung über der Knopfreihe (die Android-Wischgeste trifft die Knöpfe, nicht die Leiste), großer Kreis;
   deutlich nach oben wischen spult nicht – Halten und seitlich ziehen spult
@@ -41,7 +46,7 @@ rechts **Untertitel (CC) · Bildformat · Bild-in-Bild · Drehen**.
 - **In App öffnen** (z. B. VLC) und **Qualität**, wenn es sie für das Video gibt
 - **Geschwindigkeit** (0,5× bis 2×, Liste zum Antippen)
 - **Einstellungen** – kurz wie in einer Einstellungs-App: Design (Glas/Schlicht), Ambient, Fortschrittslinie, Vollbild,
-  Sprungweite, Halten, Wischsperre oben/unten, Auto-Drehen, Download, Helper-App, **Sprache** (Auto/Deutsch/English),
+  Sprungweite, Halten, Wischsperre oben/unten, Auto-Drehen, Beim Verlassen, Download, Helper-App, **Sprache** (Auto/Deutsch/English),
   Zurücksetzen – gelten für alle Seiten und **überstehen Updates**
 - **Tonspur** (Sprache) bei Streams mit mehreren Tonspuren
 - **Standbild speichern** (JPG in Downloads) – wo die Seite es zulässt, nicht in Firefox auf dem Handy
@@ -149,7 +154,9 @@ Updates erhalten. Alle Werte stehen außerdem oben im Userscript (`CONFIG`, Stan
 ## Repository
 
 ```
-userscript/            das Userscript (aktuelle Version)
+src/                   Quelltext des Userscripts in 28 Teilen (hier ändern)
+tools/                 build.js baut daraus das Userscript, unbenutzt.js findet Unbenutztes
+userscript/            das fertige Userscript (aktuelle Version – zum Installieren)
 app/                   Helper-App (Java, ohne Bibliotheken)
 tests/browser/         Browser-Tests (Python + Playwright) mit Testseiten in web/
 tests/java/            Tests für den Download-Kern (ohne Android) + Erzeugung der Test-Streams

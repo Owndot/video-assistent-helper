@@ -3,11 +3,24 @@
 Alles, was man braucht, um am Video-Assistent weiterzuarbeiten: Aufbau, Schnittstelle zwischen Skript und App,
 Bauen, Tests und die Stolperfallen, die schon gelöst sind (bitte nicht wieder einbauen).
 
-## 1. Aufbau des Userscripts (`userscript/video-assistent.user.js`)
+## 1. Aufbau des Userscripts (`src/` → `userscript/video-assistent.user.js`)
 
-Ein einziges Skript (~4.100 Zeilen, ohne Build-Schritt), `@inject-into content`, `@run-at document-start`,
+**Seit 17.0 wird in `src/` gearbeitet**, nicht in der fertigen Datei. `src/` enthält das Skript in 28 Teilen
+(`010-kopf.js` … `280-diagnose.js`, je ein Thema). Die Teile sind Abschnitte **einer** Funktion (das Skript läuft
+als Ganzes in einer Hülle) – einzeln kein gültiges JavaScript, aneinandergehängt genau das Userscript:
+
+```
+node tools/build.js           # userscript/video-assistent.user.js aus src/ bauen (prüft die Syntax)
+node tools/build.js --check   # passt die fertige Datei zu src/? (läuft in der CI vor den Tests)
+node --expose-internals tools/unbenutzt.js   # Unbenutztes finden: Funktionen/Variablen, CONFIG, Übersetzungen, CSS
+```
+
+`tools/ersetze.py` (`rep(alt, neu)`) ändert Text in genau dem Teil, in dem er steht. Neue Teile: dreistellige
+Nummer dazwischen wählen (z. B. `235-…`). Die Reihenfolge der Dateinamen ist die Reihenfolge im Skript.
+
+~5.200 Zeilen, `@inject-into content`, `@run-at document-start`,
 nutzt `hls.js` per `@require`. Die Oberfläche liegt in einem **geschlossenen Shadow-DOM** an einem Element mit
-Zufallsnamen (Seiten können sie weder sehen noch verändern). Abschnitte in der Datei, von oben nach unten:
+Zufallsnamen (Seiten können sie weder sehen noch verändern). Abschnitte, von oben nach unten:
 
 | Abschnitt | Aufgabe |
 |---|---|
@@ -111,6 +124,8 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_topguard.py`, `test_idle.py` | gesperrter oberer/unterer Rand, sparsamer Takt ohne Video |
 | `test_tapzoom.py` | Doppeltipp-Zoom: füllt hochkant, Richtung zum Finger, 3× quer, Verschieben, Gummiband, Schwung, Drehen |
 | `test_extras.py` | Untertitel (Seite, .srt/.vtt, Datei, Stream, Lage), ⋮ Mehr: Tonspur, Standbild, Einstellungen, Design, Media Session |
+| `test_leave.py` | App-Wechsel (Fokus/verdeckt) ≠ Zurück-Taste, „Beim Verlassen“, Bild-in-Bild ✕/Vollbild |
+| `test_prevlag.py` | Messung: Zeit bis zur richtigen Vorschau nach dem Anhalten (`LAG=1.3` = schwaches Netz; mit 2. Datei = Vergleich) |
 | `test_ui.py` | Aufteilung (⋮ oben, CC unten), Hinweis-Lage, Zeitleiste beim Hochwischen, Sprache Deutsch/Englisch |
 | `test_pagesubs.py` | Untertitel nur in den Seitendaten (ARD-artig, EBU-TT ab 10:00:00), in nachgeladener Konfiguration (ZDF-artig, TTML), vom Seiten-Player geladen |
 | `test_pixel.py` | sieht man wirklich etwas? Ambient-Licht im Rand, Vorschaubild = echtes Bild an der Stelle (auch nach 13 s) |
@@ -129,6 +144,10 @@ Benachrichtigungen) – das prüft nur das Handy.
 
 ## 6. Stolperfallen (schon gelöst – nicht wieder einbauen)
 
+- Spul-Vorschau: einen langsamen Sprung des Vorschau-Videos **nie neu starten** (sonst wird er bei schwachem Netz nie
+  fertig – 16.2-Fehler). Der Wächter greift nur, wenn der Sprung fertig ist, aber `seeked` fehlt (`!pv.seeking`).
+- Vollbild-Ende ist nur dann die Zurück-Taste, wenn die Seite dabei **sichtbar und im Fokus** bleibt – beim
+  App-Wechsel kommen `blur`/`visibilitychange` (manchmal erst nach dem Vollbild-Ende, daher der zweite Blick nach 750 ms).
 - App-Texte: `Tr.t("deutsch", "english")` (nach Sprache des Handys), App-Name in `res/values*/strings.xml`.
   Die Zustände von `/dlstate` (`fertig`, `läuft`, `Fehler: …`) sind Schnittstelle zum Skript – nicht übersetzen.
 - Sprache: alle sichtbaren Texte bleiben im Code deutsch und laufen durch `tr()` (in `h()`, `toast()`, `showInd()`,
@@ -233,3 +252,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 16.3 | Hinweise unter dem Bild (mit Abstand, sonst über der Leiste/dem Menü/den Untertiteln) im Glas der Knöpfe; Wischsperre oben/unten in Worten mit Erklärung; Teilen-Knopf (Beitragslink, im eingebetteten Fenster der Link der Hauptseite); „Helper“ statt „Helfer“. App: Deutsch/Englisch (`Tr`), nur noch eigener Schlüssel, Host-Prüfung gegen DNS-Rebinding |
 | 16.4 | Aufteilung „oben schlank“: oben Download + ⋮, unten Tempo · CC · Format · Bild-in-Bild · Drehen; Teilen, In App öffnen, Qualität im ⋮-Menü (Knöpfe unsichtbar in `.vstash`, das Menü löst sie aus) |
 | 16.5 | Tempo aus der unteren Leiste ins ⋮-Menü (Liste 0,5×–2×). App: Sprache von Hand (Auto/Deutsch/English, `Keys.lang` → `Tr.force`) |
+| 17.0 | Quelltext in `src/` (28 Teile, `tools/build.js`, CI prüft); Altlasten entfernt (Aufklapp-Knopf, feste Seitenverhältnisse, Weiterschauen-Aufräumen). Vorschau: Bilder aus dem laufenden Video, Finger vor Raster, Raster nahe am Finger, Wächter startet langsame Sprünge nicht mehr neu. Zoom: bei sichtbaren Leisten normale Gesten. App-Wechsel schließt den Player nicht; „Beim Verlassen“ (Weiter/Anhalten); Bild-in-Bild ✕ = Pause, „Vollbild“ = zurück in den Vollbild-Player |

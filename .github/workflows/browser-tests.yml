@@ -5,7 +5,7 @@ name: Browser-Tests
 on:
   push:
     branches: [main]
-    paths: ['userscript/**', 'tests/**', '.github/workflows/browser-tests.yml']
+    paths: ['src/**', 'tools/**', 'userscript/**', 'tests/**', '.github/workflows/browser-tests.yml']
   workflow_dispatch:
     inputs:
       tests:
@@ -38,6 +38,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Userscript passt zu src/
+        run: node tools/build.js --check
 
       - name: Werkzeuge
         run: |
