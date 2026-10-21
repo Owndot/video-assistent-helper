@@ -217,3 +217,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 14.8 | Schlicht hell wie One UI; Leisten blenden je Fläche ein (kein „erst hell, dann dunkel“) |
 | 14.9 | Schlicht: Play/±10 zurückhaltender (Video scheint durch) |
 | 15.0 | Hinweise und Untertitel im Stil des gewählten Designs; Weiterschauen entfernt |
+| 15.1 | Schlicht: Play/±10 fast durchsichtig |
