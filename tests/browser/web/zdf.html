@@ -1,0 +1,3 @@
+<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1"><title>ZDF-artig</title></head>
+<body style="margin:0"><video id=v muted autoplay playsinline style="width:100%;display:block"></video><p>ZDF-artig</p>
+<script>fetch('player/ptmd.json').then(r=>r.json()).then(j=>{const v=document.getElementById('v');v.src=j.priorityList[0].formitaeten[0].qualities[0].uri;v.play();});</script></body></html>

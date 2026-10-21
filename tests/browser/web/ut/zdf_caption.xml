@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" ttp:tickRate="10000000">
+<body><div begin="1s">
+<p begin="0t" end="20000000t">ZDF oben 0<br/><span>unten</span></p>
+<p begin="30000000t" end="50000000t">ZDF oben 3<br/><span>unten</span></p>
+<p begin="60000000t" end="80000000t">ZDF oben 6<br/><span>unten</span></p>
+<p begin="90000000t" end="110000000t">ZDF oben 9<br/><span>unten</span></p>
+<p begin="120000000t" end="140000000t">ZDF oben 12<br/><span>unten</span></p>
+<p begin="150000000t" end="170000000t">ZDF oben 15<br/><span>unten</span></p>
+<p begin="180000000t" end="200000000t">ZDF oben 18<br/><span>unten</span></p>
+<p begin="210000000t" end="230000000t">ZDF oben 21<br/><span>unten</span></p>
+<p begin="240000000t" end="260000000t">ZDF oben 24<br/><span>unten</span></p>
+<p begin="270000000t" end="290000000t">ZDF oben 27<br/><span>unten</span></p>
+<p begin="300000000t" end="320000000t">ZDF oben 30<br/><span>unten</span></p>
+<p begin="330000000t" end="350000000t">ZDF oben 33<br/><span>unten</span></p>
+<p begin="360000000t" end="380000000t">ZDF oben 36<br/><span>unten</span></p>
+<p begin="390000000t" end="410000000t">ZDF oben 39<br/><span>unten</span></p>
+<p begin="420000000t" end="440000000t">ZDF oben 42<br/><span>unten</span></p>
+<p begin="450000000t" end="470000000t">ZDF oben 45<br/><span>unten</span></p>
+<p begin="480000000t" end="500000000t">ZDF oben 48<br/><span>unten</span></p>
+<p begin="510000000t" end="530000000t">ZDF oben 51<br/><span>unten</span></p>
+<p begin="540000000t" end="560000000t">ZDF oben 54<br/><span>unten</span></p>
+</div></body></tt>

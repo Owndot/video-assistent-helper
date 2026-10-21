@@ -111,6 +111,7 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_topguard.py`, `test_idle.py` | gesperrter oberer/unterer Rand, sparsamer Takt ohne Video |
 | `test_tapzoom.py` | Doppeltipp-Zoom: füllt hochkant, Richtung zum Finger, 3× quer, Verschieben, Gummiband, Schwung, Drehen |
 | `test_extras.py` | ⋯ Mehr: Untertitel (Seite, .srt/.vtt, Datei, Stream), Tonspur, Standbild, Einstellungen, Weiterschauen, Media Session |
+| `test_pagesubs.py` | Untertitel nur in den Seitendaten (ARD-artig, EBU-TT ab 10:00:00), in nachgeladener Konfiguration (ZDF-artig, TTML), vom Seiten-Player geladen |
 | `test_pixel.py` | sieht man wirklich etwas? Ambient-Licht im Rand, Vorschaubild = echtes Bild an der Stelle (auch nach 13 s) |
 
 Bekannt: `test_tt.py` besteht 2 von 3 (TikTok liefert ohne Anmeldung keine Video-ID) – kein Fehler.
@@ -156,6 +157,11 @@ Benachrichtigungen) – das prüft nur das Handy.
 - **Untertitel** zeichnet der Player selbst (`.vsub`, nur Text). hls.js liefert Zeilen nur an eine eingeschaltete Spur
   → `subtitleDisplay` an, Spur aber auf `hidden`; hls.js hängt außerdem einen leeren `<track src="data:,WEBVTT">` an
   (ignorieren).
+- **Untertitel der Seite** (`findPageSubs`, erst beim Öffnen des Menüs): URLs mit Untertitel-Merkmal aus `innerHTML`
+  (JSON mit `\u002F` entschärft), aus `performance`-Einträgen und aus bis zu 8 nachgelesenen Player-Konfigurationen;
+  ARD zusätzlich `api.ardmediathek.de/page-gateway/pages/ard/item/<id>` (wie yt-dlp). Jede Datei wird geladen und
+  geparst (WebVTT/SRT/TTML), WebVTT+EBU-TT derselben Untertitel nur einmal. Zeiten ab 10:00:00 (Sendezeit-Code)
+  werden auf die Videolänge zurückgerechnet. Cookies nur an die eigene Seite.
 
 **Firefox** (`GECKO` im Skript):
 - Ein Tipp im eingebetteten Fenster gilt **nicht** für die Hauptseite (`navigator.userActivation` dort inaktiv) →
@@ -198,3 +204,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 13.9 | Doppeltipp Mitte = Bild füllen zum Finger hin; Verschieben nicht mehr in die schwarzen Ränder |
 | 14.0 | Zoom wie Telegram (aus dessen offenem Quellcode): 3× um die Tippstelle, ein Finger verschiebt, Gummiband ⅓, Schwung, 250 ms |
 | 14.1 | ⋯ Mehr: Untertitel (Seite/Stream/Datei), Tonspur, Standbild, Einstellungen (dauerhaft); Weiterschauen; Media Session |
+| 14.2 | Untertitel der Seite finden (Seitendaten, vom Player Geladenes, ARD-Schnittstelle); TTML/EBU-TT-Leser |

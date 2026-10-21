@@ -28,8 +28,9 @@ Der Player funktioniert auch **ohne** Helfer-App – dann regeln die Gesten nur 
 - dünne Fortschrittslinie, wenn die Leisten ausgeblendet sind; am Ende anhalten statt endlos schleifen
 
 **⋯ Mehr** (Knopf unten rechts im Player)
-- **Untertitel**: von der Seite, aus dem Stream oder eigene `.srt`/`.vtt`-Datei vom Handy; Größe, Höhe und
-  Verschiebung (früher/später) einstellbar
+- **Untertitel**: von der Seite (auch wenn die Seite sie mit ihrem eigenen Player zeigt, z. B. ARD/ZDF-Mediathek –
+  das Skript sucht sie beim Öffnen des Menüs), aus dem Stream oder eigene `.srt`/`.vtt`/`.ttml`-Datei vom Handy;
+  Größe, Höhe und Verschiebung (früher/später) einstellbar
 - **Tonspur** (Sprache) bei Streams mit mehreren Tonspuren
 - **Standbild speichern** (JPG in Downloads) – wo die Seite es zulässt, nicht in Firefox auf dem Handy
 - **Einstellungen**: Vollbild, Sprungweite (5/10/15/30 s), Tempo beim Halten, Randsperren, Weiterschauen, Ambient,

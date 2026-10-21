@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt:tt xmlns:tt="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" ttp:timeBase="media"><tt:body><tt:div>
+<tt:p begin="10:00:00.000" end="10:00:01.800"><tt:span>EBU Zeile 0</tt:span></tt:p>
+<tt:p begin="10:00:02.000" end="10:00:03.800"><tt:span>EBU Zeile 2</tt:span></tt:p>
+<tt:p begin="10:00:04.000" end="10:00:05.800"><tt:span>EBU Zeile 4</tt:span></tt:p>
+<tt:p begin="10:00:06.000" end="10:00:07.800"><tt:span>EBU Zeile 6</tt:span></tt:p>
+<tt:p begin="10:00:08.000" end="10:00:09.800"><tt:span>EBU Zeile 8</tt:span></tt:p>
+<tt:p begin="10:00:10.000" end="10:00:11.800"><tt:span>EBU Zeile 10</tt:span></tt:p>
+<tt:p begin="10:00:12.000" end="10:00:13.800"><tt:span>EBU Zeile 12</tt:span></tt:p>
+<tt:p begin="10:00:14.000" end="10:00:15.800"><tt:span>EBU Zeile 14</tt:span></tt:p>
+<tt:p begin="10:00:16.000" end="10:00:17.800"><tt:span>EBU Zeile 16</tt:span></tt:p>
+<tt:p begin="10:00:18.000" end="10:00:19.800"><tt:span>EBU Zeile 18</tt:span></tt:p>
+<tt:p begin="10:00:20.000" end="10:00:21.800"><tt:span>EBU Zeile 20</tt:span></tt:p>
+<tt:p begin="10:00:22.000" end="10:00:23.800"><tt:span>EBU Zeile 22</tt:span></tt:p>
+<tt:p begin="10:00:24.000" end="10:00:25.800"><tt:span>EBU Zeile 24</tt:span></tt:p>
+<tt:p begin="10:00:26.000" end="10:00:27.800"><tt:span>EBU Zeile 26</tt:span></tt:p>
+<tt:p begin="10:00:28.000" end="10:00:29.800"><tt:span>EBU Zeile 28</tt:span></tt:p>
+<tt:p begin="10:00:30.000" end="10:00:31.800"><tt:span>EBU Zeile 30</tt:span></tt:p>
+<tt:p begin="10:00:32.000" end="10:00:33.800"><tt:span>EBU Zeile 32</tt:span></tt:p>
+<tt:p begin="10:00:34.000" end="10:00:35.800"><tt:span>EBU Zeile 34</tt:span></tt:p>
+<tt:p begin="10:00:36.000" end="10:00:37.800"><tt:span>EBU Zeile 36</tt:span></tt:p>
+<tt:p begin="10:00:38.000" end="10:00:39.800"><tt:span>EBU Zeile 38</tt:span></tt:p>
+<tt:p begin="10:00:40.000" end="10:00:41.800"><tt:span>EBU Zeile 40</tt:span></tt:p>
+<tt:p begin="10:00:42.000" end="10:00:43.800"><tt:span>EBU Zeile 42</tt:span></tt:p>
+<tt:p begin="10:00:44.000" end="10:00:45.800"><tt:span>EBU Zeile 44</tt:span></tt:p>
+<tt:p begin="10:00:46.000" end="10:00:47.800"><tt:span>EBU Zeile 46</tt:span></tt:p>
+<tt:p begin="10:00:48.000" end="10:00:49.800"><tt:span>EBU Zeile 48</tt:span></tt:p>
+<tt:p begin="10:00:50.000" end="10:00:51.800"><tt:span>EBU Zeile 50</tt:span></tt:p>
+<tt:p begin="10:00:52.000" end="10:00:53.800"><tt:span>EBU Zeile 52</tt:span></tt:p>
+<tt:p begin="10:00:54.000" end="10:00:55.800"><tt:span>EBU Zeile 54</tt:span></tt:p>
+<tt:p begin="10:00:56.000" end="10:00:57.800"><tt:span>EBU Zeile 56</tt:span></tt:p>
+</tt:div></tt:body></tt:tt>
