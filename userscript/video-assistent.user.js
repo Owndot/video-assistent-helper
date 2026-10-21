@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      15.3
+// @version      15.4
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -3633,6 +3633,10 @@
       const hz = b[1] * st.zoom;
       const top = Math.max(0, H / 2 + st.panY - hz / 2), bot = Math.min(H, H / 2 + st.panY + hz / 2);
       const pad = Math.round(Math.max(8, (bot - top) * 0.04));
+      // Schriftgröße wie in Videoplayern üblich nach der Höhe des sichtbaren Bildes (≈ 5 %) – hochkant wirkt sie so
+      // genauso wie im Querformat; nie kleiner als gut lesbar. klein/mittel/groß = Faktor darauf.
+      const f = { s: 0.85, m: 1, l: 1.25 }[CONFIG.subSize] || 1;
+      subEl.style.fontSize = Math.round(clamp((bot - top) * 0.052, 14, 28) * f * 10) / 10 + 'px';
       const ctlOn = wrap.classList.contains('ctl');
       // Lage eines Bedienelements ohne laufende Einblend-Animation (offsetTop statt getBoundingClientRect)
       const yOf = (el) => { let y = 0; for (let e = el; e && e !== wrap; e = e.offsetParent) y += e.offsetTop; return y; };
@@ -4916,7 +4920,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 15.3',
+      'Video-Assistent 15.4',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

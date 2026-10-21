@@ -220,3 +220,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 15.1 | Schlicht: Play/±10 fast durchsichtig |
 | 15.2 | Untertitel wie in üblichen Playern: nur Schrift mit Kontur, ohne Fläche |
 | 15.3 | Untertitel wie Fernseh-/Streaming-Untertitel: mittlere Stärke, Haarlinien-Kontur, mehr Buchstabenabstand |
+| 15.4 | Untertitel-Schriftgröße nach Bildhöhe (≈ 5 %, 14–28 px) – hochkant wie quer |
