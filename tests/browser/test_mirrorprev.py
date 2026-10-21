@@ -1,7 +1,7 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Spul-Vorschau beim Spiegeln (Facebook, 17.1):
-#  1) Seitendaten nennen eine fertige Datei zu GENAU diesem Video (gleiche Länge) → Vorschau zeigt jede Stelle
-#  2) Datei mit anderer Länge (anderes Video) → wird nicht benutzt; Angeschautes zeigt trotzdem ein gemerktes Bild
+# Spul-Vorschau beim Spiegeln (Facebook und Seiten ohne Adresse, 17.2): keine zweite Quelle (auch nicht aus den
+# Seitendaten – auf Facebook zu unzuverlässig) → angeschaute Stellen zeigen ein beim Abspielen gemerktes Bild,
+# nie gesehene nur die Zeit. Firefox (Handy) kann keine Bilder kopieren: dort immer nur die Zeit.
 import time, json
 exec(open('test_v8.py').read().split("results = []")[0])
 R = 'window.__evpRoot'; results = []
@@ -14,6 +14,8 @@ def page(u):
 <script type="application/json">{"video":{"id":"%s","playable_url":"%s"}}</script>
 <video id=v muted autoplay playsinline src="/data/clip.webm" style="width:100%%;display:block"></video>
 </body></html>''' % (A, u)
+HITS = [0]
+def fmt(t): t = int(t); return '%d:%02d' % (t // 60, t % 60)
 def run(cdn_body, tag):
     with sync_playwright() as p:
         b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
@@ -55,18 +57,15 @@ def run(cdn_body, tag):
         far = drag(0.7); seen = drag(4.0 / dur)
         b.close()
     print('   %s: Spiegeln %s · weit %s · gesehen %s · Abrufe %d' % (tag, mirror, far, seen, len(hits)))
+    HITS[0] = len(hits)
     return mirror, far, seen, dur, errs
-m, far, seen, dur, errs = run(CLIP, 'passende Datei')
+m, far, seen, dur, errs = run(CLIP, 'Seitendaten mit Datei')
+FF = __import__('os').environ.get('BROWSER', '').lower() == 'firefox'
 check('Spiegeln aktiv (Facebook)', m)
-check('passende Datei aus den Seitendaten: Vorschau zeigt auch nie gesehene Stellen', far[0] and far[1] is not None and abs(far[1] - 0.7 * dur) < 2.5, far)
-check('… und angeschaute Stellen', seen[0] and abs(seen[1] - 4.0) < 2, seen)
+check('nie gesehene Stelle: nur die Zeit (keine Datei aus den Seitendaten)', not far[0] and far[2] == fmt(0.7 * dur), far)
+if FF: check('Firefox (Handy): auch angeschaute Stelle nur mit Zeit', not seen[0], seen)
+else: check('angeschaute Stelle: gemerktes Bild vom Abspielen', seen[0] and abs(seen[1] - 4.0) < 2, seen)
+check('Datei aus den Seitendaten wird nicht geladen', HITS[0] == 0, HITS)
 check('keine Fehler', not errs, errs)
-m, far, seen, dur, errs = run(CLIP2, 'andere Länge')
-check('Datei mit anderer Länge (anderes Video): nicht benutzt – weite Stelle ohne Bild', not far[0] or (far[1] is not None and abs(far[1] - 0.7 * dur) > 10 and False), far)
-if __import__('os').environ.get('BROWSER', '').lower() == 'firefox':
-    # Firefox auf dem Handy kann keine Bilder aus Videos kopieren – dort gibt es ohne zweite Quelle nur die Zeit
-    check('… Firefox (Handy): ohne zweite Quelle nur die Zeit', not seen[0], seen)
-else:
-    check('… angeschaute Stelle trotzdem mit gemerktem Bild', seen[0] and abs(seen[1] - 4.0) < 3, seen)
 srv.shutdown()
 print('ERGEBNIS: %d von %d' % (sum(results), len(results)))

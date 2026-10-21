@@ -203,13 +203,27 @@
       showControls();
       updateUI();
     };
+    // Reels-Seiten (Facebook u. a.) springen beim Ende („ended“) von selbst zum nächsten Video – dann wäre der Player
+    // schwarz und man stünde danach auf einem anderen Reel. Darum KURZ VOR dem Ende anhalten (letztes Bild bleibt
+    // stehen): Die Seite bekommt das Ende gar nicht mit. Nahe am Ende genauer hinschauen als „timeupdate“ (¼ s).
+    let nearIv = 0;
+    const stopNear = () => { clearInterval(nearIv); nearIv = 0; };
+    const nearEnd = () => {
+      if (vp !== st || st.mode !== 'capture' || st.endHold || orig.paused) { stopNear(); return; }
+      const d = orig.duration, t = orig.currentTime;
+      if (!isFinite(d) || d < 2) { stopNear(); return; }
+      if (t >= d - 0.25 / Math.max(1, orig.playbackRate || 1)) { stopNear(); holdEnd(); }
+      else if (t < d - 2) stopNear();
+    };
     const onOrigTime = () => {
       if (vp !== st || st.mode !== 'capture') return;
       const d = orig.duration, t = orig.currentTime;
       const userSeek = Date.now() - (st.userSeekAt || 0) < 1500;
       if (!userSeek && isFinite(d) && d > 3 && lastT > d - 1.5 && t < 1.5) holdEnd();   // von hinten nach vorn gesprungen = Schleife
+      if (!nearIv && !st.endHold && isFinite(d) && d >= 2 && t > d - 1.5 && !orig.paused) nearIv = setInterval(nearEnd, 40);
       lastT = t;
     };
+    st.cleanup.push(stopNear);
     const onOrigEnded = () => holdEnd();
     orig.addEventListener('timeupdate', onOrigTime);
     orig.addEventListener('ended', onOrigEnded);

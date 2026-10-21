@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      17.1
+// @version      17.2
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -3182,7 +3182,8 @@
 
     // ----- Bedienelemente -----
     // Play nach dem Ende: Sprung an den Anfang ist dann gewollt (nicht als Schleife werten)
-    function togglePlay() { const m = M(); if (m.paused) { st.endHold = false; st.userSeekAt = Date.now(); m.play().catch(() => {}); } else m.pause(); showControls(); }
+    function togglePlay() { const m = M(); if (m.paused) { if (st.endHold) { try { m.currentTime = 0; } catch (e) {} }   // am Ende angehalten: von vorn
+        st.endHold = false; st.userSeekAt = Date.now(); m.play().catch(() => {}); } else m.pause(); showControls(); }
     function seekBy(d) {
       const m = M();
       const max = isFinite(m.duration) ? m.duration - 0.5 : m.currentTime + d;
@@ -3643,7 +3644,7 @@
     }
     if (MS) {
       msMeta();
-      msH('play', () => { const m = M(); st.endHold = false; m.play().catch(() => {}); });
+      msH('play', () => { const m = M(); if (st.endHold) { try { m.currentTime = 0; } catch (e) {} } st.endHold = false; m.play().catch(() => {}); });
       msH('pause', () => M().pause());
       msH('stop', () => M().pause());
       msH('seekbackward', (d) => seekBy(-((d && d.seekOffset) || SKIP())));
@@ -4205,26 +4206,15 @@
     st.cleanup.push(() => { thumbs.clear(); bucket = 0; });
     // Kleinste Qualität desselben Videos (lädt viel schneller); Streams nutzen ohnehin die kleinste Stufe
     function previewSrc() {
-      if (st.mode === 'capture') return capSrc();
       if (st.hls) return st.cur;
       const curRes = st.srcRes[st.cur] || 0;
       const low = st.sources.filter((u) => (st.srcRes[u] || 0) >= 144).sort((x, y) => st.srcRes[x] - st.srcRes[y])[0];
       return low && curRes && st.srcRes[low] < curRes ? low : st.cur;
     }
-    // Gespiegeltes Video (Facebook): Die Seite nennt oft eine fertige MP4-Datei zu diesem Video – die nimmt die
-    // Vorschau (kleinste zuerst). Gilt nur, wenn ihre Länge zum laufenden Video passt (sonst ein anderes Video).
-    function capCands() {
-      if (!META || !orig) return [];
-      try { const ids = [], e = metaFor(orig, ids); return e ? [e.sd, e.hd].filter((u, i, a) => u && a.indexOf(u) === i) : []; } catch (e) { return []; }
-    }
-    function capSrc() {
-      // Seitendaten kommen oft erst nach und nach: leere Liste nach ein paar Sekunden neu suchen
-      if (st.capList == null || (!st.capList.length && Date.now() - (st.capAt || 0) > 3000)) { st.capList = capCands(); st.capAt = Date.now(); st.capIdx = 0; }
-      return st.capList[st.capIdx || 0] || '';
-    }
     function prevLoad() {
-      const key = st.mode === 'own' ? st.cur : st.mode === 'capture' ? capSrc() : '';
-      if (!key) { prev.classList.add('noimg'); return false; }   // keine zweite Quelle → gemerkte Bilder und die Zeit
+      const key = st.mode === 'own' ? st.cur : '';
+      // gespiegelt (Facebook, Seiten ohne Adresse): keine zweite Quelle → gemerkte Bilder vom Anschauen und die Zeit
+      if (!key) { prev.classList.add('noimg'); return false; }
       prev.classList.remove('noimg');
       if (pvs.key === key) return true;
       prevReset();
@@ -4355,13 +4345,7 @@
       pvs.busy = false;
       // Kleinere Qualität gewählt, aber andere Länge? Dann lieber die laufende Quelle nehmen
       const md = M().duration;
-      if (st.mode === 'capture') {
-        // andere Länge = anderes Video → nächste Adresse, sonst ohne zweite Quelle weiter (nur gemerkte Bilder)
-        if (isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > 2) {
-          st.capIdx = (st.capIdx || 0) + 1; prevReset(); prevLoad();
-          return;
-        }
-      } else if (pvs.src !== st.cur && isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > 3) {
+      if (pvs.src !== st.cur && isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > 3) {
         const key = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = key; return;
       }
       bucketFor();
@@ -4387,10 +4371,7 @@
       }
       pump();
     }
-    pv.addEventListener('error', () => {
-      if (st.mode === 'capture' && st.capList && (st.capIdx || 0) + 1 < st.capList.length) { st.capIdx = (st.capIdx || 0) + 1; prevReset(); prevLoad(); return; }
-      prev.classList.add('noimg');
-    });
+    pv.addEventListener('error', () => { prev.classList.add('noimg'); });
     // Streams: Raster gleich nach dem Start vorholen (kleinste Stufe, wenig Daten)
     // Vorwärmen nach dem Start: Streams holen gleich das Raster (kleinste Stufe, wenig Daten),
     // Dateien nur ihr Inhaltsverzeichnis (wenige KB) – dann wartet auch das erste Ziehen nicht darauf
@@ -4817,13 +4798,27 @@
       showControls();
       updateUI();
     };
+    // Reels-Seiten (Facebook u. a.) springen beim Ende („ended“) von selbst zum nächsten Video – dann wäre der Player
+    // schwarz und man stünde danach auf einem anderen Reel. Darum KURZ VOR dem Ende anhalten (letztes Bild bleibt
+    // stehen): Die Seite bekommt das Ende gar nicht mit. Nahe am Ende genauer hinschauen als „timeupdate“ (¼ s).
+    let nearIv = 0;
+    const stopNear = () => { clearInterval(nearIv); nearIv = 0; };
+    const nearEnd = () => {
+      if (vp !== st || st.mode !== 'capture' || st.endHold || orig.paused) { stopNear(); return; }
+      const d = orig.duration, t = orig.currentTime;
+      if (!isFinite(d) || d < 2) { stopNear(); return; }
+      if (t >= d - 0.25 / Math.max(1, orig.playbackRate || 1)) { stopNear(); holdEnd(); }
+      else if (t < d - 2) stopNear();
+    };
     const onOrigTime = () => {
       if (vp !== st || st.mode !== 'capture') return;
       const d = orig.duration, t = orig.currentTime;
       const userSeek = Date.now() - (st.userSeekAt || 0) < 1500;
       if (!userSeek && isFinite(d) && d > 3 && lastT > d - 1.5 && t < 1.5) holdEnd();   // von hinten nach vorn gesprungen = Schleife
+      if (!nearIv && !st.endHold && isFinite(d) && d >= 2 && t > d - 1.5 && !orig.paused) nearIv = setInterval(nearEnd, 40);
       lastT = t;
     };
+    st.cleanup.push(stopNear);
     const onOrigEnded = () => holdEnd();
     orig.addEventListener('timeupdate', onOrigTime);
     orig.addEventListener('ended', onOrigEnded);
@@ -4886,11 +4881,16 @@
     // Deine Stelle ZUERST merken – wird hls.js beendet, springt das eigene Video auf 0 zurück.
     // An diese Stelle springt dann das Video auf der Seite, auch bei stückweise ladenden Seiten (Facebook, Instagram, Pornhub …).
     // Gleiche Länge prüfen, damit nicht z. B. eine Werbung oder ein anderes Video verstellt wird.
-    let target = -1;
+    let target = -1, atEnd = !!st.endHold;
     try {
       const t = st.vid.currentTime, vd = st.vid.duration, od = o.duration;
       const sameLen = !isFinite(od) || !isFinite(vd) || Math.abs(od - vd) < 3;
-      if (st.mode === 'own' && t > 0 && sameLen) target = t;
+      if (st.mode === 'own' && t > 0 && sameLen) {
+        target = t;
+        // am Ende geschlossen: kurz VOR das Ende stellen und angehalten lassen – sonst springt eine Reels-Seite
+        // („ended“) von selbst zum nächsten Video
+        if (isFinite(vd) && (st.vid.ended || t >= vd - 1)) { atEnd = true; target = Math.max(0, (isFinite(od) ? od : vd) - 0.3); }
+      }
     } catch (e) {}
     if (st.hls) { try { st.hls.destroy(); } catch (e) {} }
     if (st.actx) { try { st.actx.close(); } catch (e) {} }
@@ -4898,7 +4898,8 @@
     if (target >= 0) { try { o.currentTime = target; } catch (e) {} }
     try { if (typeof st.origMuted === 'boolean') o.muted = st.origMuted; } catch (e) {}   // ursprünglichen Ton zurückgeben
     // Video auf der Seite weiterlaufen lassen (Instagram & Co. haben oft keinen Play-Knopf)
-    if (CONFIG.resumeAfterClose) {
+    if (atEnd) { try { o.pause(); } catch (e) {} }
+    else if (CONFIG.resumeAfterClose) {
       setTimeout(() => {
         try { const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
         watchStall(o);
@@ -5223,7 +5224,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 17.1',
+      'Video-Assistent 17.2',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

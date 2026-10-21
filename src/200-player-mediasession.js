@@ -20,7 +20,7 @@
     }
     if (MS) {
       msMeta();
-      msH('play', () => { const m = M(); st.endHold = false; m.play().catch(() => {}); });
+      msH('play', () => { const m = M(); if (st.endHold) { try { m.currentTime = 0; } catch (e) {} } st.endHold = false; m.play().catch(() => {}); });
       msH('pause', () => M().pause());
       msH('stop', () => M().pause());
       msH('seekbackward', (d) => seekBy(-((d && d.seekOffset) || SKIP())));

@@ -124,7 +124,8 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_topguard.py`, `test_idle.py` | gesperrter oberer/unterer Rand, sparsamer Takt ohne Video |
 | `test_tapzoom.py` | Doppeltipp-Zoom: füllt hochkant, Richtung zum Finger, 3× quer, Verschieben, Gummiband, Schwung, Drehen |
 | `test_extras.py` | Untertitel (Seite, .srt/.vtt, Datei, Stream, Lage), ⋮ Mehr: Tonspur, Standbild, Einstellungen, Design, Media Session |
-| `test_fbprev.py` | Vorschau beim Spiegeln: passende Datei aus den Seitendaten / andere Länge abgelehnt / gemerkte Bilder |
+| `test_mirrorprev.py` | Vorschau beim Spiegeln: angeschaute Stellen mit gemerktem Bild, sonst nur die Zeit |
+| `test_reelend.py` | Reels-Seite springt am Ende von selbst weiter: Player hält vorher an, beim Schließen bleibt man beim Reel |
 | `test_leave.py` | App-Wechsel (Fokus/verdeckt) ≠ Zurück-Taste, „Beim Verlassen“, Bild-in-Bild ✕/Vollbild |
 | `test_prevlag.py` | Messung: Zeit bis zur richtigen Vorschau nach dem Anhalten (`LAG=1.3` = schwaches Netz; mit 2. Datei = Vergleich) |
 | `test_ui.py` | Aufteilung (⋮ oben, CC unten), Hinweis-Lage, Zeitleiste beim Hochwischen, Sprache Deutsch/Englisch |
@@ -147,6 +148,8 @@ Benachrichtigungen) – das prüft nur das Handy.
 
 - Spul-Vorschau: einen langsamen Sprung des Vorschau-Videos **nie neu starten** (sonst wird er bei schwachem Netz nie
   fertig – 16.2-Fehler). Der Wächter greift nur, wenn der Sprung fertig ist, aber `seeked` fehlt (`!pv.seeking`).
+- Reels-Seiten reagieren auf `ended` (nächstes Reel). Gespiegelt daher kurz vor dem Ende anhalten (`nearEnd`, 40 ms)
+  und beim Schließen am Ende das Original NICHT weiterspielen lassen.
 - Vollbild-Ende ist nur dann die Zurück-Taste, wenn die Seite dabei **sichtbar und im Fokus** bleibt – beim
   App-Wechsel kommen `blur`/`visibilitychange` (manchmal erst nach dem Vollbild-Ende, daher der zweite Blick nach 750 ms).
 - App-Texte: `Tr.t("deutsch", "english")` (nach Sprache des Handys), App-Name in `res/values*/strings.xml`.
@@ -254,4 +257,5 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 16.4 | Aufteilung „oben schlank“: oben Download + ⋮, unten Tempo · CC · Format · Bild-in-Bild · Drehen; Teilen, In App öffnen, Qualität im ⋮-Menü (Knöpfe unsichtbar in `.vstash`, das Menü löst sie aus) |
 | 16.5 | Tempo aus der unteren Leiste ins ⋮-Menü (Liste 0,5×–2×). App: Sprache von Hand (Auto/Deutsch/English, `Keys.lang` → `Tr.force`) |
 | 17.0 | Quelltext in `src/` (28 Teile, `tools/build.js`, CI prüft); Altlasten entfernt (Aufklapp-Knopf, feste Seitenverhältnisse, Weiterschauen-Aufräumen). Vorschau: Bilder aus dem laufenden Video, Finger vor Raster, Raster nahe am Finger, Wächter startet langsame Sprünge nicht mehr neu. Zoom: bei sichtbaren Leisten normale Gesten. App-Wechsel schließt den Player nicht; „Beim Verlassen“ (Weiter/Anhalten); Bild-in-Bild ✕ = Pause, „Vollbild“ = zurück in den Vollbild-Player |
-| 17.1 | Vorschau beim Spiegeln (Facebook): fertige Datei aus den Seitendaten (nur bei gleicher Länge), sonst gemerkte Bilder aus dem gespiegelten Bild; gemerkte Bilder bleiben beim Wechsel der Vorschau-Quelle |
+| 17.1 | Vorschau beim Spiegeln: gemerkte Bilder aus dem gespiegelten Bild; gemerkte Bilder bleiben beim Wechsel der Vorschau-Quelle |
+| 17.2 | Reels: gespiegeltes Original kurz VOR dem Ende anhalten (Seite springt nicht zum nächsten Reel), am Ende geschlossen = Original bleibt angehalten. Vorschau aus Facebook-Seitendaten wieder entfernt (zu unzuverlässig) |

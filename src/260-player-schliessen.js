@@ -36,11 +36,16 @@
     // Deine Stelle ZUERST merken – wird hls.js beendet, springt das eigene Video auf 0 zurück.
     // An diese Stelle springt dann das Video auf der Seite, auch bei stückweise ladenden Seiten (Facebook, Instagram, Pornhub …).
     // Gleiche Länge prüfen, damit nicht z. B. eine Werbung oder ein anderes Video verstellt wird.
-    let target = -1;
+    let target = -1, atEnd = !!st.endHold;
     try {
       const t = st.vid.currentTime, vd = st.vid.duration, od = o.duration;
       const sameLen = !isFinite(od) || !isFinite(vd) || Math.abs(od - vd) < 3;
-      if (st.mode === 'own' && t > 0 && sameLen) target = t;
+      if (st.mode === 'own' && t > 0 && sameLen) {
+        target = t;
+        // am Ende geschlossen: kurz VOR das Ende stellen und angehalten lassen – sonst springt eine Reels-Seite
+        // („ended“) von selbst zum nächsten Video
+        if (isFinite(vd) && (st.vid.ended || t >= vd - 1)) { atEnd = true; target = Math.max(0, (isFinite(od) ? od : vd) - 0.3); }
+      }
     } catch (e) {}
     if (st.hls) { try { st.hls.destroy(); } catch (e) {} }
     if (st.actx) { try { st.actx.close(); } catch (e) {} }
@@ -48,7 +53,8 @@
     if (target >= 0) { try { o.currentTime = target; } catch (e) {} }
     try { if (typeof st.origMuted === 'boolean') o.muted = st.origMuted; } catch (e) {}   // ursprünglichen Ton zurückgeben
     // Video auf der Seite weiterlaufen lassen (Instagram & Co. haben oft keinen Play-Knopf)
-    if (CONFIG.resumeAfterClose) {
+    if (atEnd) { try { o.pause(); } catch (e) {} }
+    else if (CONFIG.resumeAfterClose) {
       setTimeout(() => {
         try { const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
         watchStall(o);
