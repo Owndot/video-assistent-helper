@@ -214,3 +214,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 14.6 | Glas-Einstellung wirkt sofort (Wellen/Lupe ↔ Milchglas, `setLens`) |
 | 14.7 | Design-Wahl: Glas ↔ Schlicht (`:host(.flat)` – nur Milchglas, ohne Kante/Glanz/Lupe, überall) |
 | 14.8 | Schlicht hell wie One UI; Leisten blenden je Fläche ein (kein „erst hell, dann dunkel“) |
+| 14.9 | Schlicht: Play/±10 zurückhaltender (Video scheint durch) |
