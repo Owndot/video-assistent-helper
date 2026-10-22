@@ -98,9 +98,13 @@
     const m = s.meta;
     if (m) { try { if (m.made) m.el.remove(); else if (m.before !== null) m.el.setAttribute('content', m.before); } catch (e) {} }
   }
+  // Würde der Browser jetzt Vollbild erlauben (frische Berührung, auch in einem eingebetteten Fenster)? Ohne die
+  // Angabe (ältere Browser) einfach versuchen.
+  function touchFresh() { try { return !navigator.userActivation || navigator.userActivation.isActive; } catch (e) { return true; } }
   function frameFs(f) {
     try {
       if (fsElem() === f) return;
+      if (!touchFresh()) { sendState(); if (fb.childWin) fpost(fb.childWin, { t: 'fsno' }); return; }   // ohne Berührung lehnt der Browser ohnehin ab
       const rq = f.requestFullscreen || f.webkitRequestFullscreen;
       const pr = rq && rq.call(f, { navigationUI: 'hide' });
       // abgelehnt (Firefox: kein Tipp hier oben) → das Fenster selbst versucht es, dort gilt der Tipp noch

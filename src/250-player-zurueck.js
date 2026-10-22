@@ -63,7 +63,8 @@
     // Vollbild selbst zurückholen: sofort, nach 250 ms und nach 700 ms (und wenn das Fenster den Fokus bekommt) –
     // ohne Berührung erlaubt das nicht jeder Browser; dann klappt es mit der nächsten Berührung (18.6)
     function tryRegain() {
-      [0, 250, 700].forEach((ms) => setTimeout(() => { if (vp === st && st.fsLost && !isFs() && !document.hidden && !pipIsOurs(vid)) regainFs(); }, ms));
+      // nur, wenn der Browser es gerade erlauben würde (frische Berührung) – sonst nur eine Fehlermeldung in der Konsole
+      [0, 250, 700].forEach((ms) => setTimeout(() => { if (vp === st && st.fsLost && !isFs() && !document.hidden && !pipIsOurs(vid) && touchFresh()) regainFs(); }, ms));
     }
     const onFocusBack = () => { if (vp === st && st.fsLost && !isFs() && !document.hidden) tryRegain(); };
     addEventListener('focus', onFocusBack);
@@ -91,16 +92,17 @@
     vid.addEventListener('leavepictureinpicture', () => {
       st.pipLeaveAt = Date.now();
       // „Vollbild“ im kleinen Fenster: sofort versuchen (der Browser erlaubt es oft nur in diesem Moment)
-      if (CONFIG.startFullscreen && !isFs()) { try { const pr = enterFs(); if (pr && pr.then) pr.then(() => { if (vp === st && isFs()) { st.fsStart = true; st.fsLost = false; if (st.orient) lockO(st.orient); } }); } catch (e) {} }
+      if (CONFIG.startFullscreen && !isFs() && touchFresh()) { try { const pr = enterFs(); if (pr && pr.then) pr.then(() => { if (vp === st && isFs()) { st.fsStart = true; st.fsLost = false; if (st.orient) lockO(st.orient); } }); } catch (e) {} }
       setTimeout(() => {
         if (vp !== st) return;
         if (document.hidden) { st.userPauseAt = Date.now(); pauseAway(); return; }   // ✕ im kleinen Fenster = gewollt
         if (CONFIG.startFullscreen && !isFs()) {
-          enterFs().then(() => {
+          const done = () => {
             if (vp !== st) return;
             if (isFs()) { st.fsStart = true; st.fsLost = false; if (st.orient) lockO(st.orient); }
             else { st.fsLost = true; if (st.pushHist) st.pushHist(); showControls(); toast('Antippen für Vollbild'); }
-          });
+          };
+          if (touchFresh()) enterFs().then(done); else done();
         }
       }, 300);
     });

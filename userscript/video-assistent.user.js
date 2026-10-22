@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.1
+// @version      19.2
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -332,9 +332,13 @@
     const m = s.meta;
     if (m) { try { if (m.made) m.el.remove(); else if (m.before !== null) m.el.setAttribute('content', m.before); } catch (e) {} }
   }
+  // Würde der Browser jetzt Vollbild erlauben (frische Berührung, auch in einem eingebetteten Fenster)? Ohne die
+  // Angabe (ältere Browser) einfach versuchen.
+  function touchFresh() { try { return !navigator.userActivation || navigator.userActivation.isActive; } catch (e) { return true; } }
   function frameFs(f) {
     try {
       if (fsElem() === f) return;
+      if (!touchFresh()) { sendState(); if (fb.childWin) fpost(fb.childWin, { t: 'fsno' }); return; }   // ohne Berührung lehnt der Browser ohnehin ab
       const rq = f.requestFullscreen || f.webkitRequestFullscreen;
       const pr = rq && rq.call(f, { navigationUI: 'hide' });
       // abgelehnt (Firefox: kein Tipp hier oben) → das Fenster selbst versucht es, dort gilt der Tipp noch
@@ -5118,7 +5122,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Vollbild selbst zurückholen: sofort, nach 250 ms und nach 700 ms (und wenn das Fenster den Fokus bekommt) –
     // ohne Berührung erlaubt das nicht jeder Browser; dann klappt es mit der nächsten Berührung (18.6)
     function tryRegain() {
-      [0, 250, 700].forEach((ms) => setTimeout(() => { if (vp === st && st.fsLost && !isFs() && !document.hidden && !pipIsOurs(vid)) regainFs(); }, ms));
+      // nur, wenn der Browser es gerade erlauben würde (frische Berührung) – sonst nur eine Fehlermeldung in der Konsole
+      [0, 250, 700].forEach((ms) => setTimeout(() => { if (vp === st && st.fsLost && !isFs() && !document.hidden && !pipIsOurs(vid) && touchFresh()) regainFs(); }, ms));
     }
     const onFocusBack = () => { if (vp === st && st.fsLost && !isFs() && !document.hidden) tryRegain(); };
     addEventListener('focus', onFocusBack);
@@ -5146,16 +5151,17 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     vid.addEventListener('leavepictureinpicture', () => {
       st.pipLeaveAt = Date.now();
       // „Vollbild“ im kleinen Fenster: sofort versuchen (der Browser erlaubt es oft nur in diesem Moment)
-      if (CONFIG.startFullscreen && !isFs()) { try { const pr = enterFs(); if (pr && pr.then) pr.then(() => { if (vp === st && isFs()) { st.fsStart = true; st.fsLost = false; if (st.orient) lockO(st.orient); } }); } catch (e) {} }
+      if (CONFIG.startFullscreen && !isFs() && touchFresh()) { try { const pr = enterFs(); if (pr && pr.then) pr.then(() => { if (vp === st && isFs()) { st.fsStart = true; st.fsLost = false; if (st.orient) lockO(st.orient); } }); } catch (e) {} }
       setTimeout(() => {
         if (vp !== st) return;
         if (document.hidden) { st.userPauseAt = Date.now(); pauseAway(); return; }   // ✕ im kleinen Fenster = gewollt
         if (CONFIG.startFullscreen && !isFs()) {
-          enterFs().then(() => {
+          const done = () => {
             if (vp !== st) return;
             if (isFs()) { st.fsStart = true; st.fsLost = false; if (st.orient) lockO(st.orient); }
             else { st.fsLost = true; if (st.pushHist) st.pushHist(); showControls(); toast('Antippen für Vollbild'); }
-          });
+          };
+          if (touchFresh()) enterFs().then(done); else done();
         }
       }, 300);
     });
@@ -5987,7 +5993,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.1',
+      'Video-Assistent 19.2',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
