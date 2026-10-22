@@ -8,4 +8,5 @@ const v = document.getElementById('v'); let h = null;
 function load(src) { if (h) h.destroy(); h = new Hls(); h.loadSource(src); h.attachMedia(v); h.on(Hls.Events.MANIFEST_PARSED, () => v.play()); }
 load('/hls/master.m3u8');
 window.switchTo = () => { history.pushState({}, '', '/video/jetzt-folge/b-22222'); load('/hls2/master.m3u8'); };
+window.switchBack = () => { history.pushState({}, '', '/video/wieder-erste-folge/a-33333'); load('/hls/master.m3u8'); };
 </script></body></html>

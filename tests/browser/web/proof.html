@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1"><title>Stream-Nachweis – Testseite</title>
+<script src="hls.min.js"></script></head>
+<body style="margin:0"><video id=v muted playsinline style="width:100%;display:block"></video><p>x</p>
+<script>
+const v = document.getElementById('v'), mode = location.hash.slice(1);
+(async () => {
+  if (mode === 'preload') {
+    // Die Seite lädt schon das NÄCHSTE Video vor (40 s), spielt aber dieses (60 s) – nach Zeitpunkt nicht zu unterscheiden
+    await (await fetch('/hls3/master.m3u8')).text(); await (await fetch('/hls3/v/index.m3u8')).text();
+    const h = new Hls(); h.loadSource('/hls/master.m3u8'); h.attachMedia(v); h.on(Hls.Events.MANIFEST_PARSED, () => v.play());
+  } else if (mode === 'file') {
+    // Datei-Video per MediaSource (30 s); danach lädt die Seite eine andere Datei (60 s, z. B. Vorschau des nächsten)
+    const V = await (await fetch('/f30/v.webm')).arrayBuffer(), A = await (await fetch('/f30/a.webm')).arrayBuffer();
+    const ms = new MediaSource(); v.src = URL.createObjectURL(ms);
+    await new Promise(r => ms.addEventListener('sourceopen', r, { once: true }));
+    const sv = ms.addSourceBuffer('video/webm; codecs="vp8"'), sa = ms.addSourceBuffer('audio/webm; codecs="opus"');
+    const add = (sb, x) => new Promise((r) => { sb.addEventListener('updateend', r, { once: true }); sb.appendBuffer(x); });
+    await add(sv, V); await add(sa, A);
+    try { ms.endOfStream(); } catch (e) {}
+    v.play().catch(() => {});
+    setTimeout(() => fetch('/clip.webm', { headers: { Range: 'bytes=0-1000' } }), 300);
+  }
+})();
+</script></body></html>

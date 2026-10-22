@@ -47,6 +47,19 @@
         return;
       }
       st.expectDur = 0;
+      // Gegenprobe beim Öffnen: Ist das Video gleich lang wie das auf der Seite? Sonst ist es ein anderes (z. B. das
+      // vorige nach einem schnellen Wechsel) → gleich die nächste Quelle. Passt keine, zurück zur ersten (z. B. wenn die
+      // Seite gerade Werbung zeigt). Nur einmal pro Öffnen, nie bei Live.
+      if (!st.lenOk) {
+        const od = orig.duration, vd = vid.duration;
+        if (isFinite(od) && od > 1 && isFinite(vd) && vd > 1 && Math.abs(od - vd) > lenTol(od)) {
+          if (!st.lenFirst) st.lenFirst = st.cur;
+          if (st.idx < st.sources.length) { tryNext(); return; }
+          st.lenOk = true;
+          if (st.lenFirst !== st.cur) { st.sources = [st.lenFirst].concat(st.sources.filter((x) => x !== st.lenFirst)); st.idx = 0; tryNext(); return; }
+        }
+        st.lenOk = true;
+      }
       if (!st.hls && st.startTime > 1 && isFinite(vid.duration) && vid.duration > st.startTime) { try { vid.currentTime = st.startTime; } catch (e) {} }
       vid.playbackRate = st.speed;
       autoOrient(vid.videoWidth, vid.videoHeight);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      18.0
+// @version      18.1
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -519,6 +519,7 @@
   function seeUrl(u, arrived) {
     if (typeof u !== 'string' || u.indexOf('http') !== 0) return;
     if (SPLIT_CDN_RE.test(hostOf(u))) { noteSplit(u, arrived); return; }
+    noteSegment(u);
     if (isMedia(u)) addSource(u);
   }
   // Das Video, von dem in den letzten 20 Sekunden am meisten geladen wurde
@@ -637,10 +638,112 @@
     let u;
     try { u = new URL(raw, location.href).href; } catch (e) { return; }
     if (!/^https?:/i.test(u) || SEGMENT_RE.test(u) || SPLIT_CDN_RE.test(hostOf(u))) return;
-    if (sources.some((s) => s.u === u)) return;
+    const i = sources.findIndex((s) => s.u === u);
+    if (i >= 0) {
+      // die Seite lädt sie erneut (z. B. zurück zu einem früheren Video): gilt ab jetzt wieder als neu.
+      // Lädt sie nur der eigene Player, bleibt der Zeitpunkt der Seite.
+      if (vp && vp.mode === 'own') return;
+      const s = sources.splice(i, 1)[0]; s.t = Date.now(); sources.push(s);
+      return;
+    }
     sources.push({ u: u, t: Date.now() });
     if (sources.length > 40) sources.shift();
   }
+
+  // ---------- Nachweis: welcher Stream läuft WIRKLICH? (18.1) ----------
+  // Statt nach dem Zeitpunkt zu raten: Die Stream-Listen (m3u8/mpd), die die Seite ohnehin lädt, werden mitgelesen
+  // (kein zusätzlicher Abruf). Daraus ist bekannt, in welchem Ordner die Stücke jedes Streams liegen, welche
+  // Unter-Listen zu welcher Haupt-Liste gehören und wie lang das Video ist. Lädt die Seite dann Stücke aus einem
+  // dieser Ordner, ist bewiesen, welcher Stream läuft.
+  const urlKey = (u) => { try { const x = new URL(u, location.href); return x.origin + x.pathname; } catch (e) { return String(u).split(/[?#]/)[0]; } };
+  const dirOf = (u) => urlKey(u).replace(/[^\/]*$/, '');
+  const plInfo = new Map();    // urlKey → { u, kids:Set(urlKey), segDirs:[Ordner], dur, live, t }
+  const segHits = new Map();   // Ordner der Stücke → zuletzt geladen
+  const SEGFILE_RE = /\.(ts|m4s|mp4|m4a|m4v|aac|cmfv|cmfa|webm|mp3)(\?|#|$)/i;
+  function isoDur(s) {
+    const m = /P(?:(\d+(?:\.\d+)?)D)?T?(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?/.exec(s || '');
+    if (!m) return NaN;
+    return (+m[1] || 0) * 86400 + (+m[2] || 0) * 3600 + (+m[3] || 0) * 60 + (+m[4] || 0);
+  }
+  function notePlaylist(reqUrl, finalUrl, text) {
+    try {
+      if (typeof text !== 'string' || text.length > 4e6) return;
+      const base = finalUrl || reqUrl;
+      const abs = (x) => { try { return new URL(x, base).href; } catch (e) { return ''; } };
+      const info = { u: reqUrl, kids: new Set(), segDirs: [], dur: NaN, live: false, t: Date.now() };
+      const dirs = new Set();
+      const addDir = (a) => { if (!a) return; const d = dirOf(a); try { if (new URL(d).pathname.length > 1) dirs.add(d); } catch (e) {} };
+      const head = text.slice(0, 600).trimStart();
+      if (head.startsWith('#EXTM3U')) {
+        const lines = text.split(/\r?\n/);
+        let sum = 0, segs = 0, kidNext = false;
+        for (let i = 0; i < lines.length; i++) {
+          const l = lines[i].trim();
+          if (!l) continue;
+          if (l[0] === '#') {
+            if (l.startsWith('#EXTINF:')) { sum += parseFloat(l.slice(8)) || 0; segs++; }
+            else if (l.startsWith('#EXT-X-STREAM-INF')) kidNext = true;
+            else if (l.startsWith('#EXT-X-MEDIA:') || l.startsWith('#EXT-X-I-FRAME-STREAM-INF')) { const m = /URI="([^"]+)"/.exec(l); if (m) info.kids.add(urlKey(abs(m[1]))); }
+            else if (l.startsWith('#EXT-X-MAP:')) { const m = /URI="([^"]+)"/.exec(l); if (m) addDir(abs(m[1])); }
+            continue;
+          }
+          if (kidNext) { info.kids.add(urlKey(abs(l))); kidNext = false; }
+          else addDir(abs(l));
+        }
+        if (segs) { info.live = text.indexOf('#EXT-X-ENDLIST') < 0; if (!info.live) info.dur = sum; }
+      } else if (/<MPD[\s>]/.test(head) || /<MPD[\s>]/.test(text.slice(0, 4000))) {
+        info.live = /\btype\s*=\s*["']dynamic["']/.test(text);
+        const m = /mediaPresentationDuration\s*=\s*["']([^"']+)["']/.exec(text);
+        if (m && !info.live) info.dur = isoDur(m[1]);
+        addDir(base);   // DASH: Stücke liegen bei der mpd (oder unter ihrer BaseURL)
+        const re = /<BaseURL[^>]*>([^<]+)<\/BaseURL>/g; let b, n = 0;
+        while ((b = re.exec(text)) && n++ < 8) { const x = b[1].trim(); addDir(abs(/\/$/.test(x) ? x + 'x' : x)); }
+      } else return;
+      info.segDirs = Array.from(dirs).slice(0, 12);
+      plInfo.set(urlKey(reqUrl), info);
+      if (finalUrl && urlKey(finalUrl) !== urlKey(reqUrl)) plInfo.set(urlKey(finalUrl), info);
+      while (plInfo.size > 80) plInfo.delete(plInfo.keys().next().value);
+    } catch (e) {}
+  }
+  function noteSegment(u) {
+    if (PLAYLIST_RE.test(u) || !(SEGFILE_RE.test(u) || SEGMENT_RE.test(u))) return;
+    if (vp && vp.mode === 'own') return;   // Stücke des eigenen Players zählen nicht
+    const d = dirOf(u);
+    segHits.delete(d); segHits.set(d, Date.now());
+    if (segHits.size > 120) segHits.delete(segHits.keys().next().value);
+  }
+  // Der Stream, aus dem die Seite seit „since“ zuletzt Stücke geladen hat – als Haupt-Liste (alle Qualitäten)
+  function playingStream(since) {
+    const now = Date.now(), from = Math.max(since || 0, now - 30000);
+    let media = null, mediaT = 0;
+    segHits.forEach((t, d) => {
+      if (t < from || t <= mediaT) return;
+      let m = null;
+      plInfo.forEach((p) => { if (p.segDirs.some((sd) => d.startsWith(sd)) && (!m || p.t > m.t)) m = p; });
+      if (m) { media = m; mediaT = t; }
+    });
+    if (!media) return null;
+    const mk = urlKey(media.u);
+    let master = null;
+    plInfo.forEach((p) => { if (p.kids.has(mk) && (!master || p.t > master.t)) master = p; });
+    let u = master ? master.u : '';
+    if (!u) {   // Haupt-Liste nicht lesbar: die kurz davor (nach dem letzten Videowechsel) geladene, die nichts anderes enthält
+      const near = sources.filter((s) => PLAYLIST_RE.test(s.u) && s.t >= navAt && s.t <= media.t + 500 && s.t >= media.t - 8000 && urlKey(s.u) !== mk)
+        .map((s) => s.u).filter((x) => { const p = plInfo.get(urlKey(x)); return !p || (!p.kids.size && !p.segDirs.length); });
+      u = rankPlaylists(near).filter((x) => /master|manifest|playlist/i.test(x))[0] || media.u;
+    }
+    return { u: u, dur: media.dur, live: media.live };
+  }
+  // Länge eines Streams, soweit bekannt (aus der eigenen Liste oder einer ihrer Unter-Listen)
+  function streamLen(u) {
+    const p = plInfo.get(urlKey(u));
+    if (!p) return null;
+    if (p.live) return { live: true };
+    if (isFinite(p.dur)) return { dur: p.dur };
+    for (const k of p.kids) { const q = plInfo.get(k); if (q && q.live) return { live: true }; if (q && isFinite(q.dur)) return { dur: q.dur }; }
+    return null;
+  }
+  const lenTol = (d) => Math.max(4, d * 0.015);
 
   try {
     new PerformanceObserver((list) => {
@@ -661,6 +764,7 @@
         let u = '';
         try { u = typeof input === 'string' ? input : (input && input.url) || ''; seeUrl(u); } catch (e) {}
         const p = of.apply(this, arguments);
+        if (PLAYLIST_RE.test(u)) p.then((res) => { try { if (res && res.ok) res.clone().text().then((t) => notePlaylist(u, res.url, t), () => {}); } catch (e) {} }, () => {});
         if (META && API_RE.test(u)) {
           p.then((res) => { try { res.clone().text().then((t) => { bodiesRead++; scanText(t); }, () => {}); } catch (e) {} }, () => {});
         }
@@ -672,6 +776,11 @@
       try {
         const u = String(url);
         seeUrl(u);
+        if (PLAYLIST_RE.test(u)) {
+          this.addEventListener('load', function () {
+            try { if (this.status < 400 && (!this.responseType || this.responseType === 'text')) notePlaylist(new URL(u, location.href).href, this.responseURL, this.responseText); } catch (e) {}
+          });
+        }
         if (META && API_RE.test(u)) {
           this.addEventListener('load', function () {
             try {
@@ -1230,6 +1339,10 @@
     const single = countEligible() <= 1;
     // Pornhub: komplette MP4 mit Ton zuerst (beste Qualität vorn), der Stream nur als Ausweich
     if (PH && phCache && phCache.length) phCache.forEach((c) => add(c.u, 'MP4 mit Ton' + (c.res ? ' · ' + c.res + 'p' : '')));
+    // 1. bewiesen: die Seite lädt gerade Stücke genau dieses Streams (seit Start dieses Videos / letztem Wechsel)
+    checkNav();
+    const ps = playingStream(Math.max(navAt, (startAt.get(v) || 0) - 300));
+    if (ps) add(ps.u, 'Stream (läuft gerade, geprüft)');
     add(timingMatch(v), 'Stream (läuft gerade)');
     add(posterMatch(v), 'Stream (Vorschaubild)');
     if (single) {
@@ -1242,6 +1355,23 @@
       (near.qualities || [{ u: near.best }]).forEach((c) => add(c.u, near.how || 'Seitendaten'));
     }
     if (single) recent().filter((x) => !PLAYLIST_RE.test(x)).reverse().forEach((x) => add(x, 'Datei (Netzwerk)'));
+    // 2. Gegenprobe Länge: Streams, deren Länge NICHT zum Video auf der Seite passt, sind ein anderes Video → ans Ende.
+    //    Passende vor unbekannten. Der bewiesene bleibt vorn. (Live: keine Länge, keine Prüfung.)
+    const d = v.duration;
+    r.proof = ps ? 'Stücke' : '';
+    if (isFinite(d) && d > 1) {
+      const cls = (x) => {
+        if (ps && x.u === ps.u) return -1;
+        const l = PLAYLIST_RE.test(x.u) ? streamLen(x.u) : null;
+        if (!l || l.live) return 1;
+        if (Math.abs(l.dur - d) <= lenTol(d)) { x.how += ' · Länge passt'; return 0; }
+        x.how += ' · andere Länge'; return 2;
+      };
+      list.forEach((x, i) => { x.c = cls(x); x.i = i; });
+      list.sort((a, b) => a.c - b.c || a.i - b.i);
+      if (!r.proof && list.length && list[0].c === 0) r.proof = 'Länge';
+      list.forEach((x) => { delete x.c; delete x.i; });
+    }
     r.list = list.slice(0, 8);
     if (r.list.length) { r.best = r.list[0].u; r.how = r.list[0].how; }
     return r;
@@ -3103,6 +3233,19 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         return;
       }
       st.expectDur = 0;
+      // Gegenprobe beim Öffnen: Ist das Video gleich lang wie das auf der Seite? Sonst ist es ein anderes (z. B. das
+      // vorige nach einem schnellen Wechsel) → gleich die nächste Quelle. Passt keine, zurück zur ersten (z. B. wenn die
+      // Seite gerade Werbung zeigt). Nur einmal pro Öffnen, nie bei Live.
+      if (!st.lenOk) {
+        const od = orig.duration, vd = vid.duration;
+        if (isFinite(od) && od > 1 && isFinite(vd) && vd > 1 && Math.abs(od - vd) > lenTol(od)) {
+          if (!st.lenFirst) st.lenFirst = st.cur;
+          if (st.idx < st.sources.length) { tryNext(); return; }
+          st.lenOk = true;
+          if (st.lenFirst !== st.cur) { st.sources = [st.lenFirst].concat(st.sources.filter((x) => x !== st.lenFirst)); st.idx = 0; tryNext(); return; }
+        }
+        st.lenOk = true;
+      }
       if (!st.hls && st.startTime > 1 && isFinite(vid.duration) && vid.duration > st.startTime) { try { vid.currentTime = st.startTime; } catch (e) {} }
       vid.playbackRate = st.speed;
       autoOrient(vid.videoWidth, vid.videoHeight);
@@ -5597,7 +5740,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 18.0',
+      'Video-Assistent 18.1',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
@@ -5608,6 +5751,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       'Puffer-Spur: ' + (function () { if (!v) return '-'; const m = creditsFor(v, 0); const l = (bufCredit.get(v) || []).length; return l + ' Zuwächse | ' + (Array.from(m.entries()).map((e) => e[0].slice(-6) + ':' + e[1].toFixed(1)).join(', ') || '-'); })(),
       'HD nachladen: ' + hdLog + ' | Weiterleitung: ' + lastResolve + (PH ? ' | Pornhub-MP4: ' + phLog : '') + (IG ? ' | Instagram-MP4: ' + igLog : '') + (TT ? ' | TikTok: ' + ttLog + ' · ' + (ttPostUrl(v) || 'kein Link') : ''),
       'Zuletzt geöffnet: ' + (lastIntent.t ? Math.round((Date.now() - lastIntent.t) / 1000) + ' s her | ' + lastIntent.how + ' | ' + hostOf(lastIntent.url) + ' …' + lastIntent.url.slice(-50) : '-'),
+      'Stream-Nachweis: ' + (r.proof || '-') + ' | Listen gelesen: ' + plInfo.size + ' | Stück-Ordner: ' + segHits.size +
+        (function () { const p = playingStream(navAt); return p ? ' | lädt gerade: ' + hostOf(p.u) + ' …' + p.u.slice(-40) : ''; })(),
       'Kodierung: ' + (r.best ? encTag(r.best) || '-' : '-'),
       'IDs am Video: ' + (r.ids.slice(0, 12).join(', ') || '-'),
       'Meta-Einträge: ' + metaCount + ' (Schlüssel: ' + metaMap.size + ') | API-Antworten: ' + bodiesRead + ' | Netzwerk-Quellen: ' + sources.length,

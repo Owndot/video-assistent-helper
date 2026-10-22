@@ -32,6 +32,17 @@ with sync_playwright() as p:
     pg.evaluate('() => Array.from(%s.querySelectorAll(".vmenu.on .vmi")).find(b => b.firstChild.textContent === "Link teilen").click()' % R); time.sleep(0.6)
     sh = pg.evaluate('() => window.__shared')
     check('… geteilt wird die neue Seitenadresse, nicht der Link aufs vorige Video', len(sh) == 1 and sh[0]['url'].endswith('/video/jetzt-folge/b-22222'), sh)
+    # zurück zum ersten Video (A → B → A): dessen Stream wurde früher schon geladen, gilt aber jetzt wieder
+    pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(1.0)
+    pg.evaluate('() => switchBack()')
+    pg.wait_for_function('() => { const v = document.getElementById("v"); return v.currentTime > 0.3 && v.videoWidth > 0; }', timeout=20000)
+    pg.evaluate('() => { const v = document.getElementById("v"); v.muted = false; v.play(); }'); time.sleep(0.8)
+    n1 = len(reqs)
+    pg.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
+    pg.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.currentTime > 0.3; }' % R, timeout=20000)
+    time.sleep(0.5)
+    after2 = [u.replace(B, '/') for u in reqs[n1:] if '.m3u8' in u]
+    check('zurück zum ersten Video: Player lädt wieder dessen Stream', any('/hls/' in u for u in after2) and not any('/hls2/' in u for u in after2), after2)
     check('keine Fehler', not errs, errs)
     b.close()
 srv.shutdown()

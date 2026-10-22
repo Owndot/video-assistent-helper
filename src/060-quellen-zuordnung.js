@@ -389,6 +389,10 @@
     const single = countEligible() <= 1;
     // Pornhub: komplette MP4 mit Ton zuerst (beste Qualität vorn), der Stream nur als Ausweich
     if (PH && phCache && phCache.length) phCache.forEach((c) => add(c.u, 'MP4 mit Ton' + (c.res ? ' · ' + c.res + 'p' : '')));
+    // 1. bewiesen: die Seite lädt gerade Stücke genau dieses Streams (seit Start dieses Videos / letztem Wechsel)
+    checkNav();
+    const ps = playingStream(Math.max(navAt, (startAt.get(v) || 0) - 300));
+    if (ps) add(ps.u, 'Stream (läuft gerade, geprüft)');
     add(timingMatch(v), 'Stream (läuft gerade)');
     add(posterMatch(v), 'Stream (Vorschaubild)');
     if (single) {
@@ -401,6 +405,23 @@
       (near.qualities || [{ u: near.best }]).forEach((c) => add(c.u, near.how || 'Seitendaten'));
     }
     if (single) recent().filter((x) => !PLAYLIST_RE.test(x)).reverse().forEach((x) => add(x, 'Datei (Netzwerk)'));
+    // 2. Gegenprobe Länge: Streams, deren Länge NICHT zum Video auf der Seite passt, sind ein anderes Video → ans Ende.
+    //    Passende vor unbekannten. Der bewiesene bleibt vorn. (Live: keine Länge, keine Prüfung.)
+    const d = v.duration;
+    r.proof = ps ? 'Stücke' : '';
+    if (isFinite(d) && d > 1) {
+      const cls = (x) => {
+        if (ps && x.u === ps.u) return -1;
+        const l = PLAYLIST_RE.test(x.u) ? streamLen(x.u) : null;
+        if (!l || l.live) return 1;
+        if (Math.abs(l.dur - d) <= lenTol(d)) { x.how += ' · Länge passt'; return 0; }
+        x.how += ' · andere Länge'; return 2;
+      };
+      list.forEach((x, i) => { x.c = cls(x); x.i = i; });
+      list.sort((a, b) => a.c - b.c || a.i - b.i);
+      if (!r.proof && list.length && list[0].c === 0) r.proof = 'Länge';
+      list.forEach((x) => { delete x.c; delete x.i; });
+    }
     r.list = list.slice(0, 8);
     if (r.list.length) { r.best = r.list[0].u; r.how = r.list[0].how; }
     return r;
