@@ -246,11 +246,22 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   }
   // Quellen für den eingebauten Player, die beste zuerst (DASH-Manifeste kann er nicht)
   // Kadri/Facebook: die MP4 nur nehmen, wenn sie sicher zum laufenden Video gehört – sonst keine (→ Spiegeln)
+  // Qualität zuerst (19.3): Die fertige Datei nur nehmen, wenn sie mindestens etwa so scharf ist wie das, was Facebook
+  // gerade zeigt (kurze Bildseite). Facebook spielt selbst oft HD als getrennte Bild-/Tonspur – die kann nur das Spiegeln.
+  function fbRes(u) {
+    const tag = encTag(u);
+    const m = /(\d{3,4})p\b/.exec(tag) || /\.C3\.(\d{3,4})\./.exec(tag);
+    return m ? +m[1] : 0;
+  }
   function fbSureSources(v, resMap) {
     try {
       const af = assetFor(v);
       if (!af.sure || !af.asset) return [];
-      const out = playerSources(v, resMap).filter((u) => assetOf(u) === af.asset);
+      let out = playerSources(v, resMap).filter((u) => assetOf(u) === af.asset);
+      const shown = Math.min(v.videoWidth || 0, v.videoHeight || 0);   // was Facebook gerade abspielt
+      if (shown > 0) out = out.filter((u) => fbRes(u) >= shown * 0.9);   // unschärfer (oder unbekannt) → spiegeln
+      out.sort((a, b) => fbRes(b) - fbRes(a));
+      out.forEach((u) => { if (resMap && fbRes(u)) resMap[u] = fbRes(u); });
       return out;
     } catch (e) { return []; }
   }

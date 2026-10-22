@@ -31,6 +31,9 @@
     subHigh: false,           // Untertitel oben im Bild statt unten (z. B. wenn das Video eigene Texte unten hat)
     language: 'auto',         // Sprache der Oberfläche: 'auto' (wie der Browser), 'de' oder 'en'
     dialogBoost: false,       // Dialog-Verstärker (Stimmen deutlicher) – im ⋮-Menü umschaltbar
+    // Spul-Vorschau: 'live' = das Video selbst springt beim Ziehen mit (wie Samsung Internet; geht überall, auch beim
+    // Spiegeln), 'thumb' = kleines Vorschaubild über der Leiste (braucht eine zweite Kopie des Videos)
+    seekPreview: 'live',
     leaveAction: 'play',      // in eine andere App wechseln: 'play' = weiterlaufen lassen (wie der Browser es erlaubt), 'pause' = anhalten
     // Helfer-App "Video-Assistent Helfer" (eigene APK): Läuft sie, steuern die Wischgesten die ECHTE Helligkeit und
     // Medienlautstärke des Handys. Läuft sie nicht, regelt der Player wie bisher nur das Video. false = nie fragen.
@@ -79,7 +82,7 @@
   };
   // Eigene Einstellungen (im Player: ⋯ → Einstellungen) gelten vor den Werten oben und überstehen Updates des Skripts
   const SETTING_KEYS = ['startFullscreen', 'lensGlass', 'ambient', 'progressLine', 'holdSpeed', 'topGuard', 'bottomGuard',
-    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh', 'language', 'leaveAction', 'dialogBoost',
+    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh', 'language', 'leaveAction', 'dialogBoost', 'seekPreview',
     // Seitenlisten (in Kadri über die Einstellungsseite änderbar; ein eigener Wert ersetzt die Liste oben)
     'ytdlpSites', 'downloadOnlySites', 'disabledSites'];
   const CONFIG_DEFAULT = {};
@@ -117,7 +120,7 @@
     'Füllen': 'Fill', 'Strecken': 'Stretch',
     // Einstellungen (kurz)
     'Design': 'Design', 'Glas': 'Glass', 'Schlicht': 'Plain', 'Vollbild': 'Full screen', 'Ambient': 'Ambient',
-    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
+    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Spul-Vorschau': 'Seek preview', 'Im Bild': 'In video', 'Kleines Bild': 'Thumbnail', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
     'Link teilen': 'Share link', 'Zurück': 'Back', 'Wiederholen': 'Repeat', 'Wiederholen aus': 'Repeat off', 'Wiederholen: endlos': 'Repeat: endless', 'Sleep-Timer': 'Sleep timer', 'Ende des Videos': 'End of video', 'Läuft': 'Running', 'Sleep-Timer aus': 'Sleep timer off', 'Sleep-Timer: angehalten': 'Sleep timer: paused', 'Sleep-Timer: Ende des Videos': 'Sleep timer: end of video', 'Dialog-Verstärker': 'Dialogue boost', 'Dialog-Verstärker an': 'Dialogue boost on', 'Dialog-Verstärker aus': 'Dialogue boost off', 'Dialog-Verstärker: hier nicht möglich (die Seite gibt den Ton nicht frei)': 'Dialogue boost: not possible here (the site doesn’t release the sound)', 'In App öffnen': 'Open in app', 'Beim Verlassen': 'When leaving', 'Weiter': 'Keep playing', 'Anhalten': 'Pause', 'Antippen für Vollbild': 'Tap for full screen', 'z. B. VLC': 'e.g. VLC', 'Link kopiert': 'Link copied', 'Kein Link zu diesem Video gefunden': 'No link to this video found',
     'Oben: Wischen bis ganz an den Rand': 'Top: swiping works right up to the edge', 'Unten: Wischen bis ganz an den Rand': 'Bottom: swiping works right down to the edge',
     '✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helper benutzen. Du kannst diese Seite schließen.': '✓ Connected. From now on only this script can use the helper. You can close this page.',

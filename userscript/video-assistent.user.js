@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.2
+// @version      19.3
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -74,6 +74,9 @@
     subHigh: false,           // Untertitel oben im Bild statt unten (z. B. wenn das Video eigene Texte unten hat)
     language: 'auto',         // Sprache der Oberfläche: 'auto' (wie der Browser), 'de' oder 'en'
     dialogBoost: false,       // Dialog-Verstärker (Stimmen deutlicher) – im ⋮-Menü umschaltbar
+    // Spul-Vorschau: 'live' = das Video selbst springt beim Ziehen mit (wie Samsung Internet; geht überall, auch beim
+    // Spiegeln), 'thumb' = kleines Vorschaubild über der Leiste (braucht eine zweite Kopie des Videos)
+    seekPreview: 'live',
     leaveAction: 'play',      // in eine andere App wechseln: 'play' = weiterlaufen lassen (wie der Browser es erlaubt), 'pause' = anhalten
     // Helfer-App "Video-Assistent Helfer" (eigene APK): Läuft sie, steuern die Wischgesten die ECHTE Helligkeit und
     // Medienlautstärke des Handys. Läuft sie nicht, regelt der Player wie bisher nur das Video. false = nie fragen.
@@ -122,7 +125,7 @@
   };
   // Eigene Einstellungen (im Player: ⋯ → Einstellungen) gelten vor den Werten oben und überstehen Updates des Skripts
   const SETTING_KEYS = ['startFullscreen', 'lensGlass', 'ambient', 'progressLine', 'holdSpeed', 'topGuard', 'bottomGuard',
-    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh', 'language', 'leaveAction', 'dialogBoost',
+    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh', 'language', 'leaveAction', 'dialogBoost', 'seekPreview',
     // Seitenlisten (in Kadri über die Einstellungsseite änderbar; ein eigener Wert ersetzt die Liste oben)
     'ytdlpSites', 'downloadOnlySites', 'disabledSites'];
   const CONFIG_DEFAULT = {};
@@ -160,7 +163,7 @@
     'Füllen': 'Fill', 'Strecken': 'Stretch',
     // Einstellungen (kurz)
     'Design': 'Design', 'Glas': 'Glass', 'Schlicht': 'Plain', 'Vollbild': 'Full screen', 'Ambient': 'Ambient',
-    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
+    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Spul-Vorschau': 'Seek preview', 'Im Bild': 'In video', 'Kleines Bild': 'Thumbnail', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
     'Link teilen': 'Share link', 'Zurück': 'Back', 'Wiederholen': 'Repeat', 'Wiederholen aus': 'Repeat off', 'Wiederholen: endlos': 'Repeat: endless', 'Sleep-Timer': 'Sleep timer', 'Ende des Videos': 'End of video', 'Läuft': 'Running', 'Sleep-Timer aus': 'Sleep timer off', 'Sleep-Timer: angehalten': 'Sleep timer: paused', 'Sleep-Timer: Ende des Videos': 'Sleep timer: end of video', 'Dialog-Verstärker': 'Dialogue boost', 'Dialog-Verstärker an': 'Dialogue boost on', 'Dialog-Verstärker aus': 'Dialogue boost off', 'Dialog-Verstärker: hier nicht möglich (die Seite gibt den Ton nicht frei)': 'Dialogue boost: not possible here (the site doesn’t release the sound)', 'In App öffnen': 'Open in app', 'Beim Verlassen': 'When leaving', 'Weiter': 'Keep playing', 'Anhalten': 'Pause', 'Antippen für Vollbild': 'Tap for full screen', 'z. B. VLC': 'e.g. VLC', 'Link kopiert': 'Link copied', 'Kein Link zu diesem Video gefunden': 'No link to this video found',
     'Oben: Wischen bis ganz an den Rand': 'Top: swiping works right up to the edge', 'Unten: Wischen bis ganz an den Rand': 'Bottom: swiping works right down to the edge',
     '✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helper benutzen. Du kannst diese Seite schließen.': '✓ Connected. From now on only this script can use the helper. You can close this page.',
@@ -2637,11 +2640,22 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   }
   // Quellen für den eingebauten Player, die beste zuerst (DASH-Manifeste kann er nicht)
   // Kadri/Facebook: die MP4 nur nehmen, wenn sie sicher zum laufenden Video gehört – sonst keine (→ Spiegeln)
+  // Qualität zuerst (19.3): Die fertige Datei nur nehmen, wenn sie mindestens etwa so scharf ist wie das, was Facebook
+  // gerade zeigt (kurze Bildseite). Facebook spielt selbst oft HD als getrennte Bild-/Tonspur – die kann nur das Spiegeln.
+  function fbRes(u) {
+    const tag = encTag(u);
+    const m = /(\d{3,4})p\b/.exec(tag) || /\.C3\.(\d{3,4})\./.exec(tag);
+    return m ? +m[1] : 0;
+  }
   function fbSureSources(v, resMap) {
     try {
       const af = assetFor(v);
       if (!af.sure || !af.asset) return [];
-      const out = playerSources(v, resMap).filter((u) => assetOf(u) === af.asset);
+      let out = playerSources(v, resMap).filter((u) => assetOf(u) === af.asset);
+      const shown = Math.min(v.videoWidth || 0, v.videoHeight || 0);   // was Facebook gerade abspielt
+      if (shown > 0) out = out.filter((u) => fbRes(u) >= shown * 0.9);   // unschärfer (oder unbekannt) → spiegeln
+      out.sort((a, b) => fbRes(b) - fbRes(a));
+      out.forEach((u) => { if (resMap && fbRes(u)) resMap[u] = fbRes(u); });
       return out;
     } catch (e) { return []; }
   }
@@ -3955,6 +3969,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
           [sfxL, sfxR].forEach((e) => { if (e.lab) e.lab.textContent = String(SKIP()); });
           bBack.setAttribute('aria-label', tr(SKIP() + ' s zurück')); bFwd.setAttribute('aria-label', tr(SKIP() + ' s vor'));
         }),
+        it('Spul-Vorschau', CONFIG.seekPreview === 'thumb' ? 'Kleines Bild' : 'Im Bild', () => setSetting('seekPreview', CONFIG.seekPreview === 'thumb' ? 'live' : 'thumb')),
         it('Halten', String(CONFIG.holdSpeed).replace('.', UI_EN() ? '.' : ',') + '×', () => next('holdSpeed', [1.5, 2, 3])),
         // Wischsperre: Streifen am Rand ohne Helligkeit/Lautstärke (Schnelleinstellungen, Home-Geste) – Stufe in Worten
         it('Wischsperre oben', zone(CONFIG.topGuard), () => { next('topGuard', ZONES); zoneTip('topGuard', 'Oberste', 'Oben'); }),
@@ -4606,16 +4621,16 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     bar.addEventListener('pointerdown', (e) => {
       stop(e); st.barDrag = true; clearTimeout(st.hideTimer);
       barG = { x: e.clientX, y: e.clientY, off: false, lock: false };
-      pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid();
+      if (!liveMode()) { pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid(); }
     });
     bar.addEventListener('pointermove', (e) => {
       if (!barG || barG.off || barG.lock) return;
       const dx = e.clientX - barG.x, dy = e.clientY - barG.y;
       if (Math.abs(dx) > 10) { barG.lock = true; return; }
-      if (-dy > 40 && Math.abs(dx) < 16) { barG.off = true; st.barDrag = false; prevHide(); barBack(); }
+      if (-dy > 40 && Math.abs(dx) < 16) { barG.off = true; st.barDrag = false; prevHide(); liveEnd(true); barBack(); }
     });
     bar.addEventListener('pointercancel', () => {   // Android hat die Wischgeste übernommen
-      if (barG && !barG.lock && !barG.off) { barG.off = true; st.barDrag = false; barBack(); setTimeout(() => { if (barG && barG.off) { barG = null; barBack(); scheduleHide(); } }, 120); }
+      if (barG && !barG.lock && !barG.off) { barG.off = true; st.barDrag = false; liveEnd(true); barBack(); setTimeout(() => { if (barG && barG.off) { barG = null; barBack(); scheduleHide(); } }, 120); }
     });
     bar.addEventListener('input', () => {
       if (barG && barG.off) { barBack(); return; }
@@ -4629,6 +4644,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       barG = null;
       const m = M();
       st.userSeekAt = Date.now();
+      liveEnd(false);
       if (isFinite(m.duration)) { try { m.currentTime = bar.value / 1000 * m.duration; } catch (e) {} }
       st.barDrag = false;
       prevHide();
@@ -4839,16 +4855,48 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Vorwärmen nach dem Start: Streams holen gleich das Raster (kleinste Stufe, wenig Daten),
     // Dateien nur ihr Inhaltsverzeichnis (wenige KB) – dann wartet auch das erste Ziehen nicht darauf
     st.prevWarm = () => {
+      if (liveMode()) return;   // Spulen im Bild: kein Vorschau-Video nötig (spart Daten)
       if (st.mode !== 'own' || !st.cur) return;
       if (st.hls) { pvs.autoGrid = true; pvs.userDone = true; prevLoad(); if (pv.readyState >= 1) startGrid(); }
       else { pv.preload = 'metadata'; prevLoad(); }
     };
+    // ----- Spulen „im Bild“ (wie Samsung Internet, 19.3) -----
+    // Während du ziehst, springt das Video selbst an die Stelle – du siehst das echte Bild in voller Größe. Geht überall
+    // gleich, auch beim Spiegeln (dann springt das Video der Seite), ohne zweite Kopie des Videos. Sicher: immer nur EIN
+    // Sprung auf einmal; zieht der Finger weiter, wird danach nur die neueste Stelle angesprungen.
+    const liveMode = () => CONFIG.seekPreview !== 'thumb';
+    const live = { on: false, busy: false, want: -1, t0: 0, tm: 0 };
+    function liveTo(t) {
+      const m = M();
+      if (!live.on) { live.on = true; live.t0 = m.currentTime; }
+      live.want = t;
+      if (!live.busy) livePump();
+    }
+    function livePump() {
+      const m = M();
+      if (live.want < 0 || !live.on) { live.busy = false; return; }
+      const t = live.want;
+      live.want = -1; live.busy = true;
+      st.userSeekAt = Date.now();
+      const done = () => { m.removeEventListener('seeked', done); clearTimeout(live.tm); live.busy = false; if (live.want >= 0) livePump(); };
+      m.addEventListener('seeked', done);
+      live.tm = setTimeout(done, 1200);   // keine Meldung (kommt bei Streams vor)? trotzdem weiter
+      try { m.currentTime = t; } catch (e) { done(); }
+    }
+    // Ende: back = zurück an die Stelle vor dem Ziehen (Hochwischen über die Leiste war kein Spulen)
+    function liveEnd(back) {
+      if (!live.on) return;
+      live.on = false; live.want = -1;
+      if (back) { st.userSeekAt = Date.now(); try { M().currentTime = live.t0; } catch (e) {} }
+    }
+    st.liveTo = liveTo; st.liveEnd = liveEnd; st.liveMode = liveMode;
     function prevShow(p) {
       const d = M().duration;
       if (!isFinite(d) || d <= 0) return;
       const t = p * d;
       pvTime.textContent = fmtTime(t);
-      const img = prevLoad() && !prev.classList.contains('noimg');
+      if (liveMode()) liveTo(t);
+      const img = !liveMode() && prevLoad() && !prev.classList.contains('noimg');
       if (img) {
         pvs.lastWant = t;
         const n = nearest(t);
@@ -4955,6 +5003,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         g.delta = dx / W * 90;   // ganze Bildschirmbreite = 90 Sekunden
         const to = clamp(g.time + g.delta, 0, isFinite(m.duration) ? m.duration : g.time + g.delta);
         showSeek(to, m.duration, g.delta);
+        if (st.liveMode && st.liveMode()) st.liveTo(to);   // Bild springt mit
       } else if (g.mode === 'vol' || g.mode === 'bright') {
         // gut ein Drittel der Bildschirmhöhe = 0 → 100 % (im Querformat mindestens 180 Pixel)
         const range = Math.max(H * 0.36, 180);
@@ -5010,6 +5059,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (cur.mode === 'seek') {
         const m = M();
         setTimeout(hideSeek, 350);   // kurz stehen lassen, dann weich ausblenden
+        if (st.liveEnd) st.liveEnd(false);
         st.userSeekAt = Date.now();
         try { m.currentTime = clamp(cur.time + cur.delta, 0, isFinite(m.duration) ? m.duration - 0.5 : cur.time + cur.delta); } catch (err) {}
         return;
@@ -5993,7 +6043,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.2',
+      'Video-Assistent 19.3',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

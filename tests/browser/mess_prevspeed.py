@@ -1,6 +1,7 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
 import time, json, sys
 exec(open('test_v8.py').read().split("results = []")[0])
+SCRIPT = SCRIPT.replace("seekPreview: 'live'", "seekPreview: 'thumb'")
 R = 'window.__evpRoot'
 def measure(path, page):
     S = open(path, encoding='utf-8').read()

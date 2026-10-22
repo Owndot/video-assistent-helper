@@ -201,16 +201,48 @@
     // Vorwärmen nach dem Start: Streams holen gleich das Raster (kleinste Stufe, wenig Daten),
     // Dateien nur ihr Inhaltsverzeichnis (wenige KB) – dann wartet auch das erste Ziehen nicht darauf
     st.prevWarm = () => {
+      if (liveMode()) return;   // Spulen im Bild: kein Vorschau-Video nötig (spart Daten)
       if (st.mode !== 'own' || !st.cur) return;
       if (st.hls) { pvs.autoGrid = true; pvs.userDone = true; prevLoad(); if (pv.readyState >= 1) startGrid(); }
       else { pv.preload = 'metadata'; prevLoad(); }
     };
+    // ----- Spulen „im Bild“ (wie Samsung Internet, 19.3) -----
+    // Während du ziehst, springt das Video selbst an die Stelle – du siehst das echte Bild in voller Größe. Geht überall
+    // gleich, auch beim Spiegeln (dann springt das Video der Seite), ohne zweite Kopie des Videos. Sicher: immer nur EIN
+    // Sprung auf einmal; zieht der Finger weiter, wird danach nur die neueste Stelle angesprungen.
+    const liveMode = () => CONFIG.seekPreview !== 'thumb';
+    const live = { on: false, busy: false, want: -1, t0: 0, tm: 0 };
+    function liveTo(t) {
+      const m = M();
+      if (!live.on) { live.on = true; live.t0 = m.currentTime; }
+      live.want = t;
+      if (!live.busy) livePump();
+    }
+    function livePump() {
+      const m = M();
+      if (live.want < 0 || !live.on) { live.busy = false; return; }
+      const t = live.want;
+      live.want = -1; live.busy = true;
+      st.userSeekAt = Date.now();
+      const done = () => { m.removeEventListener('seeked', done); clearTimeout(live.tm); live.busy = false; if (live.want >= 0) livePump(); };
+      m.addEventListener('seeked', done);
+      live.tm = setTimeout(done, 1200);   // keine Meldung (kommt bei Streams vor)? trotzdem weiter
+      try { m.currentTime = t; } catch (e) { done(); }
+    }
+    // Ende: back = zurück an die Stelle vor dem Ziehen (Hochwischen über die Leiste war kein Spulen)
+    function liveEnd(back) {
+      if (!live.on) return;
+      live.on = false; live.want = -1;
+      if (back) { st.userSeekAt = Date.now(); try { M().currentTime = live.t0; } catch (e) {} }
+    }
+    st.liveTo = liveTo; st.liveEnd = liveEnd; st.liveMode = liveMode;
     function prevShow(p) {
       const d = M().duration;
       if (!isFinite(d) || d <= 0) return;
       const t = p * d;
       pvTime.textContent = fmtTime(t);
-      const img = prevLoad() && !prev.classList.contains('noimg');
+      if (liveMode()) liveTo(t);
+      const img = !liveMode() && prevLoad() && !prev.classList.contains('noimg');
       if (img) {
         pvs.lastWant = t;
         const n = nearest(t);

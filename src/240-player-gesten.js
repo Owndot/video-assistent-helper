@@ -81,6 +81,7 @@
         g.delta = dx / W * 90;   // ganze Bildschirmbreite = 90 Sekunden
         const to = clamp(g.time + g.delta, 0, isFinite(m.duration) ? m.duration : g.time + g.delta);
         showSeek(to, m.duration, g.delta);
+        if (st.liveMode && st.liveMode()) st.liveTo(to);   // Bild springt mit
       } else if (g.mode === 'vol' || g.mode === 'bright') {
         // gut ein Drittel der Bildschirmhöhe = 0 → 100 % (im Querformat mindestens 180 Pixel)
         const range = Math.max(H * 0.36, 180);
@@ -136,6 +137,7 @@
       if (cur.mode === 'seek') {
         const m = M();
         setTimeout(hideSeek, 350);   // kurz stehen lassen, dann weich ausblenden
+        if (st.liveEnd) st.liveEnd(false);
         st.userSeekAt = Date.now();
         try { m.currentTime = clamp(cur.time + cur.delta, 0, isFinite(m.duration) ? m.duration - 0.5 : cur.time + cur.delta); } catch (err) {}
         return;

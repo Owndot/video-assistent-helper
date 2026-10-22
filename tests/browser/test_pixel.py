@@ -4,6 +4,7 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 import time, json, sys
 from PIL import Image, ImageStat
 exec(open('test_v8.py').read().split("results = []")[0])
+SCRIPT = SCRIPT.replace("seekPreview: 'live'", "seekPreview: 'thumb'")   # dieser Test prüft das kleine Vorschaubild (19.3: Standard ist „im Bild“)
 R = 'window.__evpRoot'; results = []
 def check(n, c, i=''): results.append(bool(c)); print(('OK   ' if c else 'FAIL ') + n + ('  – ' + str(i) if i != '' else ''))
 STATS = '''(el) => { const c = document.createElement('canvas'); c.width = 48; c.height = 27; const g = c.getContext('2d');

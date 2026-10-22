@@ -112,16 +112,16 @@
     bar.addEventListener('pointerdown', (e) => {
       stop(e); st.barDrag = true; clearTimeout(st.hideTimer);
       barG = { x: e.clientX, y: e.clientY, off: false, lock: false };
-      pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid();
+      if (!liveMode()) { pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid(); }
     });
     bar.addEventListener('pointermove', (e) => {
       if (!barG || barG.off || barG.lock) return;
       const dx = e.clientX - barG.x, dy = e.clientY - barG.y;
       if (Math.abs(dx) > 10) { barG.lock = true; return; }
-      if (-dy > 40 && Math.abs(dx) < 16) { barG.off = true; st.barDrag = false; prevHide(); barBack(); }
+      if (-dy > 40 && Math.abs(dx) < 16) { barG.off = true; st.barDrag = false; prevHide(); liveEnd(true); barBack(); }
     });
     bar.addEventListener('pointercancel', () => {   // Android hat die Wischgeste übernommen
-      if (barG && !barG.lock && !barG.off) { barG.off = true; st.barDrag = false; barBack(); setTimeout(() => { if (barG && barG.off) { barG = null; barBack(); scheduleHide(); } }, 120); }
+      if (barG && !barG.lock && !barG.off) { barG.off = true; st.barDrag = false; liveEnd(true); barBack(); setTimeout(() => { if (barG && barG.off) { barG = null; barBack(); scheduleHide(); } }, 120); }
     });
     bar.addEventListener('input', () => {
       if (barG && barG.off) { barBack(); return; }
@@ -135,6 +135,7 @@
       barG = null;
       const m = M();
       st.userSeekAt = Date.now();
+      liveEnd(false);
       if (isFinite(m.duration)) { try { m.currentTime = bar.value / 1000 * m.duration; } catch (e) {} }
       st.barDrag = false;
       prevHide();

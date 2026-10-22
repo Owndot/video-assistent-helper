@@ -3,6 +3,7 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 # (17.1/17.2 zeigten für Angeschautes gemerkte Bilder – der Wechsel Bild ↔ nur Zeit flackerte beim Spulen.)
 import time, json
 exec(open('test_v8.py').read().split("results = []")[0])
+SCRIPT = SCRIPT.replace("seekPreview: 'live'", "seekPreview: 'thumb'")   # dieser Test prüft das kleine Vorschaubild (19.3: Standard ist „im Bild“)
 R = 'window.__evpRoot'; results = []
 def check(n, c, i=''): results.append(bool(c)); print(('OK   ' if c else 'FAIL ') + n + ('  – ' + str(i) if i != '' else ''))
 CLIP = open(WEB + '/clip.webm', 'rb').read()        # 60 s – das laufende Video

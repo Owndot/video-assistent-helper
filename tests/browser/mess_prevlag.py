@@ -7,6 +7,7 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 # Aufruf: python3 mess_prevlag.py [alt.js]  – mit einer zweiten Skriptdatei zum Vergleich
 import time, sys
 exec(open('test_v8.py').read().split("results = []")[0])
+SCRIPT = SCRIPT.replace("seekPreview: 'live'", "seekPreview: 'thumb'")
 R = 'window.__evpRoot'
 WAIT = '''(want) => new Promise((ok) => { const t0 = performance.now(); const p = %s.querySelector(".vprev");
   const f = () => { const t = p.dataset.t != null ? parseFloat(p.dataset.t) : NaN;

@@ -1,6 +1,7 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
 import time, json, sys
 exec(open('test_v8.py').read().split("results = []")[0])
+SCRIPT = SCRIPT.replace("seekPreview: 'live'", "seekPreview: 'thumb'")   # dieser Test prüft das kleine Vorschaubild (19.3: Standard ist „im Bild“)
 results = []
 def check(name, ok, info=''):
     results.append((name, bool(ok))); print(('OK   ' if ok else 'FAIL ') + name + ('  – ' + str(info) if info != '' else ''))
