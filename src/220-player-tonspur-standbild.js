@@ -109,10 +109,12 @@
     // die Leiste zurück
     // Spulen auf der Leiste (19.4) – eigene, große Berührungsfläche statt des Schiebereglers des Browsers:
     //  - kurz antippen = an diese Stelle springen
-    //  - ziehen = von der AKTUELLEN Stelle aus weiter (kein Sprung zum Finger); die Leiste wird dabei dick
-    //  - Tempo wie beim Mauszeiger (19.5, statt „nach unten = fein“): schnell ziehen = grob (wie die Leiste), langsam
-    //    ziehen = fein (bis achtmal genauer, bei langen Videos). Nichts zu lernen – wer genau sucht, zieht von selbst
-    //    langsam. Über der Vorschau steht, wie weit es von der alten Stelle weg ist („+0:42“).
+    //  - ziehen = die Stelle folgt dem Finger; die Leiste wird dabei dick
+    //  - Punkt unter dem Finger (19.6): beim Ziehen steht die Stelle genau unter dem Finger (wie YouTube) – nie läuft der
+    //    Finger aus dem Bild, Anfang und Ende liegen an den Enden der Leiste.
+    //  - fast stillhalten und kriechen (unter ~35 px/s) = fein (bis achtmal genauer, nur bei längeren Videos). Danach
+    //    bei normaler Bewegung gleitet die Stelle innerhalb weniger Millimeter wieder unter den Finger (kein Sprung).
+    //    Über der Vorschau steht, wie weit es von der alten Stelle weg ist („+0:42“).
     //  - zurück an die alte Stelle (weißer Strich auf der Leiste): rastet ein (kurzes Vibrieren, „± 0“) – loslassen
     //    dort = nichts ändern
     //  - nach oben weg vom Balken = abbrechen (Hinweis erscheint); loslassen dort = zurück an die alte Stelle.
@@ -163,7 +165,7 @@
       if (!d || scr.on) return;
       try { barHit.setPointerCapture(e.pointerId); } catch (x) {}
       const m = M();
-      Object.assign(scr, { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, lx: e.clientX, lt: e.timeStamp || performance.now(), v: -1, t0: m.currentTime, t: m.currentTime, raw: m.currentTime, moved: false, mode: '', snap: false, away: false });
+      Object.assign(scr, { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, lx: e.clientX, lt: e.timeStamp || performance.now(), v: -1, t0: m.currentTime, t: m.currentTime, raw: m.currentTime, moved: false, first: true, mode: '', snap: false, away: false });
       // weißer Strich: hier warst du (dorthin zurück rastet ein)
       const br = bar.getBoundingClientRect(), rr = bar.parentNode.getBoundingClientRect();
       barMark.style.left = Math.round(br.left - rr.left + 7 + clamp(m.currentTime / d, 0, 1) * (br.width - 14) - 1.5) + 'px';
@@ -177,21 +179,26 @@
       const dy = e.clientY - scr.y0;
       if (!scr.moved) {
         if (Math.hypot(e.clientX - scr.x0, dy) < 8) return;
-        scr.moved = true;   // (die ersten Pixel zählen mit: lx bleibt beim Aufsetzpunkt)
+        scr.moved = true;
         wrap.classList.add('thick');
       }
       const br = bar.getBoundingClientRect(), w = Math.max(60, br.width - 14);
+      const at = (cx) => clamp((cx - br.left - 7) / w, 0, 1) * d;   // Stelle unter dem Finger
       const now = e.timeStamp || performance.now(), dt = Math.max(4, now - scr.lt);
       const dx = e.clientX - scr.lx;
       scr.lx = e.clientX; scr.lt = now;
       if (dy < -Math.max(70, br.height * 1.5)) { scr.mode = 'cancel'; scr.v = -1; scrubShow(scr.t0); return; }
-      // Tempo: Fingergeschwindigkeit (px/ms, geglättet) → Sekunden pro Pixel zwischen „fein“ und „wie die Leiste“
+      // Fingergeschwindigkeit (px/ms, geglättet) mischt zwischen „fein“ (kleine Schritte von der Stelle aus) und
+      // „unter dem Finger“ (der Abstand zum Finger schrumpft mit jeder Bewegung, nach ~25 px auf ein Drittel)
       const sp = Math.abs(dx) / dt;
       scr.v = scr.v < 0 ? sp : scr.v * 0.6 + sp * 0.4;
       const full = d / w, fine = Math.min(full, Math.max(full / 8, 0.08));
-      const rate = fine + (full - fine) * clamp((scr.v - 0.06) / 0.24, 0, 1);
-      scr.mode = rate < full * 0.6 ? 'fine' : '';
-      scr.raw = clamp(scr.raw + dx * rate, 0, d);
+      const g = scr.first ? 1 : clamp((scr.v - 0.035) / 0.085, 0, 1);
+      const inc = scr.raw + dx * fine;
+      const under = at(e.clientX) + (scr.first ? 0 : (scr.raw - at(e.clientX - dx)) * Math.exp(-Math.abs(dx) / 25));
+      scr.first = false;
+      scr.mode = g < 0.5 && fine < full * 0.6 ? 'fine' : '';
+      scr.raw = clamp(inc + (under - inc) * g, 0, d);
       // Einrasten an der alten Stelle (erst nachdem du einmal weg warst)
       const zone = Math.max(0.25, fine * 7);
       const near = Math.abs(scr.raw - scr.t0) < zone;
