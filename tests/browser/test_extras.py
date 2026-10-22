@@ -14,8 +14,8 @@ def open_player(pg, url, ready='v && v.currentTime > 0.5'):
     pg.wait_for_function('() => { const v = %s.querySelector(".vv"); return %s && isFinite(v.duration); }' % (R, ready), timeout=20000)
     time.sleep(0.6)
 def ctl(pg): pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R); time.sleep(0.15)
-def more(pg):
-    ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Mehr]").click()' % R); time.sleep(0.35)
+def more(pg):   # ⋮-Menü öffnen (ein offenes Menü vorher schließen – ⋮ würde es sonst nur zumachen)
+    ctl(pg); pg.evaluate('() => { const r = %s; if (r.querySelector(".vmenu.on")) { r.querySelector(".vmenu").classList.remove("on"); r.querySelector(".vp").classList.remove("menu"); } r.querySelector("button[aria-label=Mehr]").click(); }' % R); time.sleep(0.35)
 def subsm(pg):   # Untertitel-Knopf unten (CC)
     ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Untertitel]").click()' % R); time.sleep(0.35)
 def items(pg):
@@ -34,7 +34,7 @@ with sync_playwright() as p:
     # ---------- Untertitel von der Seite ----------
     open_player(pg, 'subs.html')
     more(pg); m = items(pg)
-    check('Mehr (oben rechts): Teilen, Standbild, Einstellungen (keine Tonspur bei einer Spur)', [x[0] for x in m if x[0] not in ('In App öffnen', 'Qualität')] == ['Link teilen', 'Geschwindigkeit', 'Standbild speichern', 'Einstellungen'], m)
+    check('Mehr (oben rechts): Teilen, Standbild, Einstellungen (keine Tonspur bei einer Spur)', [x[0] for x in m if x[0] not in ('In App öffnen', 'Qualität')] == ['Link teilen', 'Geschwindigkeit', 'Sleep-Timer', 'Dialog-Verstärker', 'Standbild speichern', 'Einstellungen'], m)
     subsm(pg); m = items(pg)
     check('Untertitel-Menü: Aus, Deutsch, English, Datei laden', [x[0] for x in m][:4] == ['Aus', 'Deutsch', 'English', 'Datei laden …'], m)
     pick(pg, 'Deutsch'); time.sleep(0.8)
