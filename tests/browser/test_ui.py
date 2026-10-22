@@ -46,20 +46,20 @@ with sync_playwright() as p:
     pg.mouse.move(br[0] + br[2] * 0.85, y); pg.mouse.down(); pg.mouse.move(br[0] + br[2] * 0.85, y - 70, steps=8); pg.mouse.up(); time.sleep(0.6)
     t1 = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
     check('Hochwischen über die Zeitleiste: Stelle bleibt', abs(t1 - 20) < 1, round(t1, 1))
-    # (19.4: Ziehen spult von der aktuellen Stelle aus – um die gezogene Strecke)
+    # (19.6: beim Ziehen steht die Stelle unter dem Finger)
     W = br[2] - 14
     tb = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
     ctl(pg); pg.mouse.move(br[0] + br[2] * 0.3, y); pg.mouse.down(); pg.mouse.move(br[0] + br[2] * 0.6, y, steps=8); pg.mouse.up(); time.sleep(0.6)
     t2 = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
-    exp2 = tb + 0.3 * br[2] / W * 60
-    check('zur Seite ziehen: spult weiter normal (um die Strecke)', abs(t2 - exp2) < 3, [round(t2, 1), round(exp2, 1)])
+    exp2 = (br[2] * 0.6 - 7) / W * 60
+    check('zur Seite ziehen: spult (Stelle unter dem Finger)', abs(t2 - exp2) < 3, [round(t2, 1), round(exp2, 1)])
     # Kreis halten, Finger wackelt beim Greifen etwas nach oben, dann zur Seite → spult trotzdem (16.1: milder Schutz)
     pg.evaluate('() => { const v = %s.querySelector(".vv"); v.currentTime = 10; }' % R); time.sleep(0.4)
     tb = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
     ctl(pg); pg.mouse.move(br[0] + br[2] * 0.3, y); pg.mouse.down(); pg.mouse.move(br[0] + br[2] * 0.3 + 3, y - 22, steps=5)
     pg.mouse.move(br[0] + br[2] * 0.8, y - 22, steps=10); pg.mouse.up(); time.sleep(0.6)
     t3 = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
-    exp3 = tb + 0.5 * br[2] / W * 60
+    exp3 = (br[2] * 0.8 - 7) / W * 60
     check('Halten mit Wackler nach oben, dann seitlich: spult', abs(t3 - exp3) < 3, [round(t3, 1), round(exp3, 1)])
     # wie Samsung: Zeitleiste über den Knöpfen (Knöpfe liegen zwischen Leiste und Android-Wischgeste)
     lay2 = pg.evaluate('() => { const r = %s; return [r.querySelector(".vrow").getBoundingClientRect().bottom, r.querySelector(".vhead").getBoundingClientRect().top]; }' % R)

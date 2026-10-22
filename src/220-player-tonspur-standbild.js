@@ -190,6 +190,9 @@
       if (dy < -Math.max(70, br.height * 1.5)) { scr.mode = 'cancel'; scr.v = -1; scrubShow(scr.t0); return; }
       // Fingergeschwindigkeit (px/ms, geglättet) mischt zwischen „fein“ (kleine Schritte von der Stelle aus) und
       // „unter dem Finger“ (der Abstand zum Finger schrumpft mit jeder Bewegung, nach ~25 px auf ein Drittel)
+      // Hochwischen (Android-Geste) ist kein Spulen: erst wenn der Finger ~10 px zur Seite gezogen hat, springt die
+      // Stelle unter ihn
+      if (scr.first && Math.abs(e.clientX - scr.x0) < 10) { scrubShow(scr.t); return; }
       const sp = Math.abs(dx) / dt;
       scr.v = scr.v < 0 ? sp : scr.v * 0.6 + sp * 0.4;
       const full = d / w, fine = Math.min(full, Math.max(full / 8, 0.08));
