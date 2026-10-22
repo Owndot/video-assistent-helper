@@ -14,7 +14,9 @@ mkdir -p out
 bad=(); n=0
 for t in ${TESTS:-test_*.py}; do
   log="out/${t%.py}.log"
-  timeout 300 python3 -u "$t" > "$log" 2>&1; code=$?
+  t0=$SECONDS
+  timeout -k 15 300 python3 -u "$t" > "$log" 2>&1; code=$?
+  dur="$((SECONDS - t0))s"
   if [[ $t == mess_* ]]; then
     r=$(grep -vE '^\s*$' "$log" | tail -3 | tr '\n' ' ' | cut -c1-160)
     printf '%-22s Messung: %s\n' "$t" "${r:-(keine Ausgabe)}"
@@ -24,7 +26,7 @@ for t in ${TESTS:-test_*.py}; do
   res=$(grep -E '^ERGEBNIS' "$log" | tail -1)
   nfail=$(grep -cE '^\s*FAIL' "$log")
   why=''
-  if [ "$code" = 124 ]; then why='Zeit überschritten (300 s)'
+  if [ "$code" = 124 ] || [ "$code" = 137 ]; then why='Zeit überschritten (300 s)'
   elif [ "$code" != 0 ]; then why='Absturz: '$(grep -E '^[A-Za-z_.]+(Error|Exception)' "$log" | tail -1 | cut -c1-90)
   elif [ -z "$res" ]; then why='keine Ergebniszeile'
   elif [ "$nfail" -gt 0 ]; then why="$nfail Prüfung(en) fehlgeschlagen"
@@ -33,10 +35,10 @@ for t in ${TESTS:-test_*.py}; do
   fi
   if [ -n "$why" ]; then
     bad+=("$t")
-    printf '%-22s FEHLER – %s\n' "$t" "$why"
+    printf '%-22s %5s FEHLER – %s\n' "$t" "$dur" "$why"
     grep -E '^\s*FAIL' "$log" | head -5 | cut -c1-200 | sed 's/^/      /'
   else
-    printf '%-22s ok   %s\n' "$t" "${res#ERGEBNIS: }"
+    printf '%-22s %5s ok   %s\n' "$t" "$dur" "${res#ERGEBNIS: }"
   fi
 done
 [ $n = 0 ] && exit 0   # nur Messungen

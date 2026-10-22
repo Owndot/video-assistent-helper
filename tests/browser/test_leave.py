@@ -86,7 +86,11 @@ with sync_playwright() as p:
         if (c) window.__cov = Math.max(window.__cov, getComputedStyle(c).opacity > 0.5 ? 1 : 0); requestAnimationFrame(f); }; f(); }''' % R)
     ours = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
     pg.evaluate('() => document.exitFullscreen().catch(() => {})'); time.sleep(0.15)
-    vg = pg.evaluate('() => { const w = %s.querySelector(".vp"); return w ? [w.classList.contains("vgone"), getComputedStyle(w).opacity, %s.querySelector(".vv").muted] : null; }' % (R, R))
+    # (Ausblenden dauert 0,1 s – auf langsamen Testrechnern bis zu ½ s warten)
+    for _ in range(8):
+        vg = pg.evaluate('() => { const w = %s.querySelector(".vp"); return w ? [w.classList.contains("vgone"), getComputedStyle(w).opacity, %s.querySelector(".vv").muted] : null; }' % (R, R))
+        if not vg or float(vg[1]) < 0.5: break
+        time.sleep(0.05)
     check('Zurück-Geste: Player sofort unsichtbar und stumm (man sieht gleich die Seite, 17.8)', vg and vg[0] and float(vg[1]) < 0.5 and vg[2], vg)
     ov = pg.evaluate('() => { const o = document.getElementById("v"); return [Math.round(o.currentTime * 10) / 10, o.paused, o.muted]; }')
     check('… Seite schon an deiner Stelle, läuft mit Ton (vor dem Schließen, 17.9)', abs(ov[0] - ours) < 1.2 and not ov[1] and not ov[2], [ours, ov])
