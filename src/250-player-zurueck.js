@@ -242,9 +242,10 @@
     };
     // Reels-Seiten (Facebook u. a.) springen beim Ende von selbst zum nächsten Video – manche schon kurz VOR „ended“
     // (sobald die Zeit fast am Ende ist). Dann wäre der Player schwarz und man stünde danach auf einem anderen Reel.
-    // Darum: 0,6 s vor dem Ende anhalten (letztes Bild bleibt stehen) und – siehe „Schleuse“ unten – der Seite die
+    // Darum: 0,2 s vor dem Ende anhalten (letztes Bild bleibt stehen; früher 0,6 s – seit der Facebook-Countdown
+    // abgebrochen wird, reicht das, 18.4) und – siehe „Schleuse“ unten – der Seite die
     // letzten Meldungen des Videos gar nicht erst zeigen. Nahe am Ende genauer hinschauen als „timeupdate“ (¼ s).
-    const END_GAP = 0.6;
+    const END_GAP = 0.2;
     let nearIv = 0;
     const stopNear = () => { clearInterval(nearIv); nearIv = 0; };
     const nearEnd = () => {

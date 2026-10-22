@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      18.3
+// @version      18.4
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -5192,9 +5192,10 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     };
     // Reels-Seiten (Facebook u. a.) springen beim Ende von selbst zum nächsten Video – manche schon kurz VOR „ended“
     // (sobald die Zeit fast am Ende ist). Dann wäre der Player schwarz und man stünde danach auf einem anderen Reel.
-    // Darum: 0,6 s vor dem Ende anhalten (letztes Bild bleibt stehen) und – siehe „Schleuse“ unten – der Seite die
+    // Darum: 0,2 s vor dem Ende anhalten (letztes Bild bleibt stehen; früher 0,6 s – seit der Facebook-Countdown
+    // abgebrochen wird, reicht das, 18.4) und – siehe „Schleuse“ unten – der Seite die
     // letzten Meldungen des Videos gar nicht erst zeigen. Nahe am Ende genauer hinschauen als „timeupdate“ (¼ s).
-    const END_GAP = 0.6;
+    const END_GAP = 0.2;
     let nearIv = 0;
     const stopNear = () => { clearInterval(nearIv); nearIv = 0; };
     const nearEnd = () => {
@@ -5813,7 +5814,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 18.3',
+      'Video-Assistent 18.4',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
