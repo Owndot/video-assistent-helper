@@ -29,9 +29,35 @@ import android.widget.Toast;
  * Die Seite wird bei jeder Rückkehr neu aufgebaut (Rechte können sich in den Android-Einstellungen geändert haben).
  */
 public class MainActivity extends Activity {
-    // Farben wie im Player
-    static final int BG = 0xFF0E1014, CARD = 0xFF171A21, LINE = 0xFF262A33, TXT = 0xFFF2F4F7, SUB = 0xFFA3A9B5;
-    static final int ACC = 0xFF9BE7FF, ACC_TXT = 0xFF06222C, OK = 0xFF4CD964, WARN = 0xFFFFB020, SEG = 0xFF0E1014;
+    // Farben: dunkel (wie der Player) oder hell – einfarbig wie iOS/One UI: Hauptknöpfe weiß (dunkel) bzw. schwarz (hell)
+    private int BG, CARD, LINE, TXT, SUB, ACC, ACC_TXT, OUT, OK, OK_TXT, WARN, SEG;
+    private boolean dark;
+
+    /** Design: "auto" (wie das Handy), "light" oder "dark" */
+    static String theme(Activity a) { return prefs(a).getString("theme", "auto"); }
+
+    private void palette() {
+        String t = theme(this);
+        boolean sysDark = (getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+        dark = "dark".equals(t) || (!"light".equals(t) && sysDark);
+        if (dark) {
+            BG = 0xFF0E1014; CARD = 0xFF171A21; LINE = 0xFF262A33; TXT = 0xFFF2F4F7; SUB = 0xFFA3A9B5;
+            ACC = 0xFFF2F4F7; ACC_TXT = 0xFF0E1014; OUT = 0x55F2F4F7; OK = 0xFF34C759; OK_TXT = 0xFF06210F; WARN = 0xFFFFB020; SEG = 0xFF0E1014;
+        } else {
+            BG = 0xFFF2F3F7; CARD = 0xFFFFFFFF; LINE = 0xFFE3E5EA; TXT = 0xFF111318; SUB = 0xFF5F6470;
+            ACC = 0xFF111318; ACC_TXT = 0xFFFFFFFF; OUT = 0x40111318; OK = 0xFF1E9E4A; OK_TXT = 0xFFFFFFFF; WARN = 0xFFB26A00; SEG = 0xFFF2F3F7;
+        }
+        try {
+            getWindow().setStatusBarColor(BG);
+            getWindow().setNavigationBarColor(BG);
+            View d = getWindow().getDecorView();
+            int f = dark ? 0 : (View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+            d.setSystemUiVisibility(f);
+        } catch (Exception ignored) {}
+        if (sv != null) sv.setBackgroundColor(BG);
+    }
+    private ScrollView sv;
 
     private LinearLayout root;
 
@@ -41,10 +67,9 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         Keys.applyLang(this);
-        try { getWindow().setStatusBarColor(BG); getWindow().setNavigationBarColor(BG); } catch (Exception ignored) {}
-        ScrollView sv = new ScrollView(this);
+        sv = new ScrollView(this);
         sv.setFillViewport(true);
-        sv.setBackgroundColor(BG);
+        palette();
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(18), dp(26), dp(18), dp(28));
@@ -72,6 +97,7 @@ public class MainActivity extends Activity {
 
     // ---------- Aufbau ----------
     private void build() {
+        palette();
         root.removeAllViews();
         boolean ov = Settings.canDrawOverlays(this);
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
@@ -158,6 +184,14 @@ public class MainActivity extends Activity {
             }
             build();
         }));
+        LinearLayout tr = row();
+        tr.setPadding(0, dp(16), 0, dp(6));
+        tr.addView(text(Tr.t("Design", "Theme"), 16, false, TXT), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        set.addView(tr);
+        set.addView(segmented(new String[]{"Auto", Tr.t("Hell", "Light"), Tr.t("Dunkel", "Dark")}, new String[]{"auto", "light", "dark"}, theme(this), t -> {
+            prefs(this).edit().putString("theme", t).apply();
+            build();
+        }));
         Switch boot = new Switch(this);
         boot.setText(Tr.t("Beim Einschalten des Handys starten", "Start when the phone is switched on"));
         boot.setTextColor(TXT);
@@ -196,7 +230,7 @@ public class MainActivity extends Activity {
         num.setGravity(Gravity.CENTER);
         num.setTextSize(TypedValue.COMPLEX_UNIT_SP, ok ? 15 : 14);
         num.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
-        num.setTextColor(ok ? 0xFF0B2414 : ACC_TXT);
+        num.setTextColor(ok ? OK_TXT : ACC_TXT);
         num.setBackground(round(ok ? OK : ACC, dp(14), 0));
         r.addView(num, new LinearLayout.LayoutParams(dp(28), dp(28)));
         LinearLayout t = col();
@@ -266,10 +300,10 @@ public class MainActivity extends Activity {
 
     /** Knopf als Kapsel: gefüllt (Hauptaktion) oder mit Rand */
     private TextView pill(String label, boolean filled, View.OnClickListener l) {
-        TextView b = text(label, 15, true, filled ? ACC_TXT : ACC);
+        TextView b = text(label, 15, true, filled ? ACC_TXT : TXT);
         b.setGravity(Gravity.CENTER);
         b.setPadding(dp(16), dp(10), dp(16), dp(10));
-        b.setBackground(round(filled ? ACC : 0x00000000, dp(22), filled ? 0 : 0x669BE7FF));
+        b.setBackground(round(filled ? ACC : 0x00000000, dp(22), filled ? 0 : OUT));
         b.setClickable(true);
         b.setOnClickListener(l);
         return b;

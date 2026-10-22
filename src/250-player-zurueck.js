@@ -211,7 +211,7 @@
     try { orig.loop = false; } catch (e) {}
     const holdEnd = () => {
       if (vp !== st || st.mode !== 'capture') return;
-      if (st.repeatNow && st.repeatNow()) return;   // Wiederholen an: von vorn statt anhalten
+      if (st.repeatNow && st.repeatNow()) { if (!st.sleepHit) return; st.sleepHit = false; }   // Wiederholen: von vorn · Sleep-Timer: anhalten
       st.endHold = true;
       try { orig.pause(); } catch (e) {}
       showControls();

@@ -98,7 +98,7 @@
     // Teilen/In App/Qualität/Tempo bleiben als unsichtbare Knöpfe (.vstash) bestehen – das Menü löst sie aus.
     const bMore = ib(I.more, 'Mehr');
     const bSubs = chip(P.cc, 'Untertitel', 'Untertitel');   // unten: Untertitel (leuchtet, wenn an)
-    const bRep = chip(P.repeat, 'Wiederholen', 'Wiederholen');   // unten: Aus → 1× → 5× → Aus (Zahl = noch übrige Male)
+    const bRep = chip(P.repeat, 'Wiederholen', 'Wiederholen');   // unten: Aus → 1× → ∞ → Aus
     const repNum = h('b', { class: 'vrepn' }, ''); bRep.append(repNum);
     const subEl = h('div', { class: 'vsub', 'aria-live': 'polite' });
     const bUnlock = ib(P.lock, 'Entsperren', 'vunlock g');

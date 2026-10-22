@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      17.4
+// @version      17.5
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -63,6 +63,7 @@
     subSize: 'm',             // Untertitel: 's' klein, 'm' mittel, 'l' groß
     subHigh: false,           // Untertitel oben im Bild statt unten (z. B. wenn das Video eigene Texte unten hat)
     language: 'auto',         // Sprache der Oberfläche: 'auto' (wie der Browser), 'de' oder 'en'
+    dialogBoost: false,       // Dialog-Verstärker (Stimmen deutlicher) – im ⋮-Menü umschaltbar
     leaveAction: 'play',      // in eine andere App wechseln: 'play' = weiterlaufen lassen (wie der Browser es erlaubt), 'pause' = anhalten
     // Helfer-App "Video-Assistent Helfer" (eigene APK): Läuft sie, steuern die Wischgesten die ECHTE Helligkeit und
     // Medienlautstärke des Handys. Läuft sie nicht, regelt der Player wie bisher nur das Video. false = nie fragen.
@@ -111,7 +112,7 @@
   };
   // Eigene Einstellungen (im Player: ⋯ → Einstellungen) gelten vor den Werten oben und überstehen Updates des Skripts
   const SETTING_KEYS = ['startFullscreen', 'lensGlass', 'ambient', 'progressLine', 'holdSpeed', 'topGuard', 'bottomGuard',
-    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh', 'language', 'leaveAction'];
+    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh', 'language', 'leaveAction', 'dialogBoost'];
   const CONFIG_DEFAULT = {};
   SETTING_KEYS.forEach((k) => { CONFIG_DEFAULT[k] = CONFIG[k]; });
   const userSettings = () => { const o = store.get('settings', {}); return o && typeof o === 'object' ? o : {}; };
@@ -144,7 +145,7 @@
     // Einstellungen (kurz)
     'Design': 'Design', 'Glas': 'Glass', 'Schlicht': 'Plain', 'Vollbild': 'Full screen', 'Ambient': 'Ambient',
     'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
-    'Link teilen': 'Share link', 'Zurück': 'Back', 'Wiederholen': 'Repeat', 'Wiederholen aus': 'Repeat off', 'In App öffnen': 'Open in app', 'Beim Verlassen': 'When leaving', 'Weiter': 'Keep playing', 'Anhalten': 'Pause', 'Antippen für Vollbild': 'Tap for full screen', 'z. B. VLC': 'e.g. VLC', 'Link kopiert': 'Link copied', 'Kein Link zu diesem Video gefunden': 'No link to this video found',
+    'Link teilen': 'Share link', 'Zurück': 'Back', 'Wiederholen': 'Repeat', 'Wiederholen aus': 'Repeat off', 'Wiederholen: endlos': 'Repeat: endless', 'Sleep-Timer': 'Sleep timer', 'Ende des Videos': 'End of video', 'Läuft': 'Running', 'Sleep-Timer aus': 'Sleep timer off', 'Sleep-Timer: angehalten': 'Sleep timer: paused', 'Sleep-Timer: Ende des Videos': 'Sleep timer: end of video', 'Dialog-Verstärker': 'Dialogue boost', 'Dialog-Verstärker an': 'Dialogue boost on', 'Dialog-Verstärker aus': 'Dialogue boost off', 'Dialog-Verstärker: hier nicht möglich (die Seite gibt den Ton nicht frei)': 'Dialogue boost: not possible here (the site doesn’t release the sound)', 'In App öffnen': 'Open in app', 'Beim Verlassen': 'When leaving', 'Weiter': 'Keep playing', 'Anhalten': 'Pause', 'Antippen für Vollbild': 'Tap for full screen', 'z. B. VLC': 'e.g. VLC', 'Link kopiert': 'Link copied', 'Kein Link zu diesem Video gefunden': 'No link to this video found',
     'Oben: Wischen bis ganz an den Rand': 'Top: swiping works right up to the edge', 'Unten: Wischen bis ganz an den Rand': 'Bottom: swiping works right down to the edge',
     '✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helper benutzen. Du kannst diese Seite schließen.': '✓ Connected. From now on only this script can use the helper. You can close this page.',
     'Verbinden hat nicht geklappt – läuft der Helper? In der App nochmal auf „Verbinden“ tippen.': 'Connecting failed – is the helper running? Tap “Connect” in the app again.',
@@ -190,6 +191,9 @@
     'links': 'left', 'rechts': 'right',
   };
   const EN_RX = [
+    [/^Sleep-Timer: (\d+) min$/, (m) => 'Sleep timer: ' + m[1] + ' min'],
+    [/^noch (\d+) min$/, (m) => m[1] + ' min left'],
+    [/^(\d+) min$/, (m) => m[1] + ' min'],
     [/^Wiederholen: (\d+)×$/, (m) => 'Repeat: ' + m[1] + '×'],
     [/^Oberste (\d+) %: kein Wischen für Helligkeit\/Lautstärke$/, (m) => 'Top ' + m[1] + ' %: no brightness/volume swipe'],
     [/^Unterste (\d+) %: kein Wischen für Helligkeit\/Lautstärke$/, (m) => 'Bottom ' + m[1] + ' %: no brightness/volume swipe'],
@@ -1632,7 +1636,7 @@
 .pill .pb{all:unset;position:relative;z-index:1;display:flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:21px;cursor:pointer;color:#fff;-webkit-touch-callout:none;transition:transform .28s cubic-bezier(.34,1.56,.64,1),background .15s ease}
 .pill .pb:active{transform:scale(.86)}
 .pill:active{-webkit-backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.6) brightness(1.45);backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.6) brightness(1.45)}
-.pill .pb:focus-visible{outline:2px solid #9BE7FF;outline-offset:1px}
+.pill .pb:focus-visible{outline:2px solid #fff;outline-offset:1px}
 .pill svg{width:23px;height:23px;fill:currentColor;flex:none;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.55)) drop-shadow(0 0 3px rgba(0,0,0,.25))}
 /* feine Trennlinie zwischen den zwei Symbolen */
 .pill .dl::after{content:"";position:absolute;right:-1px;top:11px;bottom:11px;width:1px;background:linear-gradient(transparent,rgba(255,255,255,.28),transparent)}
@@ -2207,7 +2211,7 @@
     sun: 'M20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69zM12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6zm0-10c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4z',
   };
   const VP_CSS = `
-.vp{--glass:rgba(255,255,255,.13);--edge1:rgba(255,255,255,.6);--edge2:rgba(255,255,255,.06);--sub:rgba(255,255,255,.74);--ice:#9BE7FF;--trk:rgba(255,255,255,.25);
+.vp{--glass:rgba(255,255,255,.13);--edge1:rgba(255,255,255,.6);--edge2:rgba(255,255,255,.06);--sub:rgba(255,255,255,.74);--ice:#FFFFFF;--trk:rgba(255,255,255,.25);
  position:fixed;inset:0;background:#000;z-index:2147483647;touch-action:none;color:#fff;font:15px/1.2 var(--font);-webkit-user-select:none;user-select:none;overflow:hidden;overflow:clip;-webkit-tap-highlight-color:transparent}
 .vv.vzan{transition:transform .25s cubic-bezier(.215,.61,.355,1)}
 /* Hinweise im Player: immer an derselben Stelle wie die Gesten-Anzeige (unter dem Bild) und im selben Glas (.g) */
@@ -2294,9 +2298,10 @@
 .vchip:active{transform:scale(.84)}
 .vchip span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .vchip svg{width:22px;height:22px;fill:#fff;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}
-.vchip.on{color:var(--ice)}
+/* aktiv: einfarbig wie iOS/One UI – helle Fläche hinter dem weißen Symbol (statt Farbe) */
+.vchip.on{color:#fff;background:rgba(255,255,255,.24)}
 .vchip.on svg{fill:var(--ice)}
-.vchip .vrepn{position:absolute;right:5px;bottom:6px;min-width:13px;height:13px;border-radius:7px;padding:0 2px;box-sizing:border-box;background:var(--ice);color:#0b1a22;font:800 9px/13px var(--font);text-align:center}
+.vchip .vrepn{position:absolute;right:3px;bottom:4px;min-width:14px;height:14px;border-radius:7px;padding:0 3px;box-sizing:border-box;background:#fff;color:#111;box-shadow:0 1px 3px rgba(0,0,0,.35);font:800 10px/14px var(--font);text-align:center}
 .vchip .vrepn:empty{display:none}
 .vchip[hidden]{display:none}
 .vtime{font:600 12px var(--font);font-variant-numeric:tabular-nums;color:var(--sub);min-width:40px;text-align:center}
@@ -2561,7 +2566,7 @@
     // Teilen/In App/Qualität/Tempo bleiben als unsichtbare Knöpfe (.vstash) bestehen – das Menü löst sie aus.
     const bMore = ib(I.more, 'Mehr');
     const bSubs = chip(P.cc, 'Untertitel', 'Untertitel');   // unten: Untertitel (leuchtet, wenn an)
-    const bRep = chip(P.repeat, 'Wiederholen', 'Wiederholen');   // unten: Aus → 1× → 5× → Aus (Zahl = noch übrige Male)
+    const bRep = chip(P.repeat, 'Wiederholen', 'Wiederholen');   // unten: Aus → 1× → ∞ → Aus
     const repNum = h('b', { class: 'vrepn' }, ''); bRep.append(repNum);
     const subEl = h('div', { class: 'vsub', 'aria-live': 'polite' });
     const bUnlock = ib(P.lock, 'Entsperren', 'vunlock g');
@@ -3581,30 +3586,34 @@
 
     // ===== ⋯ Mehr: Untertitel, Tonspur, Standbild, Einstellungen =====
     on(bMore, () => { if (menuOpen()) closeMenu(); else openMore(); });   // zweiter Tipp schließt das Menü
-    // ----- Wiederholen: Aus → 1× → 5× → Aus. Am Ende von vorn, bis die Male aufgebraucht sind (dann wie sonst anhalten) -----
+    // ----- Wiederholen: Aus → 1× → endlos (∞) → Aus (wie YouTube/Spotify). Am Ende von vorn, solange noch Male übrig -----
     st.repLeft = 0;
-    const repShow = () => { bRep.classList.toggle('on', st.repLeft > 0); repNum.textContent = st.repLeft > 0 ? String(st.repLeft) : ''; };
+    const repShow = () => { bRep.classList.toggle('on', st.repLeft > 0); repNum.textContent = st.repLeft === Infinity ? '∞' : st.repLeft > 0 ? String(st.repLeft) : ''; };
     on(bRep, () => {
-      st.repLeft = st.repLeft === 0 ? 1 : st.repLeft === 1 ? 5 : 0;
+      st.repLeft = st.repLeft === 0 ? 1 : st.repLeft === 1 ? Infinity : 0;
       repShow();
-      toast(st.repLeft ? 'Wiederholen: ' + st.repLeft + '×' : 'Wiederholen aus');
+      toast(st.repLeft === Infinity ? 'Wiederholen: endlos' : st.repLeft ? 'Wiederholen: 1×' : 'Wiederholen aus');
     });
     // true = es geht von vorn weiter (ein Mal verbraucht)
     st.repeatNow = () => {
+      if (st.sleepAtEnd && st.sleepAtEnd()) return true;   // Sleep-Timer „Ende des Videos“: hier Schluss
       if (!(st.repLeft > 0)) return false;
-      st.repLeft--; repShow();
+      if (st.repLeft !== Infinity) st.repLeft--;
+      repShow();
       const m = M();
       st.endHold = false; st.userSeekAt = Date.now();
       try { m.currentTime = 0; const pr = m.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
       return true;
     };
-    vid.addEventListener('ended', () => { if (vp === st && st.mode === 'own') st.repeatNow(); });
+    vid.addEventListener('ended', () => { if (vp === st && st.mode === 'own') { st.repeatNow(); st.sleepHit = false; } });
     on(bSubs, () => openSubs());
     function openMore() {
       const items = [{ label: 'Link teilen', fn: () => bShare.click() }];
       if (bExt && !bExt.hidden) items.push({ label: 'In App öffnen', sub: 'z. B. VLC', fn: () => bExt.click() });
       if (!bQual.hidden) { const q = bQual.querySelector('span'); items.push({ label: 'Qualität', sub: q ? q.textContent : '', fn: () => bQual.click() }); }
       items.push({ label: 'Geschwindigkeit', sub: spLabel(st.speed), fn: openSpeed });
+      items.push({ label: 'Sleep-Timer', sub: sleepLabel(), fn: openSleep });
+      items.push({ label: 'Dialog-Verstärker', sub: CONFIG.dialogBoost ? 'An' : 'Aus', stay: true, fn: () => { toggleDialog(); openMore(); } });
       const at = audioItems();
       if (at.length > 1) items.push({ label: 'Tonspur', sub: (at.find((x) => x.cur) || {}).label || '', fn: () => openMenu('Tonspur', at, false, openMore) });
       items.push({ label: 'Standbild speichern', fn: snapshot });
@@ -3659,6 +3668,112 @@
       openMenu('Einstellungen', items, keep, openMore);
     }
 
+    // ----- Sleep-Timer: nach 15–60 Minuten oder am Ende des Videos sanft leiser werden, dann anhalten -----
+    st.sleep = null;   // { at: Zeitpunkt (ms) | 0 = am Ende des Videos, iv, fading }
+    function sleepLabel() {
+      const s = st.sleep;
+      if (!s) return 'Aus';
+      if (!s.at) return 'Ende des Videos';
+      return 'noch ' + Math.max(1, Math.ceil((s.at - Date.now()) / 60000)) + ' min';
+    }
+    function sleepOff() {
+      const s = st.sleep;
+      if (!s) return;
+      clearInterval(s.iv);
+      if (s.fading) { try { VOL().volume = s.vol0; } catch (e) {} }
+      st.sleep = null;
+    }
+    // Ausblenden über 8 s (Lautstärke des Videos), dann Pause – danach die alte Lautstärke wiederherstellen
+    function sleepFire() {
+      const s = st.sleep;
+      if (!s || s.fading) return;
+      clearInterval(s.iv);
+      const m = VOL();
+      s.fading = true; s.vol0 = m.volume;
+      const t0 = Date.now(), D = 8000;
+      s.iv = setInterval(() => {
+        if (vp !== st) { clearInterval(s.iv); return; }
+        const k = Math.min(1, (Date.now() - t0) / D);
+        try { m.volume = s.vol0 * (1 - k); } catch (e) {}
+        if (k >= 1) {
+          clearInterval(s.iv);
+          try { M().pause(); } catch (e) {}
+          try { m.volume = s.vol0; } catch (e) {}
+          st.sleep = null;
+          toast('Sleep-Timer: angehalten');
+        }
+      }, 100);
+    }
+    function sleepSet(min) {
+      sleepOff();
+      if (min == null) { toast('Sleep-Timer aus'); return; }
+      st.sleep = { at: min ? Date.now() + min * 60000 : 0, iv: 0, fading: false };
+      if (min) st.sleep.iv = setInterval(() => { if (vp !== st) { sleepOff(); return; } if (Date.now() >= st.sleep.at) sleepFire(); }, 1000);
+      toast(min ? 'Sleep-Timer: ' + min + ' min' : 'Sleep-Timer: Ende des Videos');
+    }
+    st.cleanup.push(sleepOff);
+    // am Ende des Videos (eigener Player oder gespiegelt): true = Timer hat zugeschlagen → nicht wiederholen
+    st.sleepAtEnd = () => {
+      if (!st.sleep || st.sleep.at) return false;
+      sleepOff(); st.sleepHit = true;
+      try { M().pause(); } catch (e) {}
+      toast('Sleep-Timer: angehalten');
+      return true;
+    };
+    function openSleep() {
+      const cur = st.sleep ? (st.sleep.at ? -1 : 0) : null;
+      const opt = (label, min, isCur) => ({ label: label, cur: isCur, fn: () => sleepSet(min) });
+      openMenu('Sleep-Timer', [
+        opt('Aus', null, cur === null),
+        opt('15 min', 15, false), opt('30 min', 30, false), opt('45 min', 45, false), opt('60 min', 60, false),
+        opt('Ende des Videos', 0, cur === 0),
+      ].concat(cur === -1 ? [{ label: 'Läuft', sub: sleepLabel(), cur: true, stay: true, fn: () => {} }] : []), false, openMore);
+    }
+
+    // ----- Dialog-Verstärker: Stimmen deutlicher, laute Stellen gezähmt (wie „Sprache verbessern“ bei Fernsehern) -----
+    // Tiefen unter 120 Hz leiser, Sprachbereich (1–4 kHz) angehoben, Kompressor gleicht Laut und Leise an.
+    // Geht nur, wenn der Player den Ton bearbeiten darf (eigene Streams, Dateien derselben Seite) – sonst wäre er stumm.
+    st.dlg = null;
+    function audioGraph() {
+      if (st.srcNode) return true;
+      if (!canBoost()) return false;
+      try {
+        st.srcNode = st.actx.createMediaElementSource(vid);
+        st.gain = st.actx.createGain();
+        st.srcNode.connect(st.gain);
+        st.gain.connect(st.actx.destination);
+        if (st.actx.state === 'suspended') st.actx.resume().catch(() => {});
+        return true;
+      } catch (e) { st.srcNode = null; st.gain = null; return false; }
+    }
+    function setDialog(on) {
+      if (on && !audioGraph()) return false;
+      if (!st.srcNode) return !on;
+      const a = st.actx;
+      try { st.srcNode.disconnect(); } catch (e) {}
+      if (st.dlg) { st.dlg.forEach((n) => { try { n.disconnect(); } catch (e) {} }); st.dlg = null; }
+      if (on) {
+        const hp = a.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 120; hp.Q.value = 0.7;
+        const lo = a.createBiquadFilter(); lo.type = 'peaking'; lo.frequency.value = 300; lo.Q.value = 0.9; lo.gain.value = -2;
+        const sp = a.createBiquadFilter(); sp.type = 'peaking'; sp.frequency.value = 2400; sp.Q.value = 0.8; sp.gain.value = 6;
+        const cp = a.createDynamicsCompressor();
+        cp.threshold.value = -26; cp.knee.value = 18; cp.ratio.value = 4; cp.attack.value = 0.004; cp.release.value = 0.25;
+        const mk = a.createGain(); mk.gain.value = 1.5;   // Ausgleich: nach dem Kompressor wieder etwa gleich laut
+        st.srcNode.connect(hp); hp.connect(lo); lo.connect(sp); sp.connect(cp); cp.connect(mk); mk.connect(st.gain);
+        st.dlg = [hp, lo, sp, cp, mk];
+      } else st.srcNode.connect(st.gain);
+      return true;
+    }
+    // gespeicherte Einstellung beim Start anwenden, sobald der Ton bearbeitbar ist (eigene Quelle geladen)
+    const dlgStart = () => { if (CONFIG.dialogBoost && !st.dlg && vp === st && st.mode === 'own') setDialog(true); };
+    vid.addEventListener('playing', dlgStart);
+    function toggleDialog() {
+      const want = !CONFIG.dialogBoost;
+      if (want && !setDialog(true)) { toast('Dialog-Verstärker: hier nicht möglich (die Seite gibt den Ton nicht frei)'); return; }
+      if (!want) setDialog(false);
+      setSetting('dialogBoost', want);
+      toast(want ? 'Dialog-Verstärker an' : 'Dialog-Verstärker aus');
+    }
     // ----- Benachrichtigung & Sperrbildschirm (Media Session): Titel, Play/Pause, Springen, Position -----
     const MS = navigator.mediaSession || null;
     const msH = (a, f) => { try { MS.setActionHandler(a, f); } catch (e) {} };
@@ -4834,7 +4949,7 @@
     try { orig.loop = false; } catch (e) {}
     const holdEnd = () => {
       if (vp !== st || st.mode !== 'capture') return;
-      if (st.repeatNow && st.repeatNow()) return;   // Wiederholen an: von vorn statt anhalten
+      if (st.repeatNow && st.repeatNow()) { if (!st.sleepHit) return; st.sleepHit = false; }   // Wiederholen: von vorn · Sleep-Timer: anhalten
       st.endHold = true;
       try { orig.pause(); } catch (e) {}
       showControls();
@@ -5266,7 +5381,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 17.4',
+      'Video-Assistent 17.5',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

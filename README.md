@@ -41,13 +41,16 @@ Der Player funktioniert auch **ohne** Helper-App – dann regeln die Gesten nur 
 
 **Aufteilung**: oben links ✕ und Titel, oben rechts nur **Download** und **⋮**; unten (am Daumen) Sperre links,
 rechts **Untertitel (CC) · Wiederholen · Bildformat · Bild-in-Bild · Drehen**. Wiederholen: jedes Tippen
-schaltet Aus → 1× → 5× (die Zahl am Knopf zeigt, wie oft noch).
+schaltet Aus → 1× → ∞ (endlos).
 
 **⋮ Mehr** (oben rechts im Player; noch einmal tippen schließt; Untermenüs mit ‹ zurück, auch die Zurück-Taste
 geht im Menü nur eine Ebene zurück)
 - **Link teilen** – Link zum Video (Beitrag bei Instagram/Facebook/TikTok, sonst die Seite)
 - **In App öffnen** (z. B. VLC) und **Qualität**, wenn es sie für das Video gibt
 - **Geschwindigkeit** (0,5× bis 2×, Liste zum Antippen)
+- **Sleep-Timer**: 15/30/45/60 Minuten oder Ende des Videos – wird sanft leiser, dann Pause
+- **Dialog-Verstärker**: Stimmen deutlicher, laute Stellen leiser (bei Streams und Videos der Seite selbst; nicht, wo die
+  Seite den Ton nicht freigibt, z. B. Facebook)
 - **Einstellungen** – kurz wie in einer Einstellungs-App: Design (Glas/Schlicht), Ambient, Fortschrittslinie, Vollbild,
   Sprungweite, Halten, Wischsperre oben/unten, Auto-Drehen, Beim Verlassen, Download, Helper-App, **Sprache** (Auto/Deutsch/English),
   Zurücksetzen – gelten für alle Seiten und **überstehen Updates**
@@ -76,7 +79,7 @@ The interface is available in English and German – it follows the browser lang
 - echte **Bildschirmhelligkeit** (nur solange der Player offen ist, danach automatisch zurück) und
   **Medienlautstärke** in 1-%-Schritten
 - Downloads mit Fortschritt und „Abbrechen“ in der Benachrichtigung
-- Deutsch/Englisch nach Sprache des Handys oder von Hand („Sprache · Language“ in der App)
+- Deutsch/Englisch nach Sprache des Handys oder von Hand („Sprache · Language“ in der App), Design hell/dunkel/automatisch
 - nur vom Handy selbst erreichbar, mit eigenem geheimem Schlüssel (Koppeln) – Details unter „Sicherheit“
 
 **Nicht möglich:** Kopierschutz (DRM), Livestreams speichern, Videos ganz ohne Adresse (z. B. Facebook-Spiegel →

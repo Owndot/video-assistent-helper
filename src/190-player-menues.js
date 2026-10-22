@@ -99,30 +99,34 @@
 
     // ===== ⋯ Mehr: Untertitel, Tonspur, Standbild, Einstellungen =====
     on(bMore, () => { if (menuOpen()) closeMenu(); else openMore(); });   // zweiter Tipp schließt das Menü
-    // ----- Wiederholen: Aus → 1× → 5× → Aus. Am Ende von vorn, bis die Male aufgebraucht sind (dann wie sonst anhalten) -----
+    // ----- Wiederholen: Aus → 1× → endlos (∞) → Aus (wie YouTube/Spotify). Am Ende von vorn, solange noch Male übrig -----
     st.repLeft = 0;
-    const repShow = () => { bRep.classList.toggle('on', st.repLeft > 0); repNum.textContent = st.repLeft > 0 ? String(st.repLeft) : ''; };
+    const repShow = () => { bRep.classList.toggle('on', st.repLeft > 0); repNum.textContent = st.repLeft === Infinity ? '∞' : st.repLeft > 0 ? String(st.repLeft) : ''; };
     on(bRep, () => {
-      st.repLeft = st.repLeft === 0 ? 1 : st.repLeft === 1 ? 5 : 0;
+      st.repLeft = st.repLeft === 0 ? 1 : st.repLeft === 1 ? Infinity : 0;
       repShow();
-      toast(st.repLeft ? 'Wiederholen: ' + st.repLeft + '×' : 'Wiederholen aus');
+      toast(st.repLeft === Infinity ? 'Wiederholen: endlos' : st.repLeft ? 'Wiederholen: 1×' : 'Wiederholen aus');
     });
     // true = es geht von vorn weiter (ein Mal verbraucht)
     st.repeatNow = () => {
+      if (st.sleepAtEnd && st.sleepAtEnd()) return true;   // Sleep-Timer „Ende des Videos“: hier Schluss
       if (!(st.repLeft > 0)) return false;
-      st.repLeft--; repShow();
+      if (st.repLeft !== Infinity) st.repLeft--;
+      repShow();
       const m = M();
       st.endHold = false; st.userSeekAt = Date.now();
       try { m.currentTime = 0; const pr = m.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
       return true;
     };
-    vid.addEventListener('ended', () => { if (vp === st && st.mode === 'own') st.repeatNow(); });
+    vid.addEventListener('ended', () => { if (vp === st && st.mode === 'own') { st.repeatNow(); st.sleepHit = false; } });
     on(bSubs, () => openSubs());
     function openMore() {
       const items = [{ label: 'Link teilen', fn: () => bShare.click() }];
       if (bExt && !bExt.hidden) items.push({ label: 'In App öffnen', sub: 'z. B. VLC', fn: () => bExt.click() });
       if (!bQual.hidden) { const q = bQual.querySelector('span'); items.push({ label: 'Qualität', sub: q ? q.textContent : '', fn: () => bQual.click() }); }
       items.push({ label: 'Geschwindigkeit', sub: spLabel(st.speed), fn: openSpeed });
+      items.push({ label: 'Sleep-Timer', sub: sleepLabel(), fn: openSleep });
+      items.push({ label: 'Dialog-Verstärker', sub: CONFIG.dialogBoost ? 'An' : 'Aus', stay: true, fn: () => { toggleDialog(); openMore(); } });
       const at = audioItems();
       if (at.length > 1) items.push({ label: 'Tonspur', sub: (at.find((x) => x.cur) || {}).label || '', fn: () => openMenu('Tonspur', at, false, openMore) });
       items.push({ label: 'Standbild speichern', fn: snapshot });
