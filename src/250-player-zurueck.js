@@ -144,12 +144,15 @@
     // Player kurz unsichtbar und stumm (während geprüft wird, ob „Zurück“ gemeint war)
     function veil(on) {
       if (on === wrap.classList.contains('vgone')) return;
-      wrap.classList.toggle('vgone', on);
+      // Ton des Players aus/an – vor der Übergabe (die gibt der Seite ihren Ton zurück)
       try {
         const m = VOL();
-        if (on) { st.veilMuted = m.muted; m.muted = true; }
+        if (on) { st.veilMuted = m.muted; if (m !== orig) m.muted = true; }
         else if (typeof st.veilMuted === 'boolean') { m.muted = st.veilMuted; st.veilMuted = null; }
       } catch (e) {}
+      wrap.classList.toggle('vgone', on);
+      // Seite übernimmt sofort (an deiner Stelle, mit Ton) – war es doch kein Zurück, wieder zurücknehmen
+      if (on) handBack(st); else unHand(st);
     }
     document.addEventListener('fullscreenchange', onFs);
     document.addEventListener('webkitfullscreenchange', onFs);
@@ -267,7 +270,7 @@
       try { orig.loop = origLoop; } catch (e) {}
     });
     const onOrigPlay = () => {
-      if (vp !== st) return;
+      if (vp !== st || st.handed) return;   // schon an die Seite übergeben (Zurück-Geste): die Seite darf spielen
       // eigener Player: Original bleibt still · gespiegelt und am Ende angehalten: die Seite darf nicht von selbst neu starten
       if (st.mode === 'own' || (st.mode === 'capture' && st.endHold)) { try { orig.pause(); } catch (e) {} }
     };

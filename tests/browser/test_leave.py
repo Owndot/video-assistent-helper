@@ -5,7 +5,8 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 #  - Einstellung „Beim Verlassen“: Weiter (läuft) / Anhalten
 #  - Bild-in-Bild mit ✕ geschlossen = anhalten · „Vollbild“ im kleinen Fenster = zurück in den Vollbild-Player
 #  - läuft Bild-in-Bild und man geht zum Startbildschirm: läuft weiter
-import time
+import time, os
+FF = os.environ.get('BROWSER', '').lower() == 'firefox'
 exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])
 # Sichtbarkeit und Fokus der Seite nachstellen (Playwright kann keine App wechseln)
 SIM = '''() => { if (window.__sim) return; window.__sim = { hidden: false, focus: true };
@@ -47,13 +48,30 @@ with sync_playwright() as p:
     hide(pg, False); time.sleep(0.3)
     vg2 = pg.evaluate('() => { const w = %s.querySelector(".vp"); return [w.classList.contains("vgone"), %s.querySelector(".vv").muted]; }' % (R, R))
     check('… danach wieder sichtbar und mit Ton', not vg2[0] and not vg2[1], vg2)
+    og = pg.evaluate('() => { const o = document.getElementById("v"); return [o.paused, o.muted, getComputedStyle(o).opacity, !!%s.querySelector(".evpcover")]; }' % R)
+    check('… Seitenvideo wieder angehalten und stumm, keine Abdeckung (Übergabe zurückgenommen, 17.9)', og[0] and og[1] and og[2] == '1' and not og[3], og)
     time.sleep(0.2); pg.mouse.click(200, 300); time.sleep(0.7)
     # 3) Zurück-Taste (kein Fokusverlust, Seite bleibt sichtbar): Player schließt
+    pg.evaluate('() => { const v = %s.querySelector(".vv"); v.currentTime = 6; return v.play(); }' % R); time.sleep(0.8)
+    pg.evaluate('''() => { const o = document.getElementById("v"); window.__ov = []; window.__cov = 0;
+      const t0 = performance.now(); const f = () => { if (performance.now() - t0 > 2500) return; const c = %s.querySelector(".evpcover");
+        if (c) window.__cov = Math.max(window.__cov, getComputedStyle(c).opacity > 0.5 ? 1 : 0); requestAnimationFrame(f); }; f(); }''' % R)
+    ours = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
     pg.evaluate('() => document.exitFullscreen().catch(() => {})'); time.sleep(0.15)
     vg = pg.evaluate('() => { const w = %s.querySelector(".vp"); return w ? [w.classList.contains("vgone"), getComputedStyle(w).opacity, %s.querySelector(".vv").muted] : null; }' % (R, R))
     check('Zurück-Geste: Player sofort unsichtbar und stumm (man sieht gleich die Seite, 17.8)', vg and vg[0] and float(vg[1]) < 0.5 and vg[2], vg)
+    ov = pg.evaluate('() => { const o = document.getElementById("v"); return [Math.round(o.currentTime * 10) / 10, o.paused, o.muted]; }')
+    check('… Seite schon an deiner Stelle, läuft mit Ton (vor dem Schließen, 17.9)', abs(ov[0] - ours) < 1.2 and not ov[1] and not ov[2], [ours, ov])
     time.sleep(1.15)
     check('Zurück-Taste (Vollbild aus, Seite sichtbar): Player schließt', not opened())
+    time.sleep(1.4)
+    cov = pg.evaluate('() => [window.__cov, !!%s.querySelector(".evpcover"), getComputedStyle(document.getElementById("v")).opacity]' % R)
+    if FF:
+        check('… Firefox: Seitenvideo nach dem Springen wieder sichtbar, keine Abdeckung übrig', cov[2] == '1' and not cov[1], cov)
+    else:
+        check('… letztes Bild lag über dem Seitenvideo und ist danach weg', cov[0] == 1 and not cov[1] and cov[2] == '1', cov)
+    ov2 = pg.evaluate('() => { const o = document.getElementById("v"); return [o.currentTime, o.paused]; }')
+    check('… Seite spielt danach weiter (kein zweiter Sprung zurück)', ov2[0] > ours + 1 and not ov2[1], [ours, ov2])
     # 4) Einstellung „Anhalten“
     start()
     more(pg); pick(pg, 'Einstellungen'); pick(pg, 'Beim Verlassen'); time.sleep(0.3)

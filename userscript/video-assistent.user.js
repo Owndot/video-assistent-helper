@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      17.8
+// @version      17.9
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -4929,12 +4929,15 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Player kurz unsichtbar und stumm (während geprüft wird, ob „Zurück“ gemeint war)
     function veil(on) {
       if (on === wrap.classList.contains('vgone')) return;
-      wrap.classList.toggle('vgone', on);
+      // Ton des Players aus/an – vor der Übergabe (die gibt der Seite ihren Ton zurück)
       try {
         const m = VOL();
-        if (on) { st.veilMuted = m.muted; m.muted = true; }
+        if (on) { st.veilMuted = m.muted; if (m !== orig) m.muted = true; }
         else if (typeof st.veilMuted === 'boolean') { m.muted = st.veilMuted; st.veilMuted = null; }
       } catch (e) {}
+      wrap.classList.toggle('vgone', on);
+      // Seite übernimmt sofort (an deiner Stelle, mit Ton) – war es doch kein Zurück, wieder zurücknehmen
+      if (on) handBack(st); else unHand(st);
     }
     document.addEventListener('fullscreenchange', onFs);
     document.addEventListener('webkitfullscreenchange', onFs);
@@ -5052,7 +5055,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       try { orig.loop = origLoop; } catch (e) {}
     });
     const onOrigPlay = () => {
-      if (vp !== st) return;
+      if (vp !== st || st.handed) return;   // schon an die Seite übergeben (Zurück-Geste): die Seite darf spielen
       // eigener Player: Original bleibt still · gespiegelt und am Ende angehalten: die Seite darf nicht von selbst neu starten
       if (st.mode === 'own' || (st.mode === 'capture' && st.endHold)) { try { orig.pause(); } catch (e) {} }
     };
@@ -5105,6 +5108,112 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       return !!d && (d === v || d === hostEl);
     } catch (e) { return false; }
   }
+  // ----- Übergabe an die Seite -----
+  // Das Video der Seite springt an deine Stelle und läuft (mit Ton) weiter. Bis es dort ein Bild hat, liegt dein
+  // letztes Bild genau darüber – sonst sähe man kurz den Anfang des Videos und dann einen Sprung (17.9).
+  // Bei der Zurück-Geste passiert das schon in dem Moment, in dem sie erkannt wird (nicht erst nach der Prüfung).
+  function handBack(st) {
+    if (st.handed) return;
+    st.handed = true;
+    const o = st.orig;
+    let target = -1, atEnd = !!st.endHold;
+    // Deine Stelle ZUERST merken – wird hls.js beendet, springt das eigene Video auf 0 zurück.
+    // Gleiche Länge prüfen, damit nicht z. B. eine Werbung oder ein anderes Video verstellt wird.
+    try {
+      const t = st.vid.currentTime, vd = st.vid.duration, od = o.duration;
+      const sameLen = !isFinite(od) || !isFinite(vd) || Math.abs(od - vd) < 3;
+      if (st.mode === 'own' && t > 0 && sameLen) {
+        target = t;
+        // am Ende: kurz VOR das Ende stellen und angehalten lassen – sonst springt eine Reels-Seite zum nächsten Video
+        if (isFinite(vd) && (st.vid.ended || t >= vd - 1)) { atEnd = true; target = Math.max(0, (isFinite(od) ? od : vd) - 0.3); }
+      }
+    } catch (e) {}
+    if (target >= 0 && Math.abs((o.currentTime || 0) - target) > 0.4) {
+      coverOver(o, st.vid);
+      try { o.currentTime = target; } catch (e) {}
+    }
+    try { if (typeof st.origMuted === 'boolean') o.muted = st.origMuted; } catch (e) {}   // ursprünglichen Ton zurückgeben
+    // Video auf der Seite weiterlaufen lassen (Instagram & Co. haben oft keinen Play-Knopf)
+    if (atEnd) { try { o.pause(); } catch (e) {} }
+    else if (CONFIG.resumeAfterClose && st.mode === 'own') {
+      try { const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
+      watchStall(o);
+    } else if (CONFIG.resumeAfterClose) {
+      setTimeout(() => { try { const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {} watchStall(o); }, 200);
+    }
+  }
+  // doch nicht geschlossen (Drehen, App-Wechsel): Seite wieder still und angehalten, Player übernimmt wieder
+  function unHand(st) {
+    if (!st.handed) return;
+    st.handed = false;
+    removeCover();
+    if (st.mode !== 'own') return;
+    try { st.orig.muted = true; st.orig.pause(); } catch (e) {}
+  }
+  let coverEl = null;
+  function coverOver(o, src) {
+    removeCover();
+    if (!root) return;
+    // Firefox-Handy kann Videobilder nicht kopieren (wäre ein schwarzer Kasten): dann das Video der Seite
+    // unsichtbar lassen, bis es an der richtigen Stelle ein Bild hat – lieber kurz dunkel als Anfang + Sprung
+    const hideOrig = () => {
+      const c = { _hid: o, _op: o.style.getPropertyValue('opacity'), _pr: o.style.getPropertyPriority('opacity'), remove() {}, style: {} };
+      o.style.setProperty('opacity', '0', 'important');
+      return c;
+    };
+    try {
+      const r = o.getBoundingClientRect();
+      if (FF_MOBILE || r.width < 60 || r.height < 40 || !src.videoWidth || !src.videoHeight || src.readyState < 2) {
+        const c = hideOrig(); coverEl = c;
+        const gone = () => removeCover(c);
+        const onSeeked = () => { if (o.requestVideoFrameCallback) o.requestVideoFrameCallback(() => gone()); else setTimeout(gone, 120); };
+        o.addEventListener('seeked', onSeeked, { once: true });
+        c._off = () => o.removeEventListener('seeked', onSeeked);
+        c._t = setTimeout(gone, 2500);
+        return;
+      }
+      const c = document.createElement('canvas');
+      c.className = 'evpcover';
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+      const x = c.getContext('2d');
+      x.fillStyle = '#000'; x.fillRect(0, 0, c.width, c.height);
+      const cov = getComputedStyle(o).objectFit === 'cover';
+      const s = (cov ? Math.max : Math.min)(c.width / src.videoWidth, c.height / src.videoHeight);
+      const w = src.videoWidth * s, hh = src.videoHeight * s;
+      x.drawImage(src, (c.width - w) / 2, (c.height - hh) / 2, w, hh);
+      const place = () => { const q = o.getBoundingClientRect(); c.style.cssText = 'position:fixed;left:' + q.left + 'px;top:' + q.top + 'px;width:' + q.width + 'px;height:' + q.height + 'px;z-index:2147483646;pointer-events:none;opacity:' + (c._out ? 0 : 1) + ';transition:opacity .15s ease'; };
+      place();
+      root.append(c);
+      coverEl = c;
+      // mitgehen, falls sich die Seite nach dem Vollbild noch zurechtrückt (Drehen, Leisten)
+      c._place = place;
+      addEventListener('resize', place); addEventListener('scroll', place, true);
+      requestAnimationFrame(place);
+      // weg, sobald die Seite an der neuen Stelle ein Bild zeigt – spätestens nach 3 s
+      const gone = () => removeCover(c);
+      const onSeeked = () => { if (o.requestVideoFrameCallback) o.requestVideoFrameCallback(() => gone()); else setTimeout(gone, 80); };
+      o.addEventListener('seeked', onSeeked, { once: true });
+      c._off = () => o.removeEventListener('seeked', onSeeked);
+      c._t = setTimeout(gone, 3000);
+    } catch (e) {}
+  }
+  function removeCover(c) {
+    c = c || coverEl;
+    if (!c || c._out) return;
+    c._out = true;
+    clearTimeout(c._t);
+    if (c._off) c._off();
+    if (c._hid) {   // nur versteckt: Sichtbarkeit wie vorher
+      try { if (c._op) c._hid.style.setProperty('opacity', c._op, c._pr); else c._hid.style.removeProperty('opacity'); } catch (e) {}
+      if (coverEl === c) coverEl = null;
+      return;
+    }
+    removeEventListener('resize', c._place); removeEventListener('scroll', c._place, true);
+    c.style.opacity = '0';
+    setTimeout(() => c.remove(), 180);
+    if (coverEl === c) coverEl = null;
+  }
   function closePlayer() {
     const st = vp;
     if (!st) return;
@@ -5115,34 +5224,10 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       st.vid.disablePictureInPicture = true;   // beendet Bild-in-Bild auch dort, wo exitPictureInPicture nicht greift
     } catch (e) {}
     clearTimeout(st.loadTimer); clearTimeout(st.hideTimer); clearTimeout(st.u2);
-    const o = st.orig;
-    // Deine Stelle ZUERST merken – wird hls.js beendet, springt das eigene Video auf 0 zurück.
-    // An diese Stelle springt dann das Video auf der Seite, auch bei stückweise ladenden Seiten (Facebook, Instagram, Pornhub …).
-    // Gleiche Länge prüfen, damit nicht z. B. eine Werbung oder ein anderes Video verstellt wird.
-    let target = -1, atEnd = !!st.endHold;
-    try {
-      const t = st.vid.currentTime, vd = st.vid.duration, od = o.duration;
-      const sameLen = !isFinite(od) || !isFinite(vd) || Math.abs(od - vd) < 3;
-      if (st.mode === 'own' && t > 0 && sameLen) {
-        target = t;
-        // am Ende geschlossen: kurz VOR das Ende stellen und angehalten lassen – sonst springt eine Reels-Seite
-        // („ended“) von selbst zum nächsten Video
-        if (isFinite(vd) && (st.vid.ended || t >= vd - 1)) { atEnd = true; target = Math.max(0, (isFinite(od) ? od : vd) - 0.3); }
-      }
-    } catch (e) {}
+    handBack(st);   // Seite übernimmt an deiner Stelle (bei der Zurück-Geste schon geschehen)
     if (st.hls) { try { st.hls.destroy(); } catch (e) {} }
     if (st.actx) { try { st.actx.close(); } catch (e) {} }
     try { st.vid.pause(); st.vid.srcObject = null; st.vid.removeAttribute('src'); st.vid.load(); } catch (e) {}
-    if (target >= 0) { try { o.currentTime = target; } catch (e) {} }
-    try { if (typeof st.origMuted === 'boolean') o.muted = st.origMuted; } catch (e) {}   // ursprünglichen Ton zurückgeben
-    // Video auf der Seite weiterlaufen lassen (Instagram & Co. haben oft keinen Play-Knopf)
-    if (atEnd) { try { o.pause(); } catch (e) {} }
-    else if (CONFIG.resumeAfterClose) {
-      setTimeout(() => {
-        try { const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
-        watchStall(o);
-      }, 200);
-    }
     try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch (e) {}
     try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
     st.cleanup.forEach((f) => { try { f(); } catch (e) {} });
@@ -5497,7 +5582,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 17.8',
+      'Video-Assistent 17.9',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
