@@ -25,7 +25,8 @@ with sync_playwright() as p:
         if tag == 'Stream':   # hängender Sprung (kein „seeked“) – der Wächter muss die Vorschau trotzdem nachziehen
             pg.evaluate('''() => { const pv = %s.querySelector(".vprev video"); let n = 0;
                 pv.addEventListener("seeked", (e) => { if (n++ < 3) e.stopImmediatePropagation(); }, true); }''' % R)
-        pg.mouse.move(br[0] + br[2] * 0.1, y); pg.mouse.down()
+        f0 = pg.evaluate('() => { const v = %s.querySelector(".vv"); return v.currentTime / v.duration; }' % R)   # 19.4: am Punkt greifen
+        pg.mouse.move(br[0] + 7 + f0 * (br[2] - 14), y); pg.mouse.down()
         pg.mouse.move(br[0] + br[2] * 0.4, y, steps=6); pg.mouse.move(br[0] + br[2] * 0.7, y, steps=6)
         try:
             pg.wait_for_function('() => %s.querySelector(".vprev").classList.contains("img")' % R, timeout=6000)
@@ -42,7 +43,7 @@ with sync_playwright() as p:
                      cx: r.left + r.width / 2, bottom: r.bottom, barTop: bar.getBoundingClientRect().top, label: pr.querySelector("b").textContent,
                      main: v.currentTime, w: Math.round(r.width) }; }''' % (R, R, R))
         pg.screenshot(path=OUT + '/prev_%s.png' % tag.replace(' ', '_'))
-        thumbx = br[0] + 7 + 0.7 * (br[2] - 14)
+        thumbx = br[0] + 7 + pg.evaluate('() => %s.querySelector(".vbar").value / 1000' % R) * (br[2] - 14)   # über dem Punkt der Leiste
         check(tag + ': Vorschau erscheint mit Bild', info['on'] and info['img'], info)
         check(tag + ': Bild zeigt die Fingerstelle', abs(info['t'] - info['want']) < 2.5, [round(info['t'], 1), round(info['want'], 1), info['label']])
         check(tag + ': sitzt über dem Punkt', info['bottom'] <= info['barTop'] and abs(info['cx'] - thumbx) < 40, [round(info['cx']), round(thumbx)])

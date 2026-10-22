@@ -241,7 +241,7 @@
       if (!isFinite(d) || d <= 0) return;
       const t = p * d;
       pvTime.textContent = fmtTime(t);
-      if (liveMode()) liveTo(t);
+      if (liveMode() && !wrap.classList.contains('scrubx')) liveTo(t);
       const img = !liveMode() && prevLoad() && !prev.classList.contains('noimg');
       if (img) {
         pvs.lastWant = t;

@@ -48,7 +48,9 @@ def run(cdn_body, tag):
         y = br[1] + br[3] / 2; X = lambda f: br[0] + 7 + f * (br[2] - 14)
         def drag(f):
             pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R); time.sleep(0.2)
-            pg.mouse.move(X(0.5), y); pg.mouse.down(); pg.mouse.move(X(f), y, steps=8); time.sleep(2.0)
+            # (19.4: am Punkt greifen – Ziehen spult von der aktuellen Stelle aus)
+            f0 = pg.evaluate('() => { const v = document.getElementById("v"); return v.currentTime / v.duration; }')
+            pg.mouse.move(X(f0), y); pg.mouse.down(); pg.mouse.move(X(f), y, steps=8); time.sleep(2.0)
             r = pg.evaluate('() => { const p = %s.querySelector(".vprev"); return [p.classList.contains("img"), p.dataset.t ? parseFloat(p.dataset.t) : null, p.querySelector("b").textContent]; }' % R)
             pg.mouse.up(); time.sleep(0.8)
             pg.evaluate('() => { document.getElementById("v").currentTime = 6; }'); time.sleep(0.5)

@@ -3,16 +3,20 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 # (dann das Video der Seite). Hochwischen über die Leiste = kein Spulen → zurück an die alte Stelle.
 import time
 exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])
+SCRIPT = SCRIPT.replace("seekPreview: 'thumb'", "seekPreview: 'live'")   # Einstellung „Spul-Vorschau: Im Bild“
 def bar_rect(pg): return pg.evaluate('() => { const r = %s.querySelector(".vbar").getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; }' % R)
 def cur(pg, sel): return pg.evaluate('(s) => { const v = s === "orig" ? document.getElementById("v") : %s.querySelector(".vv"); return Math.round(v.currentTime * 10) / 10; }' % R, sel)
 def drag(pg, frac_from, frac_to, which='vv', hold_check=True):
     x, y, w, h = bar_rect(pg); cy = y + h / 2
     pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R)
+    f0 = pg.evaluate('(s) => { const v = s === "orig" ? document.getElementById("v") : %s.querySelector(".vv"); return v.currentTime / v.duration; }' % R, which)
+    frac_to = f0 + (frac_to - frac_from); frac_from = f0   # am Punkt greifen (Ziehen spult von der aktuellen Stelle aus)
     pg.mouse.move(x + 7 + frac_from * (w - 14), cy); pg.mouse.down()
     pg.mouse.move(x + 7 + frac_to * (w - 14), cy, steps=12); time.sleep(0.9)
     during = cur(pg, which)
     box = pg.evaluate('() => { const p = %s.querySelector(".vprev"); return [p.classList.contains("on"), p.classList.contains("img"), (p.querySelector("b,span,.vpt") || p).textContent.trim()]; }' % R)
     pg.mouse.up(); time.sleep(0.6)
+    drag.target = frac_to
     return during, box
 with sync_playwright() as p:
     b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
@@ -23,17 +27,19 @@ with sync_playwright() as p:
     pg.evaluate('() => %s.querySelector(".vv").pause()' % R); time.sleep(0.3)
     d = pg.evaluate('() => %s.querySelector(".vv").duration' % R)
     # 1) Leiste ziehen: Video steht schon WÄHREND des Ziehens an der Fingerstelle (kein kleines Bild)
+    pg.evaluate('() => { %s.querySelector(".vv").currentTime = 6; }' % R); time.sleep(0.4)
     during, box = drag(pg, 0.1, 0.6)
-    check('Leiste ziehen: Video springt schon beim Ziehen mit (60 %%: %.0f s)' % (0.6 * d), abs(during - 0.6 * d) < 3, [during, round(0.6 * d, 1)])
+    tg = drag.target * d
+    check('Leiste ziehen: Video springt schon beim Ziehen mit (%.0f s)' % tg, abs(during - tg) < 3, [during, round(tg, 1)])
     check('… dabei nur die Zeit über der Leiste, kein kleines Vorschaubild', box[0] and not box[1], box)
     after = cur(pg, 'vv')
-    check('… nach dem Loslassen genau dort', abs(after - 0.6 * d) < 1.5, after)
+    check('… nach dem Loslassen genau dort', abs(after - tg) < 1.5, [after, round(tg, 1)])
     # 2) Hochwischen über die Leiste: kein Spulen → zurück an die alte Stelle
     t0 = cur(pg, 'vv')
     x, y, w, h = bar_rect(pg); cy = y + h / 2; fx = x + 7 + (t0 / d) * (w - 14)
     pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R)
-    pg.mouse.move(fx, cy); pg.mouse.down(); pg.mouse.move(fx + 6, cy, steps=2); time.sleep(0.5)
-    pg.mouse.move(fx + 6, cy - 70, steps=6); time.sleep(0.3); pg.mouse.up(); time.sleep(0.8)
+    pg.mouse.move(fx, cy); pg.mouse.down(); pg.mouse.move(fx + 40, cy, steps=4); time.sleep(0.5)
+    pg.mouse.move(fx + 40, cy - 110, steps=6); time.sleep(0.3); pg.mouse.up(); time.sleep(0.8)
     t1 = cur(pg, 'vv')
     check('Hochwischen über die Leiste: zurück an die alte Stelle', abs(t1 - t0) < 1.5, [t0, t1])
     # 3) Wischen übers Bild (seitlich): Bild springt mit
@@ -62,7 +68,7 @@ with sync_playwright() as p:
     pg.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.srcObject; }' % R, timeout=15000); time.sleep(0.8)
     dm = pg.evaluate('() => document.getElementById("v").duration')
     during, box = drag(pg, 0.1, 0.5, 'orig')
-    check('gespiegelt: das Video der Seite springt beim Ziehen mit', abs(during - 0.5 * dm) < 3, [during, round(0.5 * dm, 1)])
+    check('gespiegelt: das Video der Seite springt beim Ziehen mit', abs(during - drag.target * dm) < 3, [during, round(drag.target * dm, 1)])
     check('keine Fehler', not errs, errs)
     b.close()
 srv.shutdown()

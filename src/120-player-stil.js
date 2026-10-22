@@ -121,10 +121,20 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vchip .vrepn:empty{display:none}
 .vchip[hidden]{display:none}
 .vtime{font:600 12px var(--font);font-variant-numeric:tabular-nums;color:var(--sub);min-width:40px;text-align:center}
-.vbar{flex:1;-webkit-appearance:none;appearance:none;height:38px;background:transparent;margin:0;cursor:pointer;filter:invert(1);--trk:rgba(0,0,0,.25)}
-.vbar::-webkit-slider-runnable-track{height:5px;border-radius:3px;background:var(--trk);transition:height .18s ease}
-.vbar:active::-webkit-slider-runnable-track{height:9px;border-radius:5px}
-.vbar::-moz-range-track{height:5px;border-radius:3px;background:var(--trk)}
+.vbar{flex:1;-webkit-appearance:none;appearance:none;height:38px;background:transparent;margin:0;cursor:pointer;filter:invert(1);--trk:rgba(0,0,0,.25);pointer-events:none;transition:opacity .15s ease}
+.vbar::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:var(--trk);transition:height .18s ease,border-radius .18s ease}
+.vbar::-moz-range-track{height:6px;border-radius:3px;background:var(--trk);transition:height .18s ease}
+/* Berührungsfläche der Leiste: groß (56 px hoch), über der ganzen Zeile – Spulen siehe 220 (19.4) */
+.vbarhit{position:absolute;left:0;right:0;top:50%;height:56px;transform:translateY(-50%);z-index:2;touch-action:none;cursor:pointer}
+/* beim Ziehen: dicke Leiste ohne Punkt (wie Samsung Internet) */
+.vp.thick .vbar::-webkit-slider-runnable-track{height:18px;border-radius:9px}
+.vp.thick .vbar::-moz-range-track{height:18px;border-radius:9px}
+.vp.thick .vbar::-webkit-slider-thumb{transform:scale(0) !important;margin-top:0 !important}
+.vp.thick .vbar::-moz-range-thumb{transform:scale(0) !important}
+/* Abbrechen-Bereich (Finger weit über der Leiste) und Fein-Spulen (unter der Leiste) */
+.vp.scrubx .vbar{opacity:.4}
+.vp.scrubx .vprev b{background:rgba(205,45,45,.82)}
+.vp.scrubfine .vprev b{background:rgba(96,74,214,.78)}
 .vbar::-webkit-slider-thumb{-webkit-appearance:none;margin-top:-6.5px;width:18px;height:18px;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1);transition:transform .2s cubic-bezier(.34,1.56,.64,1),margin .18s ease}
 .vbar::-moz-range-thumb{width:18px;height:18px;border:0;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1)}
 .vbar:active::-moz-range-thumb{transform:scale(1.2)}
@@ -145,7 +155,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vprev.live .vpv{opacity:1}
 .vprev.live .vpc{opacity:0}
 .vprev.noimg .vpbox{display:none}
-.vprev b{font:700 13px var(--font);font-variant-numeric:tabular-nums;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);padding:4px 10px;border-radius:12px;background:rgba(18,20,28,.5)}
+.vprev b{white-space:nowrap;font:700 13px var(--font);font-variant-numeric:tabular-nums;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);padding:4px 10px;border-radius:12px;background:rgba(18,20,28,.5)}
 /* Spulen per Wischen: große, dünne Zeit mitten im Bild, darunter die Restzeit – nur Zahlen, kein Kasten */
 .vseek{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;color:#fff;pointer-events:none;opacity:0;transition:opacity .14s ease;z-index:3;white-space:nowrap;
  text-shadow:0 2px 14px rgba(0,0,0,.45),0 0 2px rgba(0,0,0,.4);font-variant-numeric:tabular-nums}

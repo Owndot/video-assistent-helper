@@ -107,39 +107,85 @@
     // gut geht: sobald der Finger ~10 px zur Seite zieht, gilt es als Spulen (wird nie mehr abgebrochen). Nur deutlich
     // nach oben (40 px) bei kaum seitlicher Bewegung – oder wenn Android die Geste übernimmt (pointercancel) – springt
     // die Leiste zurück
-    let barG = null;
-    const barBack = () => { const m = M(); if (isFinite(m.duration) && m.duration > 0) { bar.value = String(Math.round(m.currentTime / m.duration * 1000)); paintBar(bar.value / 1000); tCur.textContent = fmtTime(m.currentTime); } };
-    bar.addEventListener('pointerdown', (e) => {
-      stop(e); st.barDrag = true; clearTimeout(st.hideTimer);
-      barG = { x: e.clientX, y: e.clientY, off: false, lock: false };
-      if (!liveMode()) { pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid(); }
-    });
-    bar.addEventListener('pointermove', (e) => {
-      if (!barG || barG.off || barG.lock) return;
-      const dx = e.clientX - barG.x, dy = e.clientY - barG.y;
-      if (Math.abs(dx) > 10) { barG.lock = true; return; }
-      if (-dy > 40 && Math.abs(dx) < 16) { barG.off = true; st.barDrag = false; prevHide(); liveEnd(true); barBack(); }
-    });
-    bar.addEventListener('pointercancel', () => {   // Android hat die Wischgeste übernommen
-      if (barG && !barG.lock && !barG.off) { barG.off = true; st.barDrag = false; liveEnd(true); barBack(); setTimeout(() => { if (barG && barG.off) { barG = null; barBack(); scheduleHide(); } }, 120); }
-    });
-    bar.addEventListener('input', () => {
-      if (barG && barG.off) { barBack(); return; }
-      const m = M();
-      if (isFinite(m.duration)) tCur.textContent = fmtTime(bar.value / 1000 * m.duration);
-      paintBar(bar.value / 1000);
-      prevShow(bar.value / 1000);
-    });
-    bar.addEventListener('change', () => {
-      if (barG && barG.off) { barG = null; barBack(); scheduleHide(); return; }   // war Hochwischen, kein Spulen
-      barG = null;
-      const m = M();
-      st.userSeekAt = Date.now();
-      liveEnd(false);
-      if (isFinite(m.duration)) { try { m.currentTime = bar.value / 1000 * m.duration; } catch (e) {} }
+    // Spulen auf der Leiste (19.4) – eigene, große Berührungsfläche statt des Schiebereglers des Browsers:
+    //  - kurz antippen = an diese Stelle springen
+    //  - ziehen = von der AKTUELLEN Stelle aus weiter (kein Sprung zum Finger); die Leiste wird dabei dick
+    //  - beim Ziehen nach unten (unter die Leiste) = fein: fünfmal langsamer
+    //  - nach oben weg vom Balken = abbrechen (Hinweis erscheint); loslassen dort = zurück an die alte Stelle.
+    //    Zurück nach unten = weiter spulen. Übernimmt Android die Geste (Hochwischen vom Rand), ebenfalls abbrechen.
+    const barHit = h('div', { class: 'vbarhit', 'aria-hidden': 'true' });
+    bar.parentNode.append(barHit);
+    bar.tabIndex = -1;
+    const scr = { on: false, id: 0, x0: 0, y0: 0, lx: 0, t0: 0, t: 0, moved: false, mode: '' };
+    const durOk = () => { const d = M().duration; return isFinite(d) && d > 0 ? d : 0; };
+    const barBack = () => { const m = M(), d = durOk(); if (d) { bar.value = String(Math.round(m.currentTime / d * 1000)); paintBar(bar.value / 1000); tCur.textContent = fmtTime(m.currentTime); } };
+    function scrubShow(t) {
+      const d = durOk();
+      if (!d) return;
+      const p = clamp(t / d, 0, 1);
+      bar.value = String(Math.round(p * 1000));
+      paintBar(p);
+      tCur.textContent = fmtTime(t);
+      prevShow(p);
+      wrap.classList.toggle('scrubx', scr.mode === 'cancel');
+      wrap.classList.toggle('scrubfine', scr.mode === 'fine');
+      if (scr.mode === 'cancel') pvTime.textContent = tr('Loslassen = abbrechen');
+      else if (scr.mode === 'fine') pvTime.textContent = fmtTime(t) + ' · ' + tr('fein');
+    }
+    function scrubEnd(how) {   // how: 'seek' | 'tap' | 'cancel'
+      if (!scr.on) return;
+      scr.on = false;
+      wrap.classList.remove('thick', 'scrubx', 'scrubfine');
+      const m = M(), d = durOk();
+      if (how === 'cancel') { liveEnd(true); barBack(); }
+      else if (d) {
+        liveEnd(false);
+        st.userSeekAt = Date.now();
+        try { m.currentTime = clamp(scr.t, 0, Math.max(0, d - 0.2)); } catch (e) {}
+      }
       st.barDrag = false;
       prevHide();
       scheduleHide();
+    }
+    barHit.addEventListener('pointerdown', (e) => {
+      stop(e);
+      const d = durOk();
+      if (!d || scr.on) return;
+      try { barHit.setPointerCapture(e.pointerId); } catch (x) {}
+      const m = M();
+      Object.assign(scr, { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, lx: e.clientX, t0: m.currentTime, t: m.currentTime, moved: false, mode: '' });
+      st.barDrag = true; clearTimeout(st.hideTimer);
+      if (!liveMode()) { pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid(); }
     });
-    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((t) => bar.addEventListener(t, () => setTimeout(prevHide, 60)));
+    barHit.addEventListener('pointermove', (e) => {
+      if (!scr.on || e.pointerId !== scr.id) return;
+      const d = durOk();
+      if (!d) return;
+      const dy = e.clientY - scr.y0;
+      if (!scr.moved) {
+        if (Math.hypot(e.clientX - scr.x0, dy) < 8) return;
+        scr.moved = true;   // (die ersten Pixel zählen mit: lx bleibt beim Aufsetzpunkt)
+        wrap.classList.add('thick');
+      }
+      const br = bar.getBoundingClientRect(), w = Math.max(60, br.width - 14);
+      if (dy < -Math.max(70, br.height * 1.5)) { scr.mode = 'cancel'; scr.lx = e.clientX; scrubShow(scr.t0); return; }
+      scr.mode = dy > 50 ? 'fine' : '';
+      const dx = e.clientX - scr.lx;
+      scr.lx = e.clientX;
+      scr.t = clamp(scr.t + dx / w * d * (scr.mode === 'fine' ? 0.2 : 1), 0, d);
+      scrubShow(scr.t);
+    });
+    barHit.addEventListener('pointerup', (e) => {
+      if (!scr.on || e.pointerId !== scr.id) return;
+      if (!scr.moved) {   // kurz angetippt: an diese Stelle
+        const br = bar.getBoundingClientRect(), d = durOk();
+        if (d) scr.t = clamp((e.clientX - br.left - 7) / Math.max(60, br.width - 14), 0, 1) * d;
+        scrubShow(scr.t);
+        scrubEnd('tap');
+        return;
+      }
+      scrubEnd(scr.mode === 'cancel' ? 'cancel' : 'seek');
+    });
+    barHit.addEventListener('pointercancel', (e) => { if (scr.on && e.pointerId === scr.id) scrubEnd('cancel'); });   // Android hat die Geste übernommen
+    barHit.addEventListener('click', stop);
 

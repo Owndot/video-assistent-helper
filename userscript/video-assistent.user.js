@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.3
+// @version      19.4
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -74,9 +74,9 @@
     subHigh: false,           // Untertitel oben im Bild statt unten (z. B. wenn das Video eigene Texte unten hat)
     language: 'auto',         // Sprache der Oberfläche: 'auto' (wie der Browser), 'de' oder 'en'
     dialogBoost: false,       // Dialog-Verstärker (Stimmen deutlicher) – im ⋮-Menü umschaltbar
-    // Spul-Vorschau: 'live' = das Video selbst springt beim Ziehen mit (wie Samsung Internet; geht überall, auch beim
-    // Spiegeln), 'thumb' = kleines Vorschaubild über der Leiste (braucht eine zweite Kopie des Videos)
-    seekPreview: 'live',
+    // Spul-Vorschau: 'thumb' = kleines Vorschaubild über der Leiste (Standard), 'live' = das Video selbst springt beim
+    // Ziehen mit (geht überall, auch beim Spiegeln)
+    seekPreview: 'thumb',
     leaveAction: 'play',      // in eine andere App wechseln: 'play' = weiterlaufen lassen (wie der Browser es erlaubt), 'pause' = anhalten
     // Helfer-App "Video-Assistent Helfer" (eigene APK): Läuft sie, steuern die Wischgesten die ECHTE Helligkeit und
     // Medienlautstärke des Handys. Läuft sie nicht, regelt der Player wie bisher nur das Video. false = nie fragen.
@@ -163,7 +163,7 @@
     'Füllen': 'Fill', 'Strecken': 'Stretch',
     // Einstellungen (kurz)
     'Design': 'Design', 'Glas': 'Glass', 'Schlicht': 'Plain', 'Vollbild': 'Full screen', 'Ambient': 'Ambient',
-    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Spul-Vorschau': 'Seek preview', 'Im Bild': 'In video', 'Kleines Bild': 'Thumbnail', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
+    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Loslassen = abbrechen': 'Release to cancel', 'fein': 'fine', 'Spul-Vorschau': 'Seek preview', 'Im Bild': 'In video', 'Kleines Bild': 'Thumbnail', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
     'Link teilen': 'Share link', 'Zurück': 'Back', 'Wiederholen': 'Repeat', 'Wiederholen aus': 'Repeat off', 'Wiederholen: endlos': 'Repeat: endless', 'Sleep-Timer': 'Sleep timer', 'Ende des Videos': 'End of video', 'Läuft': 'Running', 'Sleep-Timer aus': 'Sleep timer off', 'Sleep-Timer: angehalten': 'Sleep timer: paused', 'Sleep-Timer: Ende des Videos': 'Sleep timer: end of video', 'Dialog-Verstärker': 'Dialogue boost', 'Dialog-Verstärker an': 'Dialogue boost on', 'Dialog-Verstärker aus': 'Dialogue boost off', 'Dialog-Verstärker: hier nicht möglich (die Seite gibt den Ton nicht frei)': 'Dialogue boost: not possible here (the site doesn’t release the sound)', 'In App öffnen': 'Open in app', 'Beim Verlassen': 'When leaving', 'Weiter': 'Keep playing', 'Anhalten': 'Pause', 'Antippen für Vollbild': 'Tap for full screen', 'z. B. VLC': 'e.g. VLC', 'Link kopiert': 'Link copied', 'Kein Link zu diesem Video gefunden': 'No link to this video found',
     'Oben: Wischen bis ganz an den Rand': 'Top: swiping works right up to the edge', 'Unten: Wischen bis ganz an den Rand': 'Bottom: swiping works right down to the edge',
     '✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helper benutzen. Du kannst diese Seite schließen.': '✓ Connected. From now on only this script can use the helper. You can close this page.',
@@ -2515,10 +2515,20 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vchip .vrepn:empty{display:none}
 .vchip[hidden]{display:none}
 .vtime{font:600 12px var(--font);font-variant-numeric:tabular-nums;color:var(--sub);min-width:40px;text-align:center}
-.vbar{flex:1;-webkit-appearance:none;appearance:none;height:38px;background:transparent;margin:0;cursor:pointer;filter:invert(1);--trk:rgba(0,0,0,.25)}
-.vbar::-webkit-slider-runnable-track{height:5px;border-radius:3px;background:var(--trk);transition:height .18s ease}
-.vbar:active::-webkit-slider-runnable-track{height:9px;border-radius:5px}
-.vbar::-moz-range-track{height:5px;border-radius:3px;background:var(--trk)}
+.vbar{flex:1;-webkit-appearance:none;appearance:none;height:38px;background:transparent;margin:0;cursor:pointer;filter:invert(1);--trk:rgba(0,0,0,.25);pointer-events:none;transition:opacity .15s ease}
+.vbar::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:var(--trk);transition:height .18s ease,border-radius .18s ease}
+.vbar::-moz-range-track{height:6px;border-radius:3px;background:var(--trk);transition:height .18s ease}
+/* Berührungsfläche der Leiste: groß (56 px hoch), über der ganzen Zeile – Spulen siehe 220 (19.4) */
+.vbarhit{position:absolute;left:0;right:0;top:50%;height:56px;transform:translateY(-50%);z-index:2;touch-action:none;cursor:pointer}
+/* beim Ziehen: dicke Leiste ohne Punkt (wie Samsung Internet) */
+.vp.thick .vbar::-webkit-slider-runnable-track{height:18px;border-radius:9px}
+.vp.thick .vbar::-moz-range-track{height:18px;border-radius:9px}
+.vp.thick .vbar::-webkit-slider-thumb{transform:scale(0) !important;margin-top:0 !important}
+.vp.thick .vbar::-moz-range-thumb{transform:scale(0) !important}
+/* Abbrechen-Bereich (Finger weit über der Leiste) und Fein-Spulen (unter der Leiste) */
+.vp.scrubx .vbar{opacity:.4}
+.vp.scrubx .vprev b{background:rgba(205,45,45,.82)}
+.vp.scrubfine .vprev b{background:rgba(96,74,214,.78)}
 .vbar::-webkit-slider-thumb{-webkit-appearance:none;margin-top:-6.5px;width:18px;height:18px;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1);transition:transform .2s cubic-bezier(.34,1.56,.64,1),margin .18s ease}
 .vbar::-moz-range-thumb{width:18px;height:18px;border:0;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1)}
 .vbar:active::-moz-range-thumb{transform:scale(1.2)}
@@ -2539,7 +2549,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vprev.live .vpv{opacity:1}
 .vprev.live .vpc{opacity:0}
 .vprev.noimg .vpbox{display:none}
-.vprev b{font:700 13px var(--font);font-variant-numeric:tabular-nums;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);padding:4px 10px;border-radius:12px;background:rgba(18,20,28,.5)}
+.vprev b{white-space:nowrap;font:700 13px var(--font);font-variant-numeric:tabular-nums;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);padding:4px 10px;border-radius:12px;background:rgba(18,20,28,.5)}
 /* Spulen per Wischen: große, dünne Zeit mitten im Bild, darunter die Restzeit – nur Zahlen, kein Kasten */
 .vseek{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;color:#fff;pointer-events:none;opacity:0;transition:opacity .14s ease;z-index:3;white-space:nowrap;
  text-shadow:0 2px 14px rgba(0,0,0,.45),0 0 2px rgba(0,0,0,.4);font-variant-numeric:tabular-nums}
@@ -4616,41 +4626,87 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // gut geht: sobald der Finger ~10 px zur Seite zieht, gilt es als Spulen (wird nie mehr abgebrochen). Nur deutlich
     // nach oben (40 px) bei kaum seitlicher Bewegung – oder wenn Android die Geste übernimmt (pointercancel) – springt
     // die Leiste zurück
-    let barG = null;
-    const barBack = () => { const m = M(); if (isFinite(m.duration) && m.duration > 0) { bar.value = String(Math.round(m.currentTime / m.duration * 1000)); paintBar(bar.value / 1000); tCur.textContent = fmtTime(m.currentTime); } };
-    bar.addEventListener('pointerdown', (e) => {
-      stop(e); st.barDrag = true; clearTimeout(st.hideTimer);
-      barG = { x: e.clientX, y: e.clientY, off: false, lock: false };
-      if (!liveMode()) { pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid(); }
-    });
-    bar.addEventListener('pointermove', (e) => {
-      if (!barG || barG.off || barG.lock) return;
-      const dx = e.clientX - barG.x, dy = e.clientY - barG.y;
-      if (Math.abs(dx) > 10) { barG.lock = true; return; }
-      if (-dy > 40 && Math.abs(dx) < 16) { barG.off = true; st.barDrag = false; prevHide(); liveEnd(true); barBack(); }
-    });
-    bar.addEventListener('pointercancel', () => {   // Android hat die Wischgeste übernommen
-      if (barG && !barG.lock && !barG.off) { barG.off = true; st.barDrag = false; liveEnd(true); barBack(); setTimeout(() => { if (barG && barG.off) { barG = null; barBack(); scheduleHide(); } }, 120); }
-    });
-    bar.addEventListener('input', () => {
-      if (barG && barG.off) { barBack(); return; }
-      const m = M();
-      if (isFinite(m.duration)) tCur.textContent = fmtTime(bar.value / 1000 * m.duration);
-      paintBar(bar.value / 1000);
-      prevShow(bar.value / 1000);
-    });
-    bar.addEventListener('change', () => {
-      if (barG && barG.off) { barG = null; barBack(); scheduleHide(); return; }   // war Hochwischen, kein Spulen
-      barG = null;
-      const m = M();
-      st.userSeekAt = Date.now();
-      liveEnd(false);
-      if (isFinite(m.duration)) { try { m.currentTime = bar.value / 1000 * m.duration; } catch (e) {} }
+    // Spulen auf der Leiste (19.4) – eigene, große Berührungsfläche statt des Schiebereglers des Browsers:
+    //  - kurz antippen = an diese Stelle springen
+    //  - ziehen = von der AKTUELLEN Stelle aus weiter (kein Sprung zum Finger); die Leiste wird dabei dick
+    //  - beim Ziehen nach unten (unter die Leiste) = fein: fünfmal langsamer
+    //  - nach oben weg vom Balken = abbrechen (Hinweis erscheint); loslassen dort = zurück an die alte Stelle.
+    //    Zurück nach unten = weiter spulen. Übernimmt Android die Geste (Hochwischen vom Rand), ebenfalls abbrechen.
+    const barHit = h('div', { class: 'vbarhit', 'aria-hidden': 'true' });
+    bar.parentNode.append(barHit);
+    bar.tabIndex = -1;
+    const scr = { on: false, id: 0, x0: 0, y0: 0, lx: 0, t0: 0, t: 0, moved: false, mode: '' };
+    const durOk = () => { const d = M().duration; return isFinite(d) && d > 0 ? d : 0; };
+    const barBack = () => { const m = M(), d = durOk(); if (d) { bar.value = String(Math.round(m.currentTime / d * 1000)); paintBar(bar.value / 1000); tCur.textContent = fmtTime(m.currentTime); } };
+    function scrubShow(t) {
+      const d = durOk();
+      if (!d) return;
+      const p = clamp(t / d, 0, 1);
+      bar.value = String(Math.round(p * 1000));
+      paintBar(p);
+      tCur.textContent = fmtTime(t);
+      prevShow(p);
+      wrap.classList.toggle('scrubx', scr.mode === 'cancel');
+      wrap.classList.toggle('scrubfine', scr.mode === 'fine');
+      if (scr.mode === 'cancel') pvTime.textContent = tr('Loslassen = abbrechen');
+      else if (scr.mode === 'fine') pvTime.textContent = fmtTime(t) + ' · ' + tr('fein');
+    }
+    function scrubEnd(how) {   // how: 'seek' | 'tap' | 'cancel'
+      if (!scr.on) return;
+      scr.on = false;
+      wrap.classList.remove('thick', 'scrubx', 'scrubfine');
+      const m = M(), d = durOk();
+      if (how === 'cancel') { liveEnd(true); barBack(); }
+      else if (d) {
+        liveEnd(false);
+        st.userSeekAt = Date.now();
+        try { m.currentTime = clamp(scr.t, 0, Math.max(0, d - 0.2)); } catch (e) {}
+      }
       st.barDrag = false;
       prevHide();
       scheduleHide();
+    }
+    barHit.addEventListener('pointerdown', (e) => {
+      stop(e);
+      const d = durOk();
+      if (!d || scr.on) return;
+      try { barHit.setPointerCapture(e.pointerId); } catch (x) {}
+      const m = M();
+      Object.assign(scr, { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, lx: e.clientX, t0: m.currentTime, t: m.currentTime, moved: false, mode: '' });
+      st.barDrag = true; clearTimeout(st.hideTimer);
+      if (!liveMode()) { pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid(); }
     });
-    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((t) => bar.addEventListener(t, () => setTimeout(prevHide, 60)));
+    barHit.addEventListener('pointermove', (e) => {
+      if (!scr.on || e.pointerId !== scr.id) return;
+      const d = durOk();
+      if (!d) return;
+      const dy = e.clientY - scr.y0;
+      if (!scr.moved) {
+        if (Math.hypot(e.clientX - scr.x0, dy) < 8) return;
+        scr.moved = true;   // (die ersten Pixel zählen mit: lx bleibt beim Aufsetzpunkt)
+        wrap.classList.add('thick');
+      }
+      const br = bar.getBoundingClientRect(), w = Math.max(60, br.width - 14);
+      if (dy < -Math.max(70, br.height * 1.5)) { scr.mode = 'cancel'; scr.lx = e.clientX; scrubShow(scr.t0); return; }
+      scr.mode = dy > 50 ? 'fine' : '';
+      const dx = e.clientX - scr.lx;
+      scr.lx = e.clientX;
+      scr.t = clamp(scr.t + dx / w * d * (scr.mode === 'fine' ? 0.2 : 1), 0, d);
+      scrubShow(scr.t);
+    });
+    barHit.addEventListener('pointerup', (e) => {
+      if (!scr.on || e.pointerId !== scr.id) return;
+      if (!scr.moved) {   // kurz angetippt: an diese Stelle
+        const br = bar.getBoundingClientRect(), d = durOk();
+        if (d) scr.t = clamp((e.clientX - br.left - 7) / Math.max(60, br.width - 14), 0, 1) * d;
+        scrubShow(scr.t);
+        scrubEnd('tap');
+        return;
+      }
+      scrubEnd(scr.mode === 'cancel' ? 'cancel' : 'seek');
+    });
+    barHit.addEventListener('pointercancel', (e) => { if (scr.on && e.pointerId === scr.id) scrubEnd('cancel'); });   // Android hat die Geste übernommen
+    barHit.addEventListener('click', stop);
 
     // ----- Vorschaubild beim Spulen auf der Leiste -----
     // Ein zweites, stummes Video (in der kleinsten verfügbaren Qualität) springt an die Fingerstelle.
@@ -4895,7 +4951,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (!isFinite(d) || d <= 0) return;
       const t = p * d;
       pvTime.textContent = fmtTime(t);
-      if (liveMode()) liveTo(t);
+      if (liveMode() && !wrap.classList.contains('scrubx')) liveTo(t);
       const img = !liveMode() && prevLoad() && !prev.classList.contains('noimg');
       if (img) {
         pvs.lastWant = t;
@@ -6043,7 +6099,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.3',
+      'Video-Assistent 19.4',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
