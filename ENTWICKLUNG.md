@@ -124,6 +124,7 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_topguard.py`, `test_idle.py` | gesperrter oberer/unterer Rand, sparsamer Takt ohne Video |
 | `test_tapzoom.py` | Doppeltipp-Zoom: füllt hochkant, Richtung zum Finger, 3× quer, Verschieben, Gummiband, Schwung, Drehen |
 | `test_extras.py` | Untertitel (Seite, .srt/.vtt, Datei, Stream, Lage), ⋮ Mehr: Tonspur, Standbild, Einstellungen, Design, Media Session |
+| `test_menuback.py` | ⋮ ohne Überschrift / schließt, ‹ zurück, Zurück-Taste im Menü, Wiederholen 1× / 5× |
 | `test_mirrorprev.py` | Vorschau beim Spiegeln: ruhig nur die Zeit, kein Flackern beim Ziehen |
 | `test_reelend.py` | Reels-Seite springt am Ende von selbst weiter: Player hält vorher an, beim Schließen bleibt man beim Reel |
 | `test_leave.py` | App-Wechsel (Fokus/verdeckt) ≠ Zurück-Taste, „Beim Verlassen“, Bild-in-Bild ✕/Vollbild |
@@ -257,7 +258,8 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 16.3 | Hinweise unter dem Bild (mit Abstand, sonst über der Leiste/dem Menü/den Untertiteln) im Glas der Knöpfe; Wischsperre oben/unten in Worten mit Erklärung; Teilen-Knopf (Beitragslink, im eingebetteten Fenster der Link der Hauptseite); „Helper“ statt „Helfer“. App: Deutsch/Englisch (`Tr`), nur noch eigener Schlüssel, Host-Prüfung gegen DNS-Rebinding |
 | 16.4 | Aufteilung „oben schlank“: oben Download + ⋮, unten Tempo · CC · Format · Bild-in-Bild · Drehen; Teilen, In App öffnen, Qualität im ⋮-Menü (Knöpfe unsichtbar in `.vstash`, das Menü löst sie aus) |
 | 16.5 | Tempo aus der unteren Leiste ins ⋮-Menü (Liste 0,5×–2×). App: Sprache von Hand (Auto/Deutsch/English, `Keys.lang` → `Tr.force`) |
-| 17.0 | Quelltext in `src/` (28 Teile, `tools/build.js`, CI prüft); Altlasten entfernt (Aufklapp-Knopf, feste Seitenverhältnisse, Weiterschauen-Aufräumen). Vorschau: Bilder aus dem laufenden Video, Finger vor Raster, Raster nahe am Finger, Wächter startet langsame Sprünge nicht mehr neu. Zoom: bei sichtbaren Leisten normale Gesten. App-Wechsel schließt den Player nicht; „Beim Verlassen“ (Weiter/Anhalten); Bild-in-Bild ✕ = Pause, „Vollbild“ = zurück in den Vollbild-Player |
+| 17.0 | Quelltext in `src/` (28 Teile, `tools/build.js`, CI prüft); Altlasten entfernt (Aufklapp-Knopf, feste Seitenverhältnisse, Weiterschauen-Aufräumen). Vorschau: Bilder aus dem laufenden Video, Finger vor Raster, Raster nahe am Finger, Wächter startet langsame Sprünge nicht mehr neu. App-Wechsel schließt den Player nicht; „Beim Verlassen“ (Weiter/Anhalten); Bild-in-Bild ✕ = Pause, „Vollbild“ = zurück in den Vollbild-Player |
 | 17.1 | Vorschau beim Spiegeln: gemerkte Bilder aus dem gespiegelten Bild; gemerkte Bilder bleiben beim Wechsel der Vorschau-Quelle |
 | 17.2 | Reels: gespiegeltes Original kurz VOR dem Ende anhalten (Seite springt nicht zum nächsten Reel), am Ende geschlossen = Original bleibt angehalten. Vorschau aus Facebook-Seitendaten wieder entfernt (zu unzuverlässig) |
 | 17.3 | Vorschau beim Spiegeln wieder nur die Zeit (gemerkte Bilder nur für Angeschautes flackerten beim Spulen: Bild ↔ Zeit) |
+| 17.4 | ⋮-Menü ohne Überschrift, zweiter Tipp schließt; Untermenüs mit ‹ (`openMenu(…, back)`), Zurück-Taste bei offenem Menü nur eine Ebene zurück; Wiederholen-Knopf (Aus → 1× → 5×); Zoom-Wischgesten bei sichtbaren Leisten wieder entfernt. App: neue Oberfläche (ohne Titelleiste, erledigte Schritte als Zeile, Sprachwahl Auto/Deutsch/English) |

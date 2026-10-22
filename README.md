@@ -40,9 +40,11 @@ Der Player funktioniert auch **ohne** Helper-App – dann regeln die Gesten nur 
   **im Bild**) und Verschiebung (früher/später)
 
 **Aufteilung**: oben links ✕ und Titel, oben rechts nur **Download** und **⋮**; unten (am Daumen) Sperre links,
-rechts **Untertitel (CC) · Bildformat · Bild-in-Bild · Drehen**.
+rechts **Untertitel (CC) · Wiederholen · Bildformat · Bild-in-Bild · Drehen**. Wiederholen: jedes Tippen
+schaltet Aus → 1× → 5× (die Zahl am Knopf zeigt, wie oft noch).
 
-**⋮ Mehr** (oben rechts im Player)
+**⋮ Mehr** (oben rechts im Player; noch einmal tippen schließt; Untermenüs mit ‹ zurück, auch die Zurück-Taste
+geht im Menü nur eine Ebene zurück)
 - **Link teilen** – Link zum Video (Beitrag bei Instagram/Facebook/TikTok, sonst die Seite)
 - **In App öffnen** (z. B. VLC) und **Qualität**, wenn es sie für das Video gibt
 - **Geschwindigkeit** (0,5× bis 2×, Liste zum Antippen)
