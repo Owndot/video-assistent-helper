@@ -44,6 +44,17 @@ with sync_playwright() as p:
     pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(1.2)
     s2 = pg.evaluate('() => { const v = document.getElementById("v"); return { adv: window.__advanced, src: v.src.split("/").pop() }; }')
     check('nach dem Schließen: noch dasselbe Reel', s2['adv'] == 0 and s2['src'] == 'reel1.webm', s2)
+    # Wiederholen 1× beim Spiegeln: am Ende von vorn – die Seite springt trotzdem nicht weiter
+    pg.goto('https://www.facebook.com/reel/111222333444555/')
+    pg.wait_for_function('document.getElementById("v").currentTime > 0.5', timeout=20000)
+    pg.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(0.8)
+    pg.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
+    pg.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.srcObject; }' % R, timeout=15000)
+    pg.evaluate('() => { %s.querySelector(".vp").classList.add("ctl"); %s.querySelector("button[aria-label=Wiederholen]").click(); }' % (R, R)); time.sleep(0.3)
+    pg.evaluate('() => { const v = document.getElementById("v"); v.currentTime = v.duration - 2; }'); time.sleep(3.5)
+    s4 = pg.evaluate('() => { const v = document.getElementById("v"); return { adv: window.__advanced, src: v.src.split("/").pop(), paused: v.paused, t: Math.round(v.currentTime * 10) / 10 }; }')
+    check('Wiederholen 1× beim Spiegeln: von vorn, Seite springt nicht weiter', s4['adv'] == 0 and s4['src'] == 'reel1.webm' and not s4['paused'] and s4['t'] < 4, s4)
+    pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.8)
     # Eigener Player (Seite wird nicht gespiegelt): am Ende schließen → Original bleibt kurz vor dem Ende stehen
     ctx.route('https://reels.example.com/**', serve)
     pg.goto('https://reels.example.com/reel/1/')

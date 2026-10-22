@@ -16,16 +16,23 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
+import android.widget.Toast;
 
-/** Einstellungsseite: Rechte erteilen, Dienst starten/stoppen, ausprobieren. */
+/**
+ * Einstellungsseite (dunkel, wie der Player): oben Status, darunter die Schritte – erledigte Schritte schrumpfen zu
+ * einer Zeile mit ✓, offene zeigen Erklärung und Knopf. Unten Einstellungen (Sprache, Autostart, Ausprobieren).
+ * Die Seite wird bei jeder Rückkehr neu aufgebaut (Rechte können sich in den Android-Einstellungen geändert haben).
+ */
 public class MainActivity extends Activity {
-    private TextView stOverlay, stBattery, stService, stNotif, stPair;
-    private Button bOverlay, bBattery, bService, bNotif, bPair;
+    // Farben wie im Player
+    static final int BG = 0xFF0E1014, CARD = 0xFF171A21, LINE = 0xFF262A33, TXT = 0xFFF2F4F7, SUB = 0xFFA3A9B5;
+    static final int ACC = 0xFF9BE7FF, ACC_TXT = 0xFF06222C, OK = 0xFF4CD964, WARN = 0xFFFFB020, SEG = 0xFF0E1014;
+
     private LinearLayout root;
 
     static SharedPreferences prefs(Activity a) { return a.getSharedPreferences("helfer", MODE_PRIVATE); }
@@ -34,72 +41,62 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         Keys.applyLang(this);
+        try { getWindow().setStatusBarColor(BG); getWindow().setNavigationBarColor(BG); } catch (Exception ignored) {}
         ScrollView sv = new ScrollView(this);
         sv.setFillViewport(true);
+        sv.setBackgroundColor(BG);
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        int pad = dp(20);
-        root.setPadding(pad, dp(28), pad, pad);
+        root.setPadding(dp(18), dp(26), dp(18), dp(28));
         sv.addView(root);
         setContentView(sv);
+        // Beim Öffnen gleich starten (solange nicht ausdrücklich gestoppt)
+        if (prefs(this).getBoolean("on", true) && !HelferService.running) HelferService.start(this);
+        build();
+    }
 
-        TextView title = text(Tr.t("Video-Assistent Helper", "Video Assistant Helper"), 24, true);
-        root.addView(title);
-        TextView intro = text(Tr.t("Damit der Videoplayer im Browser die echte Bildschirmhelligkeit und die Medienlautstärke "
-                + "deines Handys steuern kann. Der Helper läuft still im Hintergrund und ist nur vom Handy selbst "
-                + "erreichbar. Die Helligkeit gilt nur, solange der Player offen ist – danach ist alles wieder wie vorher.",
-                "Lets the video player in your browser control your phone's real screen brightness and media volume. "
-                + "The helper runs quietly in the background and can only be reached from the phone itself. "
-                + "The brightness only applies while the player is open – afterwards everything is back to normal."), 15, false);
-        intro.setAlpha(0.8f);
-        intro.setPadding(0, dp(8), 0, dp(18));
-        root.addView(intro);
+    @Override
+    protected void onResume() {
+        super.onResume();
+        root.postDelayed(this::build, 250);
+    }
 
-        // 1. Helligkeit
-        stOverlay = status();
-        bOverlay = button(Tr.t("Erlauben", "Allow"), v -> startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:" + getPackageName()))));
-        card(Tr.t("1 · Helligkeit", "1 · Brightness"), Tr.t("„Über anderen Apps einblenden“ erlauben. Der Helper legt dann ein unsichtbares 1-Pixel-Fenster "
-                + "über den Bildschirm, das nur die Helligkeit wünscht.",
-                "Allow “Display over other apps”. The helper then places an invisible 1-pixel window on the screen "
-                + "that only requests the brightness."), stOverlay, bOverlay);
-
-        // 2. Akku
-        stBattery = status();
-        bBattery = button(Tr.t("Ausnehmen", "Exclude"), v -> {
-            try {
-                startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName())));
-            } catch (Exception e) {
-                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
-            }
-        });
-        card(Tr.t("2 · Im Hintergrund bleiben", "2 · Stay in the background"), Tr.t("Vom Akku-Sparen ausnehmen, sonst beendet Android den Helper nach einer Weile. "
-                + "Er verbraucht praktisch nichts: er wartet nur auf den Player.",
-                "Exclude it from battery saving, otherwise Android stops the helper after a while. "
-                + "It uses practically nothing: it just waits for the player."), stBattery, bBattery);
-
-        // 3. Benachrichtigung (Android 13+)
-        if (Build.VERSION.SDK_INT >= 33) {
-            stNotif = status();
-            bNotif = button(Tr.t("Erlauben", "Allow"), v -> requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1));
-            card(Tr.t("3 · Benachrichtigung", "3 · Notification"), Tr.t("Android verlangt für Hintergrund-Helfer eine stille Benachrichtigung. "
-                    + "Du kannst sie in den Android-Einstellungen danach ausblenden.",
-                    "Android requires a silent notification for background helpers. "
-                    + "You can hide it afterwards in the Android settings."), stNotif, bNotif);
+    @Override
+    public void onRequestPermissionsResult(int code, String[] p, int[] r) {
+        if (HelferService.running) {   // Benachrichtigung jetzt sichtbar machen
+            stopService(new Intent(this, HelferService.class));
+            HelferService.start(this);
         }
+        build();
+    }
 
-        // Koppeln: eigener Schlüssel statt des festen – dann kann keine andere App den Helfer benutzen
-        stPair = status();
-        bPair = button(Tr.t("Verbinden", "Connect"), v -> pair());
-        card(Tr.t("4 · Mit dem Browser verbinden", "4 · Connect to the browser"), Tr.t("Öffnet eine kleine Seite im Browser mit Violentmonkey. Das Skript merkt sich dort "
-                + "den geheimen Schlüssel dieser App. Ohne Verbinden funktioniert der Helper nicht – danach kann nur dein Skript ihn benutzen, keine andere App.",
-                "Opens a small page in the browser with Violentmonkey. The script remembers this app's secret key there. "
-                + "The helper doesn't work until connected – afterwards only your script can use it, no other app."), stPair, bPair);
-        stPair.setOnLongClickListener(v -> { Keys.reset(this); refresh(); android.widget.Toast.makeText(this, Tr.t("Neuer Schlüssel – bitte neu verbinden", "New key – please connect again"), android.widget.Toast.LENGTH_LONG).show(); return true; });
+    // ---------- Aufbau ----------
+    private void build() {
+        root.removeAllViews();
+        boolean ov = Settings.canDrawOverlays(this);
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        boolean bat = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+        boolean needNotif = Build.VERSION.SDK_INT >= 33;
+        boolean notif = !needNotif || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+        boolean paired = Keys.paired(this);
+        boolean on = HelferService.running;
 
-        // Dienst
-        stService = status();
-        bService = button(Tr.t("Starten", "Start"), v -> {
+        // Kopf: Symbol, Name, Status, Start/Stopp
+        LinearLayout head = row();
+        ImageView ic = new ImageView(this);   // App-Symbol: Vordergrund auf runder Fläche (das adaptive Symbol wäre eckig)
+        ic.setImageResource(R.drawable.ic_fg);
+        ic.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        ic.setBackground(round(0xFF16181D, dp(16), LINE));
+        head.addView(ic, new LinearLayout.LayoutParams(dp(52), dp(52)));
+        LinearLayout ht = col();
+        ht.setPadding(dp(14), 0, dp(8), 0);
+        ht.addView(text(Tr.t("Video-Assistent Helper", "Video Assistant Helper"), 21, true, TXT));
+        TextView st = text((on ? "● " + Tr.t("Läuft", "Running") : "○ " + Tr.t("Gestoppt", "Stopped"))
+                + (paired ? "  ·  " + Tr.t("Verbunden", "Connected") : ""), 14, true, on ? OK : WARN);
+        st.setPadding(0, dp(2), 0, 0);
+        ht.addView(st);
+        head.addView(ht, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        head.addView(pill(on ? Tr.t("Stoppen", "Stop") : Tr.t("Starten", "Start"), false, v -> {
             if (HelferService.running) {
                 stopService(new Intent(this, HelferService.class));
                 prefs(this).edit().putBoolean("on", false).apply();
@@ -107,72 +104,143 @@ public class MainActivity extends Activity {
                 prefs(this).edit().putBoolean("on", true).apply();
                 HelferService.start(this);
             }
-            root.postDelayed(this::refresh, 400);
-        });
-        card("Helper", Tr.t("Startet auch automatisch nach dem Einschalten des Handys.", "Also starts automatically when the phone is switched on."), stService, bService);
+            root.postDelayed(this::build, 400);
+        }));
+        root.addView(head);
 
-        Switch boot = new Switch(this);
-        boot.setText(Tr.t("Beim Einschalten automatisch starten", "Start automatically at boot"));
-        boot.setChecked(prefs(this).getBoolean("boot", true));
-        boot.setOnCheckedChangeListener((c, on) -> prefs(this).edit().putBoolean("boot", on).apply());
-        boot.setPadding(dp(4), dp(10), dp(4), dp(10));
-        root.addView(boot);
+        // Zusammenfassung
+        int open = (ov ? 0 : 1) + (bat ? 0 : 1) + (notif ? 0 : 1) + (paired ? 0 : 1);
+        TextView sum = text(open == 0
+                ? Tr.t("Alles bereit – im Player steuern die Wischgesten jetzt Helligkeit und Lautstärke des Handys.",
+                       "All set – swiping in the player now controls your phone's brightness and volume.")
+                : Tr.t(open == 1 ? "Noch 1 Schritt" : "Noch " + open + " Schritte", open == 1 ? "1 step left" : open + " steps left")
+                  + Tr.t(" – dann steuert der Player Helligkeit und Lautstärke des Handys.", " – then the player controls your phone's brightness and volume."),
+                15, false, SUB);
+        sum.setPadding(dp(2), dp(16), dp(2), dp(14));
+        root.addView(sum);
 
-        Button test = button(Tr.t("Ausprobieren: 3 Sekunden dunkel", "Try it: 3 seconds dark"), v -> {
-            if (!HelferService.running) HelferService.start(this);
-            Intent i = new Intent(this, HelferService.class).setAction("test");
-            startForegroundService(i);
-        });
-        LinearLayout.LayoutParams tl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        tl.topMargin = dp(12);
-        root.addView(test, tl);
+        // Schritte
+        step(1, Tr.t("Helligkeit", "Brightness"), ov, Tr.t("Erlaubt", "Allowed"),
+                Tr.t("„Über anderen Apps einblenden“ erlauben. Der Helper legt dann ein unsichtbares 1-Pixel-Fenster über den Bildschirm, das nur die Helligkeit wünscht.",
+                     "Allow “Display over other apps”. The helper then places an invisible 1-pixel window on the screen that only requests the brightness."),
+                Tr.t("Erlauben", "Allow"),
+                v -> startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName()))), null);
+        step(2, Tr.t("Im Hintergrund bleiben", "Stay in the background"), bat, Tr.t("Ausgenommen", "Excluded"),
+                Tr.t("Vom Akku-Sparen ausnehmen, sonst beendet Android den Helper nach einer Weile. Er verbraucht praktisch nichts: er wartet nur auf den Player.",
+                     "Exclude it from battery saving, otherwise Android stops the helper after a while. It uses practically nothing: it just waits for the player."),
+                Tr.t("Ausnehmen", "Exclude"), v -> {
+                    try { startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName()))); }
+                    catch (Exception e) { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
+                }, null);
+        if (needNotif) step(3, Tr.t("Benachrichtigung", "Notification"), notif, Tr.t("Erlaubt", "Allowed"),
+                Tr.t("Android verlangt für Hintergrund-Helfer eine stille Benachrichtigung. Du kannst sie danach in den Android-Einstellungen ausblenden.",
+                     "Android requires a silent notification for background helpers. You can hide it afterwards in the Android settings."),
+                Tr.t("Erlauben", "Allow"), v -> requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1), null);
+        step(needNotif ? 4 : 3, Tr.t("Mit dem Browser verbinden", "Connect to the browser"), paired, Tr.t("Verbunden", "Connected"),
+                Tr.t("Öffnet eine kleine Seite im Browser mit Violentmonkey. Das Skript merkt sich dort den geheimen Schlüssel dieser App – danach kann nur dein Skript den Helper benutzen.",
+                     "Opens a small page in the browser with Violentmonkey. The script remembers this app's secret key there – afterwards only your script can use the helper."),
+                Tr.t("Verbinden", "Connect"), v -> pair(),
+                // erledigt: weiteren Browser verbinden (z. B. Firefox) · lange drücken = neuer Schlüssel
+                pill(Tr.t("Weiterer Browser", "Another browser"), false, v -> pair()));
 
-        // Sprache von Hand (zweisprachig beschriftet, damit man sie auch in der falschen Sprache findet)
-        String cur = Keys.lang(this);
-        String curName = "de".equals(cur) ? "Deutsch" : "en".equals(cur) ? "English" : Tr.t("Automatisch (wie das Handy)", "Automatic (like the phone)");
-        Button lang = button("Sprache · Language: " + curName, v -> {
-            String l = Keys.lang(this);
-            String next = "auto".equals(l) ? "de" : "de".equals(l) ? "en" : "auto";
-            Keys.setLang(this, next);
+        // Einstellungen
+        LinearLayout set = card();
+        set.addView(text(Tr.t("Einstellungen", "Settings"), 13, true, SUB));
+        LinearLayout lr = row();
+        lr.setPadding(0, dp(12), 0, dp(6));
+        lr.addView(text("Sprache · Language", 16, false, TXT), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        set.addView(lr);
+        set.addView(segmented(new String[]{"Auto", "Deutsch", "English"}, new String[]{"auto", "de", "en"}, Keys.lang(this), l -> {
+            Keys.setLang(this, l);
             if (HelferService.running) {   // Benachrichtigung in der neuen Sprache
                 stopService(new Intent(this, HelferService.class));
                 HelferService.start(this);
             }
-            recreate();
+            build();
+        }));
+        Switch boot = new Switch(this);
+        boot.setText(Tr.t("Beim Einschalten des Handys starten", "Start when the phone is switched on"));
+        boot.setTextColor(TXT);
+        boot.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        boot.setChecked(prefs(this).getBoolean("boot", true));
+        boot.setOnCheckedChangeListener((c, isOn) -> prefs(this).edit().putBoolean("boot", isOn).apply());
+        boot.setPadding(0, dp(16), 0, dp(8));
+        set.addView(boot, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView test = pill(Tr.t("Ausprobieren: 3 Sekunden dunkel", "Try it: 3 seconds dark"), false, v -> {
+            if (!HelferService.running) HelferService.start(this);
+            startForegroundService(new Intent(this, HelferService.class).setAction("test"));
         });
-        LinearLayout.LayoutParams ll = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        ll.topMargin = dp(8);
-        root.addView(lang, ll);
+        LinearLayout.LayoutParams tl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        tl.topMargin = dp(8);
+        set.addView(test, tl);
+        addCard(set);
 
-        TextView foot = text(Tr.t("Im Userscript ist nichts einzustellen: Sobald der Helper läuft, steuern die Wischgesten links "
-                + "(Helligkeit) und rechts (Lautstärke) das Handy selbst. Läuft er nicht, regelt der Player wie bisher nur das Video.\n\n"
-                + "Downloads: Der Knopf ⬇ im Player schickt Videos hierher – Dateien über Androids Download-Manager, Streams werden "
-                + "Stück für Stück geladen und zu MP4 zusammengesetzt. Gespeichert in Download/Video-Assistent.",
-                "Nothing to set up in the userscript: as soon as the helper runs, swiping on the left "
-                + "(brightness) and right (volume) controls the phone itself. If it doesn't run, the player only adjusts the video as before.\n\n"
-                + "Downloads: the ⬇ button in the player sends videos here – files via Android's download manager, streams are "
-                + "loaded piece by piece and joined into an MP4. Saved in Download/Video-Assistent."), 13, false);
-        foot.setAlpha(0.6f);
-        foot.setPadding(0, dp(18), 0, 0);
+        // Hinweis unten
+        TextView foot = text(Tr.t("Im Userscript ist nichts einzustellen: Sobald der Helper läuft, steuern die Wischgesten links (Helligkeit) und rechts (Lautstärke) das Handy selbst. "
+                        + "Läuft er nicht, regelt der Player wie bisher nur das Video.\n\nDownloads: Der Knopf ⬇ im Player schickt Videos hierher – Dateien über Androids Download-Manager, "
+                        + "Streams werden Stück für Stück geladen und zu MP4 zusammengesetzt. Gespeichert in Download/Video-Assistent.",
+                "Nothing to set up in the userscript: as soon as the helper runs, swiping on the left (brightness) and right (volume) controls the phone itself. "
+                        + "If it doesn't run, the player only adjusts the video as before.\n\nDownloads: the ⬇ button in the player sends videos here – files via Android's download manager, "
+                        + "streams are loaded piece by piece and joined into an MP4. Saved in Download/Video-Assistent."), 13, false, SUB);
+        foot.setAlpha(0.8f);
+        foot.setPadding(dp(4), dp(10), dp(4), 0);
         root.addView(foot);
-
-        // Beim Öffnen gleich starten (solange nicht ausdrücklich gestoppt)
-        if (prefs(this).getBoolean("on", true) && !HelferService.running) HelferService.start(this);
     }
 
-    @Override
-    protected void onResume() {
-        super.onResume();
-        root.postDelayed(this::refresh, 250);
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int code, String[] p, int[] r) {
-        refresh();
-        if (HelferService.running) {   // Benachrichtigung jetzt sichtbar machen
-            stopService(new Intent(this, HelferService.class));
-            HelferService.start(this);
+    /** Ein Schritt: offen = Nummer, Titel, Erklärung, Knopf · erledigt = eine Zeile mit ✓ (und optional einem Zusatzknopf) */
+    private void step(int n, String title, boolean ok, String okText, String desc, String btn, View.OnClickListener act, View extra) {
+        LinearLayout c = card();
+        LinearLayout r = row();
+        TextView num = new TextView(this);
+        num.setText(ok ? "✓" : String.valueOf(n));
+        num.setGravity(Gravity.CENTER);
+        num.setTextSize(TypedValue.COMPLEX_UNIT_SP, ok ? 15 : 14);
+        num.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+        num.setTextColor(ok ? 0xFF0B2414 : ACC_TXT);
+        num.setBackground(round(ok ? OK : ACC, dp(14), 0));
+        r.addView(num, new LinearLayout.LayoutParams(dp(28), dp(28)));
+        LinearLayout t = col();
+        t.setPadding(dp(12), 0, dp(6), 0);
+        t.addView(text(title, 16, true, TXT));
+        if (ok) t.addView(text(okText, 13, false, OK));
+        r.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        if (ok && extra != null) r.addView(extra);
+        c.addView(r);
+        if (!ok) {
+            TextView d = text(desc, 14, false, SUB);
+            d.setPadding(0, dp(10), 0, dp(12));
+            c.addView(d);
+            c.addView(pill(btn, true, act), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
+        if (extra != null) {   // Verbinden-Karte: lange drücken = neuer Schlüssel
+            c.setOnLongClickListener(v -> {
+                Keys.reset(this);
+                Toast.makeText(this, Tr.t("Neuer Schlüssel – bitte neu verbinden", "New key – please connect again"), Toast.LENGTH_LONG).show();
+                build();
+                return true;
+            });
+        }
+        addCard(c);
+    }
+
+    private interface Pick { void on(String v); }
+
+    /** Auswahl wie bei Android-Einstellungen: drei Felder nebeneinander, das gewählte hervorgehoben */
+    private View segmented(String[] labels, String[] values, String cur, Pick pick) {
+        LinearLayout s = row();
+        s.setBackground(round(SEG, dp(14), LINE));
+        s.setPadding(dp(4), dp(4), dp(4), dp(4));
+        for (int i = 0; i < labels.length; i++) {
+            final String val = values[i];
+            boolean sel = val.equals(cur);
+            TextView o = text(labels[i], 15, sel, sel ? ACC_TXT : TXT);
+            o.setGravity(Gravity.CENTER);
+            o.setPadding(0, dp(9), 0, dp(9));
+            if (sel) o.setBackground(round(ACC, dp(11), 0));
+            o.setOnClickListener(v -> pick.on(val));
+            s.addView(o, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        return s;
     }
 
     private void pair() {
@@ -182,70 +250,58 @@ public class MainActivity extends Activity {
         try { startActivity(Intent.createChooser(i, Tr.t("Browser mit Violentmonkey wählen", "Choose the browser with Violentmonkey"))); } catch (Exception e) { startActivity(i); }
     }
 
-    private void refresh() {
-        boolean pd = Keys.paired(this);
-        stPair.setText(pd ? Tr.t("✓ Verbunden (eigener Schlüssel)", "✓ Connected (own key)") : Tr.t("• Noch nicht verbunden", "• Not connected yet"));
-        stPair.setTextColor(pd ? 0xFF4CD964 : 0xFFFF9F0A);
-        bPair.setText(pd ? Tr.t("Erneut", "Again") : Tr.t("Verbinden", "Connect"));
-        boolean ov = Settings.canDrawOverlays(this);
-        set(stOverlay, bOverlay, ov, ov ? Tr.t("Erlaubt", "Allowed") : Tr.t("Noch nicht erlaubt", "Not allowed yet"));
-        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-        boolean bat = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
-        set(stBattery, bBattery, bat, bat ? Tr.t("Ausgenommen", "Excluded") : Tr.t("Android könnte den Helper beenden", "Android might stop the helper"));
-        if (stNotif != null) {
-            boolean n = checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
-            set(stNotif, bNotif, n, n ? Tr.t("Erlaubt", "Allowed") : Tr.t("Noch nicht erlaubt", "Not allowed yet"));
-        }
-        boolean on = HelferService.running;
-        stService.setText(on ? Tr.t("● Läuft", "● Running") : Tr.t("○ Gestoppt", "○ Stopped"));
-        stService.setTextColor(on ? 0xFF4CD964 : 0xFFFF9F0A);
-        bService.setText(on ? Tr.t("Stoppen", "Stop") : Tr.t("Starten", "Start"));
-    }
-
-    private void set(TextView st, Button b, boolean ok, String msg) {
-        st.setText((ok ? "✓ " : "• ") + msg);
-        st.setTextColor(ok ? 0xFF4CD964 : 0xFFFF9F0A);
-        b.setVisibility(ok ? View.GONE : View.VISIBLE);
-    }
-
-    private void card(String head, String body, TextView status, Button action) {
-        LinearLayout c = new LinearLayout(this);
-        c.setOrientation(LinearLayout.VERTICAL);
+    // ---------- Bausteine ----------
+    private LinearLayout card() {
+        LinearLayout c = col();
         c.setPadding(dp(16), dp(14), dp(16), dp(14));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(dp(18));
-        bg.setColor(0x14FFFFFF);
-        bg.setStroke(dp(1), 0x22FFFFFF);
-        c.setBackground(bg);
-        c.addView(text(head, 17, true));
-        TextView t = text(body, 14, false);
-        t.setAlpha(0.75f);
-        t.setPadding(0, dp(4), 0, dp(8));
-        c.addView(t);
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.addView(status, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        row.addView(action);
-        c.addView(row);
+        c.setBackground(round(CARD, dp(20), LINE));
+        return c;
+    }
+
+    private void addCard(View c) {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dp(12);
+        lp.bottomMargin = dp(10);
         root.addView(c, lp);
     }
 
-    private TextView status() { return text("", 14, true); }
-
-    private Button button(String label, View.OnClickListener l) {
-        Button b = new Button(this);
-        b.setText(label);
-        b.setAllCaps(false);
+    /** Knopf als Kapsel: gefüllt (Hauptaktion) oder mit Rand */
+    private TextView pill(String label, boolean filled, View.OnClickListener l) {
+        TextView b = text(label, 15, true, filled ? ACC_TXT : ACC);
+        b.setGravity(Gravity.CENTER);
+        b.setPadding(dp(16), dp(10), dp(16), dp(10));
+        b.setBackground(round(filled ? ACC : 0x00000000, dp(22), filled ? 0 : 0x669BE7FF));
+        b.setClickable(true);
         b.setOnClickListener(l);
         return b;
     }
 
-    private TextView text(String s, int sp, boolean bold) {
+    private GradientDrawable round(int color, int radius, int stroke) {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(color);
+        g.setCornerRadius(radius);
+        if (stroke != 0) g.setStroke(dp(1), stroke);
+        return g;
+    }
+
+    private LinearLayout row() {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        return r;
+    }
+
+    private LinearLayout col() {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        return c;
+    }
+
+    private TextView text(String s, int sp, boolean bold, int color) {
         TextView t = new TextView(this);
         t.setText(s);
+        t.setTextColor(color);
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
+        t.setLineSpacing(0, 1.12f);
         if (bold) t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         return t;
     }

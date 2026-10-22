@@ -22,8 +22,7 @@ Der Player funktioniert auch **ohne** Helper-App – dann regeln die Gesten nur 
   - ganz unten bei der Helligkeit **weiterwischen = Auto** (automatische Helligkeit des Handys)
 - Doppeltippen links/rechts = ±10 s (mehrfach = 20, 30 … s), lange drücken = 2× schneller
 - Doppeltippen in der Mitte (wie Telegram): 3× Zoom um die getippte Stelle (hochkant bildschirmfüllend), noch einmal
-  = ganzes Bild; im Zoom verschiebt **ein Finger** das Bild (mit Schwung, federt an der Kante zurück) –
-  sind die Leisten zu sehen (einmal tippen), spult/regelt das Wischen wie gewohnt und der Ausschnitt bleibt
+  = ganzes Bild; im Zoom verschiebt **ein Finger** das Bild (mit Schwung, federt an der Kante zurück)
 - Zwei Finger = zoomen; Bildformat-Knopf wechselt bei jedem Tippen Original → Füllen → Strecken (wie Samsung); Qualität wählen
 - Sperre (entsperren: 1 s halten oder doppeltippen), Bild-in-Bild, Drehen, Geschwindigkeit
 - **In eine andere App wechseln** schließt den Player nicht (nur die Zurück-Taste); zurück im Browser holt ein Tipp

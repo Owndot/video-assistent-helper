@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      17.3
+// @version      17.4
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -144,7 +144,7 @@
     // Einstellungen (kurz)
     'Design': 'Design', 'Glas': 'Glass', 'Schlicht': 'Plain', 'Vollbild': 'Full screen', 'Ambient': 'Ambient',
     'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
-    'Link teilen': 'Share link', 'In App öffnen': 'Open in app', 'Beim Verlassen': 'When leaving', 'Weiter': 'Keep playing', 'Anhalten': 'Pause', 'Antippen für Vollbild': 'Tap for full screen', 'z. B. VLC': 'e.g. VLC', 'Link kopiert': 'Link copied', 'Kein Link zu diesem Video gefunden': 'No link to this video found',
+    'Link teilen': 'Share link', 'Zurück': 'Back', 'Wiederholen': 'Repeat', 'Wiederholen aus': 'Repeat off', 'In App öffnen': 'Open in app', 'Beim Verlassen': 'When leaving', 'Weiter': 'Keep playing', 'Anhalten': 'Pause', 'Antippen für Vollbild': 'Tap for full screen', 'z. B. VLC': 'e.g. VLC', 'Link kopiert': 'Link copied', 'Kein Link zu diesem Video gefunden': 'No link to this video found',
     'Oben: Wischen bis ganz an den Rand': 'Top: swiping works right up to the edge', 'Unten: Wischen bis ganz an den Rand': 'Bottom: swiping works right down to the edge',
     '✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helper benutzen. Du kannst diese Seite schließen.': '✓ Connected. From now on only this script can use the helper. You can close this page.',
     'Verbinden hat nicht geklappt – läuft der Helper? In der App nochmal auf „Verbinden“ tippen.': 'Connecting failed – is the helper running? Tap “Connect” in the app again.',
@@ -190,6 +190,7 @@
     'links': 'left', 'rechts': 'right',
   };
   const EN_RX = [
+    [/^Wiederholen: (\d+)×$/, (m) => 'Repeat: ' + m[1] + '×'],
     [/^Oberste (\d+) %: kein Wischen für Helligkeit\/Lautstärke$/, (m) => 'Top ' + m[1] + ' %: no brightness/volume swipe'],
     [/^Unterste (\d+) %: kein Wischen für Helligkeit\/Lautstärke$/, (m) => 'Bottom ' + m[1] + ' %: no brightness/volume swipe'],
     [/^Untertitel: (.+)$/, (m) => 'Subtitles: ' + m[1]], [/^Tonspur: (.+)$/, (m) => 'Audio: ' + m[1]],
@@ -2200,6 +2201,8 @@
     cc: 'M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z',
     hd: 'M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 11H9.5v-2h-2v2H6V9h1.5v2.5h2V9H11v6zm7-1c0 .55-.45 1-1 1h-.75v1.5h-1.5V15H14c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v4zm-3.5-.5h2v-3h-2v3z',
     vol: 'M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z',
+    back: 'M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z',
+    repeat: 'M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z',
     mute: 'M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z',
     sun: 'M20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69zM12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6zm0-10c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4z',
   };
@@ -2293,6 +2296,8 @@
 .vchip svg{width:22px;height:22px;fill:#fff;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}
 .vchip.on{color:var(--ice)}
 .vchip.on svg{fill:var(--ice)}
+.vchip .vrepn{position:absolute;right:5px;bottom:6px;min-width:13px;height:13px;border-radius:7px;padding:0 2px;box-sizing:border-box;background:var(--ice);color:#0b1a22;font:800 9px/13px var(--font);text-align:center}
+.vchip .vrepn:empty{display:none}
 .vchip[hidden]{display:none}
 .vtime{font:600 12px var(--font);font-variant-numeric:tabular-nums;color:var(--sub);min-width:40px;text-align:center}
 .vbar{flex:1;-webkit-appearance:none;appearance:none;height:38px;background:transparent;margin:0;cursor:pointer;filter:invert(1);--trk:rgba(0,0,0,.25)}
@@ -2390,6 +2395,9 @@
 .vmlist.mt.mb{-webkit-mask-image:linear-gradient(180deg,transparent 0,#000 16px,#000 calc(100% - 16px),transparent 100%);mask-image:linear-gradient(180deg,transparent 0,#000 16px,#000 calc(100% - 16px),transparent 100%)}
 .vmenu.on{opacity:1;transform:none;pointer-events:auto}
 .vmenu .vmh{position:relative;z-index:1;padding:8px 12px 6px;font:600 13px var(--font);color:var(--sub)}
+.vmenu .vmh.bk{display:flex;align-items:center;gap:4px;padding:2px 12px 4px 2px;font:600 15px var(--font);color:#fff}
+.vmenu .vmb{width:40px;height:40px;border-radius:20px;background:transparent}
+.vmenu .vmb svg{width:24px;height:24px;fill:#fff}
 .vmi{all:unset;position:relative;z-index:1;display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;padding:13px 14px;border-radius:18px;font:500 15px var(--font);cursor:pointer}
 .vmi:active{background:rgba(255,255,255,.12)}
 .vmi small{margin-left:auto;color:var(--sub);font:500 12.5px var(--font)}
@@ -2553,6 +2561,8 @@
     // Teilen/In App/Qualität/Tempo bleiben als unsichtbare Knöpfe (.vstash) bestehen – das Menü löst sie aus.
     const bMore = ib(I.more, 'Mehr');
     const bSubs = chip(P.cc, 'Untertitel', 'Untertitel');   // unten: Untertitel (leuchtet, wenn an)
+    const bRep = chip(P.repeat, 'Wiederholen', 'Wiederholen');   // unten: Aus → 1× → 5× → Aus (Zahl = noch übrige Male)
+    const repNum = h('b', { class: 'vrepn' }, ''); bRep.append(repNum);
     const subEl = h('div', { class: 'vsub', 'aria-live': 'polite' });
     const bUnlock = ib(P.lock, 'Entsperren', 'vunlock g');
     const menu = h('div', { class: 'vmenu g', role: 'menu' });
@@ -2562,7 +2572,7 @@
         h('div', { class: 'vscrim' }),
         h('div', { class: 'vtop' }, bClose, title, h('div', { class: 'vcluster g ia' }, bDl, bMore)),
         h('div', { class: 'vmid' }, bBack, bPlay, bFwd),
-        h('div', { class: 'vbot ia' }, h('div', { class: 'vrow' }, tCur, bar, tDur), h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bSubs, bFit, bPip, bRot))), h('div', { class: 'vstash' }, bShare, bExt, bQual, bSpeed)),
+        h('div', { class: 'vbot ia' }, h('div', { class: 'vrow' }, tCur, bar, tDur), h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bSubs, bRep, bFit, bPip, bRot))), h('div', { class: 'vstash' }, bShare, bExt, bQual, bSpeed)),
       ind, side, seekBox, sfxL, sfxR, mini, menu, bUnlock);
     root.append(wrap);
     // Lupen-Glas für alle Glasflächen (Größe kommt erst nach dem Einblenden; ändert sie sich, wird neu berechnet)
@@ -3268,7 +3278,7 @@
     // Tempo im ⋮-Menü: Liste zum Antippen (wie YouTube), langsam → schnell
     const openSpeed = () => openMenu('Geschwindigkeit', SPEEDS.slice().sort((a, b) => a - b).map((v) => ({
       label: v === 1 ? spLabel(1) + ' · Normal' : spLabel(v), cur: v === st.speed, fn: () => { setSpeed(v); toast(spLabel(v)); },
-    })));
+    })), false, openMore);
     // Bild-in-Bild: kleines Fenster über anderen Apps. Dabei endet das Vollbild – das darf den Player NICHT schließen.
     const pipFallback = () => {
       // Manche Android-Browser kennen nur das automatische Bild-in-Bild: Video im Vollbild + zum Startbildschirm wischen
@@ -3471,16 +3481,23 @@
     if (IG) igVideoUrl(orig).then((x) => { if (x) { st.igUrl = x; st.refreshDl(); } }, () => {});
     st.refreshDl();
     // ----- Menüs: Glas-Blatt von unten -----
-    function openMenu(head, items, keepScroll) {
+    // head: Überschrift (leer = keine) · back: Untermenü – Pfeil ‹ (und die Zurück-Taste) führt dorthin zurück
+    function openMenu(head, items, keepScroll, back) {
       const old = keepScroll && menu.classList.contains('on') ? menu.querySelector('.vmlist') : null;
       const oldTop = old ? old.scrollTop : 0;
       menu.textContent = '';
+      st.menuBack = back || null;
       const list = h('div', { class: 'vmlist' });
-      menu.append(h('div', { class: 'vmh' }, head), list);   // (h übersetzt die Texte)
+      if (head || back) {
+        const bk = back ? ib(P.back, 'Zurück', 'vmb') : null;
+        if (bk) bk.addEventListener('click', (e) => { stop(e); back(); });
+        menu.append(h('div', { class: 'vmh' + (back ? ' bk' : '') }, bk, head || ''));   // (h übersetzt die Texte)
+      }
+      menu.append(list);
       items.forEach((it) => {
         const b = h('button', { class: 'vmi' + (it.cur ? ' cur' : ''), role: 'menuitemradio', 'aria-checked': it.cur ? 'true' : 'false' },
           String(it.label), it.sub ? h('small', null, String(it.sub)) : null);
-        b.addEventListener('click', (e) => { stop(e); if (!it.stay) closeMenu(); it.fn(); });
+        b.addEventListener('click', (e) => { stop(e); regainFs(); if (!it.stay) closeMenu(); it.fn(); });
         list.append(b);
       });
       wrap.classList.add('menu');
@@ -3493,8 +3510,10 @@
       if (oldTop) list.scrollTop = oldTop;
       requestAnimationFrame(edges);
     }
-    function closeMenu() { menu.classList.remove('on'); wrap.classList.remove('menu'); scheduleHide(); }
+    function closeMenu() { menu.classList.remove('on'); wrap.classList.remove('menu'); st.menuBack = null; scheduleHide(); }
     const menuOpen = () => menu.classList.contains('on');
+    // Zurück-Taste bei offenem Menü: eine Ebene zurück (Untermenü → ⋮) oder Menü zu – nie gleich den Player schließen
+    const menuStepBack = () => { if (st.menuBack) st.menuBack(); else closeMenu(); };
     st.closeMenu = closeMenu;
 
     // ----- Bildformat & Zoom -----
@@ -3558,10 +3577,28 @@
       if (t > 0) st.startTime = t;
       tryNext();
     }
-    on(bQual, () => { const items = qualityItems(); if (items.length > 1) openMenu('Qualität', items); });
+    on(bQual, () => { const items = qualityItems(); if (items.length > 1) openMenu('Qualität', items, false, openMore); });   // nur über ⋮ erreichbar
 
     // ===== ⋯ Mehr: Untertitel, Tonspur, Standbild, Einstellungen =====
-    on(bMore, () => openMore());
+    on(bMore, () => { if (menuOpen()) closeMenu(); else openMore(); });   // zweiter Tipp schließt das Menü
+    // ----- Wiederholen: Aus → 1× → 5× → Aus. Am Ende von vorn, bis die Male aufgebraucht sind (dann wie sonst anhalten) -----
+    st.repLeft = 0;
+    const repShow = () => { bRep.classList.toggle('on', st.repLeft > 0); repNum.textContent = st.repLeft > 0 ? String(st.repLeft) : ''; };
+    on(bRep, () => {
+      st.repLeft = st.repLeft === 0 ? 1 : st.repLeft === 1 ? 5 : 0;
+      repShow();
+      toast(st.repLeft ? 'Wiederholen: ' + st.repLeft + '×' : 'Wiederholen aus');
+    });
+    // true = es geht von vorn weiter (ein Mal verbraucht)
+    st.repeatNow = () => {
+      if (!(st.repLeft > 0)) return false;
+      st.repLeft--; repShow();
+      const m = M();
+      st.endHold = false; st.userSeekAt = Date.now();
+      try { m.currentTime = 0; const pr = m.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
+      return true;
+    };
+    vid.addEventListener('ended', () => { if (vp === st && st.mode === 'own') st.repeatNow(); });
     on(bSubs, () => openSubs());
     function openMore() {
       const items = [{ label: 'Link teilen', fn: () => bShare.click() }];
@@ -3569,10 +3606,10 @@
       if (!bQual.hidden) { const q = bQual.querySelector('span'); items.push({ label: 'Qualität', sub: q ? q.textContent : '', fn: () => bQual.click() }); }
       items.push({ label: 'Geschwindigkeit', sub: spLabel(st.speed), fn: openSpeed });
       const at = audioItems();
-      if (at.length > 1) items.push({ label: 'Tonspur', sub: (at.find((x) => x.cur) || {}).label || '', fn: () => openMenu('Tonspur', at) });
+      if (at.length > 1) items.push({ label: 'Tonspur', sub: (at.find((x) => x.cur) || {}).label || '', fn: () => openMenu('Tonspur', at, false, openMore) });
       items.push({ label: 'Standbild speichern', fn: snapshot });
       items.push({ label: 'Einstellungen', fn: () => openSettings(false) });
-      openMenu('Mehr', items);
+      openMenu('', items);   // ohne Überschrift – der ⋮-Knopf sagt schon, was es ist
     }
 
     // ----- Einstellungen (dauerhaft gespeichert, überstehen Updates) -----
@@ -3619,7 +3656,7 @@
           toast('Einstellungen zurückgesetzt');
         }),
       ];
-      openMenu('Einstellungen', items, keep);
+      openMenu('Einstellungen', items, keep, openMore);
     }
 
     // ----- Benachrichtigung & Sperrbildschirm (Media Session): Titel, Play/Pause, Springen, Position -----
@@ -4461,9 +4498,8 @@
         if (Math.abs(dx) < 14 && Math.abs(dy) < 14) return;
         clearTimeout(g.holdTimer);
         if (g.edge) { g.mode = 'none'; return; }
-        if (st.zoom > 1.01 && !g.top && !wrap.classList.contains('ctl')) {
-          // vergrößert und Leisten aus: ein Finger verschiebt das Bild (wie Telegram). Sind die Leisten zu sehen (einmal
-          // tippen), gelten die normalen Gesten – spulen, Helligkeit, Lautstärke – und der Bildausschnitt bleibt, wie er ist
+        if (st.zoom > 1.01 && !g.top) {
+          // vergrößert: ein Finger verschiebt das Bild (wie Telegram) – Helligkeit/Lautstärke/Spulen erst wieder bei 1×
           g.mode = 'pan'; g.px0 = st.panX; g.py0 = st.panY; g.vs = [];
           vid.classList.remove('vzan'); st.panFree = true;
         } else g.mode = Math.abs(dx) > Math.abs(dy) ? 'seek' : (g.top ? 'none' : (g.x > W / 2 ? 'vol' : 'bright'));
@@ -4660,6 +4696,14 @@
     st.cleanup.push(() => { try { navigator.mediaSession.setActionHandler('enterpictureinpicture', null); } catch (e) {} });
     const onFs = () => {
       if (vp !== st || isFs()) return;
+      // Zurück-Taste bei offenem Menü (Einstellungen …): nur eine Ebene zurück, Player bleibt offen;
+      // das Vollbild holt der nächste Tipp zurück (auch ein Tipp im Menü)
+      if (menuOpen() && !document.hidden) {
+        menuStepBack();
+        st.fsStart = false; st.fsLost = true;
+        if (st.pushHist) st.pushHist();
+        return;
+      }
       const exitAt = Date.now(), turnBefore = lastTurn;
       // Vollbild endet wegen Bild-in-Bild (Knopf oder Wischen zum Startbildschirm): Player bleibt offen
       const pipNow = () => pipIsOurs(vid) || document.hidden || (st.pipAt && Date.now() - st.pipAt < 2500);
@@ -4750,7 +4794,12 @@
       try { history.pushState(history.state, '', location.href); st.histPushed = true; } catch (e) {}
     };
     st.pushHist = pushHist;
-    const onPop = () => { if (vp === st) { st.histPushed = false; closePlayer(); } };
+    const onPop = () => {
+      if (vp !== st) return;
+      st.histPushed = false;
+      if (menuOpen()) { menuStepBack(); pushHist(); return; }   // Menü offen: nur zurück im Menü
+      closePlayer();
+    };
     addEventListener('popstate', onPop);
     st.cleanup.push(() => {
       document.removeEventListener('fullscreenchange', onFs);
@@ -4785,6 +4834,7 @@
     try { orig.loop = false; } catch (e) {}
     const holdEnd = () => {
       if (vp !== st || st.mode !== 'capture') return;
+      if (st.repeatNow && st.repeatNow()) return;   // Wiederholen an: von vorn statt anhalten
       st.endHold = true;
       try { orig.pause(); } catch (e) {}
       showControls();
@@ -5216,7 +5266,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 17.3',
+      'Video-Assistent 17.4',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

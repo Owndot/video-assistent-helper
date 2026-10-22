@@ -73,6 +73,14 @@
     st.cleanup.push(() => { try { navigator.mediaSession.setActionHandler('enterpictureinpicture', null); } catch (e) {} });
     const onFs = () => {
       if (vp !== st || isFs()) return;
+      // Zurück-Taste bei offenem Menü (Einstellungen …): nur eine Ebene zurück, Player bleibt offen;
+      // das Vollbild holt der nächste Tipp zurück (auch ein Tipp im Menü)
+      if (menuOpen() && !document.hidden) {
+        menuStepBack();
+        st.fsStart = false; st.fsLost = true;
+        if (st.pushHist) st.pushHist();
+        return;
+      }
       const exitAt = Date.now(), turnBefore = lastTurn;
       // Vollbild endet wegen Bild-in-Bild (Knopf oder Wischen zum Startbildschirm): Player bleibt offen
       const pipNow = () => pipIsOurs(vid) || document.hidden || (st.pipAt && Date.now() - st.pipAt < 2500);
@@ -163,7 +171,12 @@
       try { history.pushState(history.state, '', location.href); st.histPushed = true; } catch (e) {}
     };
     st.pushHist = pushHist;
-    const onPop = () => { if (vp === st) { st.histPushed = false; closePlayer(); } };
+    const onPop = () => {
+      if (vp !== st) return;
+      st.histPushed = false;
+      if (menuOpen()) { menuStepBack(); pushHist(); return; }   // Menü offen: nur zurück im Menü
+      closePlayer();
+    };
     addEventListener('popstate', onPop);
     st.cleanup.push(() => {
       document.removeEventListener('fullscreenchange', onFs);
@@ -198,6 +211,7 @@
     try { orig.loop = false; } catch (e) {}
     const holdEnd = () => {
       if (vp !== st || st.mode !== 'capture') return;
+      if (st.repeatNow && st.repeatNow()) return;   // Wiederholen an: von vorn statt anhalten
       st.endHold = true;
       try { orig.pause(); } catch (e) {}
       showControls();

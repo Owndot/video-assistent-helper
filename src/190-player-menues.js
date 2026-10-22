@@ -1,14 +1,21 @@
     // ----- Menüs: Glas-Blatt von unten -----
-    function openMenu(head, items, keepScroll) {
+    // head: Überschrift (leer = keine) · back: Untermenü – Pfeil ‹ (und die Zurück-Taste) führt dorthin zurück
+    function openMenu(head, items, keepScroll, back) {
       const old = keepScroll && menu.classList.contains('on') ? menu.querySelector('.vmlist') : null;
       const oldTop = old ? old.scrollTop : 0;
       menu.textContent = '';
+      st.menuBack = back || null;
       const list = h('div', { class: 'vmlist' });
-      menu.append(h('div', { class: 'vmh' }, head), list);   // (h übersetzt die Texte)
+      if (head || back) {
+        const bk = back ? ib(P.back, 'Zurück', 'vmb') : null;
+        if (bk) bk.addEventListener('click', (e) => { stop(e); back(); });
+        menu.append(h('div', { class: 'vmh' + (back ? ' bk' : '') }, bk, head || ''));   // (h übersetzt die Texte)
+      }
+      menu.append(list);
       items.forEach((it) => {
         const b = h('button', { class: 'vmi' + (it.cur ? ' cur' : ''), role: 'menuitemradio', 'aria-checked': it.cur ? 'true' : 'false' },
           String(it.label), it.sub ? h('small', null, String(it.sub)) : null);
-        b.addEventListener('click', (e) => { stop(e); if (!it.stay) closeMenu(); it.fn(); });
+        b.addEventListener('click', (e) => { stop(e); regainFs(); if (!it.stay) closeMenu(); it.fn(); });
         list.append(b);
       });
       wrap.classList.add('menu');
@@ -21,8 +28,10 @@
       if (oldTop) list.scrollTop = oldTop;
       requestAnimationFrame(edges);
     }
-    function closeMenu() { menu.classList.remove('on'); wrap.classList.remove('menu'); scheduleHide(); }
+    function closeMenu() { menu.classList.remove('on'); wrap.classList.remove('menu'); st.menuBack = null; scheduleHide(); }
     const menuOpen = () => menu.classList.contains('on');
+    // Zurück-Taste bei offenem Menü: eine Ebene zurück (Untermenü → ⋮) oder Menü zu – nie gleich den Player schließen
+    const menuStepBack = () => { if (st.menuBack) st.menuBack(); else closeMenu(); };
     st.closeMenu = closeMenu;
 
     // ----- Bildformat & Zoom -----
@@ -86,10 +95,28 @@
       if (t > 0) st.startTime = t;
       tryNext();
     }
-    on(bQual, () => { const items = qualityItems(); if (items.length > 1) openMenu('Qualität', items); });
+    on(bQual, () => { const items = qualityItems(); if (items.length > 1) openMenu('Qualität', items, false, openMore); });   // nur über ⋮ erreichbar
 
     // ===== ⋯ Mehr: Untertitel, Tonspur, Standbild, Einstellungen =====
-    on(bMore, () => openMore());
+    on(bMore, () => { if (menuOpen()) closeMenu(); else openMore(); });   // zweiter Tipp schließt das Menü
+    // ----- Wiederholen: Aus → 1× → 5× → Aus. Am Ende von vorn, bis die Male aufgebraucht sind (dann wie sonst anhalten) -----
+    st.repLeft = 0;
+    const repShow = () => { bRep.classList.toggle('on', st.repLeft > 0); repNum.textContent = st.repLeft > 0 ? String(st.repLeft) : ''; };
+    on(bRep, () => {
+      st.repLeft = st.repLeft === 0 ? 1 : st.repLeft === 1 ? 5 : 0;
+      repShow();
+      toast(st.repLeft ? 'Wiederholen: ' + st.repLeft + '×' : 'Wiederholen aus');
+    });
+    // true = es geht von vorn weiter (ein Mal verbraucht)
+    st.repeatNow = () => {
+      if (!(st.repLeft > 0)) return false;
+      st.repLeft--; repShow();
+      const m = M();
+      st.endHold = false; st.userSeekAt = Date.now();
+      try { m.currentTime = 0; const pr = m.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
+      return true;
+    };
+    vid.addEventListener('ended', () => { if (vp === st && st.mode === 'own') st.repeatNow(); });
     on(bSubs, () => openSubs());
     function openMore() {
       const items = [{ label: 'Link teilen', fn: () => bShare.click() }];
@@ -97,10 +124,10 @@
       if (!bQual.hidden) { const q = bQual.querySelector('span'); items.push({ label: 'Qualität', sub: q ? q.textContent : '', fn: () => bQual.click() }); }
       items.push({ label: 'Geschwindigkeit', sub: spLabel(st.speed), fn: openSpeed });
       const at = audioItems();
-      if (at.length > 1) items.push({ label: 'Tonspur', sub: (at.find((x) => x.cur) || {}).label || '', fn: () => openMenu('Tonspur', at) });
+      if (at.length > 1) items.push({ label: 'Tonspur', sub: (at.find((x) => x.cur) || {}).label || '', fn: () => openMenu('Tonspur', at, false, openMore) });
       items.push({ label: 'Standbild speichern', fn: snapshot });
       items.push({ label: 'Einstellungen', fn: () => openSettings(false) });
-      openMenu('Mehr', items);
+      openMenu('', items);   // ohne Überschrift – der ⋮-Knopf sagt schon, was es ist
     }
 
     // ----- Einstellungen (dauerhaft gespeichert, überstehen Updates) -----
@@ -147,6 +174,6 @@
           toast('Einstellungen zurückgesetzt');
         }),
       ];
-      openMenu('Einstellungen', items, keep);
+      openMenu('Einstellungen', items, keep, openMore);
     }
 

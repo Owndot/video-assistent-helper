@@ -98,6 +98,8 @@
     // Teilen/In App/Qualität/Tempo bleiben als unsichtbare Knöpfe (.vstash) bestehen – das Menü löst sie aus.
     const bMore = ib(I.more, 'Mehr');
     const bSubs = chip(P.cc, 'Untertitel', 'Untertitel');   // unten: Untertitel (leuchtet, wenn an)
+    const bRep = chip(P.repeat, 'Wiederholen', 'Wiederholen');   // unten: Aus → 1× → 5× → Aus (Zahl = noch übrige Male)
+    const repNum = h('b', { class: 'vrepn' }, ''); bRep.append(repNum);
     const subEl = h('div', { class: 'vsub', 'aria-live': 'polite' });
     const bUnlock = ib(P.lock, 'Entsperren', 'vunlock g');
     const menu = h('div', { class: 'vmenu g', role: 'menu' });
@@ -107,7 +109,7 @@
         h('div', { class: 'vscrim' }),
         h('div', { class: 'vtop' }, bClose, title, h('div', { class: 'vcluster g ia' }, bDl, bMore)),
         h('div', { class: 'vmid' }, bBack, bPlay, bFwd),
-        h('div', { class: 'vbot ia' }, h('div', { class: 'vrow' }, tCur, bar, tDur), h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bSubs, bFit, bPip, bRot))), h('div', { class: 'vstash' }, bShare, bExt, bQual, bSpeed)),
+        h('div', { class: 'vbot ia' }, h('div', { class: 'vrow' }, tCur, bar, tDur), h('div', { class: 'vhead' }, h('div', { class: 'vtools g solo' }, bLock), h('div', { class: 'vtools g' }, bSubs, bRep, bFit, bPip, bRot))), h('div', { class: 'vstash' }, bShare, bExt, bQual, bSpeed)),
       ind, side, seekBox, sfxL, sfxR, mini, menu, bUnlock);
     root.append(wrap);
     // Lupen-Glas für alle Glasflächen (Größe kommt erst nach dem Einblenden; ändert sie sich, wird neu berechnet)

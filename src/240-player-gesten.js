@@ -54,9 +54,8 @@
         if (Math.abs(dx) < 14 && Math.abs(dy) < 14) return;
         clearTimeout(g.holdTimer);
         if (g.edge) { g.mode = 'none'; return; }
-        if (st.zoom > 1.01 && !g.top && !wrap.classList.contains('ctl')) {
-          // vergrößert und Leisten aus: ein Finger verschiebt das Bild (wie Telegram). Sind die Leisten zu sehen (einmal
-          // tippen), gelten die normalen Gesten – spulen, Helligkeit, Lautstärke – und der Bildausschnitt bleibt, wie er ist
+        if (st.zoom > 1.01 && !g.top) {
+          // vergrößert: ein Finger verschiebt das Bild (wie Telegram) – Helligkeit/Lautstärke/Spulen erst wieder bei 1×
           g.mode = 'pan'; g.px0 = st.panX; g.py0 = st.panY; g.vs = [];
           vid.classList.remove('vzan'); st.panFree = true;
         } else g.mode = Math.abs(dx) > Math.abs(dy) ? 'seek' : (g.top ? 'none' : (g.x > W / 2 ? 'vol' : 'bright'));
