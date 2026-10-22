@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      18.1
+// @version      18.2
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -2338,6 +2338,7 @@
   const P = {
     close: 'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z',
     play: 'M8 5v14l11-7z',
+    replay: 'M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z',
     pause: 'M6 19h4V5H6v14zm8-14v14h4V5h-4z',
     fit: 'M19 12h-2v3h-3v2h5v-5zM7 9h3V7H5v5h2V9zm14-6H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16.01H3V4.99h18v14.02z',
     rotate: 'M16.48 2.52c3.27 1.55 5.61 4.72 5.97 8.48h1.5C23.44 4.84 18.29 0 12 0l-.66.03 3.81 3.81 1.33-1.32zm-6.25-.77c-.59-.59-1.54-.59-2.12 0L1.75 8.11c-.59.59-.59 1.54 0 2.12l12.02 12.02c.59.59 1.54.59 2.12 0l6.36-6.36c.59-.59.59-1.54 0-2.12L10.23 1.75zm4.6 19.44L2.81 9.17l6.36-6.36 12.02 12.02-6.36 6.36zm-7.31.29C4.25 19.94 1.91 16.76 1.55 13H.05C.56 19.16 5.71 24 12 24l.66-.03-3.81-3.81-1.33 1.32z',
@@ -3142,6 +3143,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
           if (br.start(i) <= c + 0.5 && br.end(i) >= c) { b = isFinite(d) && d > 0 ? br.end(i) / d : p; break; }
         }
       } catch (e) {}
+      if (p >= 0.999) b = 1;
       const P1 = (p * 100).toFixed(2), B1 = (Math.max(p, b) * 100).toFixed(2);
       bar.style.setProperty('--trk', 'linear-gradient(to right,#000 ' + P1 + '%,rgba(0,0,0,.42) ' + P1 + '%,rgba(0,0,0,.42) ' + B1 + '%,rgba(0,0,0,.18) ' + B1 + '%)'   /* umgedreht: wird per invert(1) weiß */);
     }
@@ -3150,16 +3152,26 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Nur schreiben, was sich geändert hat – und Zeitleiste/Zeiten nur, solange sie zu sehen sind (beim Einblenden
     // aktualisiert showControls sofort). Spart beim normalen Schauen ständige Stil-Neuberechnungen (17.7).
     const uiLast = { cur: '', dur: '', play: null, len: null, mini: '' };
+    // Am Ende angehalten (Reels: kurz VOR dem Ende, damit die Seite nicht zum nächsten springt) – aber nur, solange es
+    // noch dort steht (nicht nach Zurückspulen)
+    function heldAtEnd(m) {
+      m = m || M();
+      const d = m.duration;
+      return !!st.endHold && m.paused && isFinite(d) && d > 0 && m.currentTime >= d - 1.5;
+    }
+    st.heldAtEnd = heldAtEnd;
     function updateUI() {
       const m = M();
-      const d = m.duration, c = m.currentTime;
+      const held = heldAtEnd(m);
+      const d = m.duration, c = held ? d : m.currentTime;   // angehalten am Ende: als fertig zeigen (volle Leiste, Endzeit)
       const hasLen = isFinite(d) && d > 0;
       if (uiLast.len !== hasLen) { uiLast.len = hasLen; wrap.classList.toggle('nolen', !hasLen); }   // Live-Stream: keine Linie
       if (hasLen) {
         const mf = 'scaleX(' + Math.min(1, Math.max(0, c / d)).toFixed(3) + ')';
         if (mf !== uiLast.mini) { uiLast.mini = mf; miniFill.style.transform = mf; }
       }
-      if (uiLast.play !== m.paused) { uiLast.play = m.paused; setIcon(bPlay, m.paused ? P.play : P.pause); }
+      const pk = !m.paused ? 'pause' : (held || m.ended) ? 'replay' : 'play';   // am Ende: „noch einmal“ statt Play
+      if (uiLast.play !== pk) { uiLast.play = pk; setIcon(bPlay, P[pk]); }
       if (!wrap.classList.contains('ctl') && !st.barDrag) return;   // Leisten aus: Zeiten und Zeitleiste ruhen lassen
       const tc = fmtTime(c), td = isFinite(d) ? fmtTime(d) : 'Live';
       if (tc !== uiLast.cur) { uiLast.cur = tc; tCur.textContent = tc; }
@@ -3391,7 +3403,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 
     // ----- Bedienelemente -----
     // Play nach dem Ende: Sprung an den Anfang ist dann gewollt (nicht als Schleife werten)
-    function togglePlay() { const m = M(); if (m.paused) { if (st.endHold) { try { m.currentTime = 0; } catch (e) {} }   // am Ende angehalten: von vorn
+    function togglePlay() { const m = M(); if (m.paused) { if (st.heldAtEnd(m)) { try { m.currentTime = 0; } catch (e) {} }   // am Ende angehalten: von vorn
         st.endHold = false; st.userSeekAt = Date.now(); m.play().catch(() => {}); } else m.pause(); showControls(); }
     function seekBy(d) {
       const m = M();
@@ -3990,7 +4002,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     }
     if (MS) {
       msMeta();
-      msH('play', () => { const m = M(); if (st.endHold) { try { m.currentTime = 0; } catch (e) {} } st.endHold = false; m.play().catch(() => {}); });
+      msH('play', () => { const m = M(); if (st.heldAtEnd && st.heldAtEnd(m)) { try { m.currentTime = 0; } catch (e) {} } st.endHold = false; m.play().catch(() => {}); });
       msH('pause', () => M().pause());
       msH('stop', () => M().pause());
       msH('seekbackward', (d) => seekBy(-((d && d.seekOffset) || SKIP())));
@@ -5740,7 +5752,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 18.1',
+      'Video-Assistent 18.2',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

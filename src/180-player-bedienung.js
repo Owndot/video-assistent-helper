@@ -1,6 +1,6 @@
     // ----- Bedienelemente -----
     // Play nach dem Ende: Sprung an den Anfang ist dann gewollt (nicht als Schleife werten)
-    function togglePlay() { const m = M(); if (m.paused) { if (st.endHold) { try { m.currentTime = 0; } catch (e) {} }   // am Ende angehalten: von vorn
+    function togglePlay() { const m = M(); if (m.paused) { if (st.heldAtEnd(m)) { try { m.currentTime = 0; } catch (e) {} }   // am Ende angehalten: von vorn
         st.endHold = false; st.userSeekAt = Date.now(); m.play().catch(() => {}); } else m.pause(); showControls(); }
     function seekBy(d) {
       const m = M();

@@ -44,6 +44,16 @@ with sync_playwright() as p:
     print('   am Ende:', s)
     check('gespiegelt: kurz vor dem Ende angehalten (Seite springt NICHT zum nächsten Reel)', s['adv'] == 0 and s['src'] == 'reel1.webm' and s['paused'] and 0 < s['left'] < 1.0, s)
     check('… Player bleibt offen und zeigt „Play“', s['open'] and s['play'] in ('Wiedergabe', 'Play'), s)
+    UI = '() => { const r = %s; r.querySelector(".vp").classList.add("ctl"); const t = r.querySelectorAll(".vtime"); return { cur: t[0].textContent, dur: t[1].textContent, bar: r.querySelector(".vbar").value, mini: r.querySelector(".vmini i").style.transform, icon: r.querySelector(".vplay path").getAttribute("d").slice(0, 7) }; }' % R
+    time.sleep(0.2); u = pg.evaluate(UI)
+    check('… Anzeige wie fertig: Zeit = Länge, Leiste voll, Symbol „noch einmal“ (18.2)', u['cur'] == u['dur'] and u['bar'] == '1000' and 'scaleX(1' in u['mini'] and u['icon'] == 'M12 5V1', u)
+    # zurückgespult (bleibt angehalten): normale Anzeige · Play läuft an DIESER Stelle weiter, nicht von vorn
+    pg.evaluate('() => { const v = document.getElementById("v"); v.currentTime = Math.max(0, v.duration - 8); }'); time.sleep(0.6)
+    u2 = pg.evaluate(UI)
+    pg.evaluate('() => %s.querySelector(".vplay").click()' % R); time.sleep(1.0)
+    t2 = pg.evaluate('() => { const v = document.getElementById("v"); return [Math.round(v.currentTime * 10) / 10, v.paused, Math.round(v.duration)]; }')
+    check('… zurückgespult: normale Anzeige, Play spielt ab dort (nicht von vorn)', u2['cur'] != u2['dur'] and u2['icon'] == 'M8 5v14' and t2[0] > t2[2] - 9 and not t2[1], [u2, t2])
+    pg.evaluate('() => document.getElementById("v").pause()')
     pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(1.2)
     s2 = pg.evaluate('() => { const v = document.getElementById("v"); return { adv: window.__advanced, src: v.src.split("/").pop() }; }')
     check('nach dem Schließen: noch dasselbe Reel', s2['adv'] == 0 and s2['src'] == 'reel1.webm', s2)

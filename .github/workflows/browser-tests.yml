@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tests:
-        description: 'Welche Tests (Muster, z. B. test_loop*.py)'
+        description: 'Welche Tests (Muster, z. B. test_fb*.py; Messungen: mess_*.py)'
         default: 'test_*.py'
       browsers:
         description: 'Browser (JSON-Liste)'
@@ -55,11 +55,15 @@ jobs:
           TESTS: ${{ github.event.inputs.tests || 'test_*.py' }}
         run: |
           cd tests/browser
-          ./run_all.sh | tee ergebnis-${{ matrix.browser }}.txt
+          # streng: jede fehlgeschlagene Prüfung / jeder Absturz macht den Lauf rot (Ergebnis steht trotzdem in der Übersicht)
+          ./run_all.sh | tee ergebnis-${{ matrix.browser }}.txt; status=${PIPESTATUS[0]}
+          # Messung (kein Bestehen/Durchfallen) nur in Chromium – braucht dessen Messwerte (CDP)
+          if [ "$BROWSER" = chromium ] && [ -z "${{ github.event.inputs.tests }}" ]; then TESTS=mess_perf.py ./run_all.sh | tee -a ergebnis-${{ matrix.browser }}.txt; fi
           echo '### Ergebnis ${{ matrix.browser }}' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cat ergebnis-${{ matrix.browser }}.txt >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit $status
 
       - name: Ergebnisse in Zweig ergebnisse-${{ matrix.browser }}
         if: always()

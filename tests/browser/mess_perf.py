@@ -5,7 +5,7 @@ import pwshim  # BROWSER=firefox → nur eingeschränkt (CDP-Messwerte gibt es n
 #   Player     – Player offen, Leisten aus (normales Schauen)
 #   Leisten    – Player offen, Leisten an
 # je 8 s: Skript-, Layout-, Stil- und Gesamtzeit in ms; dazu Start (Skript ausführen) und Tipp → Leisten sichtbar.
-# Aufruf: python3 test_perf.py [vergleich.js]
+# Aufruf: python3 mess_perf.py [vergleich.js]
 import time, sys, json
 exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])
 WIN = 8

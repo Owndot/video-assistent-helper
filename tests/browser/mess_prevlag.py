@@ -4,7 +4,7 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 #   neu    – Stelle, die noch nie geladen wurde (Raster läuft vielleicht gerade)
 #   gesehen – Stelle, die man schon angeschaut hat
 #   zurück – nochmal an eine schon gezeigte Stelle
-# Aufruf: python3 test_prevlag.py [alt.js]  – mit einer zweiten Skriptdatei zum Vergleich
+# Aufruf: python3 mess_prevlag.py [alt.js]  – mit einer zweiten Skriptdatei zum Vergleich
 import time, sys
 exec(open('test_v8.py').read().split("results = []")[0])
 R = 'window.__evpRoot'

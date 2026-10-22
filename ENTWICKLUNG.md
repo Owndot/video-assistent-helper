@@ -119,25 +119,32 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_helper.py` | Helligkeit/Lautstärke über den Helfer, Auto, Feinstufen, Lebenszeichen |
 | `test_dl3.py` | Download-Wege (Helfer, YTDLnis direkt, Menü) |
 | `test_e2e.py`, `test_pair.py` | **echter** Java-Server-Kern + Browser: Laden über die Sitzung, Cookies nur an die eigene Seite, Koppeln |
-| `test_embed.py`, `test_nest.py` | eingebettete / verschachtelte Fenster |
+| `test_embed.py`, `test_embed_nofs.py` | eingebettete Fenster (mit / ohne Vollbild) |
 | `test_mirror.py`, `test_fb*.py`, `test_ig.py`, `test_tt.py` | Facebook-Spiegel, Instagram, TikTok (nachgebaut) |
 | `test_topguard.py`, `test_idle.py` | gesperrter oberer/unterer Rand, sparsamer Takt ohne Video |
 | `test_tapzoom.py` | Doppeltipp-Zoom: füllt hochkant, Richtung zum Finger, 3× quer, Verschieben, Gummiband, Schwung, Drehen |
 | `test_extras.py` | Untertitel (Seite, .srt/.vtt, Datei, Stream, Lage), ⋮ Mehr: Tonspur, Standbild, Einstellungen, Design, Media Session |
 | `test_menuback.py` | ⋮ ohne Überschrift / schließt, ‹ zurück, Zurück-Taste im Menü, Wiederholen 1× / ∞, Sleep-Timer, Dialog-Verstärker (auch Ablehnung bei fremdem Ton) |
 | `test_fbshare.py` | Teilen in Facebook-Reels: laufendes Reel statt Seitenadresse |
-| `test_perf.py` | Messung (4× gedrosselt): Rechenzeit, Bilder/s, verworfene Videobilder, Tipp → Leisten; mit 2. Datei = Vergleich |
 | `test_mirrorprev.py` | Vorschau beim Spiegeln: ruhig nur die Zeit, kein Flackern beim Ziehen |
-| `test_reelend.py` | Reels-Seite springt am Ende von selbst weiter: Player hält vorher an, beim Schließen bleibt man beim Reel |
+| `test_reelend.py` | Reels-Seite springt am Ende von selbst weiter: Player hält vorher an (Anzeige wie fertig, „noch einmal“), beim Schließen bleibt man beim Reel |
 | `test_leave.py` | App-Wechsel (Fokus/verdeckt) ≠ Zurück-Taste, „Beim Verlassen“, Bild-in-Bild ✕/Vollbild |
-| `test_prevlag.py` | Messung: Zeit bis zur richtigen Vorschau nach dem Anhalten (`LAG=1.3` = schwaches Netz; mit 2. Datei = Vergleich) |
+| `test_proof.py` | Stream-Nachweis: vorgeladenes nächstes Video wird nicht genommen; Datei-Videos: Gegenprobe der Länge im Player |
+| `test_spaswitch.py` | Videowechsel ohne Neuladen (ARD-artig): neuer Stream, neue Seitenadresse beim Teilen, A → B → A |
 | `test_ui.py` | Aufteilung (⋮ oben, CC unten), Hinweis-Lage, Zeitleiste beim Hochwischen, Sprache Deutsch/Englisch |
 | `test_pagesubs.py` | Untertitel nur in den Seitendaten (ARD-artig, EBU-TT ab 10:00:00), in nachgeladener Konfiguration (ZDF-artig, TTML), vom Seiten-Player geladen |
 | `test_pixel.py` | sieht man wirklich etwas? Ambient-Licht im Rand, Vorschaubild = echtes Bild an der Stelle (auch nach 13 s) |
 
-Bekannt: `test_tt.py` besteht 2 von 3 (TikTok liefert ohne Anmeldung keine Video-ID) – kein Fehler.
+**Streng:** `run_all.sh` zählt jede fehlgeschlagene Prüfung (`FAIL`, `FEHLER`, „x von y“ mit x < y), jeden Absturz,
+jede Zeitüberschreitung und jeden Test ohne `ERGEBNIS`-Zeile als Fehler und endet dann mit Fehlercode – CI wird rot.
+Jeder `test_*.py` muss deshalb am Ende `ERGEBNIS: x von y` ausgeben.
+
+**Messungen** (`mess_*.py`, kein Bestehen/Durchfallen, laufen nur auf Zuruf: `TESTS="mess_perf.py" ./run_all.sh`):
+`mess_perf.py` (4× gedrosselt: Rechenzeit, Bilder/s, verworfene Videobilder, Tipp → Leisten; läuft in CI zusätzlich in
+Chromium), `mess_prevlag.py` / `mess_prevspeed.py` (Vorschau), `mess_loop2.py` (Spiegel nach Neuladen),
+`mess_ffcap.py` / `mess_ffdiag.py` (Untersuchungen), `mess_design.py`, `mess_lens_text.py`, `mess_nest.py`,
+`mess_mini_sym.py`, `mess_dark2.py`, `mess_kvs.py`. Mit einer zweiten Skriptdatei als Argument vergleichen einige alt/neu.
 Tests tippen „fingerschnell“ (`click(force=True)`), sonst wartet Playwright, bis federnde Knöpfe stillstehen.
-`test_ffcap.py` / `test_ffdiag.py` sind Untersuchungen (Spiegeln, Zeiger-Ereignisse) ohne Bestanden/Fehler.
 
 **Java-Tests** (`tests/java`, braucht JDK 17, ffmpeg, openssl):
 ```
@@ -277,8 +284,9 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 17.4 | ⋮-Menü ohne Überschrift, zweiter Tipp schließt; Untermenüs mit ‹ (`openMenu(…, back)`), Zurück-Taste bei offenem Menü nur eine Ebene zurück; Wiederholen-Knopf (Aus → 1× → 5×); Zoom-Wischgesten bei sichtbaren Leisten wieder entfernt. App: neue Oberfläche (ohne Titelleiste, erledigte Schritte als Zeile, Sprachwahl Auto/Deutsch/English) |
 | 17.5 | Sleep-Timer (15–60 min / Ende des Videos, 8 s ausblenden), Dialog-Verstärker (Hochpass, Sprachanhebung, Kompressor – nur bei freigegebenem Ton), Wiederholen Aus → 1× → ∞, Akzent einfarbig (helle Fläche statt Hellblau). App: Design Auto/Hell/Dunkel, einfarbige Knöpfe |
 | 17.6 | Reels: 0,6 s vor dem Ende anhalten + Schleuse (`ended` nie, `timeupdate`/`pause` in der letzten Sekunde nicht zur Seite) – auch Seiten, die schon kurz vor „ended“ weiterspringen. Teilen/Download in Facebook-Reels: Video-ID aus dem eigenen Kasten (`fbVideoId`) statt der Seitenadresse, die beim ersten Reel stehen bleibt; Diagnose zeigt den Link |
-| 17.7 | Flüssiger: Ambient weichgezeichnet IM 32-px-Bild (kein Vollbild-`blur(48px)` mehr, Rand per Verlauf statt CSS-Maske), 2,5 statt 8 Bilder/s; Vorschaubilder im Leerlauf; Zeiten/Zeitleiste nur bei sichtbaren Leisten und nur bei Änderung; Tipp → Leisten sofort (statt 280 ms), frisch eingeblendete Knöpfe 300 ms ohne Tipps (Doppeltipp trifft nicht Play). Messung `test_perf.py`: 35 → 60 Bilder/s, 23 → 0 verworfene Videobilder, Tipp 312 → 25 ms |
+| 17.7 | Flüssiger: Ambient weichgezeichnet IM 32-px-Bild (kein Vollbild-`blur(48px)` mehr, Rand per Verlauf statt CSS-Maske), 2,5 statt 8 Bilder/s; Vorschaubilder im Leerlauf; Zeiten/Zeitleiste nur bei sichtbaren Leisten und nur bei Änderung; Tipp → Leisten sofort (statt 280 ms), frisch eingeblendete Knöpfe 300 ms ohne Tipps (Doppeltipp trifft nicht Play). Messung `mess_perf.py`: 35 → 60 Bilder/s, 23 → 0 verworfene Videobilder, Tipp 312 → 25 ms |
 | 17.8 | Zurück-Geste: Player beim Vollbild-Ende sofort unsichtbar und stumm (`veil`, Klasse `vgone`), Prüfung (Drehen/App-Wechsel) läuft unsichtbar weiter – kein Zwischenbild mehr mit Browserleisten |
 | 17.9 | Übergabe an die Seite (`handBack`): bei der Zurück-Geste springt das Seitenvideo sofort an deine Stelle und läuft mit Ton weiter; bis es dort ein Bild hat, liegt dein letztes Bild darüber (`coverOver`, Canvas im Schatten-DOM; Firefox-Handy: Seitenvideo kurz unsichtbar). Kein „Anfang zeigen, dann springen“ mehr. Doch kein Zurück (Drehen/App-Wechsel): `unHand` macht die Seite wieder still |
 | 18.0 | Videowechsel ohne Neuladen (ARD-Mediathek & Co.): „Stream (läuft gerade)“ schaut nie vor den letzten Adresswechsel zurück (`navAt` = letzter Moment mit alter Adresse, auch bei `popstate`, Prüfung beim Tippen) – vorher kam bei schnellem Wechsel der Stream des VORIGEN Videos. Teilen: auf Seiten für genau ein Video (`VIDEO_PAGE_RE`, /video/…-Kennung) die Seitenadresse vor Links neben dem Player. Test `test_spaswitch.py` |
 | 18.1 | Stream-Nachweis statt Raten: Stream-Listen (m3u8/mpd), die die Seite lädt, werden mitgelesen (`notePlaylist`: Unter-Listen, Stück-Ordner, Länge; kein eigener Abruf). Lädt die Seite Stücke aus einem dieser Ordner (`noteSegment`, eigener Player zählt nicht), steht dieser Stream als „läuft gerade, geprüft“ vorn (`playingStream`). Gegenprobe Länge: bei der Auswahl (`streamLen`, falsche Länge ans Ende) und im Player (`st.lenOk`: falsche Länge → nächste Quelle, passt keine → zurück zur ersten). Erneut geladene Adressen gelten wieder als neu (A → B → A). Diagnose: Zeile „Stream-Nachweis“. Tests `test_proof.py`, `test_spaswitch.py` |
+| 18.2 | Am Ende angehalten (Reels, 0,6 s vor Schluss): Anzeige wie fertig – Zeit = Länge, Leiste und Linie voll, Symbol „noch einmal“ (`heldAtEnd`); zurückgespult: normale Anzeige, Play läuft ab dort statt von vorn. Tests: streng (`run_all.sh` rot bei jedem FAIL/Absturz), Messungen als `mess_*.py`, veraltete entfernt |

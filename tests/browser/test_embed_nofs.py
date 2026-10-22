@@ -15,9 +15,12 @@ with sync_playwright() as p:
     page.frame_locator('#f').locator('button[aria-label="Im Videoplayer öffnen"]').click()
     time.sleep(1.5)
     r = page.evaluate('() => { const r = document.getElementById("f").getBoundingClientRect(); const e = document.elementFromPoint(200, 30); return [r.left, r.top, r.width, r.height, document.fullscreenElement, e && e.id]; }')
-    print('OK ' if r[0]==0 and r[1]==0 and r[2]==400 and r[3]==800 and r[5]=='f' else 'FAIL', 'ohne Vollbild: Fenster deckt alles', r)
+    ok1 = r[0]==0 and r[1]==0 and r[2]==400 and r[3]==800 and r[5]=='f'
+    print('OK  ' if ok1 else 'FAIL', 'ohne Vollbild: Fenster deckt alles', r)
     page.screenshot(path=OUT+'/emb_nofs.png')
     page.frame_locator('#f').locator('button[aria-label="Schließen"]').click(); time.sleep(0.8)
     r2 = page.evaluate('() => [document.getElementById("f").getBoundingClientRect().height, document.querySelector("div[style*=translateZ]").getAttribute("style"), scrollY]')
-    print('OK ' if r2[0]==260 and 'important' not in r2[1] else 'FAIL', 'zurückgestellt', r2, errs)
+    ok2 = r2[0]==260 and 'important' not in r2[1] and not errs
+    print('OK  ' if ok2 else 'FAIL', 'zurückgestellt', r2, errs)
     b.close()
+print('ERGEBNIS: %d von 2' % (ok1 + ok2))
