@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      18.5
+// @version      18.6
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -3204,6 +3204,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       const u = st.sources[st.idx++];
       st.cur = u;
       st.mode = 'own';
+      if (st.setPipAllowed) st.setPipAllowed(true);
       spin.classList.add('on');
       st.loadTimer = setTimeout(tryNext, 9000);   // lädt nicht? nächste Quelle
       try { vid.srcObject = null; vid.removeAttribute('src'); } catch (e) {}
@@ -3277,6 +3278,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (!ms) { toast('Dieses Video lässt sich hier nicht im eigenen Player zeigen'); closePlayer(); return; }
       st.mode = 'capture';
       st.cur = '';
+      if (st.setPipAllowed) st.setPipAllowed(false);   // gespiegelt: kein Bild-in-Bild
       if (st.refreshDl) st.refreshDl();
       try { vid.removeAttribute('src'); } catch (e) {}
       vid.srcObject = ms;
@@ -3497,7 +3499,26 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (isFs()) { hint(); return; }
       enterFs().then(() => { if (isFs()) { st.fsStart = true; hint(); } else toast('Bild-in-Bild ist hier nicht möglich'); });
     };
+    // Bild-in-Bild nur, wo es zuverlässig läuft: NICHT beim Spiegeln und nicht auf Facebook/Instagram/Threads –
+    // dort hält die Seite ihr Video im Hintergrund an, das kleine Fenster stünde still (18.6). Dann gibt es weder den
+    // Knopf noch das automatische kleine Fenster beim Wischen zum Startbildschirm (auch nicht für das Seitenvideo).
+    st.pipOk = !!bPip && !META;
+    function setPipAllowed(ok) {
+      ok = !!ok && !!bPip && !META;
+      st.pipOk = ok;
+      try { vid.disablePictureInPicture = !ok; } catch (e) {}
+      if (bPip) bPip.style.display = ok ? '' : 'none';
+      if (ok) return;
+      if (st.origNoPip === undefined) {
+        st.origNoPip = !!orig.disablePictureInPicture;
+        st.cleanup.push(() => { try { orig.disablePictureInPicture = st.origNoPip; } catch (e) {} });
+      }
+      try { orig.disablePictureInPicture = true; } catch (e) {}
+      if (pipIsOurs(vid)) { try { document.exitPictureInPicture().catch(() => {}); } catch (e) {} }
+    }
+    st.setPipAllowed = setPipAllowed;
     on(bPip, () => {
+      if (!st.pipOk) return;
       if (pipIsOurs(vid)) { document.exitPictureInPicture().catch(() => {}); return; }
       st.pipAt = Date.now();
       let pr;
@@ -4988,16 +5009,37 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         if (pipClosed || CONFIG.leaveAction === 'pause') pauseAway();
       } else {
         markAway();
-        // zurück im Browser: Vollbild verloren? Der Browser erlaubt es nur nach einem Tipp – der nächste holt es zurück
+        // zurück im Browser: Vollbild verloren? Gleich selbst versuchen (manche Browser erlauben es beim Zurückkommen,
+        // auch ein zweites Mal kurz danach) – sonst holt es die nächste Berührung zurück (Tippen, Wischen, Knopf).
         if (CONFIG.startFullscreen && !isFs() && !pipIsOurs(vid)) {
           st.fsLost = true;
           if (st.pushHist) st.pushHist();   // Zurück-Taste schließt den Player (statt die Seite zu verlassen)
-          showControls();
-          setTimeout(() => { if (vp === st && !isFs()) toast('Antippen für Vollbild'); }, 400);
+          tryRegain();
+          setTimeout(() => { if (vp === st && !isFs()) { showControls(); toast('Antippen für Vollbild'); } }, 900);
         }
       }
     };
     document.addEventListener('visibilitychange', onVisAway);
+    // Vollbild selbst zurückholen: sofort, nach 250 ms und nach 700 ms (und wenn das Fenster den Fokus bekommt) –
+    // ohne Berührung erlaubt das nicht jeder Browser; dann klappt es mit der nächsten Berührung (18.6)
+    function tryRegain() {
+      [0, 250, 700].forEach((ms) => setTimeout(() => { if (vp === st && st.fsLost && !isFs() && !document.hidden && !pipIsOurs(vid)) regainFs(); }, ms));
+    }
+    const onFocusBack = () => { if (vp === st && st.fsLost && !isFs() && !document.hidden) tryRegain(); };
+    addEventListener('focus', onFocusBack);
+    addEventListener('pageshow', onFocusBack);
+    st.cleanup.push(() => { removeEventListener('focus', onFocusBack); removeEventListener('pageshow', onFocusBack); });
+    // Jede Berührung holt ein verlorenes Vollbild zurück – auch Wischen, Spulen, Zoomen (Tippen und Knöpfe tun es
+    // schon selbst). Ausgelöst am Ende der Berührung: erst dann erlaubt der Browser das Vollbild.
+    const onAnyTouch = (e) => {
+      if (vp !== st || !st.fsLost || isFs() || !CONFIG.startFullscreen) return;
+      if (e.type === 'pointerup' && e.pointerType === 'mouse') return;
+      const path = e.composedPath ? e.composedPath() : [];
+      if (path.some((el) => el && (el.tagName === 'BUTTON' || (el.classList && (el.classList.contains('vmenu') || el.classList.contains('vbar')))))) return;
+      regainFs();
+    };
+    wrap.addEventListener('touchend', onAnyTouch, true);
+    wrap.addEventListener('pointerup', onAnyTouch, true);
     addEventListener('blur', markAway);
     addEventListener('pagehide', markAway);
     st.cleanup.push(() => {
@@ -5008,6 +5050,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Bild-in-Bild verlassen: ✕ (Seite bleibt im Hintergrund) = anhalten; „Vollbild“/zurück zur App = Player im Vollbild
     vid.addEventListener('leavepictureinpicture', () => {
       st.pipLeaveAt = Date.now();
+      // „Vollbild“ im kleinen Fenster: sofort versuchen (der Browser erlaubt es oft nur in diesem Moment)
+      if (CONFIG.startFullscreen && !isFs()) { try { const pr = enterFs(); if (pr && pr.then) pr.then(() => { if (vp === st && isFs()) { st.fsStart = true; st.fsLost = false; if (st.orient) lockO(st.orient); } }); } catch (e) {} }
       setTimeout(() => {
         if (vp !== st) return;
         if (document.hidden) { st.userPauseAt = Date.now(); pauseAway(); return; }   // ✕ im kleinen Fenster = gewollt
@@ -5021,7 +5065,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       }, 300);
     });
     // Browser, die von selbst ins kleine Fenster wechseln können (beim Verlassen der App), fragen über die Media Session
-    try { if (navigator.mediaSession && document.pictureInPictureEnabled) navigator.mediaSession.setActionHandler('enterpictureinpicture', () => { vid.disablePictureInPicture = false; vid.requestPictureInPicture().catch(() => {}); }); } catch (e) {}
+    try { if (navigator.mediaSession && document.pictureInPictureEnabled) navigator.mediaSession.setActionHandler('enterpictureinpicture', () => { if (!st.pipOk) return; vid.disablePictureInPicture = false; vid.requestPictureInPicture().catch(() => {}); }); } catch (e) {}
     st.cleanup.push(() => { try { navigator.mediaSession.setActionHandler('enterpictureinpicture', null); } catch (e) {} });
     // ----- Im kleinen Fenster weiterlaufen lassen (18.5) -----
     // Beim Wischen zum Startbildschirm wechselt der Browser ins kleine Fenster. Kurz davor oder danach halten aber
@@ -5846,7 +5890,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 18.5',
+      'Video-Assistent 18.6',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

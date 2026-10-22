@@ -94,7 +94,26 @@
       if (isFs()) { hint(); return; }
       enterFs().then(() => { if (isFs()) { st.fsStart = true; hint(); } else toast('Bild-in-Bild ist hier nicht möglich'); });
     };
+    // Bild-in-Bild nur, wo es zuverlässig läuft: NICHT beim Spiegeln und nicht auf Facebook/Instagram/Threads –
+    // dort hält die Seite ihr Video im Hintergrund an, das kleine Fenster stünde still (18.6). Dann gibt es weder den
+    // Knopf noch das automatische kleine Fenster beim Wischen zum Startbildschirm (auch nicht für das Seitenvideo).
+    st.pipOk = !!bPip && !META;
+    function setPipAllowed(ok) {
+      ok = !!ok && !!bPip && !META;
+      st.pipOk = ok;
+      try { vid.disablePictureInPicture = !ok; } catch (e) {}
+      if (bPip) bPip.style.display = ok ? '' : 'none';
+      if (ok) return;
+      if (st.origNoPip === undefined) {
+        st.origNoPip = !!orig.disablePictureInPicture;
+        st.cleanup.push(() => { try { orig.disablePictureInPicture = st.origNoPip; } catch (e) {} });
+      }
+      try { orig.disablePictureInPicture = true; } catch (e) {}
+      if (pipIsOurs(vid)) { try { document.exitPictureInPicture().catch(() => {}); } catch (e) {} }
+    }
+    st.setPipAllowed = setPipAllowed;
     on(bPip, () => {
+      if (!st.pipOk) return;
       if (pipIsOurs(vid)) { document.exitPictureInPicture().catch(() => {}); return; }
       st.pipAt = Date.now();
       let pr;

@@ -2,6 +2,7 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 # Bild-in-Bild beim Wechsel zum Startbildschirm (18.5): Hält etwas anderes als du das Video rund um den Wechsel ins
 # kleine Fenster an (Seite verdeckt, Browser, „Beim Verlassen: Anhalten“), läuft es weiter.
 # Gegenprobe: eigene Pause (auch im kleinen Fenster), Sleep-Timer und ✕ im kleinen Fenster halten an.
+# Beim Spiegeln (Facebook, Instagram) gibt es kein Bild-in-Bild (18.6) – dort hält die Seite ihr Video im Hintergrund an.
 import time, os
 src = open('test_extras.py').read().split("with sync_playwright() as p:")[0]
 exec(src)
@@ -71,14 +72,11 @@ with sync_playwright() as p:
     pg.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(0.8)
     pg.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
     pg.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.srcObject; }' % R, timeout=15000); time.sleep(0.8)
-    pg.evaluate(SIM)
-    hide(pg, True); time.sleep(0.15); pg.evaluate(PIP_ON); time.sleep(0.9)
-    o = pg.evaluate('() => document.getElementById("v").paused')
-    check('Facebook (gespiegelt): Seite hält ihr Video beim Verdecken an → läuft im kleinen Fenster weiter', not o, o)
-    pg.evaluate(PIP_OFF); time.sleep(0.6)
-    o2 = pg.evaluate('() => document.getElementById("v").paused')
-    check('… ✕ im kleinen Fenster: angehalten', o2, o2)
-    hide(pg, False)
+    pp = pg.evaluate('() => { const r = %s, b = r.querySelector("button[aria-label=\'Bild-in-Bild\']"); return [b ? getComputedStyle(b).display : "fehlt", r.querySelector(".vv").disablePictureInPicture, document.getElementById("v").disablePictureInPicture]; }' % R)
+    check('Facebook (gespiegelt): kein Bild-in-Bild – kein Knopf, weder Player noch Seitenvideo ins kleine Fenster (18.6)', pp[0] in ('none', 'fehlt') and pp[1] is True and pp[2] is True, pp)
+    pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.8)
+    po = pg.evaluate('() => document.getElementById("v").disablePictureInPicture')
+    check('… nach dem Schließen: Seitenvideo wieder wie vorher', po is False, po)
     check('keine Fehler', not errs, errs)
     b.close()
 srv.shutdown()

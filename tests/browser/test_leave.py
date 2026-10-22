@@ -36,11 +36,39 @@ with sync_playwright() as p:
     check('App-Wechsel (Fokus weg → Vollbild aus → verdeckt): Player bleibt offen', fs0 and opened(), [fs0, opened()])
     check('… und wird dabei nicht unsichtbar gemacht', not pg.evaluate('() => %s.querySelector(".vp").classList.contains("vgone")' % R))
     check('… Standard „Weiter“: Video läuft weiter', vstate() and not vstate()[0], vstate())
-    hide(pg, False); time.sleep(0.7)
+    hide(pg, False); time.sleep(1.1)
     t = pg.evaluate('() => %s.querySelector(".toast").textContent' % R)
-    check('zurück im Browser: Hinweis „Antippen für Vollbild“', t == 'Antippen für Vollbild', t)
-    pg.mouse.click(200, 300); time.sleep(0.7)
-    check('… ein Tipp holt das Vollbild zurück', fs() and opened(), [fs(), opened()])
+    auto = fs()
+    check('zurück im Browser: Vollbild von selbst zurück – oder Hinweis „Antippen für Vollbild“', auto or t == 'Antippen für Vollbild', [auto, t])
+    if not FF and not auto:
+        # Wischen (echte Berührung) holt es ebenfalls zurück – nicht nur Tippen (18.6)
+        cdp = ctx.new_cdp_session(pg)
+        for typ, y in [('touchStart', 300), ('touchMove', 340), ('touchMove', 380), ('touchEnd', 380)]:
+            cdp.send('Input.dispatchTouchEvent', {'type': typ, 'touchPoints': [] if typ == 'touchEnd' else [{'x': 200, 'y': y}]}); time.sleep(0.05)
+        time.sleep(0.7)
+        check('… Wischen holt das Vollbild zurück', fs() and opened(), [fs(), opened()])
+    if not fs(): pg.mouse.click(200, 300); time.sleep(0.7)
+    check('… Vollbild wieder da', fs() and opened(), [fs(), opened()])
+    # 1b) länger weg (der letzte Tipp ist nicht mehr „frisch“): Browser erlaubt das Vollbild erst mit einer Berührung –
+    #     Hinweis, und auch Wischen holt es zurück
+    pg.evaluate('() => { window.__sim.focus = false; window.dispatchEvent(new Event("blur")); }')
+    pg.evaluate('() => document.exitFullscreen().catch(() => {})'); time.sleep(0.2)
+    # wie auf dem Handy: Vollbild nur direkt nach einer Berührung (der Testbrowser erlaubt es sonst immer)
+    pg.evaluate('''() => { const rq = Element.prototype.requestFullscreen; window.__rqFs = rq;
+      window.__touchAt = 0; ['pointerup', 'touchend', 'mousedown', 'click'].forEach((t) => addEventListener(t, (e) => { if (e.isTrusted) window.__touchAt = performance.now(); }, true));
+      Element.prototype.requestFullscreen = function () { if (performance.now() - window.__touchAt > 1000) return Promise.reject(new TypeError('keine Berührung')); return rq.apply(this, arguments); }; }''')
+    hide(pg, True); time.sleep(6.5)
+    hide(pg, False); time.sleep(1.1)
+    t1 = pg.evaluate('() => %s.querySelector(".toast").textContent' % R); a1 = fs()
+    check('länger weg: Vollbild von selbst – oder Hinweis „Antippen für Vollbild“', a1 or t1 == 'Antippen für Vollbild', [a1, t1])
+    if not FF and not a1:
+        cdp = ctx.new_cdp_session(pg)
+        for typ, y in [('touchStart', 300), ('touchMove', 340), ('touchMove', 380), ('touchEnd', 380)]:
+            cdp.send('Input.dispatchTouchEvent', {'type': typ, 'touchPoints': [] if typ == 'touchEnd' else [{'x': 200, 'y': y}]}); time.sleep(0.05)
+        time.sleep(0.7)
+        check('… Wischen (nicht nur Tippen) holt das Vollbild zurück', fs() and opened(), [fs(), opened()])
+    if not fs(): pg.mouse.click(200, 300); time.sleep(0.7)
+    pg.evaluate('() => { Element.prototype.requestFullscreen = window.__rqFs; }')
     # 2) App-Wechsel, bei dem die Meldung „verdeckt“ erst spät kommt (ohne vorherigen Fokusverlust)
     pg.evaluate('() => document.exitFullscreen().catch(() => {})'); time.sleep(0.55)
     hide(pg, True); time.sleep(1.0)
