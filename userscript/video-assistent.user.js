@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      18.6
+// @version      18.7
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -3609,6 +3609,14 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       });
     }
     // Alle Wege zum Speichern (langes Drücken auf ⬇, oder wenn der Browser nicht darf)
+    // An YTDLnis / eine andere App übergeben: Der Browser verliert dabei das Vollbild (und holt es ohne Berührung nicht
+    // zurück). Darum: Player hält an, und kommst du zurück, ist er zu – die Seite steht an deiner Stelle (18.7).
+    const dlOut = (f) => {
+      st.dlAt = Date.now(); st.dlCancel = false;
+      const r = f();
+      // Teilen-Menü abgebrochen? Dann bleibt der Player offen
+      if (r && r.then) r.then((ok) => { if (!ok) { st.dlCancel = true; st.dlAt = 0; } });
+    };
     function dlMenu(browserFailed) {
       const d = directUrl(), hs = helperSrc();
       let link = '';
@@ -3616,7 +3624,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       const items = [];
       if (hs && st.sys && st.sys.dl) items.push({ label: 'Mit dem Helper', sub: hs.k === 'file' ? 'Download-Manager' : 'Stream → MP4', fn: () => helperDownload(hs) });
       if (hs && st.sys && st.sys.proxy) items.push({ label: 'Über den Browser laden', sub: 'für geschützte Seiten · Seite offen lassen', fn: () => helperDownload(hs, 'browser') });
-      if (link) items.push({ label: 'Mit YTDLnis', sub: 'direkt öffnen', fn: () => toYtdlnis(link) });
+      if (link) items.push({ label: 'Mit YTDLnis', sub: 'direkt öffnen', fn: () => dlOut(() => toYtdlnis(link)) });
       if (d && !browserFailed) items.push({ label: 'Im Browser speichern', sub: 'Download des Browsers', fn: () => browserSave(d) });
       if (d) {
         items.push({ label: 'Im Browser öffnen', sub: 'dort ⋮ → Herunterladen', fn: () => {
@@ -3625,7 +3633,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         } });
         items.push({ label: 'Hier speichern', sub: 'Player bis zum Ende offen lassen', fn: () => directDownload(d, () => toast('Die Seite sperrt den Download')) });
       }
-      if (link || d) items.push({ label: 'Teilen …', sub: 'an eine andere App', fn: () => shareUrl(link || d) });
+      if (link || d) items.push({ label: 'Teilen …', sub: 'an eine andere App', fn: () => dlOut(() => shareUrl(link || d)) });
       if (!items.length) { toast(hs && hs.k === 'hls' ? 'Für Streams wird die Helper-App gebraucht' : 'Für dieses Video gibt es keine Datei zum Herunterladen'); return; }
       openMenu('Herunterladen', items);
     }
@@ -3638,10 +3646,10 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       const d = directUrl(), hs = helperSrc();
       let link = '';
       try { link = SHOW_DOWNLOAD ? postUrlFor(orig) : ''; } catch (e) {}
-      if (link && onSite(CONFIG.ytdlpSites)) { if (CONFIG.downloader === 'share') shareUrl(link); else toYtdlnis(link); return; }
+      if (link && onSite(CONFIG.ytdlpSites)) { if (CONFIG.downloader === 'share') dlOut(() => shareUrl(link)); else dlOut(() => toYtdlnis(link)); return; }
       if (hs && st.sys && st.sys.dl) { helperDownload(hs); return; }
       if (d) { browserSave(d); return; }
-      if (link) { if (CONFIG.downloader === 'share') shareUrl(link); else toYtdlnis(link); return; }
+      if (link) { if (CONFIG.downloader === 'share') dlOut(() => shareUrl(link)); else dlOut(() => toYtdlnis(link)); return; }
       dlMenu();
     });
     bDl.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); dlMenu(); });
@@ -5001,6 +5009,19 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     const pauseAway = () => { const m = M(); if (!m.paused) { st.pausedAway = true; try { m.pause(); } catch (e) {} } };
     const onVisAway = () => {
       if (vp !== st) return;
+      // gerade an YTDLnis / eine andere App übergeben (Download): anhalten – beim Zurückkommen ist der Player zu
+      if (document.hidden && st.dlAt && Date.now() - st.dlAt < 5000) {
+        markAway(); st.dlAway = true;
+        st.userPauseAt = Date.now();
+        try { M().pause(); } catch (e) {}
+        return;
+      }
+      if (!document.hidden && st.dlAway) {
+        st.dlAway = false;
+        // kurz warten: wurde das Teilen-Menü nur abgebrochen, bleibt der Player offen (wie nach einem App-Wechsel)
+        setTimeout(() => { if (vp !== st) return; if (st.dlCancel) { st.dlCancel = false; onVisAway(); return; } st.closePaused = true; closePlayer(); }, 350);
+        return;
+      }
       if (document.hidden) {
         markAway();
         if (pipIsOurs(vid)) return;   // läuft im kleinen Fenster weiter – genau dafür ist es da
@@ -5437,7 +5458,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     }
     try { if (typeof st.origMuted === 'boolean') o.muted = st.origMuted; } catch (e) {}   // ursprünglichen Ton zurückgeben
     // Video auf der Seite weiterlaufen lassen (Instagram & Co. haben oft keinen Play-Knopf)
-    if (atEnd) { try { o.pause(); } catch (e) {} }
+    if (atEnd || st.closePaused) { try { o.pause(); } catch (e) {} }   // (nach einem Download: angehalten lassen)
     else if (CONFIG.resumeAfterClose && st.mode === 'own') {
       try { const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
       watchStall(o);
@@ -5810,10 +5831,11 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   function shareUrl(url) {
     const fallback = () => copyText(url, 'Link kopiert – in YTDLnis einfügen');
     if (navigator.share) {
-      navigator.share({ url: url }).catch((e) => { if (!e || e.name !== 'AbortError') fallback(); });
-    } else {
-      fallback();
+      // Ergebnis: true = geteilt, false = abgebrochen/fehlgeschlagen
+      return navigator.share({ url: url }).then(() => true, (e) => { if (!e || e.name !== 'AbortError') fallback(); return false; });
     }
+    fallback();
+    return Promise.resolve(false);
   }
 
   function typeShort(u) {
@@ -5890,7 +5912,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 18.6',
+      'Video-Assistent 18.7',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

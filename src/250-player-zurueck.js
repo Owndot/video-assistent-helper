@@ -28,6 +28,19 @@
     const pauseAway = () => { const m = M(); if (!m.paused) { st.pausedAway = true; try { m.pause(); } catch (e) {} } };
     const onVisAway = () => {
       if (vp !== st) return;
+      // gerade an YTDLnis / eine andere App übergeben (Download): anhalten – beim Zurückkommen ist der Player zu
+      if (document.hidden && st.dlAt && Date.now() - st.dlAt < 5000) {
+        markAway(); st.dlAway = true;
+        st.userPauseAt = Date.now();
+        try { M().pause(); } catch (e) {}
+        return;
+      }
+      if (!document.hidden && st.dlAway) {
+        st.dlAway = false;
+        // kurz warten: wurde das Teilen-Menü nur abgebrochen, bleibt der Player offen (wie nach einem App-Wechsel)
+        setTimeout(() => { if (vp !== st) return; if (st.dlCancel) { st.dlCancel = false; onVisAway(); return; } st.closePaused = true; closePlayer(); }, 350);
+        return;
+      }
       if (document.hidden) {
         markAway();
         if (pipIsOurs(vid)) return;   // läuft im kleinen Fenster weiter – genau dafür ist es da

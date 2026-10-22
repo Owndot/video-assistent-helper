@@ -118,6 +118,7 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_player.py`, `test_v8.py` | Grundfunktionen, Gesten, Menüs, Qualität |
 | `test_helper.py` | Helligkeit/Lautstärke über den Helfer, Auto, Feinstufen, Lebenszeichen |
 | `test_dl3.py` | Download-Wege (Helfer, YTDLnis direkt, Menü) |
+| `test_dlclose.py` | nach Download an YTDLnis: Player zu beim Zurückkommen, Seite an der Stelle; Teilen abgebrochen: bleibt offen |
 | `test_e2e.py`, `test_pair.py` | **echter** Java-Server-Kern + Browser: Laden über die Sitzung, Cookies nur an die eigene Seite, Koppeln |
 | `test_embed.py`, `test_embed_nofs.py` | eingebettete Fenster (mit / ohne Vollbild) |
 | `test_mirror.py`, `test_fb*.py`, `test_ig.py`, `test_tt.py` | Facebook-Spiegel, Instagram, TikTok (nachgebaut) |
@@ -296,3 +297,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 18.4 | Reels: Halt am Ende 0,2 s vor Schluss statt 0,6 s (`END_GAP`) – der Countdown der Seite wird ja abgebrochen |
 | 18.5 | Bild-in-Bild läuft weiter: Hält etwas anderes als du das Video rund um den Wechsel ins kleine Fenster (±2,5 s) oder darin an – Facebook beim Verdecken, der Browser, „Beim Verlassen: Anhalten“ –, läuft es sofort weiter (max. 8×). Gewollt bleibt gewollt: Play/Pause, Knopf im kleinen Fenster (Media Session), Sleep-Timer, Reel-Ende, ✕ (`st.userPauseAt`). Test `test_pipkeep.py` |
 | 18.6 | (Erster Versuch – Facebook im Hintergrund weiterlaufen lassen – wieder entfernt: half nicht, zu viel Eingriff.) Bild-in-Bild **aus** beim Spiegeln und auf Facebook/Instagram/Threads (`setPipAllowed`: kein Knopf, `disablePictureInPicture` für Player- und Seitenvideo, kein automatisches kleines Fenster). Vollbild zurück: beim Zurückkommen (sichtbar, Fokus, pageshow) selbst versuchen – sofort, nach 250 und 700 ms (`tryRegain`); aus dem kleinen Fenster sofort; sonst holt JEDE Berührung es zurück, auch Wischen/Spulen/Zoomen (`onAnyTouch`, touchend/pointerup). Hinweis erst nach 0,9 s |
+| 18.7 | Download an YTDLnis / Teilen-Menü (`dlOut`): wird die Seite danach verdeckt, hält der Player an; beim Zurückkommen ist er zu, das Seitenvideo steht angehalten an deiner Stelle (`st.closePaused`). Teilen-Menü abgebrochen (`shareUrl` liefert jetzt true/false): Player bleibt offen. Test `test_dlclose.py` |

@@ -107,7 +107,7 @@
     }
     try { if (typeof st.origMuted === 'boolean') o.muted = st.origMuted; } catch (e) {}   // ursprünglichen Ton zurückgeben
     // Video auf der Seite weiterlaufen lassen (Instagram & Co. haben oft keinen Play-Knopf)
-    if (atEnd) { try { o.pause(); } catch (e) {} }
+    if (atEnd || st.closePaused) { try { o.pause(); } catch (e) {} }   // (nach einem Download: angehalten lassen)
     else if (CONFIG.resumeAfterClose && st.mode === 'own') {
       try { const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
       watchStall(o);

@@ -241,10 +241,11 @@
   function shareUrl(url) {
     const fallback = () => copyText(url, 'Link kopiert – in YTDLnis einfügen');
     if (navigator.share) {
-      navigator.share({ url: url }).catch((e) => { if (!e || e.name !== 'AbortError') fallback(); });
-    } else {
-      fallback();
+      // Ergebnis: true = geteilt, false = abgebrochen/fehlgeschlagen
+      return navigator.share({ url: url }).then(() => true, (e) => { if (!e || e.name !== 'AbortError') fallback(); return false; });
     }
+    fallback();
+    return Promise.resolve(false);
   }
 
   function typeShort(u) {

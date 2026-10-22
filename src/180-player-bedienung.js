@@ -204,6 +204,14 @@
       });
     }
     // Alle Wege zum Speichern (langes Drücken auf ⬇, oder wenn der Browser nicht darf)
+    // An YTDLnis / eine andere App übergeben: Der Browser verliert dabei das Vollbild (und holt es ohne Berührung nicht
+    // zurück). Darum: Player hält an, und kommst du zurück, ist er zu – die Seite steht an deiner Stelle (18.7).
+    const dlOut = (f) => {
+      st.dlAt = Date.now(); st.dlCancel = false;
+      const r = f();
+      // Teilen-Menü abgebrochen? Dann bleibt der Player offen
+      if (r && r.then) r.then((ok) => { if (!ok) { st.dlCancel = true; st.dlAt = 0; } });
+    };
     function dlMenu(browserFailed) {
       const d = directUrl(), hs = helperSrc();
       let link = '';
@@ -211,7 +219,7 @@
       const items = [];
       if (hs && st.sys && st.sys.dl) items.push({ label: 'Mit dem Helper', sub: hs.k === 'file' ? 'Download-Manager' : 'Stream → MP4', fn: () => helperDownload(hs) });
       if (hs && st.sys && st.sys.proxy) items.push({ label: 'Über den Browser laden', sub: 'für geschützte Seiten · Seite offen lassen', fn: () => helperDownload(hs, 'browser') });
-      if (link) items.push({ label: 'Mit YTDLnis', sub: 'direkt öffnen', fn: () => toYtdlnis(link) });
+      if (link) items.push({ label: 'Mit YTDLnis', sub: 'direkt öffnen', fn: () => dlOut(() => toYtdlnis(link)) });
       if (d && !browserFailed) items.push({ label: 'Im Browser speichern', sub: 'Download des Browsers', fn: () => browserSave(d) });
       if (d) {
         items.push({ label: 'Im Browser öffnen', sub: 'dort ⋮ → Herunterladen', fn: () => {
@@ -220,7 +228,7 @@
         } });
         items.push({ label: 'Hier speichern', sub: 'Player bis zum Ende offen lassen', fn: () => directDownload(d, () => toast('Die Seite sperrt den Download')) });
       }
-      if (link || d) items.push({ label: 'Teilen …', sub: 'an eine andere App', fn: () => shareUrl(link || d) });
+      if (link || d) items.push({ label: 'Teilen …', sub: 'an eine andere App', fn: () => dlOut(() => shareUrl(link || d)) });
       if (!items.length) { toast(hs && hs.k === 'hls' ? 'Für Streams wird die Helper-App gebraucht' : 'Für dieses Video gibt es keine Datei zum Herunterladen'); return; }
       openMenu('Herunterladen', items);
     }
@@ -233,10 +241,10 @@
       const d = directUrl(), hs = helperSrc();
       let link = '';
       try { link = SHOW_DOWNLOAD ? postUrlFor(orig) : ''; } catch (e) {}
-      if (link && onSite(CONFIG.ytdlpSites)) { if (CONFIG.downloader === 'share') shareUrl(link); else toYtdlnis(link); return; }
+      if (link && onSite(CONFIG.ytdlpSites)) { if (CONFIG.downloader === 'share') dlOut(() => shareUrl(link)); else dlOut(() => toYtdlnis(link)); return; }
       if (hs && st.sys && st.sys.dl) { helperDownload(hs); return; }
       if (d) { browserSave(d); return; }
-      if (link) { if (CONFIG.downloader === 'share') shareUrl(link); else toYtdlnis(link); return; }
+      if (link) { if (CONFIG.downloader === 'share') dlOut(() => shareUrl(link)); else dlOut(() => toYtdlnis(link)); return; }
       dlMenu();
     });
     bDl.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); dlMenu(); });
