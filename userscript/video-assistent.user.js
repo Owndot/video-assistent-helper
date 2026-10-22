@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      17.6
+// @version      17.7
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -2232,7 +2232,10 @@
 @keyframes vflash{0%{opacity:.55}100%{opacity:0}}
 .vv{position:absolute;inset:0;margin:auto;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;object-position:50% 50%;background:transparent;transform-origin:50% 50%}
 /* Ambient-Modus: die Farben des Bildes leuchten weich in die schwarzen Ränder (wie bei YouTube) */
-.vamb{position:absolute;left:-12%;top:-12%;width:124%;height:124%;filter:blur(48px) saturate(1.45) brightness(.7);opacity:0;transition:opacity .8s ease;pointer-events:none;
+.vamb{position:absolute;left:-12%;top:-12%;width:124%;height:124%;opacity:0;transition:opacity .8s ease;pointer-events:none}
+/* Firefox-Handy (zweites Video statt Mini-Bild): Weichzeichnen und Rand per CSS. Sonst steckt beides schon im
+   Mini-Bild selbst – der Bildschirm vergrößert es nur (kein teurer Weichzeichner über den ganzen Bildschirm) */
+video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
  -webkit-mask-image:radial-gradient(ellipse 62% 58% at 50% 50%,#000 38%,rgba(0,0,0,.45) 66%,transparent 92%);mask-image:radial-gradient(ellipse 62% 58% at 50% 50%,#000 38%,rgba(0,0,0,.45) 66%,transparent 92%)}
 .vp.amb .vamb{opacity:.7}
 .vdim{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none}
@@ -2276,6 +2279,7 @@
 .vmid .g{background:rgba(22,24,32,.16)}
 .vb:focus-visible,.vchip:focus-visible,.vmi:focus-visible{outline:2px solid var(--ice);outline-offset:2px}
 .vstash{display:none!important}
+.vp.ctlnew .vchrome,.vp.ctlnew .vchrome *{pointer-events:none!important}
 .vtext{width:auto;min-width:40px;padding:0 9px;font:650 13.5px var(--font);font-variant-numeric:tabular-nums}
 .vmid{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:30px;transition:opacity .2s}
 .vplay{width:64px;height:64px;border-radius:32px}
@@ -2899,10 +2903,31 @@
     })();
 
     // ----- Ambient-Modus -----
-    // Ein winziges Abbild des aktuellen Bildes (32 Pixel breit), stark weichgezeichnet hinter dem Video.
-    // Wenig Arbeit: ~8 Mal pro Sekunde ein Mini-Bild, sanft überblendet. Abschaltbar im Format-Menü (wird gemerkt).
-    let actx = null;
-    if (!FF_MOBILE) { try { actx = amb.getContext('2d', { alpha: false }); } catch (e) {} }
+    // Ein winziges Abbild des aktuellen Bildes (32 Pixel breit) hinter dem Video. Weichzeichnen, Farbe und der weiche
+    // Rand werden IM Mini-Bild gerechnet (32 Pixel – kostet nichts); der Bildschirm vergrößert es nur. Früher machte das
+    // ein CSS-Weichzeichner über den ganzen Bildschirm – der kostete auf Handys flüssige Bilder (17.7).
+    // 2–3 Mal pro Sekunde ein neues Bild, sanft überblendet (in einem zweiten Mini-Bild gesammelt).
+    let actx = null, accC = null, accX = null;
+    if (!FF_MOBILE) {
+      try {
+        actx = amb.getContext('2d');
+        accC = document.createElement('canvas'); accC.width = amb.width; accC.height = amb.height;
+        accX = accC.getContext('2d', { alpha: false });
+        if (!accX) actx = null;
+      } catch (e) { actx = null; }
+    }
+    // weicher, ovaler Rand wie früher per CSS-Maske: Ellipse 62 % × 58 %, voll bis 38 %, 45 % bei 66 %, weg bei 92 %
+    function ambMask(w, h) {
+      actx.globalCompositeOperation = 'destination-in';
+      actx.filter = 'none';
+      actx.setTransform(w * 0.62, 0, 0, h * 0.58, w / 2, h / 2);
+      const g = actx.createRadialGradient(0, 0, 0, 0, 0, 1);
+      g.addColorStop(0.38, 'rgba(0,0,0,1)'); g.addColorStop(0.66, 'rgba(0,0,0,.45)'); g.addColorStop(0.92, 'rgba(0,0,0,0)');
+      actx.fillStyle = g;
+      actx.fillRect(-2, -2, 4, 4);
+      actx.setTransform(1, 0, 0, 1, 0, 0);
+      actx.globalCompositeOperation = 'source-over';
+    }
     // Firefox-Handy: derselbe Bildstrom in einem zweiten, weichgezeichneten Video (kein Kopieren, kein zweites Laden).
     // Eigene Quelle: Abgriff des Player-Videos – nur mit captureStream (lässt den Ton im Player); ältere Firefox
     // (nur mozCaptureStream, das den Ton mitnimmt) zeigen Ambient nur beim Spiegeln.
@@ -2929,10 +2954,15 @@
       const vw = vid.videoWidth, vh = vid.videoHeight;
       if (!vw || !vh || vid.readyState < 2) return;
       const ch = Math.max(8, Math.min(48, Math.round(32 * vh / vw)));
-      if (amb.height !== ch) { amb.height = ch; first = true; }
+      if (amb.height !== ch) { amb.height = ch; accC.height = ch; first = true; }
+      const w = amb.width, h = amb.height;
       try {
-        actx.globalAlpha = first ? 1 : 0.3;   // sanft überblenden statt flackern
-        actx.drawImage(vid, 0, 0, amb.width, amb.height);
+        accX.globalAlpha = first ? 1 : 0.5;   // sanft überblenden statt flackern
+        accX.drawImage(vid, 0, 0, w, h);
+        actx.clearRect(0, 0, w, h);
+        actx.filter = 'blur(3px) saturate(1.45) brightness(.7)';   // entspricht blur(48px) auf voller Größe
+        actx.drawImage(accC, 0, 0);
+        ambMask(w, h);
       } catch (e) {}
     }
     function setAmbient(on, save) {
@@ -2941,7 +2971,7 @@
       if (on) ambDraw(true);
       if (save) { setSetting('ambient', on); try { localStorage.removeItem('evp-ambient'); } catch (e) {} }   // gilt für alle Seiten
     }
-    const ambTimer = setInterval(() => { if (!document.hidden && !M().paused) ambDraw(false); }, 120);
+    const ambTimer = setInterval(() => { if (!document.hidden && !M().paused) ambDraw(false); }, 400);
     vid.addEventListener('loadeddata', () => ambDraw(true));
     vid.addEventListener('seeked', () => ambDraw(true));
     st.cleanup.push(() => {
@@ -2957,7 +2987,7 @@
       clearTimeout(st.hideTimer);
       st.hideTimer = setTimeout(() => { if (!M().paused && !st.barDrag) wrap.classList.remove('ctl'); }, 3200);
     }
-    function showControls() { wrap.classList.add('ctl'); scheduleHide(); }
+    function showControls() { const was = wrap.classList.contains('ctl'); wrap.classList.add('ctl'); scheduleHide(); if (!was) updateUI(); }
     function toggleControls() { if (wrap.classList.contains('ctl')) { wrap.classList.remove('ctl'); clearTimeout(st.hideTimer); } else showControls(); }
 
     // Fortschritt (weiß) + schon geladener Bereich (halbhell) + Rest (dunkel)
@@ -2975,20 +3005,28 @@
     }
 
     // ----- Anzeige aktualisieren -----
+    // Nur schreiben, was sich geändert hat – und Zeitleiste/Zeiten nur, solange sie zu sehen sind (beim Einblenden
+    // aktualisiert showControls sofort). Spart beim normalen Schauen ständige Stil-Neuberechnungen (17.7).
+    const uiLast = { cur: '', dur: '', play: null, len: null, mini: '' };
     function updateUI() {
       const m = M();
       const d = m.duration, c = m.currentTime;
-      tCur.textContent = fmtTime(c);
-      tDur.textContent = isFinite(d) ? fmtTime(d) : 'Live';
       const hasLen = isFinite(d) && d > 0;
-      wrap.classList.toggle('nolen', !hasLen);   // Live-Stream: keine Linie
-      if (hasLen) miniFill.style.transform = 'scaleX(' + Math.min(1, Math.max(0, c / d)).toFixed(4) + ')';
+      if (uiLast.len !== hasLen) { uiLast.len = hasLen; wrap.classList.toggle('nolen', !hasLen); }   // Live-Stream: keine Linie
+      if (hasLen) {
+        const mf = 'scaleX(' + Math.min(1, Math.max(0, c / d)).toFixed(3) + ')';
+        if (mf !== uiLast.mini) { uiLast.mini = mf; miniFill.style.transform = mf; }
+      }
+      if (uiLast.play !== m.paused) { uiLast.play = m.paused; setIcon(bPlay, m.paused ? P.play : P.pause); }
+      if (!wrap.classList.contains('ctl') && !st.barDrag) return;   // Leisten aus: Zeiten und Zeitleiste ruhen lassen
+      const tc = fmtTime(c), td = isFinite(d) ? fmtTime(d) : 'Live';
+      if (tc !== uiLast.cur) { uiLast.cur = tc; tCur.textContent = tc; }
+      if (td !== uiLast.dur) { uiLast.dur = td; tDur.textContent = td; }
       if (!st.barDrag) {
         const p = isFinite(d) && d > 0 ? c / d : 0;
         bar.value = String(Math.round(p * 1000));
         paintBar(p);
       }
-      setIcon(bPlay, m.paused ? P.play : P.pause);
     }
     const onMediaEv = (e) => {
       const fromOrig = e.currentTarget === orig;
@@ -4410,7 +4448,9 @@
       const now = Date.now();
       if (now - mainSnapAt < 1000 || thumbs.has(Math.round(vid.currentTime / bucketFor()))) return;
       mainSnapAt = now;
-      snap(vid);
+      // erst, wenn der Browser gerade nichts zu tun hat (kein Ruckeln mitten in einer Bewegung)
+      if (window.requestIdleCallback) requestIdleCallback(() => { if (vp === st && !vid.seeking) snap(vid); }, { timeout: 1500 });
+      else snap(vid);
     };
     vid.addEventListener('timeupdate', mainSnap);
     vid.addEventListener('seeked', () => setTimeout(mainSnap, 120));
@@ -4560,7 +4600,7 @@
 
     // ----- Gesten (wie Just Player) -----
     const pts = new Map();
-    let g = null, pinch = null, lastTapT = 0, lastZone = 9, tapTimer = 0;
+    let g = null, pinch = null, lastTapT = 0, lastZone = 9;
     gest.addEventListener('pointerdown', (e) => {
       stop(e);
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -4712,15 +4752,15 @@
       const zone = cur.x < W * 0.35 ? -1 : cur.x > W * 0.65 ? 1 : 0;
       // Serie: nach einem Doppeltipp zählt jeder weitere schnelle Tipp auf derselben Seite 10 s dazu
       if (zone && st.skipRun && st.skipRun.zone === zone && now < st.skipRun.until) {
-        clearTimeout(tapTimer);
         seekBy(zone * SKIP());
         st.skipRun.total += SKIP(); st.skipRun.until = now + 650;
         showSkipFx(zone, st.skipRun.total);
         return;
       }
       if (now - lastTapT < 300 && zone === lastZone) {
-        clearTimeout(tapTimer);
         lastTapT = 0;
+        // Doppeltipp: der erste Tipp hat die Leisten schon umgeschaltet – zurück auf den Stand davor
+        if (wrap.classList.contains('ctl') !== st.tapCtl) { if (st.tapCtl) showControls(); else { wrap.classList.remove('ctl'); clearTimeout(st.hideTimer); } }
         if (zone) {
           seekBy(zone * SKIP());
           st.skipRun = { zone: zone, total: SKIP(), until: now + 650 };
@@ -4731,7 +4771,11 @@
       }
       lastTapT = now;
       lastZone = zone;
-      tapTimer = setTimeout(toggleControls, 280);
+      // sofort umschalten (wie native Player) statt 280 ms auf einen möglichen zweiten Tipp zu warten. Frisch
+      // eingeblendete Knöpfe nehmen 300 ms lang keine Tipps an – sonst träfe der zweite Tipp eines Doppeltipps Play.
+      st.tapCtl = wrap.classList.contains('ctl');
+      toggleControls();
+      if (!st.tapCtl) { wrap.classList.add('ctlnew'); clearTimeout(st.ctlNewT); st.ctlNewT = setTimeout(() => wrap.classList.remove('ctlnew'), 320); }
     };
     gest.addEventListener('pointerup', endGest);
     gest.addEventListener('pointercancel', endGest);
@@ -5433,7 +5477,7 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 17.6',
+      'Video-Assistent 17.7',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

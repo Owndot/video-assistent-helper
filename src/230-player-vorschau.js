@@ -84,7 +84,9 @@
       const now = Date.now();
       if (now - mainSnapAt < 1000 || thumbs.has(Math.round(vid.currentTime / bucketFor()))) return;
       mainSnapAt = now;
-      snap(vid);
+      // erst, wenn der Browser gerade nichts zu tun hat (kein Ruckeln mitten in einer Bewegung)
+      if (window.requestIdleCallback) requestIdleCallback(() => { if (vp === st && !vid.seeking) snap(vid); }, { timeout: 1500 });
+      else snap(vid);
     };
     vid.addEventListener('timeupdate', mainSnap);
     vid.addEventListener('seeked', () => setTimeout(mainSnap, 120));

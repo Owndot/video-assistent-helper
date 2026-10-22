@@ -126,6 +126,7 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_extras.py` | Untertitel (Seite, .srt/.vtt, Datei, Stream, Lage), ⋮ Mehr: Tonspur, Standbild, Einstellungen, Design, Media Session |
 | `test_menuback.py` | ⋮ ohne Überschrift / schließt, ‹ zurück, Zurück-Taste im Menü, Wiederholen 1× / ∞, Sleep-Timer, Dialog-Verstärker (auch Ablehnung bei fremdem Ton) |
 | `test_fbshare.py` | Teilen in Facebook-Reels: laufendes Reel statt Seitenadresse |
+| `test_perf.py` | Messung (4× gedrosselt): Rechenzeit, Bilder/s, verworfene Videobilder, Tipp → Leisten; mit 2. Datei = Vergleich |
 | `test_mirrorprev.py` | Vorschau beim Spiegeln: ruhig nur die Zeit, kein Flackern beim Ziehen |
 | `test_reelend.py` | Reels-Seite springt am Ende von selbst weiter: Player hält vorher an, beim Schließen bleibt man beim Reel |
 | `test_leave.py` | App-Wechsel (Fokus/verdeckt) ≠ Zurück-Taste, „Beim Verlassen“, Bild-in-Bild ✕/Vollbild |
@@ -153,6 +154,10 @@ Benachrichtigungen) – das prüft nur das Handy.
 - Vorschau beim Spiegeln: KEINE gemerkten Bilder nur für angeschaute Stellen – der Wechsel Bild ↔ Zeit flackert.
 - Dialog-Verstärker/Verstärkung über 100 % nur mit `canBoost()`: `createMediaElementSource` macht Videos fremder Server
   ohne Freigabe (CORS) STUMM – dann lieber „hier nicht möglich“.
+- Kein CSS-`filter: blur()` über große, sich ständig ändernde Flächen (Ambient): kostete auf dem Handy die Hälfte der
+  Bilder. Weichzeichnen im Mini-Bild (`ctx.filter`), der Bildschirm skaliert nur.
+- Leisten nach einem Tipp sofort zeigen – dann die frischen Knöpfe kurz ohne Tipps (`ctlnew`), sonst trifft der zweite
+  Tipp eines Doppeltipps den Play-Knopf.
 - Reels-Seiten reagieren auf `ended` – manche schon auf „fast am Ende“. Gespiegelt daher 0,6 s vor dem Ende anhalten
   (`nearEnd`, 40 ms), die letzten Meldungen per Einfang-Zuhörer auf `window` abfangen (`gate`) und beim Schließen am
   Ende das Original NICHT weiterspielen lassen.
@@ -270,3 +275,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 17.4 | ⋮-Menü ohne Überschrift, zweiter Tipp schließt; Untermenüs mit ‹ (`openMenu(…, back)`), Zurück-Taste bei offenem Menü nur eine Ebene zurück; Wiederholen-Knopf (Aus → 1× → 5×); Zoom-Wischgesten bei sichtbaren Leisten wieder entfernt. App: neue Oberfläche (ohne Titelleiste, erledigte Schritte als Zeile, Sprachwahl Auto/Deutsch/English) |
 | 17.5 | Sleep-Timer (15–60 min / Ende des Videos, 8 s ausblenden), Dialog-Verstärker (Hochpass, Sprachanhebung, Kompressor – nur bei freigegebenem Ton), Wiederholen Aus → 1× → ∞, Akzent einfarbig (helle Fläche statt Hellblau). App: Design Auto/Hell/Dunkel, einfarbige Knöpfe |
 | 17.6 | Reels: 0,6 s vor dem Ende anhalten + Schleuse (`ended` nie, `timeupdate`/`pause` in der letzten Sekunde nicht zur Seite) – auch Seiten, die schon kurz vor „ended“ weiterspringen. Teilen/Download in Facebook-Reels: Video-ID aus dem eigenen Kasten (`fbVideoId`) statt der Seitenadresse, die beim ersten Reel stehen bleibt; Diagnose zeigt den Link |
+| 17.7 | Flüssiger: Ambient weichgezeichnet IM 32-px-Bild (kein Vollbild-`blur(48px)` mehr, Rand per Verlauf statt CSS-Maske), 2,5 statt 8 Bilder/s; Vorschaubilder im Leerlauf; Zeiten/Zeitleiste nur bei sichtbaren Leisten und nur bei Änderung; Tipp → Leisten sofort (statt 280 ms), frisch eingeblendete Knöpfe 300 ms ohne Tipps (Doppeltipp trifft nicht Play). Messung `test_perf.py`: 35 → 60 Bilder/s, 23 → 0 verworfene Videobilder, Tipp 312 → 25 ms |

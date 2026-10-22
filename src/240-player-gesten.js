@@ -1,6 +1,6 @@
     // ----- Gesten (wie Just Player) -----
     const pts = new Map();
-    let g = null, pinch = null, lastTapT = 0, lastZone = 9, tapTimer = 0;
+    let g = null, pinch = null, lastTapT = 0, lastZone = 9;
     gest.addEventListener('pointerdown', (e) => {
       stop(e);
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -152,15 +152,15 @@
       const zone = cur.x < W * 0.35 ? -1 : cur.x > W * 0.65 ? 1 : 0;
       // Serie: nach einem Doppeltipp zählt jeder weitere schnelle Tipp auf derselben Seite 10 s dazu
       if (zone && st.skipRun && st.skipRun.zone === zone && now < st.skipRun.until) {
-        clearTimeout(tapTimer);
         seekBy(zone * SKIP());
         st.skipRun.total += SKIP(); st.skipRun.until = now + 650;
         showSkipFx(zone, st.skipRun.total);
         return;
       }
       if (now - lastTapT < 300 && zone === lastZone) {
-        clearTimeout(tapTimer);
         lastTapT = 0;
+        // Doppeltipp: der erste Tipp hat die Leisten schon umgeschaltet – zurück auf den Stand davor
+        if (wrap.classList.contains('ctl') !== st.tapCtl) { if (st.tapCtl) showControls(); else { wrap.classList.remove('ctl'); clearTimeout(st.hideTimer); } }
         if (zone) {
           seekBy(zone * SKIP());
           st.skipRun = { zone: zone, total: SKIP(), until: now + 650 };
@@ -171,7 +171,11 @@
       }
       lastTapT = now;
       lastZone = zone;
-      tapTimer = setTimeout(toggleControls, 280);
+      // sofort umschalten (wie native Player) statt 280 ms auf einen möglichen zweiten Tipp zu warten. Frisch
+      // eingeblendete Knöpfe nehmen 300 ms lang keine Tipps an – sonst träfe der zweite Tipp eines Doppeltipps Play.
+      st.tapCtl = wrap.classList.contains('ctl');
+      toggleControls();
+      if (!st.tapCtl) { wrap.classList.add('ctlnew'); clearTimeout(st.ctlNewT); st.ctlNewT = setTimeout(() => wrap.classList.remove('ctlnew'), 320); }
     };
     gest.addEventListener('pointerup', endGest);
     gest.addEventListener('pointercancel', endGest);

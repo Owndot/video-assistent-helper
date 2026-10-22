@@ -14,10 +14,31 @@
     })();
 
     // ----- Ambient-Modus -----
-    // Ein winziges Abbild des aktuellen Bildes (32 Pixel breit), stark weichgezeichnet hinter dem Video.
-    // Wenig Arbeit: ~8 Mal pro Sekunde ein Mini-Bild, sanft überblendet. Abschaltbar im Format-Menü (wird gemerkt).
-    let actx = null;
-    if (!FF_MOBILE) { try { actx = amb.getContext('2d', { alpha: false }); } catch (e) {} }
+    // Ein winziges Abbild des aktuellen Bildes (32 Pixel breit) hinter dem Video. Weichzeichnen, Farbe und der weiche
+    // Rand werden IM Mini-Bild gerechnet (32 Pixel – kostet nichts); der Bildschirm vergrößert es nur. Früher machte das
+    // ein CSS-Weichzeichner über den ganzen Bildschirm – der kostete auf Handys flüssige Bilder (17.7).
+    // 2–3 Mal pro Sekunde ein neues Bild, sanft überblendet (in einem zweiten Mini-Bild gesammelt).
+    let actx = null, accC = null, accX = null;
+    if (!FF_MOBILE) {
+      try {
+        actx = amb.getContext('2d');
+        accC = document.createElement('canvas'); accC.width = amb.width; accC.height = amb.height;
+        accX = accC.getContext('2d', { alpha: false });
+        if (!accX) actx = null;
+      } catch (e) { actx = null; }
+    }
+    // weicher, ovaler Rand wie früher per CSS-Maske: Ellipse 62 % × 58 %, voll bis 38 %, 45 % bei 66 %, weg bei 92 %
+    function ambMask(w, h) {
+      actx.globalCompositeOperation = 'destination-in';
+      actx.filter = 'none';
+      actx.setTransform(w * 0.62, 0, 0, h * 0.58, w / 2, h / 2);
+      const g = actx.createRadialGradient(0, 0, 0, 0, 0, 1);
+      g.addColorStop(0.38, 'rgba(0,0,0,1)'); g.addColorStop(0.66, 'rgba(0,0,0,.45)'); g.addColorStop(0.92, 'rgba(0,0,0,0)');
+      actx.fillStyle = g;
+      actx.fillRect(-2, -2, 4, 4);
+      actx.setTransform(1, 0, 0, 1, 0, 0);
+      actx.globalCompositeOperation = 'source-over';
+    }
     // Firefox-Handy: derselbe Bildstrom in einem zweiten, weichgezeichneten Video (kein Kopieren, kein zweites Laden).
     // Eigene Quelle: Abgriff des Player-Videos – nur mit captureStream (lässt den Ton im Player); ältere Firefox
     // (nur mozCaptureStream, das den Ton mitnimmt) zeigen Ambient nur beim Spiegeln.
@@ -44,10 +65,15 @@
       const vw = vid.videoWidth, vh = vid.videoHeight;
       if (!vw || !vh || vid.readyState < 2) return;
       const ch = Math.max(8, Math.min(48, Math.round(32 * vh / vw)));
-      if (amb.height !== ch) { amb.height = ch; first = true; }
+      if (amb.height !== ch) { amb.height = ch; accC.height = ch; first = true; }
+      const w = amb.width, h = amb.height;
       try {
-        actx.globalAlpha = first ? 1 : 0.3;   // sanft überblenden statt flackern
-        actx.drawImage(vid, 0, 0, amb.width, amb.height);
+        accX.globalAlpha = first ? 1 : 0.5;   // sanft überblenden statt flackern
+        accX.drawImage(vid, 0, 0, w, h);
+        actx.clearRect(0, 0, w, h);
+        actx.filter = 'blur(3px) saturate(1.45) brightness(.7)';   // entspricht blur(48px) auf voller Größe
+        actx.drawImage(accC, 0, 0);
+        ambMask(w, h);
       } catch (e) {}
     }
     function setAmbient(on, save) {
@@ -56,7 +82,7 @@
       if (on) ambDraw(true);
       if (save) { setSetting('ambient', on); try { localStorage.removeItem('evp-ambient'); } catch (e) {} }   // gilt für alle Seiten
     }
-    const ambTimer = setInterval(() => { if (!document.hidden && !M().paused) ambDraw(false); }, 120);
+    const ambTimer = setInterval(() => { if (!document.hidden && !M().paused) ambDraw(false); }, 400);
     vid.addEventListener('loadeddata', () => ambDraw(true));
     vid.addEventListener('seeked', () => ambDraw(true));
     st.cleanup.push(() => {

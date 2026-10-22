@@ -37,6 +37,17 @@ with sync_playwright() as p:
     check('nochmal Zurück (Verlauf): Menü zu, Player bleibt offen', opened() and not menu()['on'], [opened(), menu()])
     pg.evaluate('() => history.back()'); time.sleep(0.8)
     check('noch einmal Zurück: Player zu', not opened())
+    # Tippen (17.7): Leisten sofort (nicht erst nach 280 ms) · Doppeltipp rechts springt, Leisten bleiben aus
+    open_player(pg, 'subs.html'); time.sleep(0.8)
+    pg.evaluate('() => %s.querySelector(".vp").classList.remove("ctl")' % R); time.sleep(0.6)
+    pg.mouse.click(200, 330); t1 = pg.evaluate('() => %s.querySelector(".vp").classList.contains("ctl")' % R)
+    check('ein Tipp: Leisten sofort da', t1, t1)
+    pg.evaluate('() => { const v = %s.querySelector(".vv"); v.pause(); v.currentTime = 20; }' % R); time.sleep(0.6)   # Pause blendet Leisten ein …
+    pg.evaluate('() => %s.querySelector(".vp").classList.remove("ctl")' % R); time.sleep(0.4)                          # … danach aus
+    pg.mouse.click(330, 330); time.sleep(0.08); pg.mouse.click(330, 330); time.sleep(0.9)
+    dt = pg.evaluate('() => [%s.querySelector(".vp").classList.contains("ctl"), Math.round(%s.querySelector(".vv").currentTime)]' % (R, R))
+    check('Doppeltipp rechts: springt vor, Leisten bleiben aus', not dt[0] and dt[1] >= 29, dt)
+    pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.8)
     # Wiederholen
     open_player(pg, 'subs.html'); time.sleep(0.8)
     rep = lambda: pg.evaluate('() => { const b = %s.querySelector("button[aria-label=Wiederholen]"); return [b.classList.contains("on"), b.querySelector(".vrepn").textContent, %s.querySelector(".toast").textContent]; }' % (R, R))
