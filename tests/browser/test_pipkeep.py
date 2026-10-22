@@ -20,6 +20,7 @@ with sync_playwright() as p:
     ctx = b.new_context(viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True, device_scale_factor=2)
     ctx.add_init_script(PRE); ctx.add_init_script(HLS); ctx.add_init_script(SCRIPT)
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
+    if os.environ.get('EVLOG'): pg.on('console', lambda m: print('   ', m.text) if m.text.startswith('EVLOG') else None)
     def paused(): return pg.evaluate('() => %s.querySelector(".vv").paused' % R)
     def play(): pg.evaluate('() => %s.querySelector(".vv").play()' % R); time.sleep(0.4)
     open_player(pg, 'subs.html'); time.sleep(0.5); pg.evaluate(SIM)
@@ -53,6 +54,21 @@ with sync_playwright() as p:
     play(); hide(pg, True); time.sleep(1.2)
     check('… ohne kleines Fenster: bleibt angehalten', paused())
     hide(pg, False); time.sleep(0.4)
+    # 6b) Browser nimmt das Video der SEITE ins kleine Fenster (nachdem das Vollbild-Ende erst wie „Zurück“ aussah und die
+    #     Seite übernommen hat): es läuft dort weiter, der Player schließt sich still (18.6)
+    more(pg); pick(pg, 'Einstellungen'); pick(pg, 'Beim Verlassen'); time.sleep(0.2)   # zurück auf „Weiter“
+    pg.evaluate('() => { %s.querySelector(".vmenu").classList.remove("on"); %s.querySelector(".vp").classList.remove("menu"); }' % (R, R))
+    nopip = pg.evaluate('() => document.getElementById("v").disablePictureInPicture')
+    check('eigener Player: Seitenvideo darf nicht ins kleine Fenster', nopip is True, nopip)
+    if not pg.evaluate('() => !!document.fullscreenElement'): pg.mouse.click(200, 300); time.sleep(0.6)
+    play()
+    pg.evaluate('() => document.exitFullscreen().catch(() => {})'); time.sleep(0.12)
+    pg.evaluate('''() => { const o = document.getElementById("v"); window.__opip = true;
+      Object.defineProperty(document, "pictureInPictureElement", { configurable: true, get: () => window.__opip ? o : null }); o.dispatchEvent(new Event("enterpictureinpicture")); }''')
+    hide(pg, True); time.sleep(1.4)
+    st6 = pg.evaluate('() => { const o = document.getElementById("v"); return [!!%s.querySelector(".vp"), o.paused, o.muted]; }' % R)
+    check('Seitenvideo im kleinen Fenster: läuft dort weiter (mit Ton), Player zu', not st6[0] and not st6[1] and not st6[2], st6)
+    pg.evaluate('() => { window.__opip = false; }'); hide(pg, False); time.sleep(0.4)
     # 7) Facebook (gespiegelt): die Seite hält IHR Video an, sobald sie verdeckt ist → im kleinen Fenster weiter
     CLIP = open(WEB + '/clip.webm', 'rb').read()
     FBP = '<!doctype html><html><body style="margin:0"><video id=v muted autoplay playsinline src="/data/c.webm" style="width:100%;display:block"></video><script>document.addEventListener("visibilitychange", () => { if (document.hidden) document.getElementById("v").pause(); });</script></body></html>'
@@ -79,6 +95,22 @@ with sync_playwright() as p:
     o2 = pg.evaluate('() => document.getElementById("v").paused')
     check('… ✕ im kleinen Fenster: angehalten', o2, o2)
     hide(pg, False)
+    # 8) Facebook ohne kleines Fenster, „Weiter“: Facebook erfährt nichts vom Verdecken → sein Video läuft weiter
+    time.sleep(1.2)   # (das ✕ eben gilt 1,5 s lang als „kleines Fenster geschlossen“)
+    pg.evaluate('() => document.getElementById("v").play()'); time.sleep(0.4)
+    hide(pg, True); time.sleep(1.0)
+    o3 = pg.evaluate('() => document.getElementById("v").paused')
+    check('Facebook, „Weiter“: Seite bekommt „verdeckt“ nicht mit, Video läuft weiter (auch ohne kleines Fenster)', not o3, o3)
+    hide(pg, False); time.sleep(0.4)
+    # 9) Gegenprobe „Anhalten“: Seite bekommt die Meldung wie gewohnt
+    more(pg); pick(pg, 'Einstellungen'); pick(pg, 'Beim Verlassen'); time.sleep(0.2)
+    pg.evaluate('() => { %s.querySelector(".vmenu").classList.remove("on"); %s.querySelector(".vp").classList.remove("menu"); }' % (R, R))
+    pg.evaluate('() => document.getElementById("v").play()'); time.sleep(0.4)
+    hide(pg, True); time.sleep(1.0)
+    o4 = pg.evaluate('() => document.getElementById("v").paused')
+    check('… „Anhalten“: Seite bekommt die Meldung, Video hält an', o4, o4)
+    hide(pg, False); time.sleep(0.3)
+    more(pg); pick(pg, 'Einstellungen'); pick(pg, 'Beim Verlassen'); time.sleep(0.2)   # zurück auf „Weiter“
     check('keine Fehler', not errs, errs)
     b.close()
 srv.shutdown()

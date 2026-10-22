@@ -28,6 +28,7 @@
     const pauseAway = () => { const m = M(); if (!m.paused) { st.pausedAway = true; try { m.pause(); } catch (e) {} } };
     const onVisAway = () => {
       if (vp !== st) return;
+      logEv(document.hidden ? 'Seite verdeckt (kleines Fenster: ' + pipWho(st) + ')' : 'Seite wieder sichtbar');
       if (document.hidden) {
         markAway();
         if (pipIsOurs(vid)) return;   // läuft im kleinen Fenster weiter – genau dafür ist es da
@@ -45,17 +46,21 @@
         }
       }
     };
-    document.addEventListener('visibilitychange', onVisAway);
+    onVisChange(onVisAway);
+    const onBlurLog = () => { if (vp === st) logEv('Fokus weg'); }, onFocusLog = () => { if (vp === st) logEv('Fokus zurück'); };
+    addEventListener('blur', onBlurLog); addEventListener('focus', onFocusLog);
+    st.cleanup.push(() => { removeEventListener('blur', onBlurLog); removeEventListener('focus', onFocusLog); });
     addEventListener('blur', markAway);
     addEventListener('pagehide', markAway);
     st.cleanup.push(() => {
-      document.removeEventListener('visibilitychange', onVisAway);
+      offVisChange(onVisAway);
       removeEventListener('blur', markAway);
       removeEventListener('pagehide', markAway);
     });
     // Bild-in-Bild verlassen: ✕ (Seite bleibt im Hintergrund) = anhalten; „Vollbild“/zurück zur App = Player im Vollbild
     vid.addEventListener('leavepictureinpicture', () => {
       st.pipLeaveAt = Date.now();
+      logEv('kleines Fenster zu (Player)');
       setTimeout(() => {
         if (vp !== st) return;
         if (document.hidden) { st.userPauseAt = Date.now(); pauseAway(); return; }   // ✕ im kleinen Fenster = gewollt
@@ -87,17 +92,47 @@
       pipResumes++; st.pausedAway = false;
       try { const pr = m.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
     };
+    // „Beim Verlassen: Weiter“: hält kurz nach dem Verlassen etwas anderes als du an (die Seite, der Browser) –
+    // auch wenn der Browser das kleine Fenster nicht meldet (Vivaldi u. a.) – noch einmal anwerfen
+    let awayResumes = 0;
+    const resumeAway = (why) => {
+      if (vp !== st || st.lastPauseByUser || st.endHold || CONFIG.leaveAction === 'pause' || awayResumes >= 6) return;
+      if (!(document.hidden || inPip()) || Date.now() - awayAt > 4000) return;
+      const m = M();
+      if (!m.paused) return;
+      awayResumes++;
+      try {
+        const pr = m.play();
+        logEv('weiter (' + why + ')');
+        if (pr && pr.then) pr.then(() => logEv('… läuft'), (er) => logEv('… vom Browser abgelehnt: ' + ((er && er.name) || '?')));
+      } catch (e) {}
+    };
+    st.resumeAway = resumeAway;
     const onAnyPause = (e) => {
       if (vp !== st || e.target !== M()) return;
       st.lastPauseAt = Date.now(); st.lastPauseByUser = byUser();
+      logEv('angehalten (' + (e.target === orig && orig !== vid ? 'Seite' : 'Player') + ', ' + (st.lastPauseByUser ? 'von dir' : 'nicht von dir') + ', kleines Fenster: ' + pipWho(st) + ')');
       if (!st.lastPauseByUser && inPip()) setTimeout(resumePip, 120);
+      else if (!st.lastPauseByUser) setTimeout(() => resumeAway('nach Verlassen'), 150);
     };
-    const onAnyPlay = (e) => { if (e.target === M()) st.lastPauseByUser = false; };
+    const onAnyPlay = (e) => { if (e.target === M()) { st.lastPauseByUser = false; if (document.hidden) logEv('spielt'); } };
+    // kleines Fenster der Seite (falls der Browser es doch nimmt) mitschreiben
+    const onOrigPip = (e) => {
+      if (vp !== st) return;
+      const on = e.type === 'enterpictureinpicture';
+      logEv('kleines Fenster ' + (on ? 'auf' : 'zu') + ' (Seite)');
+      // Eigener Player, aber der Browser nimmt trotzdem das (angehaltene, stumme) Video der Seite ins kleine Fenster:
+      // Seite an deiner Stelle mit Ton weiterspielen lassen und den Player still schließen (18.6)
+      if (on && st.mode === 'own') { handBack(st); setTimeout(() => { if (vp === st) closePlayer(); }, 0); }
+    };
+    orig.addEventListener('enterpictureinpicture', onOrigPip); orig.addEventListener('leavepictureinpicture', onOrigPip);
+    st.cleanup.push(() => { orig.removeEventListener('enterpictureinpicture', onOrigPip); orig.removeEventListener('leavepictureinpicture', onOrigPip); });
     vid.addEventListener('pause', onAnyPause); orig.addEventListener('pause', onAnyPause);
     vid.addEventListener('play', onAnyPlay); orig.addEventListener('play', onAnyPlay);
     st.cleanup.push(() => { orig.removeEventListener('pause', onAnyPause); orig.removeEventListener('play', onAnyPlay); });
     vid.addEventListener('enterpictureinpicture', () => {
       st.pipEnterAt = Date.now(); pipResumes = 0;
+      logEv('kleines Fenster auf (Player)');
       // kurz vorher angehalten (Seite verdeckt, „Anhalten“-Einstellung …), aber nicht von dir: weiter im kleinen Fenster
       if (M().paused && !st.lastPauseByUser && Date.now() - (st.lastPauseAt || 0) < 3000) setTimeout(resumePip, 120);
     });
@@ -112,6 +147,7 @@
         return;
       }
       const exitAt = Date.now(), turnBefore = lastTurn;
+      logEv('Vollbild aus (verdeckt: ' + (document.hidden ? 'ja' : 'nein') + ', Fokus: ' + (document.hasFocus() ? 'ja' : 'nein') + ', kleines Fenster: ' + pipWho(st) + ')');
       // Vollbild endet wegen Bild-in-Bild (Knopf oder Wischen zum Startbildschirm): Player bleibt offen
       const pipNow = () => pipIsOurs(vid) || document.hidden || (st.pipAt && Date.now() - st.pipAt < 2500);
       if (pipNow()) { st.fsStart = false; st.fsLost = true; return; }
@@ -158,7 +194,11 @@
         }
         // In eine andere App gewechselt (Fokus weg/Seite verdeckt)? Dann kein „Zurück“ – Player bleibt offen,
         // beim Zurückkommen holt der nächste Tipp das Vollbild zurück
-        const keep = () => { veil(false); st.fsStart = false; st.fsLost = true; if (st.pushHist) st.pushHist(); };
+        const keep = () => {
+          logEv('kein Zurück → Player bleibt');
+          veil(false); st.fsStart = false; st.fsLost = true; if (st.pushHist) st.pushHist();
+          if (vp === st && st.resumeAway) setTimeout(() => st.resumeAway('Player bleibt'), 60);   // beim Verlassen stumm angehalten? weiter
+        };
         if (awaySince(exitAt)) { keep(); return; }
         // Im Vollbild gestartet: Vollbild verlassen (Zurück-Taste) = Player schließen – nach einem kurzen zweiten Blick,
         // falls die Meldung „Seite verdeckt“ beim App-Wechsel etwas später kommt
@@ -174,6 +214,7 @@
     // Player kurz unsichtbar und stumm (während geprüft wird, ob „Zurück“ gemeint war)
     function veil(on) {
       if (on === wrap.classList.contains('vgone')) return;
+      logEv(on ? 'Player ausgeblendet (sieht nach Zurück aus)' : 'Player wieder eingeblendet');
       // Ton des Players aus/an – vor der Übergabe (die gibt der Seite ihren Ton zurück)
       try {
         const m = VOL();
@@ -262,6 +303,10 @@
     let lastT = 0;
     const origLoop = orig.loop;
     try { orig.loop = false; } catch (e) {}
+    // Eigener Player: Das kleine Fenster soll UNSER Video zeigen – nicht das angehaltene, stumme der Seite (18.6).
+    // Beim Spiegeln darf die Seite (ihr Video läuft ja, mit Ton). Umgeschaltet in tryNext/useCapture.
+    if (st.origNoPip === undefined) st.origNoPip = !!orig.disablePictureInPicture;
+    st.cleanup.push(() => { try { orig.disablePictureInPicture = st.origNoPip; } catch (e) {} });
     const holdEnd = () => {
       if (vp !== st || st.mode !== 'capture') return;
       if (st.repeatNow && st.repeatNow()) { if (!st.sleepHit) return; st.sleepHit = false; }   // Wiederholen: von vorn · Sleep-Timer: anhalten

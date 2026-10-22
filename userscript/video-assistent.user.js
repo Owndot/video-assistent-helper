@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      18.5
+// @version      18.6
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -398,6 +398,20 @@
   const DOWNLOAD_ONLY = onSite(CONFIG.downloadOnlySites);
   const SHOW_DOWNLOAD = DOWNLOAD_ONLY || CONFIG.downloadEverywhere || onSite(CONFIG.ytdlpSites);
   let vp = null;   // Zustand des eingebauten Players (muss vor dem ersten Prüfdurchlauf existieren)
+  // ----- Spiegeln (Facebook): „Seite verdeckt“ nicht an die Seite melden (18.6) -----
+  // Facebook hält sein Video an, sobald die Seite verdeckt ist (Wischen zum Startbildschirm) – beim Spiegeln steht
+  // dann auch der Player bzw. das kleine Fenster. Solange gespiegelt wird und „Beim Verlassen: Weiter“ gilt, bekommt die
+  // Seite diese Meldung nicht: Das Skript hört als Erstes zu (document-start, Einfangphase) und hält sie dort an.
+  // Die eigenen Zuhörer des Skripts bekommen sie trotzdem – als VIS_EV.
+  const VIS_EV = 'evp-visibility';
+  addEventListener('visibilitychange', (e) => {
+    if (!(vp && vp.mode === 'capture' && CONFIG.leaveAction !== 'pause')) return;
+    e.stopImmediatePropagation();
+    try { logEv('Meldung „' + (document.hidden ? 'verdeckt' : 'sichtbar') + '“ vor der Seite verborgen'); } catch (x) {}
+    try { document.dispatchEvent(new Event(VIS_EV)); } catch (x) {}
+  }, true);
+  function onVisChange(f, cap) { document.addEventListener('visibilitychange', f, cap); document.addEventListener(VIS_EV, f, cap); }
+  function offVisChange(f, cap) { document.removeEventListener('visibilitychange', f, cap); document.removeEventListener(VIS_EV, f, cap); }
 
   const MEDIA_RE =/\.(m3u8|mpd|mp4|webm|mkv|mov|m4v)(\?|#|$)/i;
   const PLAYLIST_RE = /\.(m3u8|mpd)(\?|#|$)/i;
@@ -1624,7 +1638,7 @@
     let left = false;
     const onLeave = () => { left = true; };
     addEventListener('blur', onLeave, true);
-    document.addEventListener('visibilitychange', onLeave, true);
+    onVisChange(onLeave, true);
     try {
       const a = document.createElement('a');
       a.href = intent;
@@ -1638,7 +1652,7 @@
     // Weg 2: Hat sich nach kurzer Zeit nichts getan (keine App, keine Auswahl), direkt navigieren
     setTimeout(() => {
       removeEventListener('blur', onLeave, true);
-      document.removeEventListener('visibilitychange', onLeave, true);
+      offVisChange(onLeave, true);
       if (left || document.hidden) { lastIntent.how += ' → Browser verlassen ✓'; return; }
       try { location.href = intent; lastIntent.how += ' → Weg 2'; } catch (e) { lastIntent.how += ' → Weg 2 Fehler'; }
       setTimeout(() => {
@@ -2280,7 +2294,7 @@
     tickTimer = navTimer = 0;
     hidePill();
   }
-  document.addEventListener('visibilitychange', () => { if (document.hidden) stopChecks(); else startChecks(); });
+  onVisChange(() => { if (document.hidden) stopChecks(); else startChecks(); });
   if (!document.hidden) startChecks();
   ['play', 'playing'].forEach((t) => document.addEventListener(t, (e) => {
     if (e.target && e.target.tagName === 'VIDEO') setTimeout(tick, 0);
@@ -2863,8 +2877,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         if (document.hidden) helper('/end');
         else if (st.sysBright) helperSend('bright', st.bright);
       };
-      document.addEventListener('visibilitychange', onVis);
-      st.cleanup.push(() => { clearInterval(beat); document.removeEventListener('visibilitychange', onVis); });
+      onVisChange(onVis);
+      st.cleanup.push(() => { clearInterval(beat); offVisChange(onVis); });
     });
     st.cleanup.push(() => { if (st.sys) helper('/end'); });
     let indTimer = 0;
@@ -3204,6 +3218,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       const u = st.sources[st.idx++];
       st.cur = u;
       st.mode = 'own';
+      if (st.origNoPip === undefined) st.origNoPip = !!orig.disablePictureInPicture;
+      try { orig.disablePictureInPicture = true; } catch (e) {}   // kleines Fenster: unser Video, nicht das der Seite
       spin.classList.add('on');
       st.loadTimer = setTimeout(tryNext, 9000);   // lädt nicht? nächste Quelle
       try { vid.srcObject = null; vid.removeAttribute('src'); } catch (e) {}
@@ -3277,6 +3293,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (!ms) { toast('Dieses Video lässt sich hier nicht im eigenen Player zeigen'); closePlayer(); return; }
       st.mode = 'capture';
       st.cur = '';
+      try { if (st.origNoPip !== undefined) orig.disablePictureInPicture = st.origNoPip; } catch (e) {}
       if (st.refreshDl) st.refreshDl();
       try { vid.removeAttribute('src'); } catch (e) {}
       vid.srcObject = ms;
@@ -4980,6 +4997,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     const pauseAway = () => { const m = M(); if (!m.paused) { st.pausedAway = true; try { m.pause(); } catch (e) {} } };
     const onVisAway = () => {
       if (vp !== st) return;
+      logEv(document.hidden ? 'Seite verdeckt (kleines Fenster: ' + pipWho(st) + ')' : 'Seite wieder sichtbar');
       if (document.hidden) {
         markAway();
         if (pipIsOurs(vid)) return;   // läuft im kleinen Fenster weiter – genau dafür ist es da
@@ -4997,17 +5015,21 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         }
       }
     };
-    document.addEventListener('visibilitychange', onVisAway);
+    onVisChange(onVisAway);
+    const onBlurLog = () => { if (vp === st) logEv('Fokus weg'); }, onFocusLog = () => { if (vp === st) logEv('Fokus zurück'); };
+    addEventListener('blur', onBlurLog); addEventListener('focus', onFocusLog);
+    st.cleanup.push(() => { removeEventListener('blur', onBlurLog); removeEventListener('focus', onFocusLog); });
     addEventListener('blur', markAway);
     addEventListener('pagehide', markAway);
     st.cleanup.push(() => {
-      document.removeEventListener('visibilitychange', onVisAway);
+      offVisChange(onVisAway);
       removeEventListener('blur', markAway);
       removeEventListener('pagehide', markAway);
     });
     // Bild-in-Bild verlassen: ✕ (Seite bleibt im Hintergrund) = anhalten; „Vollbild“/zurück zur App = Player im Vollbild
     vid.addEventListener('leavepictureinpicture', () => {
       st.pipLeaveAt = Date.now();
+      logEv('kleines Fenster zu (Player)');
       setTimeout(() => {
         if (vp !== st) return;
         if (document.hidden) { st.userPauseAt = Date.now(); pauseAway(); return; }   // ✕ im kleinen Fenster = gewollt
@@ -5039,17 +5061,47 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       pipResumes++; st.pausedAway = false;
       try { const pr = m.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
     };
+    // „Beim Verlassen: Weiter“: hält kurz nach dem Verlassen etwas anderes als du an (die Seite, der Browser) –
+    // auch wenn der Browser das kleine Fenster nicht meldet (Vivaldi u. a.) – noch einmal anwerfen
+    let awayResumes = 0;
+    const resumeAway = (why) => {
+      if (vp !== st || st.lastPauseByUser || st.endHold || CONFIG.leaveAction === 'pause' || awayResumes >= 6) return;
+      if (!(document.hidden || inPip()) || Date.now() - awayAt > 4000) return;
+      const m = M();
+      if (!m.paused) return;
+      awayResumes++;
+      try {
+        const pr = m.play();
+        logEv('weiter (' + why + ')');
+        if (pr && pr.then) pr.then(() => logEv('… läuft'), (er) => logEv('… vom Browser abgelehnt: ' + ((er && er.name) || '?')));
+      } catch (e) {}
+    };
+    st.resumeAway = resumeAway;
     const onAnyPause = (e) => {
       if (vp !== st || e.target !== M()) return;
       st.lastPauseAt = Date.now(); st.lastPauseByUser = byUser();
+      logEv('angehalten (' + (e.target === orig && orig !== vid ? 'Seite' : 'Player') + ', ' + (st.lastPauseByUser ? 'von dir' : 'nicht von dir') + ', kleines Fenster: ' + pipWho(st) + ')');
       if (!st.lastPauseByUser && inPip()) setTimeout(resumePip, 120);
+      else if (!st.lastPauseByUser) setTimeout(() => resumeAway('nach Verlassen'), 150);
     };
-    const onAnyPlay = (e) => { if (e.target === M()) st.lastPauseByUser = false; };
+    const onAnyPlay = (e) => { if (e.target === M()) { st.lastPauseByUser = false; if (document.hidden) logEv('spielt'); } };
+    // kleines Fenster der Seite (falls der Browser es doch nimmt) mitschreiben
+    const onOrigPip = (e) => {
+      if (vp !== st) return;
+      const on = e.type === 'enterpictureinpicture';
+      logEv('kleines Fenster ' + (on ? 'auf' : 'zu') + ' (Seite)');
+      // Eigener Player, aber der Browser nimmt trotzdem das (angehaltene, stumme) Video der Seite ins kleine Fenster:
+      // Seite an deiner Stelle mit Ton weiterspielen lassen und den Player still schließen (18.6)
+      if (on && st.mode === 'own') { handBack(st); setTimeout(() => { if (vp === st) closePlayer(); }, 0); }
+    };
+    orig.addEventListener('enterpictureinpicture', onOrigPip); orig.addEventListener('leavepictureinpicture', onOrigPip);
+    st.cleanup.push(() => { orig.removeEventListener('enterpictureinpicture', onOrigPip); orig.removeEventListener('leavepictureinpicture', onOrigPip); });
     vid.addEventListener('pause', onAnyPause); orig.addEventListener('pause', onAnyPause);
     vid.addEventListener('play', onAnyPlay); orig.addEventListener('play', onAnyPlay);
     st.cleanup.push(() => { orig.removeEventListener('pause', onAnyPause); orig.removeEventListener('play', onAnyPlay); });
     vid.addEventListener('enterpictureinpicture', () => {
       st.pipEnterAt = Date.now(); pipResumes = 0;
+      logEv('kleines Fenster auf (Player)');
       // kurz vorher angehalten (Seite verdeckt, „Anhalten“-Einstellung …), aber nicht von dir: weiter im kleinen Fenster
       if (M().paused && !st.lastPauseByUser && Date.now() - (st.lastPauseAt || 0) < 3000) setTimeout(resumePip, 120);
     });
@@ -5064,6 +5116,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         return;
       }
       const exitAt = Date.now(), turnBefore = lastTurn;
+      logEv('Vollbild aus (verdeckt: ' + (document.hidden ? 'ja' : 'nein') + ', Fokus: ' + (document.hasFocus() ? 'ja' : 'nein') + ', kleines Fenster: ' + pipWho(st) + ')');
       // Vollbild endet wegen Bild-in-Bild (Knopf oder Wischen zum Startbildschirm): Player bleibt offen
       const pipNow = () => pipIsOurs(vid) || document.hidden || (st.pipAt && Date.now() - st.pipAt < 2500);
       if (pipNow()) { st.fsStart = false; st.fsLost = true; return; }
@@ -5110,7 +5163,11 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         }
         // In eine andere App gewechselt (Fokus weg/Seite verdeckt)? Dann kein „Zurück“ – Player bleibt offen,
         // beim Zurückkommen holt der nächste Tipp das Vollbild zurück
-        const keep = () => { veil(false); st.fsStart = false; st.fsLost = true; if (st.pushHist) st.pushHist(); };
+        const keep = () => {
+          logEv('kein Zurück → Player bleibt');
+          veil(false); st.fsStart = false; st.fsLost = true; if (st.pushHist) st.pushHist();
+          if (vp === st && st.resumeAway) setTimeout(() => st.resumeAway('Player bleibt'), 60);   // beim Verlassen stumm angehalten? weiter
+        };
         if (awaySince(exitAt)) { keep(); return; }
         // Im Vollbild gestartet: Vollbild verlassen (Zurück-Taste) = Player schließen – nach einem kurzen zweiten Blick,
         // falls die Meldung „Seite verdeckt“ beim App-Wechsel etwas später kommt
@@ -5126,6 +5183,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Player kurz unsichtbar und stumm (während geprüft wird, ob „Zurück“ gemeint war)
     function veil(on) {
       if (on === wrap.classList.contains('vgone')) return;
+      logEv(on ? 'Player ausgeblendet (sieht nach Zurück aus)' : 'Player wieder eingeblendet');
       // Ton des Players aus/an – vor der Übergabe (die gibt der Seite ihren Ton zurück)
       try {
         const m = VOL();
@@ -5214,6 +5272,10 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     let lastT = 0;
     const origLoop = orig.loop;
     try { orig.loop = false; } catch (e) {}
+    // Eigener Player: Das kleine Fenster soll UNSER Video zeigen – nicht das angehaltene, stumme der Seite (18.6).
+    // Beim Spiegeln darf die Seite (ihr Video läuft ja, mit Ton). Umgeschaltet in tryNext/useCapture.
+    if (st.origNoPip === undefined) st.origNoPip = !!orig.disablePictureInPicture;
+    st.cleanup.push(() => { try { orig.disablePictureInPicture = st.origNoPip; } catch (e) {} });
     const holdEnd = () => {
       if (vp !== st || st.mode !== 'capture') return;
       if (st.repeatNow && st.repeatNow()) { if (!st.sleepHit) return; st.sleepHit = false; }   // Wiederholen: von vorn · Sleep-Timer: anhalten
@@ -5308,6 +5370,26 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       return !!d && (d === v || d === hostEl);
     } catch (e) { return false; }
   }
+  // ----- Protokoll: Verlassen / Bild-in-Bild (für die Diagnose, 18.6) -----
+  // Was passiert beim Wischen zum Startbildschirm wirklich (Reihenfolge der Meldungen, wer hält an)? Die letzten
+  // 40 Einträge stehen in der Diagnose – auch nachdem der Player zu ist.
+  const evLog = [];
+  function logEv(s) { evLog.push([Date.now(), s]); if (evLog.length > 40) evLog.shift(); }
+  function evLogText() {
+    if (!evLog.length) return ' -';
+    const t0 = evLog[0][0];
+    return evLog.slice(-28).map((e) => ' +' + String(e[0] - t0).padStart(6) + ' ms  ' + e[1]).join('\n');
+  }
+  function pipWho(st) {
+    try {
+      const d = document.pictureInPictureElement, r = root && root.pictureInPictureElement;
+      if (r && st && r === st.vid) return 'Player';
+      if (d && st && d === st.orig) return 'Seite';
+      if (d === hostEl) return 'Player';
+      return d ? 'anderes' : '-';
+    } catch (e) { return '?'; }
+  }
+
   // ----- Reels: „Nächstes Reel in 3 … Abbrechen“ -----
   // Facebook zählt am Ende eines Reels selbst herunter und springt dann weiter – auch wenn das Video angehalten ist.
   // Solange der Player offen ist (und kurz danach), tippt das Skript sofort auf „Abbrechen“. Erkannt wird nur ein
@@ -5374,6 +5456,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   function handBack(st) {
     if (st.handed) return;
     st.handed = true;
+    logEv('Übergabe an die Seite');
     const o = st.orig;
     let target = -1, atEnd = !!st.endHold;
     // Deine Stelle ZUERST merken – wird hls.js beendet, springt das eigene Video auf 0 zurück.
@@ -5404,7 +5487,12 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // doch nicht geschlossen (Drehen, App-Wechsel): Seite wieder still und angehalten, Player übernimmt wieder
   function unHand(st) {
     if (!st.handed) return;
+    // Hat der Browser inzwischen das Video der SEITE ins kleine Fenster genommen (Vivaldi u. a. beim Wischen zum
+    // Startbildschirm)? Dann dort weiterlaufen lassen – an deiner Stelle, mit Ton – und den Player still schließen,
+    // statt das kleine Fenster anzuhalten (18.6).
+    if (pipWho(st) === 'Seite') { logEv('kleines Fenster zeigt die Seite → Player schließen, Seite läuft weiter'); setTimeout(() => { if (vp === st) closePlayer(); }, 0); return; }
     st.handed = false;
+    logEv('Übergabe zurückgenommen');
     removeCover();
     if (st.mode !== 'own') return;
     try { st.orig.muted = true; st.orig.pause(); } catch (e) {}
@@ -5477,6 +5565,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     const st = vp;
     if (!st) return;
     vp = null;
+    logEv('Player geschlossen');
     // Kleines Fenster (Bild-in-Bild) gleich mitschließen – sonst bliebe es pausiert und tot stehen
     try {
       if (pipIsOurs(st.vid)) { const pr = document.exitPictureInPicture(); if (pr && pr.catch) pr.catch(() => {}); }
@@ -5846,7 +5935,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 18.5',
+      'Video-Assistent 18.6',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
@@ -5858,6 +5947,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       'HD nachladen: ' + hdLog + ' | Weiterleitung: ' + lastResolve + (PH ? ' | Pornhub-MP4: ' + phLog : '') + (IG ? ' | Instagram-MP4: ' + igLog : '') + (TT ? ' | TikTok: ' + ttLog + ' · ' + (ttPostUrl(v) || 'kein Link') : ''),
       'Zuletzt geöffnet: ' + (lastIntent.t ? Math.round((Date.now() - lastIntent.t) / 1000) + ' s her | ' + lastIntent.how + ' | ' + hostOf(lastIntent.url) + ' …' + lastIntent.url.slice(-50) : '-'),
       'Nächstes-Reel-Countdown abgebrochen: ' + nextCancels + '×',
+      'Ablauf Verlassen / Bild-in-Bild (letzte Einträge):\n' + evLogText(),
       'Stream-Nachweis: ' + (r.proof || '-') + ' | Listen gelesen: ' + plInfo.size + ' | Stück-Ordner: ' + segHits.size +
         (function () { const p = playingStream(navAt); return p ? ' | lädt gerade: ' + hostOf(p.u) + ' …' + p.u.slice(-40) : ''; })(),
       'Kodierung: ' + (r.best ? encTag(r.best) || '-' : '-'),

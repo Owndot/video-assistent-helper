@@ -119,8 +119,8 @@
         if (document.hidden) helper('/end');
         else if (st.sysBright) helperSend('bright', st.bright);
       };
-      document.addEventListener('visibilitychange', onVis);
-      st.cleanup.push(() => { clearInterval(beat); document.removeEventListener('visibilitychange', onVis); });
+      onVisChange(onVis);
+      st.cleanup.push(() => { clearInterval(beat); offVisChange(onVis); });
     });
     st.cleanup.push(() => { if (st.sys) helper('/end'); });
     let indTimer = 0;
