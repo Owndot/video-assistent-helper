@@ -30,7 +30,7 @@ with sync_playwright() as p:
     ctx.route('https://www.xvideos.com/**', serve)
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     def openp():
-        pg.goto('https://www.xvideos.com/video.abc123/test_clip')
+        pg.goto('https://www.xvideos.com/video12345/test_clip')
         pg.wait_for_function('document.getElementById("v").currentTime > 1', timeout=20000)
         pg.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(0.9)
         pg.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
