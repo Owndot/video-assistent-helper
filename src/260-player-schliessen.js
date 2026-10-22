@@ -22,26 +22,6 @@
       return !!d && (d === v || d === hostEl);
     } catch (e) { return false; }
   }
-  // ----- Protokoll: Verlassen / Bild-in-Bild (für die Diagnose, 18.6) -----
-  // Was passiert beim Wischen zum Startbildschirm wirklich (Reihenfolge der Meldungen, wer hält an)? Die letzten
-  // 40 Einträge stehen in der Diagnose – auch nachdem der Player zu ist.
-  const evLog = [];
-  function logEv(s) { evLog.push([Date.now(), s]); if (evLog.length > 40) evLog.shift(); }
-  function evLogText() {
-    if (!evLog.length) return ' -';
-    const t0 = evLog[0][0];
-    return evLog.slice(-28).map((e) => ' +' + String(e[0] - t0).padStart(6) + ' ms  ' + e[1]).join('\n');
-  }
-  function pipWho(st) {
-    try {
-      const d = document.pictureInPictureElement, r = root && root.pictureInPictureElement;
-      if (r && st && r === st.vid) return 'Player';
-      if (d && st && d === st.orig) return 'Seite';
-      if (d === hostEl) return 'Player';
-      return d ? 'anderes' : '-';
-    } catch (e) { return '?'; }
-  }
-
   // ----- Reels: „Nächstes Reel in 3 … Abbrechen“ -----
   // Facebook zählt am Ende eines Reels selbst herunter und springt dann weiter – auch wenn das Video angehalten ist.
   // Solange der Player offen ist (und kurz danach), tippt das Skript sofort auf „Abbrechen“. Erkannt wird nur ein
@@ -108,7 +88,6 @@
   function handBack(st) {
     if (st.handed) return;
     st.handed = true;
-    logEv('Übergabe an die Seite');
     const o = st.orig;
     let target = -1, atEnd = !!st.endHold;
     // Deine Stelle ZUERST merken – wird hls.js beendet, springt das eigene Video auf 0 zurück.
@@ -139,12 +118,7 @@
   // doch nicht geschlossen (Drehen, App-Wechsel): Seite wieder still und angehalten, Player übernimmt wieder
   function unHand(st) {
     if (!st.handed) return;
-    // Hat der Browser inzwischen das Video der SEITE ins kleine Fenster genommen (Vivaldi u. a. beim Wischen zum
-    // Startbildschirm)? Dann dort weiterlaufen lassen – an deiner Stelle, mit Ton – und den Player still schließen,
-    // statt das kleine Fenster anzuhalten (18.6).
-    if (pipWho(st) === 'Seite') { logEv('kleines Fenster zeigt die Seite → Player schließen, Seite läuft weiter'); setTimeout(() => { if (vp === st) closePlayer(); }, 0); return; }
     st.handed = false;
-    logEv('Übergabe zurückgenommen');
     removeCover();
     if (st.mode !== 'own') return;
     try { st.orig.muted = true; st.orig.pause(); } catch (e) {}
@@ -217,7 +191,6 @@
     const st = vp;
     if (!st) return;
     vp = null;
-    logEv('Player geschlossen');
     // Kleines Fenster (Bild-in-Bild) gleich mitschließen – sonst bliebe es pausiert und tot stehen
     try {
       if (pipIsOurs(st.vid)) { const pr = document.exitPictureInPicture(); if (pr && pr.catch) pr.catch(() => {}); }

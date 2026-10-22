@@ -1,20 +1,6 @@
   const DOWNLOAD_ONLY = onSite(CONFIG.downloadOnlySites);
   const SHOW_DOWNLOAD = DOWNLOAD_ONLY || CONFIG.downloadEverywhere || onSite(CONFIG.ytdlpSites);
   let vp = null;   // Zustand des eingebauten Players (muss vor dem ersten Prüfdurchlauf existieren)
-  // ----- Spiegeln (Facebook): „Seite verdeckt“ nicht an die Seite melden (18.6) -----
-  // Facebook hält sein Video an, sobald die Seite verdeckt ist (Wischen zum Startbildschirm) – beim Spiegeln steht
-  // dann auch der Player bzw. das kleine Fenster. Solange gespiegelt wird und „Beim Verlassen: Weiter“ gilt, bekommt die
-  // Seite diese Meldung nicht: Das Skript hört als Erstes zu (document-start, Einfangphase) und hält sie dort an.
-  // Die eigenen Zuhörer des Skripts bekommen sie trotzdem – als VIS_EV.
-  const VIS_EV = 'evp-visibility';
-  addEventListener('visibilitychange', (e) => {
-    if (!(vp && vp.mode === 'capture' && CONFIG.leaveAction !== 'pause')) return;
-    e.stopImmediatePropagation();
-    try { logEv('Meldung „' + (document.hidden ? 'verdeckt' : 'sichtbar') + '“ vor der Seite verborgen'); } catch (x) {}
-    try { document.dispatchEvent(new Event(VIS_EV)); } catch (x) {}
-  }, true);
-  function onVisChange(f, cap) { document.addEventListener('visibilitychange', f, cap); document.addEventListener(VIS_EV, f, cap); }
-  function offVisChange(f, cap) { document.removeEventListener('visibilitychange', f, cap); document.removeEventListener(VIS_EV, f, cap); }
 
   const MEDIA_RE =/\.(m3u8|mpd|mp4|webm|mkv|mov|m4v)(\?|#|$)/i;
   const PLAYLIST_RE = /\.(m3u8|mpd)(\?|#|$)/i;

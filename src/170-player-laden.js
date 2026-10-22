@@ -6,8 +6,6 @@
       const u = st.sources[st.idx++];
       st.cur = u;
       st.mode = 'own';
-      if (st.origNoPip === undefined) st.origNoPip = !!orig.disablePictureInPicture;
-      try { orig.disablePictureInPicture = true; } catch (e) {}   // kleines Fenster: unser Video, nicht das der Seite
       spin.classList.add('on');
       st.loadTimer = setTimeout(tryNext, 9000);   // lädt nicht? nächste Quelle
       try { vid.srcObject = null; vid.removeAttribute('src'); } catch (e) {}
@@ -81,7 +79,6 @@
       if (!ms) { toast('Dieses Video lässt sich hier nicht im eigenen Player zeigen'); closePlayer(); return; }
       st.mode = 'capture';
       st.cur = '';
-      try { if (st.origNoPip !== undefined) orig.disablePictureInPicture = st.origNoPip; } catch (e) {}
       if (st.refreshDl) st.refreshDl();
       try { vid.removeAttribute('src'); } catch (e) {}
       vid.srcObject = ms;

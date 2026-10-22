@@ -125,7 +125,7 @@
     tickTimer = navTimer = 0;
     hidePill();
   }
-  onVisChange(() => { if (document.hidden) stopChecks(); else startChecks(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stopChecks(); else startChecks(); });
   if (!document.hidden) startChecks();
   ['play', 'playing'].forEach((t) => document.addEventListener(t, (e) => {
     if (e.target && e.target.tagName === 'VIDEO') setTimeout(tick, 0);
