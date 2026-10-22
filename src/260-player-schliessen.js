@@ -203,6 +203,7 @@
     try { st.vid.pause(); st.vid.srcObject = null; st.vid.removeAttribute('src'); st.vid.load(); } catch (e) {}
     try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch (e) {}
     try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
+    kadriShield(false);   // Seite bekommt „verdeckt/sichtbar“ wieder selbst
     st.cleanup.forEach((f) => { try { f(); } catch (e) {} });
     // Mit ✕ geschlossen: unseren Verlaufseintrag wieder entfernen, damit "Zurück" danach normal funktioniert
     if (st.histPushed) { try { history.back(); } catch (e) {} }
@@ -218,7 +219,7 @@
     const go = () => {
       if (toastEl) toastEl.classList.remove('on');
       // Sofort öffnen – nicht auf die HD-Suche warten. Kommt Facebook-HD danach noch, wechselt der Player nahtlos.
-      const p = META && !FB_MIRROR ? fetchHD(v) : PH ? phMp4() : null;
+      const p = META && (!FB_MIRROR || FB_TRY_OWN) ? fetchHD(v) : PH ? phMp4() : null;
       openBrowserPlayer(v);
       if (p && META) p.then(() => { if (vp && vp.orig === v && vp.upgrade) vp.upgrade(); }, () => {});
     };

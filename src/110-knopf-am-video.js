@@ -102,7 +102,7 @@
       if (PH) { try { phMp4(); } catch (e) {} }   // MP4-Adressen schon im Hintergrund holen
       // Facebook: HD-Version selbstständig im Hintergrund suchen, sobald sicher ist, welches Video läuft
       if (META) {
-        if (!FB_MIRROR) { try { fetchHD(v); } catch (e) {} }   // beim Spiegeln unnötig – spart Daten
+        if (!FB_MIRROR || FB_TRY_OWN) { try { fetchHD(v); } catch (e) {} }   // beim (reinen) Spiegeln unnötig – spart Daten
         const a = assetFor(v).asset;
         const c = a && hdCache.get(a);
         setLabel(c && c.best >= 1080 ? 'Player · Full HD' : c && c.best >= 720 ? 'Player · HD' : 'Player');
@@ -125,7 +125,7 @@
     tickTimer = navTimer = 0;
     hidePill();
   }
-  document.addEventListener('visibilitychange', () => { if (document.hidden) stopChecks(); else startChecks(); });
+  onVisChange(() => { if (document.hidden) stopChecks(); else startChecks(); });
   if (!document.hidden) startChecks();
   ['play', 'playing'].forEach((t) => document.addEventListener(t, (e) => {
     if (e.target && e.target.tagName === 'VIDEO') setTimeout(tick, 0);

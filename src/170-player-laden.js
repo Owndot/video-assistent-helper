@@ -7,6 +7,7 @@
       st.cur = u;
       st.mode = 'own';
       if (st.setPipAllowed) st.setPipAllowed(true);
+      kadriShield(false);
       spin.classList.add('on');
       st.loadTimer = setTimeout(tryNext, 9000);   // lädt nicht? nächste Quelle
       try { vid.srcObject = null; vid.removeAttribute('src'); } catch (e) {}
@@ -54,6 +55,7 @@
       if (!st.lenOk) {
         const od = orig.duration, vd = vid.duration;
         if (isFinite(od) && od > 1 && isFinite(vd) && vd > 1 && Math.abs(od - vd) > lenTol(od)) {
+          if (st.capFallback) { st.lenOk = true; useCapture(); return; }   // Facebook: falsche Datei → spiegeln
           if (!st.lenFirst) st.lenFirst = st.cur;
           if (st.idx < st.sources.length) { tryNext(); return; }
           st.lenOk = true;
@@ -80,7 +82,9 @@
       if (!ms) { toast('Dieses Video lässt sich hier nicht im eigenen Player zeigen'); closePlayer(); return; }
       st.mode = 'capture';
       st.cur = '';
-      if (st.setPipAllowed) st.setPipAllowed(false);   // gespiegelt: kein Bild-in-Bild
+      // gespiegelt: Bild-in-Bild nur in Kadri mit Schild (sonst hielte die Seite ihr Video im Hintergrund an)
+      kadriShield(true);
+      if (st.setPipAllowed) st.setPipAllowed(kadriPage());
       if (st.refreshDl) st.refreshDl();
       try { vid.removeAttribute('src'); } catch (e) {}
       vid.srcObject = ms;

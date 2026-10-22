@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      18.8
+// @version      19.0
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -122,11 +122,17 @@
   };
   // Eigene Einstellungen (im Player: ⋯ → Einstellungen) gelten vor den Werten oben und überstehen Updates des Skripts
   const SETTING_KEYS = ['startFullscreen', 'lensGlass', 'ambient', 'progressLine', 'holdSpeed', 'topGuard', 'bottomGuard',
-    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh', 'language', 'leaveAction', 'dialogBoost'];
+    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh', 'language', 'leaveAction', 'dialogBoost',
+    // Seitenlisten (in Kadri über die Einstellungsseite änderbar; ein eigener Wert ersetzt die Liste oben)
+    'ytdlpSites', 'downloadOnlySites', 'disabledSites'];
   const CONFIG_DEFAULT = {};
   SETTING_KEYS.forEach((k) => { CONFIG_DEFAULT[k] = CONFIG[k]; });
   const userSettings = () => { const o = store.get('settings', {}); return o && typeof o === 'object' ? o : {}; };
-  (() => { const o = userSettings(); SETTING_KEYS.forEach((k) => { if (k in o && o[k] !== null) CONFIG[k] = o[k]; }); })();
+  (() => { const o = userSettings(); SETTING_KEYS.forEach((k) => {
+    if (!(k in o) || o[k] === null) return;
+    if (Array.isArray(CONFIG[k]) && !(Array.isArray(o[k]) && o[k].every((x) => typeof x === 'string'))) return;   // Seitenliste kaputt → Standard
+    CONFIG[k] = o[k];
+  }); })();
   function setSetting(k, v) {
     CONFIG[k] = v;
     const o = userSettings(); o[k] = v; store.set('settings', o);
@@ -408,6 +414,19 @@
   const DOWNLOAD_ONLY = onSite(CONFIG.downloadOnlySites);
   const SHOW_DOWNLOAD = DOWNLOAD_ONLY || CONFIG.downloadEverywhere || onSite(CONFIG.ytdlpSites);
   let vp = null;   // Zustand des eingebauten Players (muss vor dem ersten Prüfdurchlauf existieren)
+  // ----- Kadri: Spiegeln + Bild-in-Bild (19.0) -----
+  // Facebook hält sein Video an, sobald die Seite verdeckt ist – beim Spiegeln stünde dann auch das kleine Fenster.
+  // In Kadri läuft ein Skript IN der Seite (page.js): Solange gespiegelt wird, verbirgt es „verdeckt“ vor der Seite
+  // („Schild“). Dabei hält es die Meldung an, bevor irgendwer sie bekommt – auch dieses Skript. Darum reicht es sie
+  // als VIS_EV weiter, und die eigenen Zuhörer hören auf beides.
+  const VIS_EV = 'kadri-vis';
+  function onVisChange(f, cap) { document.addEventListener('visibilitychange', f, cap); if (IS_KADRI) document.addEventListener(VIS_EV, f, cap); }
+  function offVisChange(f, cap) { document.removeEventListener('visibilitychange', f, cap); if (IS_KADRI) document.removeEventListener(VIS_EV, f, cap); }
+  const kadriPage = () => { try { return IS_KADRI && document.documentElement.hasAttribute('data-kadri-page'); } catch (e) { return false; } };
+  function kadriShield(on) {
+    if (!kadriPage()) return;
+    try { document.dispatchEvent(new CustomEvent('kadri-ctl', { detail: JSON.stringify({ shield: !!on }) })); } catch (e) {}
+  }
 
   const MEDIA_RE =/\.(m3u8|mpd|mp4|webm|mkv|mov|m4v)(\?|#|$)/i;
   const PLAYLIST_RE = /\.(m3u8|mpd)(\?|#|$)/i;
@@ -430,6 +449,9 @@
   const NS = 'http://www.w3.org/2000/svg';
   const META = /(^|\.)(facebook\.com|instagram\.com|threads\.net|threads\.com|messenger\.com)$/i.test(location.hostname);
   const FB_MIRROR = /(^|\.)facebook\.com$/i.test(location.hostname) && CONFIG.fbMirror !== false;
+  // Kadri: auf Facebook zuerst der EIGENE Player mit der fertigen MP4 – aber nur, wenn sicher ist, dass sie zum
+  // laufenden Video gehört (gleiche Video-ID wie die gerade geladenen Stücke); sonst wie bisher spiegeln (19.0)
+  const FB_TRY_OWN = FB_MIRROR && IS_KADRI;
   // Firefox spiegelt mit mozCaptureStream – dabei wandert der Ton in die Spiegelung (siehe Player: VOL)
   const FF_CAP = !HTMLMediaElement.prototype.captureStream && !!HTMLMediaElement.prototype.mozCaptureStream;
   const GECKO = /\bGecko\/\d/.test(navigator.userAgent) && !/like Gecko/.test(navigator.userAgent);   // Firefox
@@ -604,7 +626,7 @@
     }
   }
   // oft genug, um Einspeisen und Ankunft sauber zu trennen – nur wo es gebraucht wird (Facebook spiegelt sonst ohnehin)
-  if (META && !FB_MIRROR) setInterval(watchBuffers, 100);
+  if (META && (!FB_MIRROR || FB_TRY_OWN)) setInterval(watchBuffers, 100);
   ['loadstart', 'emptied'].forEach((t) => document.addEventListener(t, (e) => {
     const v = e.target; if (v && v.tagName === 'VIDEO') { bufCredit.delete(v); bufPrev.delete(v); }
   }, true));
@@ -726,6 +748,17 @@
       if (d.k === 'pl') notePlaylist(d.u, typeof d.f === 'string' ? d.f : '', d.t);
       else if (d.k === 'api' && META) { bodiesRead++; try { scanText(d.t); } catch (x) {} }
     });
+  }
+  // Kadri: Der Hintergrund der Erweiterung meldet Stream-Listen, die der Tab lädt – nach dem, was der Server sagt
+  // („Content-Type“), also auch ohne .m3u8 im Namen und aus Hintergrund-Skripten der Seite (Worker), die sonst
+  // niemand sieht. Ohne Endung bekommt die Adresse ein Kennzeichen hinter „#“ (geht nicht an den Server), damit der
+  // Player sie als Stream lädt (19.0).
+  if (IS_KADRI && typeof KADRI_HOOKS !== 'undefined') {
+    KADRI_HOOKS.onSrc = (u, k) => {
+      if (typeof u !== 'string' || !/^https?:/i.test(u) || SEGMENT_RE.test(u)) return;
+      if (!PLAYLIST_RE.test(u)) u += k === 'mpd' ? '#kadri.mpd' : '#kadri.m3u8';
+      addSource(u);
+    };
   }
   function noteSegment(u) {
     if (PLAYLIST_RE.test(u) || !(SEGFILE_RE.test(u) || SEGMENT_RE.test(u))) return;
@@ -1646,7 +1679,7 @@
     let left = false;
     const onLeave = () => { left = true; };
     addEventListener('blur', onLeave, true);
-    document.addEventListener('visibilitychange', onLeave, true);
+    onVisChange(onLeave, true);
     try {
       const a = document.createElement('a');
       a.href = intent;
@@ -1660,7 +1693,7 @@
     // Weg 2: Hat sich nach kurzer Zeit nichts getan (keine App, keine Auswahl), direkt navigieren
     setTimeout(() => {
       removeEventListener('blur', onLeave, true);
-      document.removeEventListener('visibilitychange', onLeave, true);
+      offVisChange(onLeave, true);
       if (left || document.hidden) { lastIntent.how += ' → Browser verlassen ✓'; return; }
       try { location.href = intent; lastIntent.how += ' → Weg 2'; } catch (e) { lastIntent.how += ' → Weg 2 Fehler'; }
       setTimeout(() => {
@@ -2279,7 +2312,7 @@
       if (PH) { try { phMp4(); } catch (e) {} }   // MP4-Adressen schon im Hintergrund holen
       // Facebook: HD-Version selbstständig im Hintergrund suchen, sobald sicher ist, welches Video läuft
       if (META) {
-        if (!FB_MIRROR) { try { fetchHD(v); } catch (e) {} }   // beim Spiegeln unnötig – spart Daten
+        if (!FB_MIRROR || FB_TRY_OWN) { try { fetchHD(v); } catch (e) {} }   // beim (reinen) Spiegeln unnötig – spart Daten
         const a = assetFor(v).asset;
         const c = a && hdCache.get(a);
         setLabel(c && c.best >= 1080 ? 'Player · Full HD' : c && c.best >= 720 ? 'Player · HD' : 'Player');
@@ -2302,7 +2335,7 @@
     tickTimer = navTimer = 0;
     hidePill();
   }
-  document.addEventListener('visibilitychange', () => { if (document.hidden) stopChecks(); else startChecks(); });
+  onVisChange(() => { if (document.hidden) stopChecks(); else startChecks(); });
   if (!document.hidden) startChecks();
   ['play', 'playing'].forEach((t) => document.addEventListener(t, (e) => {
     if (e.target && e.target.tagName === 'VIDEO') setTimeout(tick, 0);
@@ -2599,6 +2632,15 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     return hh ? hh + ':' + p2(m) + ':' + p2(sec) : m + ':' + p2(sec);
   }
   // Quellen für den eingebauten Player, die beste zuerst (DASH-Manifeste kann er nicht)
+  // Kadri/Facebook: die MP4 nur nehmen, wenn sie sicher zum laufenden Video gehört – sonst keine (→ Spiegeln)
+  function fbSureSources(v, resMap) {
+    try {
+      const af = assetFor(v);
+      if (!af.sure || !af.asset) return [];
+      const out = playerSources(v, resMap).filter((u) => assetOf(u) === af.asset);
+      return out;
+    } catch (e) { return []; }
+  }
   function playerSources(v, resMap) {
     const out = [];
     const add = (u, res) => {
@@ -2645,7 +2687,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 
     const srcRes = {};
     const st = {
-      orig: orig, sources: FB_MIRROR && (orig.captureStream || orig.mozCaptureStream) ? [] : playerSources(orig, srcRes), srcRes: srcRes, idx: 0, hls: null, mode: 'own', cur: '',
+      orig: orig, sources: FB_MIRROR && (orig.captureStream || orig.mozCaptureStream) ? (FB_TRY_OWN ? fbSureSources(orig, srcRes) : []) : playerSources(orig, srcRes), srcRes: srcRes, idx: 0, hls: null, mode: 'own', cur: '',
+      capFallback: FB_TRY_OWN,   // passt die Datei doch nicht (andere Länge): sofort spiegeln
       startTime: orig.currentTime || 0, loadTimer: 0, hideTimer: 0, u2: 0, locked: false,
       dim: 0, fit: 'contain', speed: 1, wasFs: false, cleanup: [], barDrag: false, orient: '',
       level: 1,      // Lautstärke 0–2 (über 1 = Verstärkung)
@@ -2885,8 +2928,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         if (document.hidden) helper('/end');
         else if (st.sysBright) helperSend('bright', st.bright);
       };
-      document.addEventListener('visibilitychange', onVis);
-      st.cleanup.push(() => { clearInterval(beat); document.removeEventListener('visibilitychange', onVis); });
+      onVisChange(onVis);
+      st.cleanup.push(() => { clearInterval(beat); offVisChange(onVis); });
     });
     st.cleanup.push(() => { if (st.sys) helper('/end'); });
     let indTimer = 0;
@@ -3227,6 +3270,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       st.cur = u;
       st.mode = 'own';
       if (st.setPipAllowed) st.setPipAllowed(true);
+      kadriShield(false);
       spin.classList.add('on');
       st.loadTimer = setTimeout(tryNext, 9000);   // lädt nicht? nächste Quelle
       try { vid.srcObject = null; vid.removeAttribute('src'); } catch (e) {}
@@ -3274,6 +3318,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (!st.lenOk) {
         const od = orig.duration, vd = vid.duration;
         if (isFinite(od) && od > 1 && isFinite(vd) && vd > 1 && Math.abs(od - vd) > lenTol(od)) {
+          if (st.capFallback) { st.lenOk = true; useCapture(); return; }   // Facebook: falsche Datei → spiegeln
           if (!st.lenFirst) st.lenFirst = st.cur;
           if (st.idx < st.sources.length) { tryNext(); return; }
           st.lenOk = true;
@@ -3300,7 +3345,9 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (!ms) { toast('Dieses Video lässt sich hier nicht im eigenen Player zeigen'); closePlayer(); return; }
       st.mode = 'capture';
       st.cur = '';
-      if (st.setPipAllowed) st.setPipAllowed(false);   // gespiegelt: kein Bild-in-Bild
+      // gespiegelt: Bild-in-Bild nur in Kadri mit Schild (sonst hielte die Seite ihr Video im Hintergrund an)
+      kadriShield(true);
+      if (st.setPipAllowed) st.setPipAllowed(kadriPage());
       if (st.refreshDl) st.refreshDl();
       try { vid.removeAttribute('src'); } catch (e) {}
       vid.srcObject = ms;
@@ -3524,9 +3571,10 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Bild-in-Bild nur, wo es zuverlässig läuft: NICHT beim Spiegeln und nicht auf Facebook/Instagram/Threads –
     // dort hält die Seite ihr Video im Hintergrund an, das kleine Fenster stünde still (18.6). Dann gibt es weder den
     // Knopf noch das automatische kleine Fenster beim Wischen zum Startbildschirm (auch nicht für das Seitenvideo).
-    st.pipOk = !!bPip && !META;
+    // (Kadri: im EIGENEN Player auch auf Facebook/Instagram – die Seite kann ihn dort nicht anhalten)
+    st.pipOk = !!bPip && (!META || IS_KADRI);
     function setPipAllowed(ok) {
-      ok = !!ok && !!bPip && !META;
+      ok = !!ok && !!bPip && (!META || IS_KADRI);
       st.pipOk = ok;
       try { vid.disablePictureInPicture = !ok; } catch (e) {}
       if (bPip) bPip.style.display = ok ? '' : 'none';
@@ -5064,7 +5112,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         }
       }
     };
-    document.addEventListener('visibilitychange', onVisAway);
+    onVisChange(onVisAway);
     // Vollbild selbst zurückholen: sofort, nach 250 ms und nach 700 ms (und wenn das Fenster den Fokus bekommt) –
     // ohne Berührung erlaubt das nicht jeder Browser; dann klappt es mit der nächsten Berührung (18.6)
     function tryRegain() {
@@ -5088,7 +5136,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     addEventListener('blur', markAway);
     addEventListener('pagehide', markAway);
     st.cleanup.push(() => {
-      document.removeEventListener('visibilitychange', onVisAway);
+      offVisChange(onVisAway);
       removeEventListener('blur', markAway);
       removeEventListener('pagehide', markAway);
     });
@@ -5287,7 +5335,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Die neue Stufe erscheint nur im Qualitäts-Menü; du entscheidest.
     st.upgrade = () => {
       if (vp !== st || st.mode !== 'own') return;
-      const fresh = playerSources(orig, st.srcRes);
+      const fresh = st.capFallback ? fbSureSources(orig, st.srcRes) : playerSources(orig, st.srcRes);   // Kadri/Facebook: nur passende
       fresh.forEach((u) => { if (st.sources.indexOf(u) < 0) st.sources.push(u); });
       refreshQual();
     };
@@ -5578,6 +5626,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     try { st.vid.pause(); st.vid.srcObject = null; st.vid.removeAttribute('src'); st.vid.load(); } catch (e) {}
     try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch (e) {}
     try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
+    kadriShield(false);   // Seite bekommt „verdeckt/sichtbar“ wieder selbst
     st.cleanup.forEach((f) => { try { f(); } catch (e) {} });
     // Mit ✕ geschlossen: unseren Verlaufseintrag wieder entfernen, damit "Zurück" danach normal funktioniert
     if (st.histPushed) { try { history.back(); } catch (e) {} }
@@ -5593,7 +5642,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     const go = () => {
       if (toastEl) toastEl.classList.remove('on');
       // Sofort öffnen – nicht auf die HD-Suche warten. Kommt Facebook-HD danach noch, wechselt der Player nahtlos.
-      const p = META && !FB_MIRROR ? fetchHD(v) : PH ? phMp4() : null;
+      const p = META && (!FB_MIRROR || FB_TRY_OWN) ? fetchHD(v) : PH ? phMp4() : null;
       openBrowserPlayer(v);
       if (p && META) p.then(() => { if (vp && vp.orig === v && vp.upgrade) vp.upgrade(); }, () => {});
     };
@@ -5936,7 +5985,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 18.8',
+      'Video-Assistent 19.0',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

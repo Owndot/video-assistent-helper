@@ -59,7 +59,7 @@
         }
       }
     };
-    document.addEventListener('visibilitychange', onVisAway);
+    onVisChange(onVisAway);
     // Vollbild selbst zurückholen: sofort, nach 250 ms und nach 700 ms (und wenn das Fenster den Fokus bekommt) –
     // ohne Berührung erlaubt das nicht jeder Browser; dann klappt es mit der nächsten Berührung (18.6)
     function tryRegain() {
@@ -83,7 +83,7 @@
     addEventListener('blur', markAway);
     addEventListener('pagehide', markAway);
     st.cleanup.push(() => {
-      document.removeEventListener('visibilitychange', onVisAway);
+      offVisChange(onVisAway);
       removeEventListener('blur', markAway);
       removeEventListener('pagehide', markAway);
     });
@@ -282,7 +282,7 @@
     // Die neue Stufe erscheint nur im Qualitäts-Menü; du entscheidest.
     st.upgrade = () => {
       if (vp !== st || st.mode !== 'own') return;
-      const fresh = playerSources(orig, st.srcRes);
+      const fresh = st.capFallback ? fbSureSources(orig, st.srcRes) : playerSources(orig, st.srcRes);   // Kadri/Facebook: nur passende
       fresh.forEach((u) => { if (st.sources.indexOf(u) < 0) st.sources.push(u); });
       refreshQual();
     };

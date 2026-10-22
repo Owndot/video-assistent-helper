@@ -7,7 +7,8 @@
 
     const srcRes = {};
     const st = {
-      orig: orig, sources: FB_MIRROR && (orig.captureStream || orig.mozCaptureStream) ? [] : playerSources(orig, srcRes), srcRes: srcRes, idx: 0, hls: null, mode: 'own', cur: '',
+      orig: orig, sources: FB_MIRROR && (orig.captureStream || orig.mozCaptureStream) ? (FB_TRY_OWN ? fbSureSources(orig, srcRes) : []) : playerSources(orig, srcRes), srcRes: srcRes, idx: 0, hls: null, mode: 'own', cur: '',
+      capFallback: FB_TRY_OWN,   // passt die Datei doch nicht (andere Länge): sofort spiegeln
       startTime: orig.currentTime || 0, loadTimer: 0, hideTimer: 0, u2: 0, locked: false,
       dim: 0, fit: 'contain', speed: 1, wasFs: false, cleanup: [], barDrag: false, orient: '',
       level: 1,      // Lautstärke 0–2 (über 1 = Verstärkung)

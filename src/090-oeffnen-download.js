@@ -8,7 +8,7 @@
     let left = false;
     const onLeave = () => { left = true; };
     addEventListener('blur', onLeave, true);
-    document.addEventListener('visibilitychange', onLeave, true);
+    onVisChange(onLeave, true);
     try {
       const a = document.createElement('a');
       a.href = intent;
@@ -22,7 +22,7 @@
     // Weg 2: Hat sich nach kurzer Zeit nichts getan (keine App, keine Auswahl), direkt navigieren
     setTimeout(() => {
       removeEventListener('blur', onLeave, true);
-      document.removeEventListener('visibilitychange', onLeave, true);
+      offVisChange(onLeave, true);
       if (left || document.hidden) { lastIntent.how += ' → Browser verlassen ✓'; return; }
       try { location.href = intent; lastIntent.how += ' → Weg 2'; } catch (e) { lastIntent.how += ' → Weg 2 Fehler'; }
       setTimeout(() => {

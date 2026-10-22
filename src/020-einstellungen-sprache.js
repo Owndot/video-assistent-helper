@@ -79,11 +79,17 @@
   };
   // Eigene Einstellungen (im Player: ⋯ → Einstellungen) gelten vor den Werten oben und überstehen Updates des Skripts
   const SETTING_KEYS = ['startFullscreen', 'lensGlass', 'ambient', 'progressLine', 'holdSpeed', 'topGuard', 'bottomGuard',
-    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh', 'language', 'leaveAction', 'dialogBoost'];
+    'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh', 'language', 'leaveAction', 'dialogBoost',
+    // Seitenlisten (in Kadri über die Einstellungsseite änderbar; ein eigener Wert ersetzt die Liste oben)
+    'ytdlpSites', 'downloadOnlySites', 'disabledSites'];
   const CONFIG_DEFAULT = {};
   SETTING_KEYS.forEach((k) => { CONFIG_DEFAULT[k] = CONFIG[k]; });
   const userSettings = () => { const o = store.get('settings', {}); return o && typeof o === 'object' ? o : {}; };
-  (() => { const o = userSettings(); SETTING_KEYS.forEach((k) => { if (k in o && o[k] !== null) CONFIG[k] = o[k]; }); })();
+  (() => { const o = userSettings(); SETTING_KEYS.forEach((k) => {
+    if (!(k in o) || o[k] === null) return;
+    if (Array.isArray(CONFIG[k]) && !(Array.isArray(o[k]) && o[k].every((x) => typeof x === 'string'))) return;   // Seitenliste kaputt → Standard
+    CONFIG[k] = o[k];
+  }); })();
   function setSetting(k, v) {
     CONFIG[k] = v;
     const o = userSettings(); o[k] = v; store.set('settings', o);

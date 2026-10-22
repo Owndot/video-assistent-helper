@@ -245,6 +245,15 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     return hh ? hh + ':' + p2(m) + ':' + p2(sec) : m + ':' + p2(sec);
   }
   // Quellen für den eingebauten Player, die beste zuerst (DASH-Manifeste kann er nicht)
+  // Kadri/Facebook: die MP4 nur nehmen, wenn sie sicher zum laufenden Video gehört – sonst keine (→ Spiegeln)
+  function fbSureSources(v, resMap) {
+    try {
+      const af = assetFor(v);
+      if (!af.sure || !af.asset) return [];
+      const out = playerSources(v, resMap).filter((u) => assetOf(u) === af.asset);
+      return out;
+    } catch (e) { return []; }
+  }
   function playerSources(v, resMap) {
     const out = [];
     const add = (u, res) => {

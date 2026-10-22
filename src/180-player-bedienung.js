@@ -97,9 +97,10 @@
     // Bild-in-Bild nur, wo es zuverlässig läuft: NICHT beim Spiegeln und nicht auf Facebook/Instagram/Threads –
     // dort hält die Seite ihr Video im Hintergrund an, das kleine Fenster stünde still (18.6). Dann gibt es weder den
     // Knopf noch das automatische kleine Fenster beim Wischen zum Startbildschirm (auch nicht für das Seitenvideo).
-    st.pipOk = !!bPip && !META;
+    // (Kadri: im EIGENEN Player auch auf Facebook/Instagram – die Seite kann ihn dort nicht anhalten)
+    st.pipOk = !!bPip && (!META || IS_KADRI);
     function setPipAllowed(ok) {
-      ok = !!ok && !!bPip && !META;
+      ok = !!ok && !!bPip && (!META || IS_KADRI);
       st.pipOk = ok;
       try { vid.disablePictureInPicture = !ok; } catch (e) {}
       if (bPip) bPip.style.display = ok ? '' : 'none';
