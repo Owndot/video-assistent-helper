@@ -227,6 +227,8 @@
     // Am Ende anhalten statt Endlosschleife: Facebook/Instagram springen bei Reels still an den Anfang zurück
     // (oder laden neu). Das erkennen wir und halten an – Play-Knopf startet es noch einmal.
     st.endHold = false;
+    armNextGuard();   // Countdown „Nächstes Reel“ der Seite sofort abbrechen
+    st.cleanup.push(() => disarmNextGuard(10000));   // noch 10 s – die Seite steht danach oft am Ende
     let lastT = 0;
     const origLoop = orig.loop;
     try { orig.loop = false; } catch (e) {}

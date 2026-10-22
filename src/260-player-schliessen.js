@@ -22,6 +22,65 @@
       return !!d && (d === v || d === hostEl);
     } catch (e) { return false; }
   }
+  // ----- Reels: „Nächstes Reel in 3 … Abbrechen“ -----
+  // Facebook zählt am Ende eines Reels selbst herunter und springt dann weiter – auch wenn das Video angehalten ist.
+  // Solange der Player offen ist (und kurz danach), tippt das Skript sofort auf „Abbrechen“. Erkannt wird nur ein
+  // kleiner Kasten mit Countdown (Reel/Video … Zahl) UND einem Abbrechen-Knopf – sonst wird nichts angetippt (18.3).
+  const NEXT_RE = /(reel|video|clip)[^\n]{0,40}?\b\d{1,2}\s*(s|sek|sec)?\.?\s*$/i;   // „Next reel in 2“, „Nächstes Video in 3 s“
+  const NEXT_WORD_RE = /(next|nächst|weiter|suivant|siguiente|próxim|prossim|następn|volgend|nästa|seuraava|sonraki|следующ|наступн|შემდეგ)|\bin\s+\d/i;
+  const CANCEL_RE = /^(cancel|abbrechen|annuler|cancelar|annulla|anuluj|annuleren|avbryt|peruuta|iptal|zrušit|mégse|отмена|скасувати|취소|キャンセル|取消|إلغاء|ביטול|გაუქმება)$/i;
+  let nextObs = null, nextOff = 0, nextQ = new Set(), nextT = 0, nextCancels = 0;
+  function cancelIn(box) {
+    if (!box || box.nodeType !== 1 || (hostEl && (box === hostEl || hostEl.contains(box)))) return false;   // nie im eigenen Player
+    const txt = (box.textContent || '').trim();
+    if (!txt || txt.length > 140) return false;
+    const els = box.querySelectorAll('*');
+    let btn = null;
+    for (let i = 0; i < els.length && i < 60; i++) {
+      const t = (els[i].textContent || '').trim();
+      if (t && CANCEL_RE.test(t)) { btn = els[i].closest('[role="button"], button, a') || els[i]; break; }
+    }
+    if (!btn) return false;
+    // Countdown-Text: der Rest ohne den Knopf
+    const rest = txt.replace((btn.textContent || '').trim(), ' ').trim();
+    if (!NEXT_RE.test(rest) || !NEXT_WORD_RE.test(rest)) return false;
+    try { btn.click(); } catch (e) { return false; }
+    nextCancels++;
+    return true;
+  }
+  function nextScan() {
+    nextT = 0;
+    const q = Array.from(nextQ); nextQ.clear();
+    for (const n of q) {
+      let el = n.nodeType === 1 ? n : n.parentElement;
+      // vom geänderten Teil bis zum kleinsten Kasten, der Countdown UND Knopf enthält
+      for (let up = 0; el && up < 5; up++, el = el.parentElement) {
+        const l = (el.textContent || '').length;
+        if (l > 140) break;
+        if (cancelIn(el)) return;
+      }
+    }
+  }
+  function armNextGuard() {
+    clearTimeout(nextOff); nextOff = 0;
+    if (nextObs || !document.body) return;
+    try {
+      nextObs = new MutationObserver((ms) => {
+        for (const m of ms) {
+          if (m.type === 'characterData') nextQ.add(m.target);
+          else for (const a of m.addedNodes) if (a.nodeType === 1 || a.nodeType === 3) nextQ.add(a);
+        }
+        if (nextQ.size > 400) nextQ = new Set(Array.from(nextQ).slice(-200));
+        if (!nextT && nextQ.size) nextT = setTimeout(nextScan, 50);
+      });
+      nextObs.observe(document.body, { childList: true, subtree: true, characterData: true });
+    } catch (e) { nextObs = null; }
+  }
+  function disarmNextGuard(later) {
+    clearTimeout(nextOff);
+    nextOff = setTimeout(() => { if (vp) return; if (nextObs) nextObs.disconnect(); nextObs = null; nextQ.clear(); }, later || 0);
+  }
+
   // ----- Übergabe an die Seite -----
   // Das Video der Seite springt an deine Stelle und läuft (mit Ton) weiter. Bis es dort ein Bild hat, liegt dein
   // letztes Bild genau darüber – sonst sähe man kurz den Anfang des Videos und dann einen Sprung (17.9).
