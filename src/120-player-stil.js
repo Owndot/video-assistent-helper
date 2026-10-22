@@ -135,6 +135,11 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vp.scrubx .vbar{opacity:.4}
 .vp.scrubx .vprev b{background:rgba(205,45,45,.82)}
 .vp.scrubfine .vprev b{background:rgba(96,74,214,.78)}
+/* alte Stelle beim Ziehen (dorthin zurück rastet ein) */
+.vbarmk{position:absolute;top:50%;left:0;width:3px;height:26px;margin-top:-13px;border-radius:2px;background:#fff;box-shadow:0 0 4px rgba(0,0,0,.6);opacity:0;pointer-events:none;z-index:1;transition:opacity .15s ease,transform .15s ease}
+.vp.thick .vbarmk{opacity:.85}
+.vp.scrubsnap .vbarmk{opacity:1;transform:scaleY(1.25)}
+.vp.scrubx .vbarmk{opacity:0}
 .vbar::-webkit-slider-thumb{-webkit-appearance:none;margin-top:-6.5px;width:18px;height:18px;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1);transition:transform .2s cubic-bezier(.34,1.56,.64,1),margin .18s ease}
 .vbar::-moz-range-thumb{width:18px;height:18px;border:0;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1)}
 .vbar:active::-moz-range-thumb{transform:scale(1.2)}
@@ -263,11 +268,13 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     const m = /(\d{3,4})p\b/.exec(tag) || /\.C3\.(\d{3,4})\./.exec(tag);
     return m ? +m[1] : 0;
   }
-  function fbSureSources(v, resMap) {
+  // forPrev (19.5): für das Vorschaubild beim Spiegeln – jede Schärfe recht, die kleinste zuerst (lädt am schnellsten)
+  function fbSureSources(v, resMap, forPrev) {
     try {
       const af = assetFor(v);
       if (!af.sure || !af.asset) return [];
       let out = playerSources(v, resMap).filter((u) => assetOf(u) === af.asset);
+      if (forPrev) return out.sort((a, b) => (fbRes(a) || 1e4) - (fbRes(b) || 1e4));
       const shown = Math.min(v.videoWidth || 0, v.videoHeight || 0);   // was Facebook gerade abspielt
       if (shown > 0) out = out.filter((u) => fbRes(u) >= shown * 0.9);   // unschärfer (oder unbekannt) → spiegeln
       out.sort((a, b) => fbRes(b) - fbRes(a));

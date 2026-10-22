@@ -55,7 +55,7 @@
       if (!st.lenOk) {
         const od = orig.duration, vd = vid.duration;
         if (isFinite(od) && od > 1 && isFinite(vd) && vd > 1 && Math.abs(od - vd) > lenTol(od)) {
-          if (st.capFallback) { st.lenOk = true; useCapture(); return; }   // Facebook: falsche Datei → spiegeln
+          if (st.capFallback) { st.lenOk = true; (st.fbBad || (st.fbBad = [])).push(st.cur); useCapture(); return; }   // Facebook: falsche Datei → spiegeln (und nicht als Vorschau)
           if (!st.lenFirst) st.lenFirst = st.cur;
           if (st.idx < st.sources.length) { tryNext(); return; }
           st.lenOk = true;
@@ -97,6 +97,7 @@
       autoOrient(orig.videoWidth, orig.videoHeight);
       updateUI();
       watchMirror(ms);
+      if (st.prevWarm) setTimeout(() => { if (vp === st && st.mode === 'capture') st.prevWarm(); }, 1500);
     }
     // Spiegeln am Leben halten: Facebook/Instagram laden ein Reel am Ende jeder Schleife NEU ins Videoelement.
     // Dabei reißt die Bildübertragung ab (Ton läuft weiter, Bild schwarz) – dann sofort neu verbinden.

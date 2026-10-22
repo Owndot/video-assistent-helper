@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.4
+// @version      19.5
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -163,7 +163,7 @@
     'Füllen': 'Fill', 'Strecken': 'Stretch',
     // Einstellungen (kurz)
     'Design': 'Design', 'Glas': 'Glass', 'Schlicht': 'Plain', 'Vollbild': 'Full screen', 'Ambient': 'Ambient',
-    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Loslassen = abbrechen': 'Release to cancel', 'fein': 'fine', 'Spul-Vorschau': 'Seek preview', 'Im Bild': 'In video', 'Kleines Bild': 'Thumbnail', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
+    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Loslassen = abbrechen': 'Release to cancel', 'Spul-Vorschau': 'Seek preview', 'Im Bild': 'In video', 'Kleines Bild': 'Thumbnail', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
     'Link teilen': 'Share link', 'Zurück': 'Back', 'Wiederholen': 'Repeat', 'Wiederholen aus': 'Repeat off', 'Wiederholen: endlos': 'Repeat: endless', 'Sleep-Timer': 'Sleep timer', 'Ende des Videos': 'End of video', 'Läuft': 'Running', 'Sleep-Timer aus': 'Sleep timer off', 'Sleep-Timer: angehalten': 'Sleep timer: paused', 'Sleep-Timer: Ende des Videos': 'Sleep timer: end of video', 'Dialog-Verstärker': 'Dialogue boost', 'Dialog-Verstärker an': 'Dialogue boost on', 'Dialog-Verstärker aus': 'Dialogue boost off', 'Dialog-Verstärker: hier nicht möglich (die Seite gibt den Ton nicht frei)': 'Dialogue boost: not possible here (the site doesn’t release the sound)', 'In App öffnen': 'Open in app', 'Beim Verlassen': 'When leaving', 'Weiter': 'Keep playing', 'Anhalten': 'Pause', 'Antippen für Vollbild': 'Tap for full screen', 'z. B. VLC': 'e.g. VLC', 'Link kopiert': 'Link copied', 'Kein Link zu diesem Video gefunden': 'No link to this video found',
     'Oben: Wischen bis ganz an den Rand': 'Top: swiping works right up to the edge', 'Unten: Wischen bis ganz an den Rand': 'Bottom: swiping works right down to the edge',
     '✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helper benutzen. Du kannst diese Seite schließen.': '✓ Connected. From now on only this script can use the helper. You can close this page.',
@@ -2529,6 +2529,11 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vp.scrubx .vbar{opacity:.4}
 .vp.scrubx .vprev b{background:rgba(205,45,45,.82)}
 .vp.scrubfine .vprev b{background:rgba(96,74,214,.78)}
+/* alte Stelle beim Ziehen (dorthin zurück rastet ein) */
+.vbarmk{position:absolute;top:50%;left:0;width:3px;height:26px;margin-top:-13px;border-radius:2px;background:#fff;box-shadow:0 0 4px rgba(0,0,0,.6);opacity:0;pointer-events:none;z-index:1;transition:opacity .15s ease,transform .15s ease}
+.vp.thick .vbarmk{opacity:.85}
+.vp.scrubsnap .vbarmk{opacity:1;transform:scaleY(1.25)}
+.vp.scrubx .vbarmk{opacity:0}
 .vbar::-webkit-slider-thumb{-webkit-appearance:none;margin-top:-6.5px;width:18px;height:18px;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1);transition:transform .2s cubic-bezier(.34,1.56,.64,1),margin .18s ease}
 .vbar::-moz-range-thumb{width:18px;height:18px;border:0;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1)}
 .vbar:active::-moz-range-thumb{transform:scale(1.2)}
@@ -2657,11 +2662,13 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     const m = /(\d{3,4})p\b/.exec(tag) || /\.C3\.(\d{3,4})\./.exec(tag);
     return m ? +m[1] : 0;
   }
-  function fbSureSources(v, resMap) {
+  // forPrev (19.5): für das Vorschaubild beim Spiegeln – jede Schärfe recht, die kleinste zuerst (lädt am schnellsten)
+  function fbSureSources(v, resMap, forPrev) {
     try {
       const af = assetFor(v);
       if (!af.sure || !af.asset) return [];
       let out = playerSources(v, resMap).filter((u) => assetOf(u) === af.asset);
+      if (forPrev) return out.sort((a, b) => (fbRes(a) || 1e4) - (fbRes(b) || 1e4));
       const shown = Math.min(v.videoWidth || 0, v.videoHeight || 0);   // was Facebook gerade abspielt
       if (shown > 0) out = out.filter((u) => fbRes(u) >= shown * 0.9);   // unschärfer (oder unbekannt) → spiegeln
       out.sort((a, b) => fbRes(b) - fbRes(a));
@@ -3347,7 +3354,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (!st.lenOk) {
         const od = orig.duration, vd = vid.duration;
         if (isFinite(od) && od > 1 && isFinite(vd) && vd > 1 && Math.abs(od - vd) > lenTol(od)) {
-          if (st.capFallback) { st.lenOk = true; useCapture(); return; }   // Facebook: falsche Datei → spiegeln
+          if (st.capFallback) { st.lenOk = true; (st.fbBad || (st.fbBad = [])).push(st.cur); useCapture(); return; }   // Facebook: falsche Datei → spiegeln (und nicht als Vorschau)
           if (!st.lenFirst) st.lenFirst = st.cur;
           if (st.idx < st.sources.length) { tryNext(); return; }
           st.lenOk = true;
@@ -3389,6 +3396,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       autoOrient(orig.videoWidth, orig.videoHeight);
       updateUI();
       watchMirror(ms);
+      if (st.prevWarm) setTimeout(() => { if (vp === st && st.mode === 'capture') st.prevWarm(); }, 1500);
     }
     // Spiegeln am Leben halten: Facebook/Instagram laden ein Reel am Ende jeder Schleife NEU ins Videoelement.
     // Dabei reißt die Bildübertragung ab (Ton läuft weiter, Bild schwarz) – dann sofort neu verbinden.
@@ -4629,13 +4637,21 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Spulen auf der Leiste (19.4) – eigene, große Berührungsfläche statt des Schiebereglers des Browsers:
     //  - kurz antippen = an diese Stelle springen
     //  - ziehen = von der AKTUELLEN Stelle aus weiter (kein Sprung zum Finger); die Leiste wird dabei dick
-    //  - beim Ziehen nach unten (unter die Leiste) = fein: fünfmal langsamer
+    //  - Tempo wie beim Mauszeiger (19.5, statt „nach unten = fein“): schnell ziehen = grob (wie die Leiste), langsam
+    //    ziehen = fein (bis achtmal genauer, bei langen Videos). Nichts zu lernen – wer genau sucht, zieht von selbst
+    //    langsam. Über der Vorschau steht, wie weit es von der alten Stelle weg ist („+0:42“).
+    //  - zurück an die alte Stelle (weißer Strich auf der Leiste): rastet ein (kurzes Vibrieren, „± 0“) – loslassen
+    //    dort = nichts ändern
     //  - nach oben weg vom Balken = abbrechen (Hinweis erscheint); loslassen dort = zurück an die alte Stelle.
     //    Zurück nach unten = weiter spulen. Übernimmt Android die Geste (Hochwischen vom Rand), ebenfalls abbrechen.
     const barHit = h('div', { class: 'vbarhit', 'aria-hidden': 'true' });
-    bar.parentNode.append(barHit);
+    const barMark = h('i', { class: 'vbarmk' });
+    bar.parentNode.append(barHit, barMark);
     bar.tabIndex = -1;
-    const scr = { on: false, id: 0, x0: 0, y0: 0, lx: 0, t0: 0, t: 0, moved: false, mode: '' };
+    const scr = { on: false, id: 0, x0: 0, y0: 0, lx: 0, lt: 0, v: -1, t0: 0, t: 0, raw: 0, moved: false, mode: '', snap: false, away: false };
+    const buzz = () => { try { if (navigator.vibrate && touchFresh()) navigator.vibrate(12); } catch (e) {} };
+    // Abstand zur alten Stelle: „+12 s“, „−1:05“
+    const delta = (x) => { const a = Math.round(Math.abs(x)); return (x < 0 ? '−' : '+') + (a < 60 ? a + ' s' : fmtTime(a)); };
     const durOk = () => { const d = M().duration; return isFinite(d) && d > 0 ? d : 0; };
     const barBack = () => { const m = M(), d = durOk(); if (d) { bar.value = String(Math.round(m.currentTime / d * 1000)); paintBar(bar.value / 1000); tCur.textContent = fmtTime(m.currentTime); } };
     function scrubShow(t) {
@@ -4648,14 +4664,16 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       prevShow(p);
       wrap.classList.toggle('scrubx', scr.mode === 'cancel');
       wrap.classList.toggle('scrubfine', scr.mode === 'fine');
+      wrap.classList.toggle('scrubsnap', scr.snap && scr.mode !== 'cancel');
       if (scr.mode === 'cancel') pvTime.textContent = tr('Loslassen = abbrechen');
-      else if (scr.mode === 'fine') pvTime.textContent = fmtTime(t) + ' · ' + tr('fein');
+      else if (scr.moved) pvTime.textContent = fmtTime(t) + ' · ' + (scr.snap ? '± 0' : delta(t - scr.t0));
     }
     function scrubEnd(how) {   // how: 'seek' | 'tap' | 'cancel'
       if (!scr.on) return;
       scr.on = false;
-      wrap.classList.remove('thick', 'scrubx', 'scrubfine');
+      wrap.classList.remove('thick', 'scrubx', 'scrubfine', 'scrubsnap');
       const m = M(), d = durOk();
+      if (how === 'seek' && scr.snap) how = 'cancel';   // an der alten Stelle losgelassen: nichts ändern
       if (how === 'cancel') { liveEnd(true); barBack(); }
       else if (d) {
         liveEnd(false);
@@ -4672,7 +4690,10 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (!d || scr.on) return;
       try { barHit.setPointerCapture(e.pointerId); } catch (x) {}
       const m = M();
-      Object.assign(scr, { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, lx: e.clientX, t0: m.currentTime, t: m.currentTime, moved: false, mode: '' });
+      Object.assign(scr, { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, lx: e.clientX, lt: e.timeStamp || performance.now(), v: -1, t0: m.currentTime, t: m.currentTime, raw: m.currentTime, moved: false, mode: '', snap: false, away: false });
+      // weißer Strich: hier warst du (dorthin zurück rastet ein)
+      const br = bar.getBoundingClientRect(), rr = bar.parentNode.getBoundingClientRect();
+      barMark.style.left = Math.round(br.left - rr.left + 7 + clamp(m.currentTime / d, 0, 1) * (br.width - 14) - 1.5) + 'px';
       st.barDrag = true; clearTimeout(st.hideTimer);
       if (!liveMode()) { pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid(); }
     });
@@ -4687,11 +4708,24 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         wrap.classList.add('thick');
       }
       const br = bar.getBoundingClientRect(), w = Math.max(60, br.width - 14);
-      if (dy < -Math.max(70, br.height * 1.5)) { scr.mode = 'cancel'; scr.lx = e.clientX; scrubShow(scr.t0); return; }
-      scr.mode = dy > 50 ? 'fine' : '';
+      const now = e.timeStamp || performance.now(), dt = Math.max(4, now - scr.lt);
       const dx = e.clientX - scr.lx;
-      scr.lx = e.clientX;
-      scr.t = clamp(scr.t + dx / w * d * (scr.mode === 'fine' ? 0.2 : 1), 0, d);
+      scr.lx = e.clientX; scr.lt = now;
+      if (dy < -Math.max(70, br.height * 1.5)) { scr.mode = 'cancel'; scr.v = -1; scrubShow(scr.t0); return; }
+      // Tempo: Fingergeschwindigkeit (px/ms, geglättet) → Sekunden pro Pixel zwischen „fein“ und „wie die Leiste“
+      const sp = Math.abs(dx) / dt;
+      scr.v = scr.v < 0 ? sp : scr.v * 0.6 + sp * 0.4;
+      const full = d / w, fine = Math.min(full, Math.max(full / 8, 0.08));
+      const rate = fine + (full - fine) * clamp((scr.v - 0.06) / 0.24, 0, 1);
+      scr.mode = rate < full * 0.6 ? 'fine' : '';
+      scr.raw = clamp(scr.raw + dx * rate, 0, d);
+      // Einrasten an der alten Stelle (erst nachdem du einmal weg warst)
+      const zone = Math.max(0.25, fine * 7);
+      const near = Math.abs(scr.raw - scr.t0) < zone;
+      if (!near) scr.away = true;
+      if (near && scr.away && !scr.snap) buzz();
+      scr.snap = near && scr.away;
+      scr.t = scr.snap ? scr.t0 : scr.raw;
       scrubShow(scr.t);
     });
     barHit.addEventListener('pointerup', (e) => {
@@ -4742,20 +4776,37 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     st.cleanup.push(prevReset);
     st.cleanup.push(() => { thumbs.clear(); bucket = 0; });
     // Kleinste Qualität desselben Videos (lädt viel schneller); Streams nutzen ohnehin die kleinste Stufe
-    function previewSrc() {
+    function previewSrc(key) {
+      if (st.mode !== 'own') return key;
       if (st.hls) return st.cur;
       const curRes = st.srcRes[st.cur] || 0;
       const low = st.sources.filter((u) => (st.srcRes[u] || 0) >= 144).sort((x, y) => st.srcRes[x] - st.srcRes[y])[0];
       return low && curRes && st.srcRes[low] < curRes ? low : st.cur;
     }
+    // Gespiegelt (Facebook in Kadri, 19.5): Facebook zeigt das Video schärfer als die fertige MP4 – deshalb spiegelt
+    // Kadri. Die MP4 desselben Videos (sicher erkannt, gleiche Video-ID) taugt aber für das kleine Vorschaubild.
+    // Passt ihre Länge nicht, wird sie nicht genommen (dann nur die Zeit). Neu geprüft höchstens alle 1,5 s.
+    let fbPrevAt = 0;
+    function fbPrevSrc() {
+      if (!FB_TRY_OWN || st.mode !== 'capture') return '';
+      const bad = st.fbBad || [];
+      if (Date.now() - fbPrevAt > 1500) {
+        fbPrevAt = Date.now();
+        const u = fbSureSources(orig, null, true).filter((x) => bad.indexOf(x) < 0)[0];
+        if (u) st.fbPrev = u;
+      }
+      return st.fbPrev && bad.indexOf(st.fbPrev) < 0 ? st.fbPrev : '';
+    }
     function prevLoad() {
-      const key = st.mode === 'own' ? st.cur : '';
-      if (!key) { prev.classList.add('noimg'); return false; }   // gespiegelt (Facebook …): keine eigene Quelle → nur die Zeit
+      const key = st.mode === 'own' ? st.cur : fbPrevSrc();
+      if (!key) { prev.classList.add('noimg'); return false; }   // gespiegelt ohne passende Datei: keine eigene Quelle → nur die Zeit
+      if (pvs.key === key) return !prev.classList.contains('noimg');
       prev.classList.remove('noimg');
-      if (pvs.key === key) return true;
+      // gespiegelt und ein anderes Video (Facebook spielt schon das nächste Reel)? Gemerkte Bilder gehören zum alten
+      if (st.mode !== 'own' && pvs.key && assetOf(pvs.key) !== assetOf(key)) { thumbs.clear(); bucket = 0; }
       prevReset();
       pvs.key = key;
-      const u = previewSrc();
+      const u = previewSrc(key);
       pvs.src = u;
       if (st.hls && typeof Hls !== 'undefined') {
         const hp = new Hls({ enableWorker: false, startLevel: 0, maxBufferLength: 2, maxMaxBufferLength: 4, backBufferLength: 0 });
@@ -4880,7 +4931,10 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       pvs.busy = false;
       // Kleinere Qualität gewählt, aber andere Länge? Dann lieber die laufende Quelle nehmen
       const md = M().duration;
-      if (pvs.src !== st.cur && isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > 3) {
+      const off = isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > 3;
+      if (st.mode !== 'own') {   // gespiegelt: Datei passt nicht zum Video → nie wieder nehmen, nur die Zeit zeigen
+        if (off || !isFinite(md)) { (st.fbBad || (st.fbBad = [])).push(pvs.src); const k = pvs.key; prevReset(); pvs.key = k; prev.classList.add('noimg'); prev.classList.remove('img'); return; }
+      } else if (pvs.src !== st.cur && off) {
         const key = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = key; return;
       }
       bucketFor();
@@ -4912,6 +4966,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Dateien nur ihr Inhaltsverzeichnis (wenige KB) – dann wartet auch das erste Ziehen nicht darauf
     st.prevWarm = () => {
       if (liveMode()) return;   // Spulen im Bild: kein Vorschau-Video nötig (spart Daten)
+      if (st.mode === 'capture') { if (fbPrevSrc()) { pv.preload = 'metadata'; prevLoad(); } return; }   // Länge gleich prüfen
       if (st.mode !== 'own' || !st.cur) return;
       if (st.hls) { pvs.autoGrid = true; pvs.userDone = true; prevLoad(); if (pv.readyState >= 1) startGrid(); }
       else { pv.preload = 'metadata'; prevLoad(); }
@@ -6099,7 +6154,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.4',
+      'Video-Assistent 19.5',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
@@ -6113,7 +6168,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       'Nächstes-Reel-Countdown abgebrochen: ' + nextCancels + '×',
       'Bild-in-Bild: Browser ' + (document.pictureInPictureEnabled ? 'kann es' : 'kann es für Webseiten nicht (nur Wischen zum Startbildschirm)') +
         ' | im Player: ' + (vp ? (vp.pipOk ? 'erlaubt' : 'aus') + ' (' + (vp.mode === 'capture' ? 'gespiegelt' + (kadriPage() ? ', Schild' : '') : 'eigener Player') + ')' : 'zu') +
-        ' | Vorschau: ' + (vp ? (vp.mode === 'own' ? 'Bilder' : 'nur Zeit (gespiegelt)') : '-'),
+        ' | Vorschau: ' + (vp ? (vp.mode === 'own' ? 'Bilder' : vp.fbPrev && (vp.fbBad || []).indexOf(vp.fbPrev) < 0 ? 'Bilder aus der MP4 (gespiegelt)' : 'nur Zeit (gespiegelt)') : '-'),
       'Stream-Nachweis: ' + (r.proof || '-') + ' | Listen gelesen: ' + plInfo.size + ' | Stück-Ordner: ' + segHits.size +
         (function () { const p = playingStream(navAt); return p ? ' | lädt gerade: ' + hostOf(p.u) + ' …' + p.u.slice(-40) : ''; })(),
       'Kodierung: ' + (r.best ? encTag(r.best) || '-' : '-'),

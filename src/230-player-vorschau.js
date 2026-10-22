@@ -32,20 +32,37 @@
     st.cleanup.push(prevReset);
     st.cleanup.push(() => { thumbs.clear(); bucket = 0; });
     // Kleinste Qualität desselben Videos (lädt viel schneller); Streams nutzen ohnehin die kleinste Stufe
-    function previewSrc() {
+    function previewSrc(key) {
+      if (st.mode !== 'own') return key;
       if (st.hls) return st.cur;
       const curRes = st.srcRes[st.cur] || 0;
       const low = st.sources.filter((u) => (st.srcRes[u] || 0) >= 144).sort((x, y) => st.srcRes[x] - st.srcRes[y])[0];
       return low && curRes && st.srcRes[low] < curRes ? low : st.cur;
     }
+    // Gespiegelt (Facebook in Kadri, 19.5): Facebook zeigt das Video schärfer als die fertige MP4 – deshalb spiegelt
+    // Kadri. Die MP4 desselben Videos (sicher erkannt, gleiche Video-ID) taugt aber für das kleine Vorschaubild.
+    // Passt ihre Länge nicht, wird sie nicht genommen (dann nur die Zeit). Neu geprüft höchstens alle 1,5 s.
+    let fbPrevAt = 0;
+    function fbPrevSrc() {
+      if (!FB_TRY_OWN || st.mode !== 'capture') return '';
+      const bad = st.fbBad || [];
+      if (Date.now() - fbPrevAt > 1500) {
+        fbPrevAt = Date.now();
+        const u = fbSureSources(orig, null, true).filter((x) => bad.indexOf(x) < 0)[0];
+        if (u) st.fbPrev = u;
+      }
+      return st.fbPrev && bad.indexOf(st.fbPrev) < 0 ? st.fbPrev : '';
+    }
     function prevLoad() {
-      const key = st.mode === 'own' ? st.cur : '';
-      if (!key) { prev.classList.add('noimg'); return false; }   // gespiegelt (Facebook …): keine eigene Quelle → nur die Zeit
+      const key = st.mode === 'own' ? st.cur : fbPrevSrc();
+      if (!key) { prev.classList.add('noimg'); return false; }   // gespiegelt ohne passende Datei: keine eigene Quelle → nur die Zeit
+      if (pvs.key === key) return !prev.classList.contains('noimg');
       prev.classList.remove('noimg');
-      if (pvs.key === key) return true;
+      // gespiegelt und ein anderes Video (Facebook spielt schon das nächste Reel)? Gemerkte Bilder gehören zum alten
+      if (st.mode !== 'own' && pvs.key && assetOf(pvs.key) !== assetOf(key)) { thumbs.clear(); bucket = 0; }
       prevReset();
       pvs.key = key;
-      const u = previewSrc();
+      const u = previewSrc(key);
       pvs.src = u;
       if (st.hls && typeof Hls !== 'undefined') {
         const hp = new Hls({ enableWorker: false, startLevel: 0, maxBufferLength: 2, maxMaxBufferLength: 4, backBufferLength: 0 });
@@ -170,7 +187,10 @@
       pvs.busy = false;
       // Kleinere Qualität gewählt, aber andere Länge? Dann lieber die laufende Quelle nehmen
       const md = M().duration;
-      if (pvs.src !== st.cur && isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > 3) {
+      const off = isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > 3;
+      if (st.mode !== 'own') {   // gespiegelt: Datei passt nicht zum Video → nie wieder nehmen, nur die Zeit zeigen
+        if (off || !isFinite(md)) { (st.fbBad || (st.fbBad = [])).push(pvs.src); const k = pvs.key; prevReset(); pvs.key = k; prev.classList.add('noimg'); prev.classList.remove('img'); return; }
+      } else if (pvs.src !== st.cur && off) {
         const key = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = key; return;
       }
       bucketFor();
@@ -202,6 +222,7 @@
     // Dateien nur ihr Inhaltsverzeichnis (wenige KB) – dann wartet auch das erste Ziehen nicht darauf
     st.prevWarm = () => {
       if (liveMode()) return;   // Spulen im Bild: kein Vorschau-Video nötig (spart Daten)
+      if (st.mode === 'capture') { if (fbPrevSrc()) { pv.preload = 'metadata'; prevLoad(); } return; }   // Länge gleich prüfen
       if (st.mode !== 'own' || !st.cur) return;
       if (st.hls) { pvs.autoGrid = true; pvs.userDone = true; prevLoad(); if (pv.readyState >= 1) startGrid(); }
       else { pv.preload = 'metadata'; prevLoad(); }

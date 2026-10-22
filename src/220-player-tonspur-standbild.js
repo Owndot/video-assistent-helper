@@ -110,13 +110,21 @@
     // Spulen auf der Leiste (19.4) – eigene, große Berührungsfläche statt des Schiebereglers des Browsers:
     //  - kurz antippen = an diese Stelle springen
     //  - ziehen = von der AKTUELLEN Stelle aus weiter (kein Sprung zum Finger); die Leiste wird dabei dick
-    //  - beim Ziehen nach unten (unter die Leiste) = fein: fünfmal langsamer
+    //  - Tempo wie beim Mauszeiger (19.5, statt „nach unten = fein“): schnell ziehen = grob (wie die Leiste), langsam
+    //    ziehen = fein (bis achtmal genauer, bei langen Videos). Nichts zu lernen – wer genau sucht, zieht von selbst
+    //    langsam. Über der Vorschau steht, wie weit es von der alten Stelle weg ist („+0:42“).
+    //  - zurück an die alte Stelle (weißer Strich auf der Leiste): rastet ein (kurzes Vibrieren, „± 0“) – loslassen
+    //    dort = nichts ändern
     //  - nach oben weg vom Balken = abbrechen (Hinweis erscheint); loslassen dort = zurück an die alte Stelle.
     //    Zurück nach unten = weiter spulen. Übernimmt Android die Geste (Hochwischen vom Rand), ebenfalls abbrechen.
     const barHit = h('div', { class: 'vbarhit', 'aria-hidden': 'true' });
-    bar.parentNode.append(barHit);
+    const barMark = h('i', { class: 'vbarmk' });
+    bar.parentNode.append(barHit, barMark);
     bar.tabIndex = -1;
-    const scr = { on: false, id: 0, x0: 0, y0: 0, lx: 0, t0: 0, t: 0, moved: false, mode: '' };
+    const scr = { on: false, id: 0, x0: 0, y0: 0, lx: 0, lt: 0, v: -1, t0: 0, t: 0, raw: 0, moved: false, mode: '', snap: false, away: false };
+    const buzz = () => { try { if (navigator.vibrate && touchFresh()) navigator.vibrate(12); } catch (e) {} };
+    // Abstand zur alten Stelle: „+12 s“, „−1:05“
+    const delta = (x) => { const a = Math.round(Math.abs(x)); return (x < 0 ? '−' : '+') + (a < 60 ? a + ' s' : fmtTime(a)); };
     const durOk = () => { const d = M().duration; return isFinite(d) && d > 0 ? d : 0; };
     const barBack = () => { const m = M(), d = durOk(); if (d) { bar.value = String(Math.round(m.currentTime / d * 1000)); paintBar(bar.value / 1000); tCur.textContent = fmtTime(m.currentTime); } };
     function scrubShow(t) {
@@ -129,14 +137,16 @@
       prevShow(p);
       wrap.classList.toggle('scrubx', scr.mode === 'cancel');
       wrap.classList.toggle('scrubfine', scr.mode === 'fine');
+      wrap.classList.toggle('scrubsnap', scr.snap && scr.mode !== 'cancel');
       if (scr.mode === 'cancel') pvTime.textContent = tr('Loslassen = abbrechen');
-      else if (scr.mode === 'fine') pvTime.textContent = fmtTime(t) + ' · ' + tr('fein');
+      else if (scr.moved) pvTime.textContent = fmtTime(t) + ' · ' + (scr.snap ? '± 0' : delta(t - scr.t0));
     }
     function scrubEnd(how) {   // how: 'seek' | 'tap' | 'cancel'
       if (!scr.on) return;
       scr.on = false;
-      wrap.classList.remove('thick', 'scrubx', 'scrubfine');
+      wrap.classList.remove('thick', 'scrubx', 'scrubfine', 'scrubsnap');
       const m = M(), d = durOk();
+      if (how === 'seek' && scr.snap) how = 'cancel';   // an der alten Stelle losgelassen: nichts ändern
       if (how === 'cancel') { liveEnd(true); barBack(); }
       else if (d) {
         liveEnd(false);
@@ -153,7 +163,10 @@
       if (!d || scr.on) return;
       try { barHit.setPointerCapture(e.pointerId); } catch (x) {}
       const m = M();
-      Object.assign(scr, { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, lx: e.clientX, t0: m.currentTime, t: m.currentTime, moved: false, mode: '' });
+      Object.assign(scr, { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, lx: e.clientX, lt: e.timeStamp || performance.now(), v: -1, t0: m.currentTime, t: m.currentTime, raw: m.currentTime, moved: false, mode: '', snap: false, away: false });
+      // weißer Strich: hier warst du (dorthin zurück rastet ein)
+      const br = bar.getBoundingClientRect(), rr = bar.parentNode.getBoundingClientRect();
+      barMark.style.left = Math.round(br.left - rr.left + 7 + clamp(m.currentTime / d, 0, 1) * (br.width - 14) - 1.5) + 'px';
       st.barDrag = true; clearTimeout(st.hideTimer);
       if (!liveMode()) { pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid(); }
     });
@@ -168,11 +181,24 @@
         wrap.classList.add('thick');
       }
       const br = bar.getBoundingClientRect(), w = Math.max(60, br.width - 14);
-      if (dy < -Math.max(70, br.height * 1.5)) { scr.mode = 'cancel'; scr.lx = e.clientX; scrubShow(scr.t0); return; }
-      scr.mode = dy > 50 ? 'fine' : '';
+      const now = e.timeStamp || performance.now(), dt = Math.max(4, now - scr.lt);
       const dx = e.clientX - scr.lx;
-      scr.lx = e.clientX;
-      scr.t = clamp(scr.t + dx / w * d * (scr.mode === 'fine' ? 0.2 : 1), 0, d);
+      scr.lx = e.clientX; scr.lt = now;
+      if (dy < -Math.max(70, br.height * 1.5)) { scr.mode = 'cancel'; scr.v = -1; scrubShow(scr.t0); return; }
+      // Tempo: Fingergeschwindigkeit (px/ms, geglättet) → Sekunden pro Pixel zwischen „fein“ und „wie die Leiste“
+      const sp = Math.abs(dx) / dt;
+      scr.v = scr.v < 0 ? sp : scr.v * 0.6 + sp * 0.4;
+      const full = d / w, fine = Math.min(full, Math.max(full / 8, 0.08));
+      const rate = fine + (full - fine) * clamp((scr.v - 0.06) / 0.24, 0, 1);
+      scr.mode = rate < full * 0.6 ? 'fine' : '';
+      scr.raw = clamp(scr.raw + dx * rate, 0, d);
+      // Einrasten an der alten Stelle (erst nachdem du einmal weg warst)
+      const zone = Math.max(0.25, fine * 7);
+      const near = Math.abs(scr.raw - scr.t0) < zone;
+      if (!near) scr.away = true;
+      if (near && scr.away && !scr.snap) buzz();
+      scr.snap = near && scr.away;
+      scr.t = scr.snap ? scr.t0 : scr.raw;
       scrubShow(scr.t);
     });
     barHit.addEventListener('pointerup', (e) => {
