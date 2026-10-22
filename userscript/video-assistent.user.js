@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      18.7
+// @version      18.8
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -22,6 +22,16 @@
   'use strict';
   if (window.__evpLoaded) return;
   window.__evpLoaded = true;
+  // Skript UND Erweiterung (Kadri) gleichzeitig installiert? Sie sehen sich nicht (getrennte Bereiche) – darum ein
+  // Zeichen an der Seite: Wer zuerst da ist, läuft; der andere bleibt still (sonst zwei Knöpfe, zwei Player).
+  try {
+    const de = document.documentElement;
+    if (de) { if (de.hasAttribute('data-evp-on')) return; de.setAttribute('data-evp-on', ''); }
+  } catch (e) {}
+  // In der Erweiterung „Kadri“ gebaut? (Die Erweiterung setzt __KADRI__ vor dem Skript.) Dort sieht man ohne
+  // laufende Helfer-App nur, was auch ohne sie geht (keine Helligkeit usw.).
+  const IS_KADRI = typeof __KADRI__ !== 'undefined' && !!__KADRI__;
+  const HIDE_NO_HELPER = IS_KADRI;
   // In einem Fenster ohne eigene Quelle übernimmt die Hauptseite (sonst gäbe es zwei Buttons)
   try {
     const fe = window.frameElement;
@@ -704,6 +714,18 @@
       if (finalUrl && urlKey(finalUrl) !== urlKey(reqUrl)) plInfo.set(urlKey(finalUrl), info);
       while (plInfo.size > 80) plInfo.delete(plInfo.keys().next().value);
     } catch (e) {}
+  }
+  // Erweiterung Kadri: Ein winziges Skript IN der Seite (page.js) liest die Stream-Listen und – auf Facebook/Instagram –
+  // die API-Antworten mit, die die Seite lädt, und reicht sie hierher. Im abgetrennten Bereich (Userscript im Modus
+  // „content“) sieht das Skript diese Anfragen sonst nicht. Nur in der Erweiterung aktiv.
+  if (IS_KADRI) {
+    document.addEventListener('kadri-net', (e) => {
+      let d = null;
+      try { d = typeof e.detail === 'string' ? JSON.parse(e.detail) : null; } catch (x) { d = null; }
+      if (!d || typeof d.u !== 'string' || typeof d.t !== 'string') return;
+      if (d.k === 'pl') notePlaylist(d.u, typeof d.f === 'string' ? d.f : '', d.t);
+      else if (d.k === 'api' && META) { bodiesRead++; try { scanText(d.t); } catch (x) {} }
+    });
   }
   function noteSegment(u) {
     if (PLAYLIST_RE.test(u) || !(SEGFILE_RE.test(u) || SEGMENT_RE.test(u))) return;
@@ -3887,6 +3909,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         it('Auto-Drehen', yn(CONFIG.autoRotate), () => setSetting('autoRotate', !CONFIG.autoRotate)),
         it('Beim Verlassen', CONFIG.leaveAction === 'pause' ? 'Anhalten' : 'Weiter', () => setSetting('leaveAction', CONFIG.leaveAction === 'pause' ? 'play' : 'pause')),
         it('Download', CONFIG.downloader === 'share' ? 'Teilen' : 'YTDLnis', () => setSetting('downloader', CONFIG.downloader === 'share' ? 'ytdlnis' : 'share')),
+        (!HIDE_NO_HELPER || st.sys || CONFIG.systemHelper === false) &&   // Kadri: nur, wenn der Helfer läuft (oder abgeschaltet ist)
         it('Helper-App', yn(CONFIG.systemHelper !== false), () => { setSetting('systemHelper', CONFIG.systemHelper === false); toast('Gilt ab dem nächsten Öffnen des Players'); }),
         it('Sprache', { de: 'Deutsch', en: 'English' }[CONFIG.language] || 'Auto', () => {
           next('language', ['auto', 'de', 'en']);
@@ -3899,7 +3922,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
           setLens(CONFIG.lensGlass !== false);
           toast('Einstellungen zurückgesetzt');
         }),
-      ];
+      ].filter(Boolean);
       openMenu('Einstellungen', items, keep, openMore);
     }
 
@@ -4856,7 +4879,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
           // vergrößert: ein Finger verschiebt das Bild (wie Telegram) – Helligkeit/Lautstärke/Spulen erst wieder bei 1×
           g.mode = 'pan'; g.px0 = st.panX; g.py0 = st.panY; g.vs = [];
           vid.classList.remove('vzan'); st.panFree = true;
-        } else g.mode = Math.abs(dx) > Math.abs(dy) ? 'seek' : (g.top ? 'none' : (g.x > W / 2 ? 'vol' : 'bright'));
+        } else g.mode = Math.abs(dx) > Math.abs(dy) ? 'seek' : (g.top ? 'none' : (g.x > W / 2 ? 'vol'
+          : (HIDE_NO_HELPER && !(st.sys && st.sys.bright) ? 'none' : 'bright')));   // Helligkeit nur mit Helfer (Kadri)
         if (g.mode === 'none') return;
         // ab hier zählt jede Bewegung gleich (kein Sprung um die Anfangsstrecke); an den Enden sofort umkehrbar
         g.ly = e.clientY;
@@ -5912,7 +5936,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 18.7',
+      'Video-Assistent 18.8',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

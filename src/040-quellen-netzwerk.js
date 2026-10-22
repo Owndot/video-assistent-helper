@@ -308,6 +308,18 @@
       while (plInfo.size > 80) plInfo.delete(plInfo.keys().next().value);
     } catch (e) {}
   }
+  // Erweiterung Kadri: Ein winziges Skript IN der Seite (page.js) liest die Stream-Listen und – auf Facebook/Instagram –
+  // die API-Antworten mit, die die Seite lädt, und reicht sie hierher. Im abgetrennten Bereich (Userscript im Modus
+  // „content“) sieht das Skript diese Anfragen sonst nicht. Nur in der Erweiterung aktiv.
+  if (IS_KADRI) {
+    document.addEventListener('kadri-net', (e) => {
+      let d = null;
+      try { d = typeof e.detail === 'string' ? JSON.parse(e.detail) : null; } catch (x) { d = null; }
+      if (!d || typeof d.u !== 'string' || typeof d.t !== 'string') return;
+      if (d.k === 'pl') notePlaylist(d.u, typeof d.f === 'string' ? d.f : '', d.t);
+      else if (d.k === 'api' && META) { bodiesRead++; try { scanText(d.t); } catch (x) {} }
+    });
+  }
   function noteSegment(u) {
     if (PLAYLIST_RE.test(u) || !(SEGFILE_RE.test(u) || SEGMENT_RE.test(u))) return;
     if (vp && vp.mode === 'own') return;   // Stücke des eigenen Players zählen nicht

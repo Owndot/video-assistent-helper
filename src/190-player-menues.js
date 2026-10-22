@@ -165,6 +165,7 @@
         it('Auto-Drehen', yn(CONFIG.autoRotate), () => setSetting('autoRotate', !CONFIG.autoRotate)),
         it('Beim Verlassen', CONFIG.leaveAction === 'pause' ? 'Anhalten' : 'Weiter', () => setSetting('leaveAction', CONFIG.leaveAction === 'pause' ? 'play' : 'pause')),
         it('Download', CONFIG.downloader === 'share' ? 'Teilen' : 'YTDLnis', () => setSetting('downloader', CONFIG.downloader === 'share' ? 'ytdlnis' : 'share')),
+        (!HIDE_NO_HELPER || st.sys || CONFIG.systemHelper === false) &&   // Kadri: nur, wenn der Helfer läuft (oder abgeschaltet ist)
         it('Helper-App', yn(CONFIG.systemHelper !== false), () => { setSetting('systemHelper', CONFIG.systemHelper === false); toast('Gilt ab dem nächsten Öffnen des Players'); }),
         it('Sprache', { de: 'Deutsch', en: 'English' }[CONFIG.language] || 'Auto', () => {
           next('language', ['auto', 'de', 'en']);
@@ -177,7 +178,7 @@
           setLens(CONFIG.lensGlass !== false);
           toast('Einstellungen zurückgesetzt');
         }),
-      ];
+      ].filter(Boolean);
       openMenu('Einstellungen', items, keep, openMore);
     }
 
