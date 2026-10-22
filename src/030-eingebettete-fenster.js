@@ -104,7 +104,9 @@
   function frameFs(f) {
     try {
       if (fsElem() === f) return;
-      if (!touchFresh()) { sendState(); if (fb.childWin) fpost(fb.childWin, { t: 'fsno' }); return; }   // ohne Berührung lehnt der Browser ohnehin ab
+      // ohne Berührung lehnt Chrome ohnehin ab (und meldet einen Fehler). Firefox zählt den Tipp im eingebetteten
+      // Fenster hier oben nicht mit, erlaubt es aber trotzdem – dort also einfach versuchen
+      if (!GECKO && !touchFresh()) { sendState(); if (fb.childWin) fpost(fb.childWin, { t: 'fsno' }); return; }
       const rq = f.requestFullscreen || f.webkitRequestFullscreen;
       const pr = rq && rq.call(f, { navigationUI: 'hide' });
       // abgelehnt (Firefox: kein Tipp hier oben) → das Fenster selbst versucht es, dort gilt der Tipp noch
