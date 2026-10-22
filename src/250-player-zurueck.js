@@ -100,10 +100,16 @@
         });
         return;
       }
+      // Sieht es nach der Zurück-Taste aus (im Vollbild gestartet, nicht gedreht, Seite sichtbar)? Dann den Player
+      // SOFORT unsichtbar und stumm machen – man sieht gleich die Seite (wie bei Samsung), statt kurz den Player ohne
+      // Vollbild mit den Leisten des Browsers. Geprüft wird unsichtbar weiter; war es doch etwas anderes, kommt er zurück.
+      const maybeBack = st.fsStart && !awaySince(exitAt) && (!!st.orient || st.framed || exitAt - turnBefore >= 1500);
+      if (maybeBack) veil(true);
       // kurz abwarten: kommt das Vollbild gleich zurück oder war es eine Drehung?
       setTimeout(() => {
-        if (vp !== st || isFs()) return;
-        if (pipNow()) { st.fsStart = false; st.fsLost = true; return; }
+        if (vp !== st) return;
+        if (isFs()) { veil(false); return; }
+        if (pipNow()) { veil(false); st.fsStart = false; st.fsLost = true; return; }
         // (Eingebettetes Fenster: dessen Größe springt beim Vollbild-Ende immer – dort zählt nur die Zurück-Taste.)
         // Gedreht VOR dem Vollbild-Ende (oder praktisch gleichzeitig) = Drehung hat das Vollbild beendet.
         // Gedreht erst DANACH = Folge der Zurück-Taste (das Bild springt nach dem Vollbild zurück ins Hochformat).
@@ -112,6 +118,7 @@
         const locked = !!st.orient;
         const rotated = !st.framed && !locked && ((exitAt - turnBefore < 1500) || (lastTurn >= exitAt && lastTurn - exitAt < 120));
         if (rotated) {
+          veil(false);
           // Vollbild durch Drehen verloren (Android oder die Webseite selbst): Player bleibt offen,
           // der nächste Tipp holt das Vollbild zurück. Zurück-Taste schließt ihn bis dahin über den Verlauf.
           st.fsStart = false;
@@ -121,18 +128,29 @@
         }
         // In eine andere App gewechselt (Fokus weg/Seite verdeckt)? Dann kein „Zurück“ – Player bleibt offen,
         // beim Zurückkommen holt der nächste Tipp das Vollbild zurück
-        const keep = () => { st.fsStart = false; st.fsLost = true; if (st.pushHist) st.pushHist(); };
+        const keep = () => { veil(false); st.fsStart = false; st.fsLost = true; if (st.pushHist) st.pushHist(); };
         if (awaySince(exitAt)) { keep(); return; }
         // Im Vollbild gestartet: Vollbild verlassen (Zurück-Taste) = Player schließen – nach einem kurzen zweiten Blick,
         // falls die Meldung „Seite verdeckt“ beim App-Wechsel etwas später kommt
         if (st.fsStart) {
-          setTimeout(() => { if (vp !== st || isFs()) return; if (awaySince(exitAt)) keep(); else closePlayer(); }, 350);
+          setTimeout(() => { if (vp !== st) return; if (isFs()) { veil(false); return; } if (awaySince(exitAt)) keep(); else closePlayer(); }, 350);
           return;
         }
+        veil(false);
         lockO('');
         st.orient = '';
       }, 400);
     };
+    // Player kurz unsichtbar und stumm (während geprüft wird, ob „Zurück“ gemeint war)
+    function veil(on) {
+      if (on === wrap.classList.contains('vgone')) return;
+      wrap.classList.toggle('vgone', on);
+      try {
+        const m = VOL();
+        if (on) { st.veilMuted = m.muted; m.muted = true; }
+        else if (typeof st.veilMuted === 'boolean') { m.muted = st.veilMuted; st.veilMuted = null; }
+      } catch (e) {}
+    }
     document.addEventListener('fullscreenchange', onFs);
     document.addEventListener('webkitfullscreenchange', onFs);
     // Eingebettet: Meldungen der Hauptseite (Vollbild an/aus, Ränder, Titel)

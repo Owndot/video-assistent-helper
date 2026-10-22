@@ -88,6 +88,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vb:focus-visible,.vchip:focus-visible,.vmi:focus-visible{outline:2px solid var(--ice);outline-offset:2px}
 .vstash{display:none!important}
 .vp.ctlnew .vchrome,.vp.ctlnew .vchrome *{pointer-events:none!important}
+.vp.vgone{opacity:0!important;transition:opacity .1s ease}
+.vp.vgone,.vp.vgone *{pointer-events:none!important}
 .vtext{width:auto;min-width:40px;padding:0 9px;font:650 13.5px var(--font);font-variant-numeric:tabular-nums}
 .vmid{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:30px;transition:opacity .2s}
 .vplay{width:64px;height:64px;border-radius:32px}

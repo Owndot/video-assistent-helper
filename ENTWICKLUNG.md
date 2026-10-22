@@ -162,6 +162,8 @@ Benachrichtigungen) – das prüft nur das Handy.
   (`nearEnd`, 40 ms), die letzten Meldungen per Einfang-Zuhörer auf `window` abfangen (`gate`) und beim Schließen am
   Ende das Original NICHT weiterspielen lassen.
 - Facebook-Reels: `location.href` bleibt beim ersten Reel – für Links die ID aus dem Kasten des Videos nehmen.
+- Zurück-Geste: Nicht sichtbar auf die Entscheidung warten – `veil(true)` sofort, bei Drehen/App-Wechsel/Bild-in-Bild
+  `veil(false)`. Jeder „behalten“-Weg in `onFs` muss `veil(false)` aufrufen.
 - Vollbild-Ende ist nur dann die Zurück-Taste, wenn die Seite dabei **sichtbar und im Fokus** bleibt – beim
   App-Wechsel kommen `blur`/`visibilitychange` (manchmal erst nach dem Vollbild-Ende, daher der zweite Blick nach 750 ms).
 - App-Texte: `Tr.t("deutsch", "english")` (nach Sprache des Handys), App-Name in `res/values*/strings.xml`.
@@ -276,3 +278,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 17.5 | Sleep-Timer (15–60 min / Ende des Videos, 8 s ausblenden), Dialog-Verstärker (Hochpass, Sprachanhebung, Kompressor – nur bei freigegebenem Ton), Wiederholen Aus → 1× → ∞, Akzent einfarbig (helle Fläche statt Hellblau). App: Design Auto/Hell/Dunkel, einfarbige Knöpfe |
 | 17.6 | Reels: 0,6 s vor dem Ende anhalten + Schleuse (`ended` nie, `timeupdate`/`pause` in der letzten Sekunde nicht zur Seite) – auch Seiten, die schon kurz vor „ended“ weiterspringen. Teilen/Download in Facebook-Reels: Video-ID aus dem eigenen Kasten (`fbVideoId`) statt der Seitenadresse, die beim ersten Reel stehen bleibt; Diagnose zeigt den Link |
 | 17.7 | Flüssiger: Ambient weichgezeichnet IM 32-px-Bild (kein Vollbild-`blur(48px)` mehr, Rand per Verlauf statt CSS-Maske), 2,5 statt 8 Bilder/s; Vorschaubilder im Leerlauf; Zeiten/Zeitleiste nur bei sichtbaren Leisten und nur bei Änderung; Tipp → Leisten sofort (statt 280 ms), frisch eingeblendete Knöpfe 300 ms ohne Tipps (Doppeltipp trifft nicht Play). Messung `test_perf.py`: 35 → 60 Bilder/s, 23 → 0 verworfene Videobilder, Tipp 312 → 25 ms |
+| 17.8 | Zurück-Geste: Player beim Vollbild-Ende sofort unsichtbar und stumm (`veil`, Klasse `vgone`), Prüfung (Drehen/App-Wechsel) läuft unsichtbar weiter – kein Zwischenbild mehr mit Browserleisten |
