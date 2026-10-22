@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      17.9
+// @version      18.0
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -686,10 +686,17 @@
     };
   } catch (e) {}
 
-  let lastHref = location.href;
+  // Wechsel zu einem anderen Video OHNE Neuladen (ARD, YouTube & Co. tauschen nur den Stream im selben Player):
+  // Ab hier gelten nur noch Adressen, die danach geladen wurden. Als Zeitpunkt zählt das letzte Mal, dass noch die
+  // alte Adresse zu sehen war (nicht erst die Prüfung danach) – so fällt nichts Neues heraus.
+  const hrefKey = () => location.href.split('#')[0];
+  let lastHref = hrefKey(), hrefSeenAt = Date.now();
   function checkNav() {
-    if (location.href !== lastHref) { lastHref = location.href; navAt = Date.now() - 1500; }
+    const now = Date.now(), h = hrefKey();
+    if (h !== lastHref) { lastHref = h; navAt = Math.max(navAt, hrefSeenAt - 300); }
+    hrefSeenAt = now;
   }
+  addEventListener('popstate', () => setTimeout(checkNav, 0));
 
   function recent() {
     const r = sources.filter((s) => s.t >= navAt);
@@ -1103,10 +1110,13 @@
   document.addEventListener('loadstart', (e) => { const v = e.target; if (v && v.tagName === 'VIDEO') startAt.set(v, Date.now()); }, true);
   document.addEventListener('play', (e) => { const v = e.target; if (v && v.tagName === 'VIDEO' && !startAt.has(v)) startAt.set(v, Date.now()); }, true);
   function timingMatch(v) {
+    checkNav();   // gerade erst zu einem anderen Video gewechselt? (Prüfung läuft nur jede Sekunde)
     const s = startAt.get(v);
     if (!s) return '';
-    // Haupt-Playlists werden oft schon vor dem Videostart geladen – darum weiter zurückschauen
-    const c = sources.filter((x) => x.t >= s - 15000 && x.t <= s + 6000).map((x) => x.u).filter((u) => PLAYLIST_RE.test(u));
+    // Haupt-Playlists werden oft schon vor dem Videostart geladen – darum weiter zurückschauen,
+    // aber nie vor einen Videowechsel auf der Seite (sonst käme schnell hintereinander das VORIGE Video, 18.0)
+    const lo = Math.max(s - 15000, navAt);
+    const c = sources.filter((x) => x.t >= lo && x.t <= Math.max(s, navAt) + 6000).map((x) => x.u).filter((u) => PLAYLIST_RE.test(u));
     return rankPlaylists(c)[0] || '';
   }
 
@@ -5268,6 +5278,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // Beitrags-Adressen bekannter Seiten (YouTube, Facebook, Instagram, X, Reddit, TikTok, Vimeo …)
   const POST_RE = /\/status\/\d+|\/comments\/[a-z0-9]+|\/(?:p|reels?|tv)\/[A-Za-z0-9_-]{5,}|\/video\/\d+|\/videos\/(?:[^\/?#]+\/)?\d+|\/watch\/?\?(?:.*&)?v=[\w-]{6,}|[?&]v=[\w-]{6,}|\/shorts\/[\w-]+|story\.php\?story_fbid=\d+|fb\.watch\/\w+|vimeo\.com\/\d+|view_video\.php\?(?:.*&)?viewkey=\w+|\/video\d+\/|\/video\/x[a-z0-9]+|\/video\/BV\w+|\/videos\/[\w-]+-\d+|\/clip\/[\w-]+|\/v[a-z0-9]{5,}-[\w-]+\.html|video-?\d+_\d+|\/embed\/[\w-]{5,}/i;
   const IG_POST_RE = /\/(?:p|reels?|tv)\/(?!audio\/)([A-Za-z0-9_-]{5,})/;
+  // Seite für EIN Video: nach /video/ usw. folgt eine Kennung (mind. 3 Ziffern oder lang) – nicht /videos/neu
+  const VIDEO_PAGE_RE = /\/(?:videos?|watch|clips?|films?|episoden?|episodes?|folgen?)\/(?=[^?#]*(?:\d[^?#]*){3}|[^?#]{20})[^\/?#]{3,}/i;
   const NOT_POST_RE = /\/reels?\/audio\/|\/explore\/|\/stories\//i;
   // Alle Beitragslinks in einem Bereich, gezählt (der eigene Beitrag kommt meist mehrfach vor)
   function postLinks(el) {
@@ -5403,6 +5415,9 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     if (!v) return '';
     // TikTok-Feed: Link genau dieses Videos – NIE die Feed-Adresse (/foryou)
     if (TT) return ttPostUrl(v);
+    // Eigene Seite für genau dieses Video (Mediatheken: /video/…, /clip/…) und nur ein Video drauf: die Seitenadresse.
+    // Links neben dem Player sind dort oft das nächste oder (nach einem Wechsel ohne Neuladen) das vorige Video (18.0).
+    if (!META && VIDEO_PAGE_RE.test(location.pathname) && countEligible() <= 1) return location.href.split('#')[0];
     // Ganzer Beitrag als Einheit (Instagram, X und andere nutzen <article> pro Beitrag)
     const art = v.closest ? v.closest('article, [role="article"]') : null;
     if (art) { const b = bestLink(postLinks(art)); if (b) return b; }
@@ -5582,7 +5597,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 17.9',
+      'Video-Assistent 18.0',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

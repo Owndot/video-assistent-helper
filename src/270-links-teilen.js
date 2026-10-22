@@ -2,6 +2,8 @@
   // Beitrags-Adressen bekannter Seiten (YouTube, Facebook, Instagram, X, Reddit, TikTok, Vimeo …)
   const POST_RE = /\/status\/\d+|\/comments\/[a-z0-9]+|\/(?:p|reels?|tv)\/[A-Za-z0-9_-]{5,}|\/video\/\d+|\/videos\/(?:[^\/?#]+\/)?\d+|\/watch\/?\?(?:.*&)?v=[\w-]{6,}|[?&]v=[\w-]{6,}|\/shorts\/[\w-]+|story\.php\?story_fbid=\d+|fb\.watch\/\w+|vimeo\.com\/\d+|view_video\.php\?(?:.*&)?viewkey=\w+|\/video\d+\/|\/video\/x[a-z0-9]+|\/video\/BV\w+|\/videos\/[\w-]+-\d+|\/clip\/[\w-]+|\/v[a-z0-9]{5,}-[\w-]+\.html|video-?\d+_\d+|\/embed\/[\w-]{5,}/i;
   const IG_POST_RE = /\/(?:p|reels?|tv)\/(?!audio\/)([A-Za-z0-9_-]{5,})/;
+  // Seite für EIN Video: nach /video/ usw. folgt eine Kennung (mind. 3 Ziffern oder lang) – nicht /videos/neu
+  const VIDEO_PAGE_RE = /\/(?:videos?|watch|clips?|films?|episoden?|episodes?|folgen?)\/(?=[^?#]*(?:\d[^?#]*){3}|[^?#]{20})[^\/?#]{3,}/i;
   const NOT_POST_RE = /\/reels?\/audio\/|\/explore\/|\/stories\//i;
   // Alle Beitragslinks in einem Bereich, gezählt (der eigene Beitrag kommt meist mehrfach vor)
   function postLinks(el) {
@@ -137,6 +139,9 @@
     if (!v) return '';
     // TikTok-Feed: Link genau dieses Videos – NIE die Feed-Adresse (/foryou)
     if (TT) return ttPostUrl(v);
+    // Eigene Seite für genau dieses Video (Mediatheken: /video/…, /clip/…) und nur ein Video drauf: die Seitenadresse.
+    // Links neben dem Player sind dort oft das nächste oder (nach einem Wechsel ohne Neuladen) das vorige Video (18.0).
+    if (!META && VIDEO_PAGE_RE.test(location.pathname) && countEligible() <= 1) return location.href.split('#')[0];
     // Ganzer Beitrag als Einheit (Instagram, X und andere nutzen <article> pro Beitrag)
     const art = v.closest ? v.closest('article, [role="article"]') : null;
     if (art) { const b = bestLink(postLinks(art)); if (b) return b; }

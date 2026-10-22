@@ -269,10 +269,13 @@
   document.addEventListener('loadstart', (e) => { const v = e.target; if (v && v.tagName === 'VIDEO') startAt.set(v, Date.now()); }, true);
   document.addEventListener('play', (e) => { const v = e.target; if (v && v.tagName === 'VIDEO' && !startAt.has(v)) startAt.set(v, Date.now()); }, true);
   function timingMatch(v) {
+    checkNav();   // gerade erst zu einem anderen Video gewechselt? (Prüfung läuft nur jede Sekunde)
     const s = startAt.get(v);
     if (!s) return '';
-    // Haupt-Playlists werden oft schon vor dem Videostart geladen – darum weiter zurückschauen
-    const c = sources.filter((x) => x.t >= s - 15000 && x.t <= s + 6000).map((x) => x.u).filter((u) => PLAYLIST_RE.test(u));
+    // Haupt-Playlists werden oft schon vor dem Videostart geladen – darum weiter zurückschauen,
+    // aber nie vor einen Videowechsel auf der Seite (sonst käme schnell hintereinander das VORIGE Video, 18.0)
+    const lo = Math.max(s - 15000, navAt);
+    const c = sources.filter((x) => x.t >= lo && x.t <= Math.max(s, navAt) + 6000).map((x) => x.u).filter((u) => PLAYLIST_RE.test(u));
     return rankPlaylists(c)[0] || '';
   }
 

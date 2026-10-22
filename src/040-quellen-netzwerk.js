@@ -289,10 +289,17 @@
     };
   } catch (e) {}
 
-  let lastHref = location.href;
+  // Wechsel zu einem anderen Video OHNE Neuladen (ARD, YouTube & Co. tauschen nur den Stream im selben Player):
+  // Ab hier gelten nur noch Adressen, die danach geladen wurden. Als Zeitpunkt zählt das letzte Mal, dass noch die
+  // alte Adresse zu sehen war (nicht erst die Prüfung danach) – so fällt nichts Neues heraus.
+  const hrefKey = () => location.href.split('#')[0];
+  let lastHref = hrefKey(), hrefSeenAt = Date.now();
   function checkNav() {
-    if (location.href !== lastHref) { lastHref = location.href; navAt = Date.now() - 1500; }
+    const now = Date.now(), h = hrefKey();
+    if (h !== lastHref) { lastHref = h; navAt = Math.max(navAt, hrefSeenAt - 300); }
+    hrefSeenAt = now;
   }
+  addEventListener('popstate', () => setTimeout(checkNav, 0));
 
   function recent() {
     const r = sources.filter((s) => s.t >= navAt);

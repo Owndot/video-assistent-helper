@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1"><title>Mediathek – Testseite</title>
+<script src="hls.min.js"></script></head>
+<body style="margin:0"><div id=box><video id=v muted autoplay playsinline style="width:100%;display:block"></video>
+<a id=lnk href="/video/8-1-2-minuten-vorher/a-11111">Zuletzt gesehen</a></div>
+<script>
+// Wie die ARD-Mediathek: anderes Video OHNE Neuladen – neue Adresse, neuer Stream im selben <video>
+const v = document.getElementById('v'); let h = null;
+function load(src) { if (h) h.destroy(); h = new Hls(); h.loadSource(src); h.attachMedia(v); h.on(Hls.Events.MANIFEST_PARSED, () => v.play()); }
+load('/hls/master.m3u8');
+window.switchTo = () => { history.pushState({}, '', '/video/jetzt-folge/b-22222'); load('/hls2/master.m3u8'); };
+</script></body></html>
