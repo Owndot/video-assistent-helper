@@ -107,9 +107,10 @@
 .vchip span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .vchip svg{width:22px;height:22px;fill:#fff;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}
 /* aktiv: einfarbig wie iOS/One UI – helle Fläche hinter dem weißen Symbol (statt Farbe) */
-.vchip.on{color:#fff;background:rgba(255,255,255,.24)}
+.vchip.on{color:#fff}
+.vchip.on::before{content:"";position:absolute;inset:5px;border-radius:50%;background:rgba(255,255,255,.2);z-index:-1}
 .vchip.on svg{fill:var(--ice)}
-.vchip .vrepn{position:absolute;right:3px;bottom:4px;min-width:14px;height:14px;border-radius:7px;padding:0 3px;box-sizing:border-box;background:#fff;color:#111;box-shadow:0 1px 3px rgba(0,0,0,.35);font:800 10px/14px var(--font);text-align:center}
+.vchip .vrepn{position:absolute;right:2px;bottom:3px;min-width:14px;height:14px;border-radius:7px;padding:0 3px;box-sizing:border-box;background:#fff;color:#111;box-shadow:0 1px 3px rgba(0,0,0,.35);font:800 10px/14px var(--font);text-align:center}
 .vchip .vrepn:empty{display:none}
 .vchip[hidden]{display:none}
 .vtime{font:600 12px var(--font);font-variant-numeric:tabular-nums;color:var(--sub);min-width:40px;text-align:center}
