@@ -1,0 +1,45 @@
+OK   Button erscheint am laufenden Video  – pill on
+OK   Button ist gleich in voller Größe da (kein Aufklappen)  – pill on
+OK   Eingebauter Player öffnet sich
+OK   Spielt eigene Quelle ab, Original pausiert  – {'src': 'http://127.0.0.1:8765/clip.webm', 't': 2.615435, 'paused': False, 'origPaused': True, 'fs': True}
+OK   Startet im Vollbild  – True
+OK   Kein doppelter Ton: Seiten-Video bleibt stumm und angehalten  – {'muted': True, 'paused': True}
+OK   Im Vollbild kein zusätzlicher Verlaufseintrag (Facebook-sicher)  – (1, 1)
+OK   Doppeltippen rechts spult ~10 s vor  – 10.6
+OK   Doppeltippen links spult ~10 s zurück  – 9.3
+OK   Wischen nach rechts spult ~45 s  – 45.5
+OK   Wischen rechts runter senkt die Lautstärke  – 0.27
+OK   Wischen rechts hoch: höchstens 100 %  – ['100%', 1]
+OK   Wischen links hoch: Helligkeit höchstens 100 %  – ['', '100%']
+OK   Wischen vom Rand aus wird ignoriert  – 0.6
+OK   Wischen links runter dunkelt ab  – 0.85
+OK   Einmal tippen schaltet die Leisten um  – (False, True)
+OK   Geschwindigkeit im ⋮-Menü (Liste langsam → schnell)  – [1.25, ['0,5×', '0,75×', '1× · Normal', '1,25×', '1,5×', '2×']]
+OK   Drehen-Knopf: Querformat im Vollbild  – [True, 'landscape']
+OK   Nochmal Drehen: Hochformat, bleibt im Vollbild  – [True, True, 'portrait']
+OK   Seite beendet Vollbild nach Drehen: Player bleibt und holt Vollbild zurück  – [True, True]
+OK   Drittes Drehen: wieder Querformat, Player bleibt offen  – [True, True, 'landscape']
+OK   Vollbild durch Drehen verloren: Player bleibt offen  – True
+OK   Tipp holt verlorenes Vollbild zurück  – True
+OK   Nach Rückholen: Quer → Hoch bleibt im Vollbild  – [True, '']
+OK   Danach schließt die Zurück-Taste den Player
+OK   Zurück im Querformat schließt den Player (nicht nur Vollbild)
+OK   Zurück im Querformat (Chrome-Reihenfolge): ein Druck schließt
+OK   Vollbild verlassen schließt den Player  – {'open': False, 'url': 'http://127.0.0.1:8765/direct.html'}
+OK   Schließen entfernt den Player  – {'open': False, 'ot': 51.815566}
+OK   Original übernimmt die Stelle  – (51.3, 51.8)
+OK   Original läuft nach dem Schließen weiter  – {'paused': False, 't': 52.417031}
+OK   Seiten-Video bekommt seinen Ton zurück
+OK   Diagnose-Fenster über das Menü  – Video-Assistent 19.5
+Seite: 127.0.0.1:8765/direct.html
+Video
+OK   Ohne Adresse: übernimmt das Bild vom Original  – {'hasStream': True, 'playing': True, 'w': 640}
+OK   HLS-Stream: eigener Player lädt den Stream selbst (hls.js)  – {'src': 'blob:http://127.0.0.1:8765/cc0', 'capture': False, 't': 3.060636, 'w': 640}
+OK   Seite mit Stream: Video läuft nach dem Schließen weiter (hängt nicht)  – (False, 47.0, 48.5)
+OK   Seite mit Stream: macht an DEINER Stelle weiter (~45 s)  – 47.0
+OK   Fenster ohne Adresse: Button erscheint  – ['pill on', '224.433px']
+OK   Button sitzt am Video im Fenster (nicht oben an der Seite)  – 224.433
+OK   Fenster ohne Adresse: eigener Player spielt
+
+Fehler/Meldungen der Seite: []
+ERGEBNIS: 40 von 40 Tests bestanden

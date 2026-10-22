@@ -1,0 +1,3 @@
+direct.html       vorher: width=device-width,initial-scale=1                      | offen: width=device-width,initial-scale=1, viewport-fit=cover | danach: width=device-width,initial-scale=1
+direct_meta.html  vorher: width=device-width, initial-scale=1, maximum-scale=1    | offen: width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover | danach: width=device-width, initial-scale=1, maximum-scale=1
+ERGEBNIS: 2 von 2

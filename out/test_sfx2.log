@@ -1,0 +1,9 @@
+OK   Leisten sichtbar: +10-Knopf selbst animiert, keine zweite Scheibe  – {'knopf': True, 'zahl': '10', 'scheibe': False, 'gedimmt': True, 'pause': '1', 'zurueck': '1', 'vor': '1'}
+OK   nichts wird abgedunkelt (Pause und −10 normal sichtbar)  – {'knopf': False, 'zahl': '10', 'scheibe': False, 'gedimmt': False, 'pause': '1', 'zurueck': '1', 'vor': '1'}
+OK   danach wieder normal, Zahl zurück auf 10  – {'knopf': False, 'zahl': '10', 'scheibe': False, 'gedimmt': False, 'pause': '1', 'zurueck': '1', 'vor': '1'}
+OK   +10-Knopf zweimal schnell: zählt 20, springt 20 s  – ['20', 20.3]
+OK   Leisten aus: freie Glasscheibe  – {'knopf': False, 'zahl': '10', 'scheibe': True, 'gedimmt': False, 'pause': '0.0429887', 'zurueck': '0.0429778', 'vor': '0.042995'}
+OK   Leisten aus: Linie ganz unten sichtbar, Stand stimmt  – ['1', 38, 38, 6, 2.5, 886, 886, True]
+OK   Leisten an: Linie ausgeblendet  – 0
+Fehler: []
+ERGEBNIS: 7 von 7

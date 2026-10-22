@@ -1,0 +1,20 @@
+OK   Beim Öffnen beim Helfer nachgefragt  – [('/ping', None)]
+OK   Lautstärke geht ans Handy (ab dem aktuellen Wert)  – [0.467, 0.533, 0.6, 0.667, 0.733]
+OK   Video zwischen den Stufen etwas leiser (fein)  – 0.9799542343685788
+OK   Nicht jede Bewegung gesendet (gedrosselt)  – 5
+OK   Anzeige in 1-%-Schritten (nicht nur Handy-Stufen)  – 73%
+   fein: [74, 76, 78, 79, 81, 82, 84, 85]
+OK   Feine Schritte: je 5 Pixel 1–2 %  – [74, 76, 78, 79, 81, 82, 84, 85]
+OK   Helligkeit geht ans Handy und sinkt  – [0.6, 0.467, 0.286, 0.225, 0.143, 0.115]
+   Anzeige nach 120 px: 58%
+OK   Ganz unten: dunkelste Stufe (1 %), noch nicht Auto  – [0.004, '1%']
+OK   Video wird dabei nicht zusätzlich abgedunkelt  – ['0']
+OK   Noch weiter runter: Auto (Helfer gibt Helligkeit ans System)  – ['Auto', 1]
+OK   Aus Auto wieder hoch: Helligkeit wieder fest  – ['13%', 4]
+hidden? [False, 'visible']
+OK   Lebenszeichen alle 2,5 s  – 3
+OK   Nach Lautstärketaste geht es vom neuen Wert weiter  – 0.267
+OK   Schließen: Helfer gibt Helligkeit zurück  – [('/end', None), ('/end', None)]
+OK   Ohne Helfer: Video wird wie bisher abgedunkelt  – ['0.714823']
+Fehler der Seite: []
+ERGEBNIS: 15 von 15

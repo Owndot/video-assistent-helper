@@ -1,0 +1,13 @@
+OK   kurz antippen: springt an diese Stelle (70 %)  – [41.9, 42.0]
+OK   ziehen (Finger bei 20 %, Video bei 30 s): +10 % von der aktuellen Stelle, kein Sprung zum Finger  – [36, 36.0008]
+OK   … Leiste dabei dick  – [True, False, False, '0:36 · +6 s', False]
+OK   nach oben weg: Abbrechen-Hinweis  – [True, True, False, 'Loslassen = abbrechen', False]
+OK   … loslassen dort: zurück an die alte Stelle  – 20
+OK   nach oben und zurück: spult doch (+20 %)  – [31.9, 32.0016]
+OK   langsam ziehen: fein (deutlich weniger als grob)  – [[True, False, True, '0:28 · +8 s', False], 28.5, 28.5, 'grob wäre', 38.0]
+OK   … Abstand zur alten Stelle steht da  – [True, False, True, '0:28 · +8 s', False]
+OK   beim Ziehen: Abstand „+18 s“  – [True, False, False, '0:37 · +18 s', False]
+OK   zurück an der alten Stelle: rastet ein (± 0)  – [True, False, False, '0:20 · ± 0', True]
+OK   … loslassen dort: bleibt bei 20 s  – 20
+OK   keine Fehler  – []
+ERGEBNIS: 12 von 12

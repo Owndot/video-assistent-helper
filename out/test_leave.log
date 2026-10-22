@@ -1,0 +1,20 @@
+OK   App-Wechsel (Fokus weg → Vollbild aus → verdeckt): Player bleibt offen  – [True, True]
+OK   … und wird dabei nicht unsichtbar gemacht
+OK   … Standard „Weiter“: Video läuft weiter  – [False, 4.2]
+OK   zurück im Browser: Vollbild von selbst zurück – oder Hinweis „Antippen für Vollbild“  – [True, '']
+OK   … Vollbild wieder da  – [True, True]
+OK   länger weg: Vollbild von selbst – oder Hinweis „Antippen für Vollbild“  – [False, 'Antippen für Vollbild']
+OK   späte Meldung „verdeckt“ (0,55 s nach Vollbild-Ende): Player bleibt offen
+OK   … danach wieder sichtbar und mit Ton  – [False, False]
+OK   … Seitenvideo wieder angehalten und stumm, keine Abdeckung (Übergabe zurückgenommen, 17.9)  – [True, True, '1', False]
+OK   Zurück-Geste: Player sofort unsichtbar und stumm (man sieht gleich die Seite, 17.8)  – [True, '0', True]
+OK   … Seite schon an deiner Stelle, läuft mit Ton (vor dem Schließen, 17.9)  – [6.766258, [6.8, False, False]]
+OK   Zurück-Taste (Vollbild aus, Seite sichtbar): Player schließt
+OK   … Firefox: Seitenvideo nach dem Springen wieder sichtbar, keine Abdeckung übrig  – [0, False, '1']
+OK   … Seite spielt danach weiter (kein zweiter Sprung zurück)  – [6.766258, [9.393013, False]]
+OK   Einstellung „Beim Verlassen: Anhalten“: Video hält an  – [[['Beim Verlassen', 'Anhalten', False]], [True, 4.7]]
+OK   Bild-in-Bild mit ✕ geschlossen: Video hält an, Player bleibt  – [[True, 5.4], True]
+OK   Bild-in-Bild → Vollbild: Player im Vollbild, Video läuft  – [True, True, [False, 6.6], '']
+OK   Bild-in-Bild läuft + Startbildschirm: Video läuft weiter (auch bei „Anhalten“)  – [False, 9.1]
+OK   keine Fehler  – []
+ERGEBNIS: 19 von 19

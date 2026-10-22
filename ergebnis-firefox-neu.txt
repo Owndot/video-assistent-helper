@@ -1,0 +1,53 @@
+Test-Streams fertig.
+Übersetzt nach classes/
+test_amb.py              10s ok   4 von 4
+test_cutout.py            8s ok   2 von 2
+test_dl.py               10s ok   6 von 6
+test_dl2.py              18s ok   4 von 4
+test_dl3.py              17s ok   6 von 6
+test_dlclose.py          12s ok   4 von 4
+test_e2e.py              14s ok   6 von 6
+test_embed.py            18s FEHLER – 2 Prüfung(en) fehlgeschlagen
+      FAIL Hauptseite: eingebettetes Fenster im Vollbild  – [None, 0, 0, 400, 800, 400, 800, 'hidden']
+      FAIL Zweites Öffnen wieder im Vollbild, ✕ stellt alles zurück  – [None, [None, 260]]
+test_embed_nofs.py        8s ok   2 von 2
+test_extras.py           51s ok   37 von 37
+test_fb.py               28s ok   ERGEBNIS neu: bestanden
+test_fbhd.py             12s ok   ERGEBNIS neu: bestanden
+test_fbshare.py          10s ok   3 von 3
+test_helper.py           17s ok   15 von 15
+test_hide.py             18s ok   3 von 3
+test_idle.py             41s ok   3 von 3
+test_ig.py               14s ok   2 von 2
+test_leave.py            35s ok   19 von 19
+test_livescrub.py        15s ok   7 von 7
+test_menu.py              7s ok   4 von 4
+test_menuback.py         60s ok   21 von 21
+test_menufade.py         15s ok   6 von 6
+test_menusym.py          15s ok   4 von 4
+test_mfb.py              12s ok   ERGEBNIS neu: bestanden
+test_mirror.py           13s ok   bestanden
+test_mirrorprev.py       18s ok   6 von 6
+test_nextreel.py         19s ok   4 von 4
+test_pagesubs.py         25s ok   9 von 9
+test_pair.py             15s ok   11 von 11
+test_pip.py              11s ok   4 von 4
+test_pipkeep.py          19s ok   9 von 9
+test_pixel.py            51s ok   18 von 18
+test_player.py           66s ok   40 von 40 Tests bestanden
+test_prev.py             20s ok   15 von 15
+test_proof.py             8s ok   5 von 5
+test_reelend.py          25s ok   8 von 8
+test_scrubbar.py         16s ok   12 von 12
+test_seekpos.py          11s ok   8 von 8
+test_sfx.py               9s ok   6 von 6
+test_sfx2.py             10s ok   7 von 7
+test_spaswitch.py        11s ok   4 von 4
+test_tapzoom.py          16s ok   14 von 14
+test_topguard.py         28s ok   12 von 12
+test_tt.py               21s ok   3 von 3
+test_ui.py               29s ok   21 von 21
+test_unlock.py           13s ok   5 von 5
+test_v8.py               24s ok   17 von 17 Tests bestanden
+
+GESAMT: 1 Test(s) mit Fehlern: test_embed.py

@@ -1,0 +1,8 @@
+OK   Webseite: nur der Player-Knopf  – ['Im Videoplayer öffnen']
+OK   Unten rechts: Untertitel zuerst, Drehen ganz außen (16.5)  – ['Untertitel', 'Wiederholen', 'Bildformat', 'Bild-in-Bild', 'Drehen']
+OK   Echte Videodatei: Download-Knopf sichtbar
+OK   Direkter Download speichert die ganze Datei  – ['Testvideo direkt.webm', 2297026, 2297026]
+OK   Hinweis "im Browser"
+OK   Stream ohne Datei: kein Download-Knopf
+Fehler: []
+ERGEBNIS: 6 von 6

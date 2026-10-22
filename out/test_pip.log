@@ -1,0 +1,8 @@
+fullscreen: True pipEnabled: True
+OK   Werkzeuge nur als Symbole  – [[44, 1], [44, 1], [44, 1], [44, 1], [44, 1]]
+OK   Bild-in-Bild: Player bleibt offen  – [True, False, True, 'vp ctl amb']
+OK   Bild-in-Bild aktiv oder Hinweis sichtbar im Player  – [True, False, True, 'vp ctl amb']
+   Hinweis: Bild-in-Bild startet hier nicht – Folgeprüfungen übersprungen
+OK   Gleiches helles Glas auf dunkler und heller Seite  – radial-gradient(85% 55% at 24% 0%, rgba(0, 0, 0, 0
+Fehler: []
+ERGEBNIS: 4 von 4

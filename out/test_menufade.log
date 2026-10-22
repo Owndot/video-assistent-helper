@@ -1,0 +1,7 @@
+OK   hoch Qualität ganz oben: oben KEIN Auslaufen  – [False, False, False]
+OK   hoch Einstellungen ganz oben: oben KEIN Auslaufen  – [False, True, True]
+OK   hoch Einstellungen ganz unten: oben Auslaufen, unten nicht  – [True, False, True]
+OK   quer Qualität ganz oben: oben KEIN Auslaufen  – [False, False, False]
+OK   quer Einstellungen ganz oben: oben KEIN Auslaufen  – [False, True, True]
+OK   quer Einstellungen ganz unten: oben Auslaufen, unten nicht  – [True, False, True]
+ERGEBNIS: 6 von 6

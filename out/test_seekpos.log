@@ -1,0 +1,11 @@
+OK   port: Spul-Anzeige mitten im Video, Leisten ausgeblendet  – [True, 0, 0, '0:24', '0']
+OK   port: nach dem Loslassen wieder weg
+OK   port: Download oben rechts neben ⋮  – ['Herunterladen (z. B. mit YTDLnis)', 'Mehr']
+   Hinweis: Download läuft im Browser – du kannst die Seite verlassen
+OK   port: Download öffnet Teilen, Player bleibt offen  – [None, True]
+OK   land: Spul-Anzeige mitten im Video, Leisten ausgeblendet  – [True, 0, 0, '0:29', '0']
+OK   land: nach dem Loslassen wieder weg
+OK   land: Download oben rechts neben ⋮  – ['Herunterladen (z. B. mit YTDLnis)', 'Mehr']
+   Hinweis: Download läuft im Browser – du kannst die Seite verlassen
+OK   land: Download öffnet Teilen, Player bleibt offen  – [None, True]
+ERGEBNIS: 8 von 8

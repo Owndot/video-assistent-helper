@@ -1,0 +1,4 @@
+Download  -> direkt an YTDLnis: intent://www.tiktok.com/@testkanal/video/7349876543210987654#Intent;scheme=https;action=an… | Teilen: []
+Teilen    -> VLC bekommt: intent://v16-webapp-prime.tiktok.com/video/tos/useast2a/tos-useast2a-ve-0068c001… | Videoseite geholt: ['https://www.tiktok.com/@testkanal/video/7349876543210987654']
+Länge falsch -> VLC: - | geteilt: ['https://www.tiktok.com/@testkanal/video/7349876543210987654'] | Keine Videodatei gefunden (Länge passt nicht (95 s statt 30 s)) – Link wird geteilt
+ERGEBNIS: 3 von 3

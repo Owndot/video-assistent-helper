@@ -1,0 +1,8 @@
+OK   Datei + Helfer: Knopf da, Helfer bekommt die Datei  – [{'u': 'http://127.0.0.1:8775/clip.webm', 'ref': 'http://127.0.0.1:8775/direct.html', 'ua': 'Mozilla/5.0 (X11; Linux x86_64; rv:157.0) Gecko/20100101 Firefox/157.0', 't': 'Testvideo direkt', 'k': 'file'}]
+OK   … mit Seite als Referer und Titel  – [{'u': 'http://127.0.0.1:8775/clip.webm', 'ref': 'http://127.0.0.1:8775/direct.html', 'ua': 'Mozilla/5.0 (X11; Linux x86_64; rv:157.0) Gecko/20100101 Firefox/157.0', 't': 'Testvideo direkt', 'k': 'file'}]
+OK   Lange drücken: Menü mit allen Wegen  – ['Mit dem HelperDownload-Manager', 'Über den Browser ladenfür geschützte Seiten · Seite offen lassen', 'Im Browser speichernDownload des Browsers', 'Im Browser öffnendort ⋮ → Herunterladen', 'Hier speichernPlayer bis zum Ende offen lassen', 'Teilen …an eine andere App']
+OK   Stream + Helfer: Helfer bekommt die m3u8  – [{'u': 'http://127.0.0.1:8775/hls/master.m3u8', 'ref': 'http://127.0.0.1:8775/hls.html', 'ua': 'Mozilla/5.0 (X11; Linux x86_64; rv:157.0) Gecko/20100101 Firefox/157.0', 't': 'HLS-Testseite', 'k': 'hls'}]
+OK   Stream ohne Helfer: kein Download-Knopf  – False
+OK   yt-dlp-Seite: direkt an YTDLnis  – ['intent://www.xvideos.com/video12345/test_clip#Intent;scheme=https;action=android.intent.action.VIEW;type=video/*;package=com.deniscerri.ytdl;S.browser_fallback_url=https%3A%2F%2Fgithub.com%2Fdeniscerri%2Fytdlnis%2Freleases%2Flatest;S.title=Testclip%20XV;end']
+Fehler der Seite: []
+ERGEBNIS: 6 von 6

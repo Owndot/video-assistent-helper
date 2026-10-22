@@ -1,0 +1,31 @@
+   Datei Ambient-Element: VIDEO
+OK   Datei: Firefox nutzt den Handy-Weg (Ambient als Video)  – VIDEO
+   Datei Ambient: Rand hell an 56.7 / aus 0.0, Ambient-Bild (Mittel, Streuung) [128, 71], Videorand 302 px
+OK   Datei: Ambient-Bild hat Inhalt  – [128, 71]
+OK   Datei: Ambient-Licht sichtbar im Rand  – [56.7, 0.0]
+   Datei Vorschau: Abweichung zum echten Bild an der Stelle 0.0
+OK   Datei: Vorschaubild passt zur Stelle  – 0.0
+   Datei Vorschau: Video bereit 4, Zeit 38.1, Breite 640, Bild-Flag True, Vorschau-Video [128, 73], gezeigtes Bild [128, 73]
+OK   Datei: Firefox zeigt das Vorschau-Video direkt
+OK   Datei: Vorschau zeigt ein echtes Bild  – [128, 73]
+   Datei nach 13 s: Abweichung zum echten Bild 0.0
+OK   Datei: nach 13 s Vorschaubild passt zur Stelle  – 0.0
+   Datei nach 13 s: Ambient [125, 73] · Vorschau bereit 4, Zeit 40.2, gezeigt bei 40.2, Vorschau-Video [128, 73], gezeigtes Bild [128, 73]
+OK   Datei: nach 13 s Ambient-Bild hat Inhalt  – [125, 73]
+OK   Datei: nach 13 s Vorschau an der neuen Stelle  – [4, '40.2', '40.2', [128, 73], [128, 73]]
+   Stream Ambient-Element: VIDEO
+OK   Stream: Firefox nutzt den Handy-Weg (Ambient als Video)  – VIDEO
+   Stream Ambient: Rand hell an 56.7 / aus 0.0, Ambient-Bild (Mittel, Streuung) [128, 71], Videorand 302 px
+OK   Stream: Ambient-Bild hat Inhalt  – [128, 71]
+OK   Stream: Ambient-Licht sichtbar im Rand  – [56.7, 0.0]
+   Stream Vorschau: Abweichung zum echten Bild an der Stelle 0.7
+OK   Stream: Vorschaubild passt zur Stelle  – 0.7
+   Stream Vorschau: Video bereit 4, Zeit 38.0, Breite 320, Bild-Flag True, Vorschau-Video [128, 72], gezeigtes Bild [128, 72]
+OK   Stream: Firefox zeigt das Vorschau-Video direkt
+OK   Stream: Vorschau zeigt ein echtes Bild  – [128, 72]
+   Stream nach 13 s: Abweichung zum echten Bild 0.8
+OK   Stream: nach 13 s Vorschaubild passt zur Stelle  – 0.8
+   Stream nach 13 s: Ambient [125, 73] · Vorschau bereit 4, Zeit 40.1, gezeigt bei 40.1, Vorschau-Video [128, 72], gezeigtes Bild [128, 72]
+OK   Stream: nach 13 s Ambient-Bild hat Inhalt  – [125, 73]
+OK   Stream: nach 13 s Vorschau an der neuen Stelle  – [4, '40.1', '40.1', [128, 72], [128, 72]]
+ERGEBNIS: 18 von 18

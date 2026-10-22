@@ -1,0 +1,12 @@
+OK   Ohne Tipp: Fenster bleibt klein  – [260, None]
+FAIL Hauptseite: eingebettetes Fenster im Vollbild  – [None, 0, 0, 400, 800, 400, 800, 'hidden']
+OK   Fenster füllt den ganzen Bildschirm  – [None, 0, 0, 400, 800, 400, 800, 'hidden']
+OK   Player füllt das Fenster  – [400, 800, 400, 800, "Don't Treat Love Like A Disease - Testseite", '127.0.0.1']
+OK   Titel der Hauptseite statt doppelter Adresse  – ["Don't Treat Love Like A Disease - Testseite", '127.0.0.1']
+OK   Teilen im Fenster: Link und Titel der Hauptseite  – [{'url': 'http://127.0.0.1:8775/emb_top.html', 'title': "Don't Treat Love Like A Disease - Testseite"}]
+OK   Vollbild beendet: Player schließt  – True
+OK   Fenster wieder wie vorher  – [260, 'width:100%;height:260px;border:0;display:block', '']
+FAIL Zweites Öffnen wieder im Vollbild, ✕ stellt alles zurück  – [None, [None, 260]]
+OK   Hauptseite ohne Skript: Player läuft im Kasten weiter  – True
+Fehler der Seite: []
+ERGEBNIS: 8 von 10
