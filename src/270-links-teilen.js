@@ -96,7 +96,42 @@
     return p;
   }
 
+  // Facebook-Reels: Beim Weiterwischen bleibt die Adresse oft beim ERSTEN Reel stehen. Trägt das laufende Video in
+  // seinem eigenen Kasten eine andere Video-ID, gehört der Link zu dieser ID (nicht zur Seitenadresse).
+  // Video-ID nur aus dem eigenen Kasten des Videos: Reel-/Video-Links und „video_id“-Daten (keine bloßen Zahlen,
+  // nicht die Seitenadresse). Nach oben nur so weit, bis andere Videos dazukommen.
+  function fbVideoId(v) {
+    let el = v;
+    for (let lvl = 0; el && el.nodeType === 1 && lvl < 18; lvl++, el = el.parentElement) {
+      if (lvl > 0 && el.getElementsByTagName('video').length > 1) break;
+      const ids = [];
+      const at = el.attributes;
+      for (let j = 0; j < at.length; j++) {
+        const val = at[j].value;
+        if (val.length > 5000) continue;
+        const jm = val.match(/"video_?id"\s*:\s*"?(\d{12,})/i);
+        if (jm) ids.push(jm[1]);
+        if (at[j].name === 'href') idsIn(val, ids);
+      }
+      if (lvl > 0) { const as = el.querySelectorAll('a[href]'); for (let i = 0; i < as.length && i < 60; i++) idsIn(as[i].getAttribute('href'), ids); }
+      const id = ids.find((x) => /^\d{12,}$/.test(x));
+      if (id) return id;
+    }
+    return '';
+  }
+  function fbOwnUrl(v) {
+    if (!v || !/(^|\.)facebook\.com$/i.test(location.hostname)) return '';
+    const id = fbVideoId(v);
+    if (!id) return '';
+    const here = []; idsIn(location.href, here);
+    if (here.includes(id)) return '';   // Adresse passt zum Video
+    const reel = /\/reels?\//.test(location.pathname) || !/[?&]v=/.test(location.search);
+    return location.origin + (reel ? '/reel/' + id + '/' : '/watch/?v=' + id);
+  }
   function postUrlFor(v) {
+    const fbu = fbOwnUrl(v);
+    if (fbu) { postUrlFor.via = 'Video-ID'; return fbu; }
+    postUrlFor.via = 'Seite';
     // Die Seite selbst ist schon die Beitragsseite (z. B. Reel, YouTube-Video)
     if (POST_RE.test(location.href) && !NOT_POST_RE.test(location.href)) return location.href.split('#')[0];
     if (!v) return '';

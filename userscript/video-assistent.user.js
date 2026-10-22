@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      17.5
+// @version      17.6
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -4956,16 +4956,18 @@
       showControls();
       updateUI();
     };
-    // Reels-Seiten (Facebook u. a.) springen beim Ende („ended“) von selbst zum nächsten Video – dann wäre der Player
-    // schwarz und man stünde danach auf einem anderen Reel. Darum KURZ VOR dem Ende anhalten (letztes Bild bleibt
-    // stehen): Die Seite bekommt das Ende gar nicht mit. Nahe am Ende genauer hinschauen als „timeupdate“ (¼ s).
+    // Reels-Seiten (Facebook u. a.) springen beim Ende von selbst zum nächsten Video – manche schon kurz VOR „ended“
+    // (sobald die Zeit fast am Ende ist). Dann wäre der Player schwarz und man stünde danach auf einem anderen Reel.
+    // Darum: 0,6 s vor dem Ende anhalten (letztes Bild bleibt stehen) und – siehe „Schleuse“ unten – der Seite die
+    // letzten Meldungen des Videos gar nicht erst zeigen. Nahe am Ende genauer hinschauen als „timeupdate“ (¼ s).
+    const END_GAP = 0.6;
     let nearIv = 0;
     const stopNear = () => { clearInterval(nearIv); nearIv = 0; };
     const nearEnd = () => {
       if (vp !== st || st.mode !== 'capture' || st.endHold || orig.paused) { stopNear(); return; }
       const d = orig.duration, t = orig.currentTime;
       if (!isFinite(d) || d < 2) { stopNear(); return; }
-      if (t >= d - 0.25 / Math.max(1, orig.playbackRate || 1)) { stopNear(); holdEnd(); }
+      if (t >= d - END_GAP * Math.max(1, orig.playbackRate || 1)) { stopNear(); holdEnd(); }
       else if (t < d - 2) stopNear();
     };
     const onOrigTime = () => {
@@ -4993,6 +4995,20 @@
     orig.addEventListener('play', onOrigPlay);
     orig.addEventListener('playing', onOrigPlay);
     st.cleanup.push(() => { orig.removeEventListener('play', onOrigPlay); orig.removeEventListener('playing', onOrigPlay); });
+    // Schleuse (nur beim Spiegeln): Meldungen vom Ende des Videos erreichen die Seite nicht – „ended“ nie, „timeupdate“
+    // und „pause“ in der letzten Sekunde nicht. Abgefangen wird ganz vorn (window, Einfangphase), also vor den
+    // Zuhörern der Seite; die eigenen Zuhörer des Players werden hier direkt bedient.
+    const nearTail = () => { const d = orig.duration; return isFinite(d) && d >= 2 && orig.currentTime > d - 1; };
+    const gate = (e) => {
+      if (e.target !== orig || vp !== st || st.mode !== 'capture') return;
+      if (e.type === 'ended') { e.stopImmediatePropagation(); onOrigEnded(); updateUI(); return; }
+      if (!nearTail()) return;
+      e.stopImmediatePropagation();
+      if (e.type === 'timeupdate') { onOrigTime(); updateUI(); }
+      else if (e.type === 'pause') { showControls(); updateUI(); }
+    };
+    ['ended', 'timeupdate', 'pause'].forEach((t) => window.addEventListener(t, gate, true));
+    st.cleanup.push(() => ['ended', 'timeupdate', 'pause'].forEach((t) => window.removeEventListener(t, gate, true)));
 
     // Original anhalten (außer wir übernehmen dessen Bild) und mit dem Laden beginnen
     if (st.sources.length) { try { orig.muted = true; orig.pause(); } catch (e) {} tryNext(); }
@@ -5197,7 +5213,42 @@
     return p;
   }
 
+  // Facebook-Reels: Beim Weiterwischen bleibt die Adresse oft beim ERSTEN Reel stehen. Trägt das laufende Video in
+  // seinem eigenen Kasten eine andere Video-ID, gehört der Link zu dieser ID (nicht zur Seitenadresse).
+  // Video-ID nur aus dem eigenen Kasten des Videos: Reel-/Video-Links und „video_id“-Daten (keine bloßen Zahlen,
+  // nicht die Seitenadresse). Nach oben nur so weit, bis andere Videos dazukommen.
+  function fbVideoId(v) {
+    let el = v;
+    for (let lvl = 0; el && el.nodeType === 1 && lvl < 18; lvl++, el = el.parentElement) {
+      if (lvl > 0 && el.getElementsByTagName('video').length > 1) break;
+      const ids = [];
+      const at = el.attributes;
+      for (let j = 0; j < at.length; j++) {
+        const val = at[j].value;
+        if (val.length > 5000) continue;
+        const jm = val.match(/"video_?id"\s*:\s*"?(\d{12,})/i);
+        if (jm) ids.push(jm[1]);
+        if (at[j].name === 'href') idsIn(val, ids);
+      }
+      if (lvl > 0) { const as = el.querySelectorAll('a[href]'); for (let i = 0; i < as.length && i < 60; i++) idsIn(as[i].getAttribute('href'), ids); }
+      const id = ids.find((x) => /^\d{12,}$/.test(x));
+      if (id) return id;
+    }
+    return '';
+  }
+  function fbOwnUrl(v) {
+    if (!v || !/(^|\.)facebook\.com$/i.test(location.hostname)) return '';
+    const id = fbVideoId(v);
+    if (!id) return '';
+    const here = []; idsIn(location.href, here);
+    if (here.includes(id)) return '';   // Adresse passt zum Video
+    const reel = /\/reels?\//.test(location.pathname) || !/[?&]v=/.test(location.search);
+    return location.origin + (reel ? '/reel/' + id + '/' : '/watch/?v=' + id);
+  }
   function postUrlFor(v) {
+    const fbu = fbOwnUrl(v);
+    if (fbu) { postUrlFor.via = 'Video-ID'; return fbu; }
+    postUrlFor.via = 'Seite';
     // Die Seite selbst ist schon die Beitragsseite (z. B. Reel, YouTube-Video)
     if (POST_RE.test(location.href) && !NOT_POST_RE.test(location.href)) return location.href.split('#')[0];
     if (!v) return '';
@@ -5382,12 +5433,13 @@
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 17.5',
+      'Video-Assistent 17.6',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
       'Zuordnung über: ' + (lastVia || '-') + ' | Laufendes Video: ' + (function () { const f = assetFor(v); return (f.asset || '-') + ' (' + f.via + (f.sure ? ', sicher' : '') + ')'; })() +
         ' | geladene Videos: ' + Array.from(assetHits.keys()).slice(-4).map((a) => a + '×' + assetHits.get(a).length).join(', '),
+      'Link zum Video: ' + (function () { try { const u = postUrlFor(v); return (u || '-') + ' (' + (postUrlFor.via || '-') + ') | Video-ID im Kasten: ' + (fbVideoId(v) || '-'); } catch (e) { return '-'; } })(),
       'Spiegeln: ' + (vp && vp.mode === 'capture' ? 'aktiv, ' + (vp.mirrorFix || 0) + '× neu verbunden' + (vp.mirrorWhy ? ' (zuletzt: ' + vp.mirrorWhy + ')' : '') : (FB_MIRROR ? 'bereit' : 'aus')),
       'Puffer-Spur: ' + (function () { if (!v) return '-'; const m = creditsFor(v, 0); const l = (bufCredit.get(v) || []).length; return l + ' Zuwächse | ' + (Array.from(m.entries()).map((e) => e[0].slice(-6) + ':' + e[1].toFixed(1)).join(', ') || '-'); })(),
       'HD nachladen: ' + hdLog + ' | Weiterleitung: ' + lastResolve + (PH ? ' | Pornhub-MP4: ' + phLog : '') + (IG ? ' | Instagram-MP4: ' + igLog : '') + (TT ? ' | TikTok: ' + ttLog + ' · ' + (ttPostUrl(v) || 'kein Link') : ''),

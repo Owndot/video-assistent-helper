@@ -125,6 +125,7 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_tapzoom.py` | Doppeltipp-Zoom: füllt hochkant, Richtung zum Finger, 3× quer, Verschieben, Gummiband, Schwung, Drehen |
 | `test_extras.py` | Untertitel (Seite, .srt/.vtt, Datei, Stream, Lage), ⋮ Mehr: Tonspur, Standbild, Einstellungen, Design, Media Session |
 | `test_menuback.py` | ⋮ ohne Überschrift / schließt, ‹ zurück, Zurück-Taste im Menü, Wiederholen 1× / ∞, Sleep-Timer, Dialog-Verstärker (auch Ablehnung bei fremdem Ton) |
+| `test_fbshare.py` | Teilen in Facebook-Reels: laufendes Reel statt Seitenadresse |
 | `test_mirrorprev.py` | Vorschau beim Spiegeln: ruhig nur die Zeit, kein Flackern beim Ziehen |
 | `test_reelend.py` | Reels-Seite springt am Ende von selbst weiter: Player hält vorher an, beim Schließen bleibt man beim Reel |
 | `test_leave.py` | App-Wechsel (Fokus/verdeckt) ≠ Zurück-Taste, „Beim Verlassen“, Bild-in-Bild ✕/Vollbild |
@@ -152,8 +153,10 @@ Benachrichtigungen) – das prüft nur das Handy.
 - Vorschau beim Spiegeln: KEINE gemerkten Bilder nur für angeschaute Stellen – der Wechsel Bild ↔ Zeit flackert.
 - Dialog-Verstärker/Verstärkung über 100 % nur mit `canBoost()`: `createMediaElementSource` macht Videos fremder Server
   ohne Freigabe (CORS) STUMM – dann lieber „hier nicht möglich“.
-- Reels-Seiten reagieren auf `ended` (nächstes Reel). Gespiegelt daher kurz vor dem Ende anhalten (`nearEnd`, 40 ms)
-  und beim Schließen am Ende das Original NICHT weiterspielen lassen.
+- Reels-Seiten reagieren auf `ended` – manche schon auf „fast am Ende“. Gespiegelt daher 0,6 s vor dem Ende anhalten
+  (`nearEnd`, 40 ms), die letzten Meldungen per Einfang-Zuhörer auf `window` abfangen (`gate`) und beim Schließen am
+  Ende das Original NICHT weiterspielen lassen.
+- Facebook-Reels: `location.href` bleibt beim ersten Reel – für Links die ID aus dem Kasten des Videos nehmen.
 - Vollbild-Ende ist nur dann die Zurück-Taste, wenn die Seite dabei **sichtbar und im Fokus** bleibt – beim
   App-Wechsel kommen `blur`/`visibilitychange` (manchmal erst nach dem Vollbild-Ende, daher der zweite Blick nach 750 ms).
 - App-Texte: `Tr.t("deutsch", "english")` (nach Sprache des Handys), App-Name in `res/values*/strings.xml`.
@@ -266,3 +269,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 17.3 | Vorschau beim Spiegeln wieder nur die Zeit (gemerkte Bilder nur für Angeschautes flackerten beim Spulen: Bild ↔ Zeit) |
 | 17.4 | ⋮-Menü ohne Überschrift, zweiter Tipp schließt; Untermenüs mit ‹ (`openMenu(…, back)`), Zurück-Taste bei offenem Menü nur eine Ebene zurück; Wiederholen-Knopf (Aus → 1× → 5×); Zoom-Wischgesten bei sichtbaren Leisten wieder entfernt. App: neue Oberfläche (ohne Titelleiste, erledigte Schritte als Zeile, Sprachwahl Auto/Deutsch/English) |
 | 17.5 | Sleep-Timer (15–60 min / Ende des Videos, 8 s ausblenden), Dialog-Verstärker (Hochpass, Sprachanhebung, Kompressor – nur bei freigegebenem Ton), Wiederholen Aus → 1× → ∞, Akzent einfarbig (helle Fläche statt Hellblau). App: Design Auto/Hell/Dunkel, einfarbige Knöpfe |
+| 17.6 | Reels: 0,6 s vor dem Ende anhalten + Schleuse (`ended` nie, `timeupdate`/`pause` in der letzten Sekunde nicht zur Seite) – auch Seiten, die schon kurz vor „ended“ weiterspringen. Teilen/Download in Facebook-Reels: Video-ID aus dem eigenen Kasten (`fbVideoId`) statt der Seitenadresse, die beim ersten Reel stehen bleibt; Diagnose zeigt den Link |

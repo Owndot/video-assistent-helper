@@ -1,6 +1,6 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Reels-Seiten springen beim Ende des Videos von selbst zum nächsten (17.2): Der Player hält das gespiegelte
-# Original KURZ VOR dem Ende an – die Seite bekommt „ended“ nie, man bleibt auf demselben Reel.
+# Reels-Seiten springen beim Ende des Videos von selbst zum nächsten – manche schon kurz vor „ended“ (17.6): Der Player
+# hält das gespiegelte Original 0,6 s vor dem Ende an und lässt die letzten Meldungen nicht zur Seite durch.
 import time
 exec(open('test_v8.py').read().split("results = []")[0])
 R = 'window.__evpRoot'; results = []
@@ -11,7 +11,10 @@ PAGE = '''<!doctype html><html><head><title>Reels</title></head><body style="mar
 <script>
 // wie Facebook: am Ende automatisch das nächste Reel
 const v = document.getElementById('v'); window.__advanced = 0;
-v.addEventListener('ended', () => { window.__advanced++; v.src = '/data/reel2.webm'; v.play().catch(() => {}); });
+const next = () => { window.__advanced++; v.src = '/data/reel2.webm'; v.play().catch(() => {}); };
+v.addEventListener('ended', next);
+// wie Facebook (vermutlich): schon KURZ VOR dem Ende weiter, sobald die Zeit fast am Ende ist
+v.addEventListener('timeupdate', () => { if (v.src.endsWith('reel1.webm') && v.duration - v.currentTime < 0.45 && !v.paused) next(); });
 </script></body></html>'''
 def serve(route):
     u = route.request.url
@@ -39,7 +42,7 @@ with sync_playwright() as p:
     s = pg.evaluate('''() => { const v = document.getElementById("v"); return { adv: window.__advanced, src: v.src.split("/").pop(), paused: v.paused,
         left: Math.round((v.duration - v.currentTime) * 100) / 100, open: !!%s.querySelector(".vp"), play: %s.querySelector(".vplay").getAttribute("aria-label") }; }''' % (R, R))
     print('   am Ende:', s)
-    check('gespiegelt: kurz vor dem Ende angehalten (Seite springt NICHT zum nächsten Reel)', s['adv'] == 0 and s['src'] == 'reel1.webm' and s['paused'] and 0 < s['left'] < 0.6, s)
+    check('gespiegelt: kurz vor dem Ende angehalten (Seite springt NICHT zum nächsten Reel)', s['adv'] == 0 and s['src'] == 'reel1.webm' and s['paused'] and 0 < s['left'] < 1.0, s)
     check('… Player bleibt offen und zeigt „Play“', s['open'] and s['play'] in ('Wiedergabe', 'Play'), s)
     pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(1.2)
     s2 = pg.evaluate('() => { const v = document.getElementById("v"); return { adv: window.__advanced, src: v.src.split("/").pop() }; }')

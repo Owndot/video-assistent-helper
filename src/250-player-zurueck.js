@@ -217,16 +217,18 @@
       showControls();
       updateUI();
     };
-    // Reels-Seiten (Facebook u. a.) springen beim Ende („ended“) von selbst zum nächsten Video – dann wäre der Player
-    // schwarz und man stünde danach auf einem anderen Reel. Darum KURZ VOR dem Ende anhalten (letztes Bild bleibt
-    // stehen): Die Seite bekommt das Ende gar nicht mit. Nahe am Ende genauer hinschauen als „timeupdate“ (¼ s).
+    // Reels-Seiten (Facebook u. a.) springen beim Ende von selbst zum nächsten Video – manche schon kurz VOR „ended“
+    // (sobald die Zeit fast am Ende ist). Dann wäre der Player schwarz und man stünde danach auf einem anderen Reel.
+    // Darum: 0,6 s vor dem Ende anhalten (letztes Bild bleibt stehen) und – siehe „Schleuse“ unten – der Seite die
+    // letzten Meldungen des Videos gar nicht erst zeigen. Nahe am Ende genauer hinschauen als „timeupdate“ (¼ s).
+    const END_GAP = 0.6;
     let nearIv = 0;
     const stopNear = () => { clearInterval(nearIv); nearIv = 0; };
     const nearEnd = () => {
       if (vp !== st || st.mode !== 'capture' || st.endHold || orig.paused) { stopNear(); return; }
       const d = orig.duration, t = orig.currentTime;
       if (!isFinite(d) || d < 2) { stopNear(); return; }
-      if (t >= d - 0.25 / Math.max(1, orig.playbackRate || 1)) { stopNear(); holdEnd(); }
+      if (t >= d - END_GAP * Math.max(1, orig.playbackRate || 1)) { stopNear(); holdEnd(); }
       else if (t < d - 2) stopNear();
     };
     const onOrigTime = () => {
@@ -254,6 +256,20 @@
     orig.addEventListener('play', onOrigPlay);
     orig.addEventListener('playing', onOrigPlay);
     st.cleanup.push(() => { orig.removeEventListener('play', onOrigPlay); orig.removeEventListener('playing', onOrigPlay); });
+    // Schleuse (nur beim Spiegeln): Meldungen vom Ende des Videos erreichen die Seite nicht – „ended“ nie, „timeupdate“
+    // und „pause“ in der letzten Sekunde nicht. Abgefangen wird ganz vorn (window, Einfangphase), also vor den
+    // Zuhörern der Seite; die eigenen Zuhörer des Players werden hier direkt bedient.
+    const nearTail = () => { const d = orig.duration; return isFinite(d) && d >= 2 && orig.currentTime > d - 1; };
+    const gate = (e) => {
+      if (e.target !== orig || vp !== st || st.mode !== 'capture') return;
+      if (e.type === 'ended') { e.stopImmediatePropagation(); onOrigEnded(); updateUI(); return; }
+      if (!nearTail()) return;
+      e.stopImmediatePropagation();
+      if (e.type === 'timeupdate') { onOrigTime(); updateUI(); }
+      else if (e.type === 'pause') { showControls(); updateUI(); }
+    };
+    ['ended', 'timeupdate', 'pause'].forEach((t) => window.addEventListener(t, gate, true));
+    st.cleanup.push(() => ['ended', 'timeupdate', 'pause'].forEach((t) => window.removeEventListener(t, gate, true)));
 
     // Original anhalten (außer wir übernehmen dessen Bild) und mit dem Laden beginnen
     if (st.sources.length) { try { orig.muted = true; orig.pause(); } catch (e) {} tryNext(); }
