@@ -79,7 +79,8 @@
     const setTitle = () => { const t = pageTitle(), ho = pageHost(); tSpan.textContent = (t || ho).slice(0, 90); tSmall.textContent = t ? ho : ''; tSmall.hidden = !t; };
     setTitle();
     const bSpeed = h('button', { class: 'vb vtext', 'aria-label': 'Geschwindigkeit' }, '1×');
-    const bPip = document.pictureInPictureEnabled ? ib(I.pip, 'Bild-in-Bild', 'vtool') : null;
+    // Kadri: Knopf immer – kennt der Browser kein Bild-in-Bild für Webseiten, erklärt er den Weg über den Startbildschirm
+    const bPip = document.pictureInPictureEnabled || IS_KADRI ? ib(I.pip, 'Bild-in-Bild', 'vtool') : null;
     const bExt = DOWNLOAD_ONLY ? null : ib(I.open, 'In externer App öffnen');
     const bDl = ib(I.download, 'Herunterladen (z. B. mit YTDLnis)');
     const bShare = ib(I.share, 'Link teilen');

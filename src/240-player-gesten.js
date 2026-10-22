@@ -58,7 +58,8 @@
           // vergrößert: ein Finger verschiebt das Bild (wie Telegram) – Helligkeit/Lautstärke/Spulen erst wieder bei 1×
           g.mode = 'pan'; g.px0 = st.panX; g.py0 = st.panY; g.vs = [];
           vid.classList.remove('vzan'); st.panFree = true;
-        } else g.mode = Math.abs(dx) > Math.abs(dy) ? 'seek' : (g.top ? 'none' : (g.x > W / 2 ? 'vol'
+        } else g.mode = Math.abs(dx) > Math.abs(dy) ? 'seek' : (g.top ? 'none' : (g.x > W / 2
+          ? (HIDE_NO_HELPER && !(st.sys && st.sys.vol) ? 'none' : 'vol')            // Lautstärke nur mit Helfer (Kadri)
           : (HIDE_NO_HELPER && !(st.sys && st.sys.bright) ? 'none' : 'bright')));   // Helligkeit nur mit Helfer (Kadri)
         if (g.mode === 'none') return;
         // ab hier zählt jede Bewegung gleich (kein Sprung um die Anfangsstrecke); an den Enden sofort umkehrbar
