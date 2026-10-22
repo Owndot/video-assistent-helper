@@ -27,6 +27,7 @@
         try { m.volume = s.vol0 * (1 - k); } catch (e) {}
         if (k >= 1) {
           clearInterval(s.iv);
+          st.userPauseAt = Date.now();   // gewollt (Sleep-Timer) – auch im kleinen Fenster nicht wieder anwerfen
           try { M().pause(); } catch (e) {}
           try { m.volume = s.vol0; } catch (e) {}
           st.sleep = null;
@@ -46,6 +47,7 @@
     st.sleepAtEnd = () => {
       if (!st.sleep || st.sleep.at) return false;
       sleepOff(); st.sleepHit = true;
+      st.userPauseAt = Date.now();
       try { M().pause(); } catch (e) {}
       toast('Sleep-Timer: angehalten');
       return true;

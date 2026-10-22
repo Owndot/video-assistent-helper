@@ -21,8 +21,8 @@
     if (MS) {
       msMeta();
       msH('play', () => { const m = M(); if (st.heldAtEnd && st.heldAtEnd(m)) { try { m.currentTime = 0; } catch (e) {} } st.endHold = false; m.play().catch(() => {}); });
-      msH('pause', () => M().pause());
-      msH('stop', () => M().pause());
+      msH('pause', () => { st.userPauseAt = Date.now(); M().pause(); });   // auch der Knopf im kleinen Fenster
+      msH('stop', () => { st.userPauseAt = Date.now(); M().pause(); });
       msH('seekbackward', (d) => seekBy(-((d && d.seekOffset) || SKIP())));
       msH('seekforward', (d) => seekBy((d && d.seekOffset) || SKIP()));
       msH('previoustrack', () => seekBy(-SKIP()));

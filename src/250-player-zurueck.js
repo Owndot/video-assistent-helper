@@ -58,7 +58,7 @@
       st.pipLeaveAt = Date.now();
       setTimeout(() => {
         if (vp !== st) return;
-        if (document.hidden) { pauseAway(); return; }
+        if (document.hidden) { st.userPauseAt = Date.now(); pauseAway(); return; }   // ✕ im kleinen Fenster = gewollt
         if (CONFIG.startFullscreen && !isFs()) {
           enterFs().then(() => {
             if (vp !== st) return;
@@ -71,6 +71,36 @@
     // Browser, die von selbst ins kleine Fenster wechseln können (beim Verlassen der App), fragen über die Media Session
     try { if (navigator.mediaSession && document.pictureInPictureEnabled) navigator.mediaSession.setActionHandler('enterpictureinpicture', () => { vid.disablePictureInPicture = false; vid.requestPictureInPicture().catch(() => {}); }); } catch (e) {}
     st.cleanup.push(() => { try { navigator.mediaSession.setActionHandler('enterpictureinpicture', null); } catch (e) {} });
+    // ----- Im kleinen Fenster weiterlaufen lassen (18.5) -----
+    // Beim Wischen zum Startbildschirm wechselt der Browser ins kleine Fenster. Kurz davor oder danach halten aber
+    // manche Seiten (Facebook: ihr Video, sobald sie verdeckt ist – beim Spiegeln steht dann auch das kleine Fenster),
+    // der Browser selbst oder „Beim Verlassen: Anhalten“ das Video an. Hält es etwas anderes als du (Knopf, Knopf im
+    // kleinen Fenster, Sleep-Timer, Reel-Ende, ✕) rund um den Wechsel oder im kleinen Fenster an: gleich weiter.
+    st.pipEnterAt = 0;
+    let pipResumes = 0;
+    const byUser = () => Date.now() - (st.userPauseAt || 0) < 800 || !!st.endHold;
+    const inPip = () => pipIsOurs(vid) || (st.pipEnterAt && Date.now() - st.pipEnterAt < 2500 && !(st.pipLeaveAt > st.pipEnterAt));
+    const resumePip = () => {
+      if (vp !== st || !inPip() || st.lastPauseByUser || st.endHold || pipResumes >= 8) return;
+      const m = M();
+      if (!m.paused) return;
+      pipResumes++; st.pausedAway = false;
+      try { const pr = m.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
+    };
+    const onAnyPause = (e) => {
+      if (vp !== st || e.target !== M()) return;
+      st.lastPauseAt = Date.now(); st.lastPauseByUser = byUser();
+      if (!st.lastPauseByUser && inPip()) setTimeout(resumePip, 120);
+    };
+    const onAnyPlay = (e) => { if (e.target === M()) st.lastPauseByUser = false; };
+    vid.addEventListener('pause', onAnyPause); orig.addEventListener('pause', onAnyPause);
+    vid.addEventListener('play', onAnyPlay); orig.addEventListener('play', onAnyPlay);
+    st.cleanup.push(() => { orig.removeEventListener('pause', onAnyPause); orig.removeEventListener('play', onAnyPlay); });
+    vid.addEventListener('enterpictureinpicture', () => {
+      st.pipEnterAt = Date.now(); pipResumes = 0;
+      // kurz vorher angehalten (Seite verdeckt, „Anhalten“-Einstellung …), aber nicht von dir: weiter im kleinen Fenster
+      if (M().paused && !st.lastPauseByUser && Date.now() - (st.lastPauseAt || 0) < 3000) setTimeout(resumePip, 120);
+    });
     const onFs = () => {
       if (vp !== st || isFs()) return;
       // Zurück-Taste bei offenem Menü (Einstellungen …): nur eine Ebene zurück, Player bleibt offen;

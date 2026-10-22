@@ -129,6 +129,7 @@ geöffnet) und prüft Verhalten und Aussehen (Screenshots landen im Ordner). Die
 | `test_mirrorprev.py` | Vorschau beim Spiegeln: ruhig nur die Zeit, kein Flackern beim Ziehen |
 | `test_nextreel.py` | Facebook-Countdown „Next reel in 3“ wird bei offenem Player abgebrochen, fremde Dialoge nicht |
 | `test_reelend.py` | Reels-Seite springt am Ende von selbst weiter: Player hält vorher an (Anzeige wie fertig, „noch einmal“), beim Schließen bleibt man beim Reel |
+| `test_pipkeep.py` | Bild-in-Bild beim Startbildschirm: von außen angehalten → läuft weiter (auch Facebook gespiegelt); eigene Pause, ✕ bleiben |
 | `test_leave.py` | App-Wechsel (Fokus/verdeckt) ≠ Zurück-Taste, „Beim Verlassen“, Bild-in-Bild ✕/Vollbild |
 | `test_proof.py` | Stream-Nachweis: vorgeladenes nächstes Video wird nicht genommen; Datei-Videos: Gegenprobe der Länge im Player |
 | `test_spaswitch.py` | Videowechsel ohne Neuladen (ARD-artig): neuer Stream, neue Seitenadresse beim Teilen, A → B → A |
@@ -293,3 +294,4 @@ Benachrichtigungen) – das prüft nur das Handy.
 | 18.2 | Am Ende angehalten (Reels, 0,6 s vor Schluss): Anzeige wie fertig – Zeit = Länge, Leiste und Linie voll, Symbol „noch einmal“ (`heldAtEnd`); zurückgespult: normale Anzeige, Play läuft ab dort statt von vorn. Tests: streng (`run_all.sh` rot bei jedem FAIL/Absturz), Messungen als `mess_*.py`, veraltete entfernt |
 | 18.3 | Facebook-Countdown „Next reel in 3 … Cancel“ (läuft auch bei angehaltenem Video): solange der Player offen ist und 10 s danach tippt das Skript sofort auf „Abbrechen“ (`armNextGuard`, MutationObserver nur auf geänderte Teile; nur kleiner Kasten mit Reel/Video + Countdown-Zahl + „weiter/next“-Wort UND Abbrechen-Knopf). Diagnose zählt die Abbrüche. Test `test_nextreel.py` (mit Gegenprobe: anderer Dialog mit „Cancel“ bleibt unberührt) |
 | 18.4 | Reels: Halt am Ende 0,2 s vor Schluss statt 0,6 s (`END_GAP`) – der Countdown der Seite wird ja abgebrochen |
+| 18.5 | Bild-in-Bild läuft weiter: Hält etwas anderes als du das Video rund um den Wechsel ins kleine Fenster (±2,5 s) oder darin an – Facebook beim Verdecken, der Browser, „Beim Verlassen: Anhalten“ –, läuft es sofort weiter (max. 8×). Gewollt bleibt gewollt: Play/Pause, Knopf im kleinen Fenster (Media Session), Sleep-Timer, Reel-Ende, ✕ (`st.userPauseAt`). Test `test_pipkeep.py` |

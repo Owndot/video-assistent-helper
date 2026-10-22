@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      18.4
+// @version      18.5
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -3404,7 +3404,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // ----- Bedienelemente -----
     // Play nach dem Ende: Sprung an den Anfang ist dann gewollt (nicht als Schleife werten)
     function togglePlay() { const m = M(); if (m.paused) { if (st.heldAtEnd(m)) { try { m.currentTime = 0; } catch (e) {} }   // am Ende angehalten: von vorn
-        st.endHold = false; st.userSeekAt = Date.now(); m.play().catch(() => {}); } else m.pause(); showControls(); }
+        st.endHold = false; st.userSeekAt = Date.now(); m.play().catch(() => {}); } else { st.userPauseAt = Date.now(); m.pause(); } showControls(); }
     function seekBy(d) {
       const m = M();
       const max = isFinite(m.duration) ? m.duration - 0.5 : m.currentTime + d;
@@ -3903,6 +3903,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         try { m.volume = s.vol0 * (1 - k); } catch (e) {}
         if (k >= 1) {
           clearInterval(s.iv);
+          st.userPauseAt = Date.now();   // gewollt (Sleep-Timer) – auch im kleinen Fenster nicht wieder anwerfen
           try { M().pause(); } catch (e) {}
           try { m.volume = s.vol0; } catch (e) {}
           st.sleep = null;
@@ -3922,6 +3923,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     st.sleepAtEnd = () => {
       if (!st.sleep || st.sleep.at) return false;
       sleepOff(); st.sleepHit = true;
+      st.userPauseAt = Date.now();
       try { M().pause(); } catch (e) {}
       toast('Sleep-Timer: angehalten');
       return true;
@@ -4003,8 +4005,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     if (MS) {
       msMeta();
       msH('play', () => { const m = M(); if (st.heldAtEnd && st.heldAtEnd(m)) { try { m.currentTime = 0; } catch (e) {} } st.endHold = false; m.play().catch(() => {}); });
-      msH('pause', () => M().pause());
-      msH('stop', () => M().pause());
+      msH('pause', () => { st.userPauseAt = Date.now(); M().pause(); });   // auch der Knopf im kleinen Fenster
+      msH('stop', () => { st.userPauseAt = Date.now(); M().pause(); });
       msH('seekbackward', (d) => seekBy(-((d && d.seekOffset) || SKIP())));
       msH('seekforward', (d) => seekBy((d && d.seekOffset) || SKIP()));
       msH('previoustrack', () => seekBy(-SKIP()));
@@ -5008,7 +5010,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       st.pipLeaveAt = Date.now();
       setTimeout(() => {
         if (vp !== st) return;
-        if (document.hidden) { pauseAway(); return; }
+        if (document.hidden) { st.userPauseAt = Date.now(); pauseAway(); return; }   // ✕ im kleinen Fenster = gewollt
         if (CONFIG.startFullscreen && !isFs()) {
           enterFs().then(() => {
             if (vp !== st) return;
@@ -5021,6 +5023,36 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Browser, die von selbst ins kleine Fenster wechseln können (beim Verlassen der App), fragen über die Media Session
     try { if (navigator.mediaSession && document.pictureInPictureEnabled) navigator.mediaSession.setActionHandler('enterpictureinpicture', () => { vid.disablePictureInPicture = false; vid.requestPictureInPicture().catch(() => {}); }); } catch (e) {}
     st.cleanup.push(() => { try { navigator.mediaSession.setActionHandler('enterpictureinpicture', null); } catch (e) {} });
+    // ----- Im kleinen Fenster weiterlaufen lassen (18.5) -----
+    // Beim Wischen zum Startbildschirm wechselt der Browser ins kleine Fenster. Kurz davor oder danach halten aber
+    // manche Seiten (Facebook: ihr Video, sobald sie verdeckt ist – beim Spiegeln steht dann auch das kleine Fenster),
+    // der Browser selbst oder „Beim Verlassen: Anhalten“ das Video an. Hält es etwas anderes als du (Knopf, Knopf im
+    // kleinen Fenster, Sleep-Timer, Reel-Ende, ✕) rund um den Wechsel oder im kleinen Fenster an: gleich weiter.
+    st.pipEnterAt = 0;
+    let pipResumes = 0;
+    const byUser = () => Date.now() - (st.userPauseAt || 0) < 800 || !!st.endHold;
+    const inPip = () => pipIsOurs(vid) || (st.pipEnterAt && Date.now() - st.pipEnterAt < 2500 && !(st.pipLeaveAt > st.pipEnterAt));
+    const resumePip = () => {
+      if (vp !== st || !inPip() || st.lastPauseByUser || st.endHold || pipResumes >= 8) return;
+      const m = M();
+      if (!m.paused) return;
+      pipResumes++; st.pausedAway = false;
+      try { const pr = m.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
+    };
+    const onAnyPause = (e) => {
+      if (vp !== st || e.target !== M()) return;
+      st.lastPauseAt = Date.now(); st.lastPauseByUser = byUser();
+      if (!st.lastPauseByUser && inPip()) setTimeout(resumePip, 120);
+    };
+    const onAnyPlay = (e) => { if (e.target === M()) st.lastPauseByUser = false; };
+    vid.addEventListener('pause', onAnyPause); orig.addEventListener('pause', onAnyPause);
+    vid.addEventListener('play', onAnyPlay); orig.addEventListener('play', onAnyPlay);
+    st.cleanup.push(() => { orig.removeEventListener('pause', onAnyPause); orig.removeEventListener('play', onAnyPlay); });
+    vid.addEventListener('enterpictureinpicture', () => {
+      st.pipEnterAt = Date.now(); pipResumes = 0;
+      // kurz vorher angehalten (Seite verdeckt, „Anhalten“-Einstellung …), aber nicht von dir: weiter im kleinen Fenster
+      if (M().paused && !st.lastPauseByUser && Date.now() - (st.lastPauseAt || 0) < 3000) setTimeout(resumePip, 120);
+    });
     const onFs = () => {
       if (vp !== st || isFs()) return;
       // Zurück-Taste bei offenem Menü (Einstellungen …): nur eine Ebene zurück, Player bleibt offen;
@@ -5814,7 +5846,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 18.4',
+      'Video-Assistent 18.5',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
