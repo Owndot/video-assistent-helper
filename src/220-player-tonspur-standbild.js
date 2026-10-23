@@ -113,9 +113,11 @@
     //    Grenzen, im Schild „Lupe“/„Fein“, beim Wechsel ein kurzes Vibrieren. Wieder hoch = eine Stufe zurück, auf
     //    Höhe der Leiste = normal (die Stelle gleitet dann beim Weiterziehen wieder unter den Finger, kein Sprung).
     //    Finger an ein Ende der Leiste = der Ausschnitt wandert mit.
-    //  - zurück an die Anfangsstelle (wie YouTube „Release to cancel“): kurzes Vibrieren, Schild „Loslassen = abbrechen“
-    //    (rot) – loslassen dort = nichts ändern, das Video läuft einfach weiter. (Kein Punkt für die alte Stelle: das
-    //    Video läuft beim Spulen weiter, ein fester Punkt passte nach Sekunden nicht mehr.)
+    //  - zurück an die LAUFENDE Stelle (wie YouTube „Release to cancel“, 19.10): Das Video läuft beim Spulen weiter, die
+    //    Stelle zum Abbrechen wandert mit. Triffst du sie: kurzes Vibrieren, rotes Schild „0:50 · Loslassen = abbrechen“,
+    //    die kleine Vorschau verschwindet (das große Video zeigt genau diese Stelle). Sie „klebt“ dann am Finger und
+    //    läuft unter ihm mit, bis du ihn ~14 px wegziehst. Loslassen dort = nichts ändern, das Video läuft einfach weiter.
+    //    („Im Bild“-Spulen: das Video folgt dem Finger – dort bleibt es die Anfangsstelle.)
     //  - weit nach oben weg vom Balken = abbrechen (Hinweis erscheint); loslassen dort = zurück an die alte Stelle.
     //    Zurück nach unten = weiter spulen. Übernimmt Android die Geste (Hochwischen vom Rand), ebenfalls abbrechen.
     //    Hochwischen ist kein Spulen: die Stelle folgt dem Finger erst, wenn er ~10 px zur Seite gezogen hat.
@@ -124,7 +126,19 @@
     bar.parentNode.append(barHit, barKnob);
     bar.tabIndex = -1;
     const scr = { on: false, id: 0, x0: 0, y0: 0, lx: 0, t0: 0, t: 0, raw: 0, moved: false, first: true, mode: '', snap: false, away: false,
-      lv: 0, z: 0, ws: 0, zt: 0, zx: 0, off: 0, pan: 0, pt: 0 };
+      lv: 0, z: 0, ws: 0, zt: 0, zx: 0, off: 0, pan: 0, pt: 0, sx: 0, tk: 0 };
+    // Stelle zum Abbrechen: wo das Video gerade läuft (beim Spulen „Im Bild“: wo es vorher war)
+    const anchor = () => (liveMode() ? scr.t0 : M().currentTime);
+    // Solange eingerastet (oder im Abbrechen-Bereich), läuft die Anzeige mit dem Video mit – auch bei stillem Finger
+    function snapTick() {
+      clearInterval(scr.tk); scr.tk = 0;
+      if (!scr.on || liveMode() || !(scr.snap || scr.mode === 'cancel')) return;
+      scr.tk = setInterval(() => {
+        if (!scr.on || !(scr.snap || scr.mode === 'cancel')) { clearInterval(scr.tk); scr.tk = 0; return; }
+        if (scr.snap) scr.t = anchor();
+        scrubShow(scr.mode === 'cancel' ? anchor() : scr.t);
+      }, 250);
+    }
     const buzz = () => { try { if (navigator.vibrate && touchFresh()) navigator.vibrate(12); } catch (e) {} };
     // Abstand zur alten Stelle: „+12 s“, „−1:05“
     const delta = (x) => { const a = Math.round(Math.abs(x)); return (x < 0 ? '−' : '+') + (a < 60 ? a + ' s' : fmtTime(a)); };
@@ -164,9 +178,10 @@
       wrap.classList.toggle('scrubx', scr.mode === 'cancel');
       wrap.classList.toggle('scrubsnap', scr.snap && scr.mode !== 'cancel');
       wrap.classList.toggle('zoom', !!scr.z);
-      if (scr.mode === 'cancel' || (scr.snap && scr.moved)) pvTime.textContent = tr('Loslassen = abbrechen');
+      if (scr.mode === 'cancel') pvTime.textContent = tr('Loslassen = abbrechen');
+      else if (scr.snap && scr.moved) pvTime.textContent = fmtTime(t) + ' · ' + tr('Loslassen = abbrechen');
       else if (scr.moved) {
-        const tx = (scr.lv === 2 ? tenth(t) : fmtTime(t)) + ' · ' + delta(t - scr.t0);
+        const tx = (scr.lv === 2 ? tenth(t) : fmtTime(t)) + ' · ' + delta(t - anchor());
         pvTime.textContent = scr.lv ? tr(scr.lv === 2 ? 'Fein' : 'Lupe') + ' · ' + tx : tx;
       }
     }
@@ -194,13 +209,15 @@
         if (scr.off) { scr.off *= Math.exp(-Math.abs(dx || 0) / 20); if (Math.abs(scr.off) < 0.05) scr.off = 0; }
         scr.raw = clamp(clamp((x - g.L) / g.w, 0, 1) * d + scr.off, 0, d);
       }
-      // Einrasten an der alten Stelle (erst nachdem du einmal weg warst) – etwa 5 px der Leiste
-      const near = Math.abs(scr.raw - scr.t0) < Math.max(0.2, (scr.z || d) / g.w * 5);
-      if (!near) scr.away = true;
-      if (near && scr.away && !scr.snap) buzz();
-      scr.snap = near && scr.away;
-      scr.t = scr.snap ? scr.t0 : scr.raw;
+      // Einrasten an der laufenden Stelle (erst nachdem du einmal weg warst) – etwa 5 px der Leiste. Eingerastet bleibt
+      // es, bis der Finger ~14 px weg ist (die Stelle wandert ja mit dem Video weiter)
+      const A = anchor(), near = Math.abs(scr.raw - A) < Math.max(0.2, (scr.z || d) / g.w * 5);
+      if (scr.snap) { if (Math.abs(x - scr.sx) > 14) { scr.snap = false; scr.away = false; } }
+      else if (near && scr.away) { scr.snap = true; scr.sx = x; buzz(); }
+      if (!near && !scr.snap) scr.away = true;
+      scr.t = scr.snap ? A : scr.raw;
       scrubShow(scr.t);
+      snapTick();
     }
     // Lupe am Ende der Leiste: der Ausschnitt wandert mit (je weiter am Rand, desto schneller)
     function panTick(ts) {
@@ -221,6 +238,7 @@
       if (!scr.on) return;
       scr.on = false;
       if (scr.pan) { cancelAnimationFrame(scr.pan); scr.pan = 0; }
+      clearInterval(scr.tk); scr.tk = 0;
       scr.z = 0; scr.lv = 0; scr.off = 0;
       wrap.classList.remove('thick', 'scrubx', 'scrubsnap', 'zoom');
       tCur.classList.remove('g', 'vtz'); tDur.classList.remove('g', 'vtz');
@@ -261,7 +279,7 @@
         scr.moved = true;
         wrap.classList.add('thick');
       }
-      if (dy < -Math.max(70, geom().br.height * 1.5)) { scr.mode = 'cancel'; scrubShow(scr.t0); return; }
+      if (dy < -Math.max(70, geom().br.height * 1.5)) { const was = scr.mode; scr.mode = 'cancel'; scrubShow(anchor()); if (was !== 'cancel') snapTick(); return; }
       scr.mode = '';
       if (scr.first && Math.abs(e.clientX - scr.x0) < 10 && dy < 30) { scrubShow(scr.t); return; }   // (noch) Hochwischen
       if (scr.first) { scr.first = false; scrubAt(e.clientX, 0); }   // erst unter den Finger, dann ggf. Lupe

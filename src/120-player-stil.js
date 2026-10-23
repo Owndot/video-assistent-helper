@@ -133,6 +133,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vp.thick .vbar::-moz-range-thumb{transform:scale(0) !important}
 /* Abbrechen-Bereich (Finger weit über der Leiste) und Fein-Spulen (unter der Leiste) */
 .vp.scrubx .vbar{opacity:.4}
+/* an der laufenden Stelle (Abbrechen): keine kleine Vorschau – das große Video zeigt genau diese Stelle */
+.vp.scrubx .vprev .vpbox,.vp.scrubsnap .vprev .vpbox{display:none}
 /* Zeit über der Vorschau: im Glas des Designs (.g, „Schlicht“ = Milchglas) – rot getönt beim Abbrechen, violett mit Lupe */
 .vp.scrubx .vprev b.g,.vp.scrubsnap .vprev b.g{background:rgba(205,45,45,.62)!important}
 .vp.zoom .vprev b.g{background:rgba(110,86,226,.5)!important}

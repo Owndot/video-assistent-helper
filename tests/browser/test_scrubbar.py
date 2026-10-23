@@ -21,6 +21,7 @@ with sync_playwright() as p:
     def state(): return pg.evaluate('() => { const w = %s.querySelector(".vp"); return [w.classList.contains("thick"), w.classList.contains("scrubx"), w.classList.contains("zoom"), %s.querySelector(".vprev b").textContent, w.classList.contains("scrubsnap")]; }' % (R, R))
     D = pg.evaluate('() => %s.querySelector(".vv").duration' % R)
     def at(x, X, W): return min(max((X - x - 7) / W, 0), 1) * D   # Stelle unter dem Finger
+    def sec(tx): return int(tx.split(':')[0]) * 60 + int(tx.split(':')[1].split(',')[0])
     # 1) antippen = hinspringen
     setT(10); x, y, W = geo()
     pg.mouse.click(x + 7 + 0.7 * W, y); time.sleep(0.6)
@@ -65,6 +66,22 @@ with sync_playwright() as p:
     check('beim Ziehen: Abstand zur alten Stelle („+… s“)', any(('+%d s' % (round(r1 - 20) + k)) in s6a[3] for k in (-1, 0, 1)), [s6a, round(r1 - 20)])
     check('zurück an der alten Stelle: rastet ein („Loslassen = abbrechen“)', s6[4] and 'abbrechen' in s6[3], s6)
     check('… loslassen dort: bleibt bei 20 s', abs(t() - 20) < 0.5, t())
+    # 6b) Video läuft weiter: die Stelle zum Abbrechen wandert mit; dort eingerastet „klebt“ sie und läuft mit,
+    #     die kleine Vorschau ist weg; loslassen = nichts ändern (kein Sprung zurück)
+    pg.evaluate('() => { const v = %s.querySelector(".vv"); v.currentTime = 10; v.play(); }' % R); time.sleep(0.6)
+    x, y, W = geo(); tl = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R); fx = x + 7 + (tl / D) * W
+    pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(fx + 0.3 * W, y, steps=4); time.sleep(2.0)
+    live = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R) + 0.2
+    pg.mouse.move(x + 7 + (live / D) * W, y, steps=4); time.sleep(0.3)
+    p1 = pg.evaluate('() => { const r = %s; return [r.querySelector(".vp").classList.contains("scrubsnap"), r.querySelector(".vprev b").textContent, getComputedStyle(r.querySelector(".vpbox")).display, r.querySelector(".vv").currentTime]; }' % R)
+    time.sleep(1.5)
+    p2 = pg.evaluate('() => { const r = %s; return [r.querySelector(".vp").classList.contains("scrubsnap"), r.querySelector(".vprev b").textContent, r.querySelector(".vv").currentTime]; }' % R)
+    pg.mouse.up(); time.sleep(0.4)
+    after = pg.evaluate('() => { const v = %s.querySelector(".vv"); return [v.currentTime, v.paused]; }' % R)
+    check('läuft weiter: zurück zur LAUFENDEN Stelle → eingerastet, „Loslassen = abbrechen“, keine kleine Vorschau', p1[0] and 'abbrechen' in p1[1] and p1[2] == 'none' and abs(sec(p1[1].split(' · ')[0]) - p1[3]) <= 1.2, p1)
+    check('… Finger still: bleibt eingerastet, Zeit läuft mit dem Video mit', p2[0] and sec(p2[1].split(' · ')[0]) >= sec(p1[1].split(' · ')[0]) + 1, [p1, p2])
+    check('… loslassen: kein Sprung zurück, Video läuft weiter', not after[1] and after[0] >= p2[2] - 0.3, [p2, after])
+    pg.evaluate('() => %s.querySelector(".vv").pause()' % R)
     # 7) bis an den rechten Rand = Ende, an den linken = Anfang (egal, wo der Finger anfängt)
     setT(20); x, y, W = geo()
     pg.mouse.move(x + 7 + 0.6 * W, y); pg.mouse.down(); pg.mouse.move(x + W + 30, y, steps=4); time.sleep(0.2)
