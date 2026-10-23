@@ -111,11 +111,14 @@ with sync_playwright() as p:
     # Design: Glas ↔ Schlicht (nur Milchglas, keine Glaskante/Glanz/Lupe) – wirkt sofort, in allen Browsern
     dz = lambda: pg.evaluate('''() => { const e = %s.querySelector("button[aria-label=Schließen]"), m = %s.querySelector(".vmenu");
         return [%s.host.classList.contains("flat"), getComputedStyle(e, "::before").display, getComputedStyle(e).backdropFilter, getComputedStyle(m, "::after").display, e.style.getPropertyValue("--lens")]; }''' % (R, R, R))
-    d0 = dz(); pick(pg, 'Design'); time.sleep(0.3); d1 = dz()
-    check('Design → Schlicht: überall Milchglas, ohne Kante/Glanz/Lupe', (not d0[0]) and d1[0] and d1[1] == 'none' and d1[3] == 'none' and 'blur(22px)' in d1[2] and 'url(' not in d1[2] and d1[4] == '', [d0, d1])
-    check('Design-Eintrag zeigt „Schlicht“', ['Design', 'Schlicht', False] in items(pg), items(pg))
+    d0 = dz()
+    plain = lambda d: d[0] and d[1] == 'none' and d[3] == 'none' and 'blur(22px)' in d[2] and 'url(' not in d[2] and d[4] == ''
+    check('Standard „Schlicht“: überall Milchglas, ohne Kante/Glanz/Lupe', plain(d0) and ['Design', 'Schlicht', False] in items(pg), [d0, items(pg)])
+    pick(pg, 'Design'); time.sleep(0.3); d1 = dz()
+    check('Design → Glas: Kante zurück', (not d1[0]) and d1[1] != 'none', d1)
+    check('Design-Eintrag zeigt „Glas“', ['Design', 'Glas', False] in items(pg), items(pg))
     pick(pg, 'Design'); time.sleep(0.3); d2 = dz()
-    check('Design → Glas: Kante zurück', (not d2[0]) and d2[1] != 'none', d2)
+    check('Design → wieder Schlicht: Milchglas', plain(d2), d2)
     pick(pg, 'Sprungweite')
     lab = pg.evaluate('() => [%s.querySelector(".vskip:last-of-type").getAttribute("aria-label"), %s.querySelector("button[aria-label=\'15 s vor\'] text").textContent]' % (R, R))
     check('auf 15 s: Knöpfe zeigen 15', lab[1] == '15', lab)
