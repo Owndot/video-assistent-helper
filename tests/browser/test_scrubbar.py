@@ -7,6 +7,7 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 # großer Punkt nur beim Ziehen, unter dem Finger (kein Punkt für die alte Stelle) · Zeit und Punkt im Glas des Designs.
 import time
 exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])
+SCRIPT = SCRIPT.replace("lensGlass: false,", "lensGlass: true,")   # dieser Test vergleicht beide Designs (Glas mit Lichtbrechung und Schlicht)
 with sync_playwright() as p:
     b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
     ctx = b.new_context(viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True, device_scale_factor=2)
