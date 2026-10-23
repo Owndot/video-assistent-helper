@@ -24,7 +24,7 @@
     } catch (e) { st.actx = null; }
 
     // ----- Oberfläche -----
-    const wrap = h('div', { class: 'vp ctl' });
+    const wrap = h('div', { class: CONFIG.openUi === 'controls' ? 'vp ctl' : 'vp' });   // „Nur Bild“: ohne Leisten öffnen
     const vid = document.createElement('video');
     vid.className = 'vv';
     vid.setAttribute('playsinline', '');

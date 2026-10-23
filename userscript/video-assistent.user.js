@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.16
+// @version      19.17
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -77,6 +77,7 @@
     // Spul-Vorschau: 'thumb' = kleines Vorschaubild über der Leiste (Standard), 'live' = das Video selbst springt beim
     // Ziehen mit (geht überall, auch beim Spiegeln)
     seekPreview: 'thumb',
+    openUi: 'quiet',          // Beim Öffnen: 'quiet' = nur das Bild (Bedienung nach dem ersten Antippen), 'controls' = gleich mit Bedienung
     seekZoom: true,           // Lupe beim Spulen: Finger unter die Leiste = feiner (Ausschnitt ~1 min)
     seekBuzz: true,           // kurzes Vibrieren beim Spulen (Wechsel der Lupen-Stufe)
     leaveAction: 'play',      // in eine andere App wechseln: 'play' = weiterlaufen lassen (wie der Browser es erlaubt), 'pause' = anhalten
@@ -128,7 +129,7 @@
   // Eigene Einstellungen (im Player: ⋯ → Einstellungen) gelten vor den Werten oben und überstehen Updates des Skripts
   const SETTING_KEYS = ['startFullscreen', 'lensGlass', 'ambient', 'progressLine', 'holdSpeed', 'topGuard', 'bottomGuard',
     'skipSeconds', 'systemHelper', 'downloader', 'autoRotate', 'subSize', 'subHigh', 'language', 'leaveAction', 'dialogBoost', 'seekPreview',
-    'seekZoom', 'seekBuzz',
+    'seekZoom', 'seekBuzz', 'openUi',
     // Seitenlisten (in Kadri über die Einstellungsseite änderbar; ein eigener Wert ersetzt die Liste oben)
     'ytdlpSites', 'downloadOnlySites', 'disabledSites'];
   const CONFIG_DEFAULT = {};
@@ -166,7 +167,7 @@
     'Füllen': 'Fill', 'Strecken': 'Stretch',
     // Einstellungen (kurz)
     'Design': 'Design', 'Glas': 'Glass', 'Schlicht': 'Plain', 'Vollbild': 'Full screen', 'Ambient': 'Ambient',
-    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Loslassen = abbrechen': 'Release to cancel', 'Lupe': 'Zoom', 'Spul-Lupe': 'Seek zoom', 'Vibration': 'Vibration', 'LIVE': 'LIVE', 'Video hat gewechselt – Spulen abgebrochen': 'Video changed – seeking cancelled', 'Spul-Vorschau': 'Seek preview', 'Im Bild': 'In video', 'Kleines Bild': 'Thumbnail', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
+    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Loslassen = abbrechen': 'Release to cancel', 'Lupe': 'Zoom', 'Spul-Lupe': 'Seek zoom', 'Beim Öffnen': 'On open', 'Nur Bild': 'Picture only', 'Mit Bedienung': 'With controls', 'Vibration': 'Vibration', 'LIVE': 'LIVE', 'Video hat gewechselt – Spulen abgebrochen': 'Video changed – seeking cancelled', 'Spul-Vorschau': 'Seek preview', 'Im Bild': 'In video', 'Kleines Bild': 'Thumbnail', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
     'Link teilen': 'Share link', 'Zurück': 'Back', 'Wiederholen': 'Repeat', 'Wiederholen aus': 'Repeat off', 'Wiederholen: endlos': 'Repeat: endless', 'Sleep-Timer': 'Sleep timer', 'Ende des Videos': 'End of video', 'Läuft': 'Running', 'Sleep-Timer aus': 'Sleep timer off', 'Sleep-Timer: angehalten': 'Sleep timer: paused', 'Sleep-Timer: Ende des Videos': 'Sleep timer: end of video', 'Dialog-Verstärker': 'Dialogue boost', 'Dialog-Verstärker an': 'Dialogue boost on', 'Dialog-Verstärker aus': 'Dialogue boost off', 'Dialog-Verstärker: hier nicht möglich (die Seite gibt den Ton nicht frei)': 'Dialogue boost: not possible here (the site doesn’t release the sound)', 'In App öffnen': 'Open in app', 'Beim Verlassen': 'When leaving', 'Weiter': 'Keep playing', 'Anhalten': 'Pause', 'Antippen für Vollbild': 'Tap for full screen', 'z. B. VLC': 'e.g. VLC', 'Link kopiert': 'Link copied', 'Kein Link zu diesem Video gefunden': 'No link to this video found',
     'Oben: Wischen bis ganz an den Rand': 'Top: swiping works right up to the edge', 'Unten: Wischen bis ganz an den Rand': 'Bottom: swiping works right down to the edge',
     '✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helper benutzen. Du kannst diese Seite schließen.': '✓ Connected. From now on only this script can use the helper. You can close this page.',
@@ -2520,9 +2521,9 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vb.g:active{transform:scale(.92);-webkit-backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.6) brightness(1.5);backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.6) brightness(1.5)}
 /* Ein-/Ausblenden: nicht die ganze Leiste halb durchsichtig machen – darunter rechnet Chrome den Milchglas-Effekt
    erst am Ende (erst hell, dann plötzlich dunkler). Jede Fläche blendet sich selbst ein, der Effekt ist sofort da. */
-.vchrome{position:absolute;inset:0;pointer-events:none;visibility:hidden;transition:visibility 0s linear .22s}
-.vchrome .g{opacity:0;transition:opacity .22s ease,transform .32s cubic-bezier(.34,1.56,.64,1)}
-.vchrome .vtitle,.vchrome .vrow,.vchrome .vscrim{opacity:0;transition:opacity .22s ease}
+.vchrome{position:absolute;inset:0;pointer-events:none;visibility:hidden;transition:visibility 0s linear .16s}
+.vchrome .g{opacity:0;transition:opacity .16s ease-out,transform .32s cubic-bezier(.34,1.56,.64,1)}
+.vchrome .vtitle,.vchrome .vrow,.vchrome .vscrim{opacity:0;transition:opacity .16s ease-out}
 .vp.ctl .vchrome .g,.vp.ctl .vchrome .vtitle,.vp.ctl .vchrome .vrow,.vp.ctl .vchrome .vscrim{opacity:1}
 .vscrim{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.34) 0,rgba(0,0,0,0) 20%,rgba(0,0,0,0) 58%,rgba(0,0,0,.5) 100%);pointer-events:none}
 .vp.ctl .vchrome{visibility:visible;transition:visibility 0s}
@@ -2818,7 +2819,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     } catch (e) { st.actx = null; }
 
     // ----- Oberfläche -----
-    const wrap = h('div', { class: 'vp ctl' });
+    const wrap = h('div', { class: CONFIG.openUi === 'controls' ? 'vp ctl' : 'vp' });   // „Nur Bild“: ohne Leisten öffnen
     const vid = document.createElement('video');
     vid.className = 'vv';
     vid.setAttribute('playsinline', '');
@@ -4117,6 +4118,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
           try { localStorage.removeItem('evp-line'); } catch (e) {}
         }),
         it('Vollbild', yn(CONFIG.startFullscreen), () => setSetting('startFullscreen', !CONFIG.startFullscreen)),
+        it('Beim Öffnen', CONFIG.openUi === 'controls' ? 'Mit Bedienung' : 'Nur Bild', () => setSetting('openUi', CONFIG.openUi === 'controls' ? 'quiet' : 'controls')),
         it('Sprungweite', SKIP() + ' s', () => {
           next('skipSeconds', [5, 10, 15, 30]);
           [bFwd, bBack].forEach((b) => { const x = b.querySelector('text'); if (x) x.textContent = String(SKIP()); });
@@ -5926,7 +5928,10 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Original anhalten (außer wir übernehmen dessen Bild) und mit dem Laden beginnen
     if (st.sources.length) { showPoster(); try { orig.muted = true; orig.pause(); } catch (e) {} tryNext(); }
     else useCapture();
-    showControls();
+    // Beim Öffnen: „Nur Bild“ (wie Samsung – ruhig, Bedienung erst nach dem ersten Antippen) oder gleich mit Bedienung.
+    // Läuft das Video nach 2 s nicht (angehalten, wartet auf dich), kommt die Bedienung trotzdem.
+    if (CONFIG.openUi === 'controls') showControls();
+    else setTimeout(() => { if (vp === st && M().paused && !wrap.classList.contains('ctl')) showControls(); }, 2000);
   }
 
   // Wächter nach dem Schließen: Läuft das Video auf der Seite wirklich weiter? Hängt es, einmal anstupsen.
@@ -6503,7 +6508,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.16',
+      'Video-Assistent 19.17',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

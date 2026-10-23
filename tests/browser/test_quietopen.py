@@ -12,6 +12,8 @@ def page(b, pre=''):
     ctx.add_init_script(PRE); ctx.add_init_script(HLS); ctx.add_init_script(SCRIPT)
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     pg.goto(B + 'direct.html'); pg.wait_for_function('document.getElementById("v").currentTime > 0.5', timeout=20000)
+    pg.evaluate('() => { document.getElementById("v").muted = false; }')
+    pg.wait_for_function("() => %s && %s.querySelector(\"button[aria-label='Im Videoplayer öffnen']\")" % (R, R), timeout=20000)
     return ctx, pg, errs
 
 def playing(pg):
@@ -42,12 +44,12 @@ with sync_playwright() as p:
     check('keine Fehler (Nur Bild)', not errs, errs)
     ctx.close()
     # 3) Einstellung „Mit Bedienung“
-    ctx, pg, errs = page(b, "try { localStorage.setItem('evp-s-openUi', JSON.stringify('controls')); } catch (e) {}")
+    ctx, pg, errs = page(b, "try { localStorage.setItem('evp-s-settings', JSON.stringify({ openUi: 'controls' })); } catch (e) {}")
     pg.evaluate('() => ' + OPEN); time.sleep(0.3)
     c = pg.evaluate(CTL)
     check('„Mit Bedienung“: Bedienung gleich beim Öffnen', c, c)
     pg.evaluate('() => { const r = %s; r.querySelector("button[aria-label=Mehr]").click(); const b = Array.from(r.querySelectorAll(".vmenu .vmi")).find(x => x.firstChild.textContent === "Einstellungen"); if (b) b.click(); }' % R); time.sleep(0.5)
-    m = pg.evaluate('() => Array.from(%s.querySelectorAll(".vmenu .vmi")).map(x => x.firstChild.textContent + "=" + (x.querySelector("small") ? x.querySelector("small").textContent : "")).filter(t => t.startsWith("Beim"))' % R)
+    m = pg.evaluate('() => Array.from(%s.querySelectorAll(".vmenu .vmi")).map(x => x.firstChild.textContent + "=" + (x.querySelector("small") ? x.querySelector("small").textContent : "")).filter(t => t.startsWith("Beim Öffnen"))' % R)
     check('Einstellungen: „Beim Öffnen = Mit Bedienung“', m == ['Beim Öffnen=Mit Bedienung'], m)
     check('keine Fehler (Mit Bedienung)', not errs, errs)
     b.close()
