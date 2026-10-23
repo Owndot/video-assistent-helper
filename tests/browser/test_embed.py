@@ -56,6 +56,7 @@ with sync_playwright() as p:
     fi.wait_for_function('() => !!%s.querySelector(".vp")' % R, timeout=8000)
     time.sleep(1.2)
     fs2 = page.evaluate('() => document.fullscreenElement ? document.fullscreenElement.id : null')
+    fr.locator('.vp').evaluate('e => e.classList.add("ctl")'); time.sleep(0.3)   # Bedienung zeigen (öffnet ruhig, ohne Leisten)
     fr.locator('button[aria-label="Schließen"]').click()
     time.sleep(1.0)
     h2 = page.evaluate('() => [document.fullscreenElement, document.getElementById("f").getBoundingClientRect().height]')
