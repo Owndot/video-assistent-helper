@@ -49,10 +49,23 @@
       const bad = st.fbBad || [];
       if (Date.now() - fbPrevAt > 1500) {
         fbPrevAt = Date.now();
-        const u = fbSureSources(orig, null, true).filter((x) => bad.indexOf(x) < 0)[0];
+        let u = fbSureSources(orig, null, true).filter((x) => bad.indexOf(x) < 0)[0];
+        if (u) st.fbGuess = '';
+        else if (!st.fbPrev || st.fbPrev === st.fbGuess) { u = fbGuessSrc(bad); if (u) st.fbGuess = u; }
         if (u) st.fbPrev = u;
       }
       return st.fbPrev && bad.indexOf(st.fbPrev) < 0 ? st.fbPrev : '';
+    }
+    // Noch unsicher, welches Video läuft (z. B. Facebook-Startseite: die Stücke wurden schon vor dem Öffnen geladen)?
+    // Die Datei aus dem Beitrag rund um das Video nehmen – nur wenn dort genau EIN Video steckt. Ob sie wirklich passt,
+    // prüft danach die Länge (auf Bruchteile einer Sekunde genau); passt sie nicht, bleibt es bei der Zeit.
+    function fbGuessSrc(bad) {
+      const keep = lastNear;
+      let c = [];
+      try { if (localNear(orig)) c = lastNear.filter((x) => x.kind === 'full' && x.asset && /^https?:/i.test(x.u) && bad.indexOf(x.u) < 0); } catch (e) {}
+      lastNear = keep;   // nur nachgesehen – die Diagnose bleibt, wie sie war
+      if (!c.length || new Set(c.map((x) => x.asset)).size !== 1) return '';
+      return c.map((x) => x.u).sort((a, b) => (fbRes(a) || 1e4) - (fbRes(b) || 1e4))[0];
     }
     function prevLoad() {
       const key = st.mode === 'own' ? st.cur : fbPrevSrc();
@@ -122,7 +135,7 @@
       try { pvcx.drawImage(c, 0, 0); } catch (e) { return; }
       prev.dataset.t = String(Math.round(t * 10) / 10);
       prev.classList.add('img');
-      st.prevWhy = st.mode === 'own' ? 'Bilder' : 'Bilder aus der MP4 (gespiegelt)';
+      st.prevWhy = st.mode === 'own' ? 'Bilder' : st.fbGuess && st.fbPrev === st.fbGuess ? 'Bilder aus der MP4 des Beitrags (gespiegelt, Länge passt)' : 'Bilder aus der MP4 (gespiegelt)';
       if (pvs.t1st && !pvs.got) { pvs.got = true; st.prevFirst = Date.now() - pvs.t1st; }   // (Diagnose: wie lange bis zum ersten Bild)
       staleCheck();
     }
@@ -197,7 +210,8 @@
       pvs.busy = false;
       // Kleinere Qualität gewählt, aber andere Länge? Dann lieber die laufende Quelle nehmen
       const md = M().duration;
-      const off = isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > 3;
+      const guess = st.mode !== 'own' && !!st.fbGuess && pvs.src === previewSrc(st.fbGuess);   // Datei aus dem Beitrag: genauer prüfen
+      const off = isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > (guess ? 0.6 : 3);
       if (st.mode !== 'own') {   // gespiegelt: Datei passt nicht zum Video → nie wieder nehmen, nur die Zeit zeigen
         if (off || !isFinite(md)) {
           st.prevWhy = isFinite(md) ? 'nur Zeit (Datei ' + Math.round(pv.duration) + ' s, Video ' + Math.round(md) + ' s – anderes Video)' : 'nur Zeit (Länge des Videos unbekannt)';
