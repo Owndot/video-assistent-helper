@@ -28,19 +28,16 @@
     const pauseAway = () => { const m = M(); if (!m.paused) { st.pausedAway = true; try { m.pause(); } catch (e) {} } };
     const onVisAway = () => {
       if (vp !== st) return;
-      // gerade an YTDLnis / eine andere App übergeben (Download): anhalten – beim Zurückkommen ist der Player zu
+      // gerade an YTDLnis / eine andere App übergeben (Download): anhalten, solange die andere App vorne ist. Zurück im
+      // Browser bleibt der Player offen (angehalten an der Stelle); das Vollbild holt er sich zurück, sobald der Browser
+      // es erlaubt – sonst mit dem nächsten Antippen (auch ▶).
       if (document.hidden && st.dlAt && Date.now() - st.dlAt < 5000) {
         markAway(); st.dlAway = true;
         st.userPauseAt = Date.now();
         try { M().pause(); } catch (e) {}
         return;
       }
-      if (!document.hidden && st.dlAway) {
-        st.dlAway = false;
-        // kurz warten: wurde das Teilen-Menü nur abgebrochen, bleibt der Player offen (wie nach einem App-Wechsel)
-        setTimeout(() => { if (vp !== st) return; if (st.dlCancel) { st.dlCancel = false; onVisAway(); return; } st.closePaused = true; closePlayer(); }, 350);
-        return;
-      }
+      if (!document.hidden && st.dlAway) { st.dlAway = false; st.dlAt = 0; st.dlCancel = false; }   // weiter wie nach einem App-Wechsel
       if (document.hidden) {
         markAway();
         if (pipIsOurs(vid)) return;   // läuft im kleinen Fenster weiter – genau dafür ist es da
@@ -66,10 +63,24 @@
       // nur, wenn der Browser es gerade erlauben würde (frische Berührung) – sonst nur eine Fehlermeldung in der Konsole
       [0, 250, 700].forEach((ms) => setTimeout(() => { if (vp === st && st.fsLost && !isFs() && !document.hidden && !pipIsOurs(vid) && touchFresh()) regainFs(); }, ms));
     }
-    const onFocusBack = () => { if (vp === st && st.fsLost && !isFs() && !document.hidden) tryRegain(); };
+    const onFocusBack = () => {
+      if (vp !== st || document.hidden) return;
+      const fromDl = st.dlAway; st.dlAway = false;
+      if (!st.fsLost || isFs()) return;
+      tryRegain();
+      // (YTDLnis als Blatt über dem Browser: die Seite war nie verdeckt, nur ohne Fokus) – Bedienung + Hinweis
+      if (fromDl) setTimeout(() => { if (vp === st && !isFs()) { showControls(); toast('Antippen für Vollbild'); } }, 900);
+    };
+    // Download an eine andere App, die nur als Blatt darüber aufgeht (Seite bleibt sichtbar): auch dann anhalten
+    const onBlurDl = () => {
+      if (vp !== st || document.hidden || !st.dlAt || Date.now() - st.dlAt > 5000) return;
+      st.dlAway = true; st.userPauseAt = Date.now();
+      try { M().pause(); } catch (e) {}
+    };
     addEventListener('focus', onFocusBack);
     addEventListener('pageshow', onFocusBack);
-    st.cleanup.push(() => { removeEventListener('focus', onFocusBack); removeEventListener('pageshow', onFocusBack); });
+    addEventListener('blur', onBlurDl);
+    st.cleanup.push(() => { removeEventListener('focus', onFocusBack); removeEventListener('pageshow', onFocusBack); removeEventListener('blur', onBlurDl); });
     // Jede Berührung holt ein verlorenes Vollbild zurück – auch Wischen, Spulen, Zoomen (Tippen und Knöpfe tun es
     // schon selbst). Ausgelöst am Ende der Berührung: erst dann erlaubt der Browser das Vollbild.
     const onAnyTouch = (e) => {

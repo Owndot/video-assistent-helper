@@ -171,7 +171,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vprev.img.stale .vpc{opacity:.55;filter:brightness(.8)}
 .vprev.live .vpv{opacity:1}
 .vprev.live .vpc{opacity:0}
-.vprev.noimg .vpbox,.vprev.tonly .vpbox{display:none}
+.vprev.noimg .vpbox,.vprev.tonly .vpbox,.vprev.timeonly .vpbox{display:none}
 .vprev b{white-space:nowrap;font:700 13px var(--font);font-variant-numeric:tabular-nums;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);padding:5px 11px;border-radius:13px;transition:background .15s ease}
 /* Spulen per Wischen: große, dünne Zeit mitten im Bild, darunter die Restzeit – nur Zahlen, kein Kasten */
 .vseek{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;color:#fff;pointer-events:none;opacity:0;transition:opacity .14s ease;z-index:3;white-space:nowrap;

@@ -14,7 +14,7 @@ def drag(pg, frac_from, frac_to, which='vv', hold_check=True):
     pg.mouse.move(x + 7 + frac_from * (w - 14), cy); pg.mouse.down()
     pg.mouse.move(x + 7 + frac_to * (w - 14), cy, steps=12); time.sleep(0.9)
     during = cur(pg, which)
-    box = pg.evaluate('() => { const p = %s.querySelector(".vprev"); return [p.classList.contains("on"), p.classList.contains("img"), (p.querySelector("b,span,.vpt") || p).textContent.trim()]; }' % R)
+    box = pg.evaluate('() => { const p = %s.querySelector(".vprev"); return [p.classList.contains("on"), p.classList.contains("img"), (p.querySelector("b,span,.vpt") || p).textContent.trim(), getComputedStyle(p.querySelector(".vpbox")).display]; }' % R)
     pg.mouse.up(); time.sleep(0.6)
     drag.target = frac_to
     return during, box
@@ -31,7 +31,7 @@ with sync_playwright() as p:
     during, box = drag(pg, 0.1, 0.6)
     tg = drag.target * d
     check('Leiste ziehen: Video springt schon beim Ziehen mit (%.0f s)' % tg, abs(during - tg) < 3, [during, round(tg, 1)])
-    check('… dabei nur die Zeit über der Leiste, kein kleines Vorschaubild', box[0] and not box[1], box)
+    check('… dabei nur die Zeit über der Leiste, kein kleines Vorschaubild (auch kein leerer Kasten)', box[0] and not box[1] and box[3] == 'none', box)
     after = cur(pg, 'vv')
     check('… nach dem Loslassen genau dort', abs(after - tg) < 1.5, [after, round(tg, 1)])
     # 2) Hochwischen über die Leiste: kein Spulen → zurück an die alte Stelle
@@ -69,6 +69,7 @@ with sync_playwright() as p:
     dm = pg.evaluate('() => document.getElementById("v").duration')
     during, box = drag(pg, 0.1, 0.5, 'orig')
     check('gespiegelt: das Video der Seite springt beim Ziehen mit', abs(during - drag.target * dm) < 3, [during, round(drag.target * dm, 1)])
+    check('… und auch hier kein Vorschau-Kasten, nur die Zeit', box[0] and box[3] == 'none', box)
     check('keine Fehler', not errs, errs)
     b.close()
 srv.shutdown()

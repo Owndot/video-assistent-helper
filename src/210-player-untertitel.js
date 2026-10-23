@@ -178,7 +178,7 @@
     const SUB_HINT = /(subtitle|untertitel|caption|webvtt|ebutt|ttml|dfxp|\/ut\/|\/subs?\/|\/cc\/)/i;
     const NOT_SUB = /\.(m3u8|mpd|mp4|m4s|ts|webm|mp3|aac|js|mjs|css|png|jpe?g|gif|webp|svg|ico|woff2?|html?|json)(\?|#|$)/i;
     const subLike = (u) => SUB_EXT.test(u) || (SUB_HINT.test(u) && !NOT_SUB.test(u));
-    const pageSubs = { done: false, busy: false, list: [], cache: new Map() };
+    const pageSubs = { done: false, busy: false, list: [], cache: new Map(), near: new Map(), why: '' };
     function scanText(txt, found) {
       const t = String(txt || '').replace(/\\u002[fF]/g, '/').replace(/\\\//g, '/').replace(/&amp;/g, '&');
       const re = /https?:\/\/[^\s"'<>\\)]+/g;
@@ -191,6 +191,8 @@
         const all = near.match(/"(?:languageCode|language|lang|srclang|locale)"\s*:\s*"[a-zA-Z]{2,3}(?:[-_][a-zA-Z]+)?"/g);
         const lm = all ? /"([a-zA-Z]{2,3})(?:[-_][a-zA-Z]+)?"$/.exec(all[all.length - 1]) : null;   // die letzte davor
         found.set(u, lm ? lm[1].toLowerCase() : urlLang(u));
+        // lange Zahlen rundherum (Video-IDs): gehört die Datei zu DIESEM Video? (Facebook: viele Videos auf einer Seite)
+        pageSubs.near.set(u, t.slice(Math.max(0, m.index - 1500), m.index + u.length + 1500).match(/\d{12,}/g) || []);
       }
     }
     function urlLang(u) {
@@ -223,14 +225,27 @@
         const k = subKey(u), o = byKey.get(k);
         if (!o || (/vtt/i.test(u) && !/vtt/i.test(o[0]))) byKey.set(k, [u, lang || (o && o[1]) || '']);
       });
-      const list = [];
+      // Welche gehören zu DIESEM Video? Seine IDs (am Video, im Beitrag, aus dem Netzwerk) stehen nahe bei der Adresse.
+      // Und: Untertitel, die deutlich nach dem Ende des Videos noch weiterlaufen, gehören zu einem anderen Video.
+      const own = new Set();
+      try { videoIdsFor(orig).forEach((x) => own.add(x)); } catch (e) {}
+      try { const a = assetFor(orig).asset; if (a) own.add(a); } catch (e) {}
+      try { lastNear.forEach((c) => { if (c.asset) own.add(c.asset); }); } catch (e) {}
+      const md = M().duration;
+      let list = [], longer = 0;
       for (const [u, lang] of byKey.values()) {
         const txt = await gmText(u);
         const c = parseSubs(txt);
         if (c.length < 2) continue;
+        const end = c.reduce((x, q) => Math.max(x, q[1]), 0);
+        if (isFinite(md) && md > 5 && end > md + 3) { longer++; continue; }   // läuft länger als das Video → anderes Video
         pageSubs.cache.set(u, c);
-        list.push({ u: u, lang: lang });
+        list.push({ u: u, lang: lang, mine: own.size > 0 && (pageSubs.near.get(u) || []).some((x) => own.has(x)) });
       }
+      const mine = list.filter((x) => x.mine);
+      if (mine.length) list = mine;   // eindeutig zugeordnete gefunden → nur diese (die übrigen gehören zu anderen Videos)
+      st.subsWhy = pageSubs.why = list.length + ' passend' + (mine.length ? ' (über die Video-ID)' : '') + (longer ? ', ' + longer + '× länger als das Video verworfen' : '') +
+        (byKey.size - list.length - longer > 0 ? ', ' + (byKey.size - list.length - longer) + '× anderes Video/leer' : '');
       const counts = {};
       pageSubs.list = list.map((x, i) => {
         const name = LANG[x.lang] || (x.lang ? x.lang.toUpperCase() : 'Seite ' + (i + 1));

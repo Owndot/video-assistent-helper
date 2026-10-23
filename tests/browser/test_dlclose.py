@@ -1,6 +1,7 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Download an YTDLnis: Der Browser verliert beim Wechsel zu YTDLnis das Vollbild. Darum hält der Player an,
-# und kommt man zurück, ist er zu – das Seitenvideo steht angehalten an der Stelle. Teilen-Menü abgebrochen: bleibt offen.
+# Download an YTDLnis: Der Browser verliert beim Wechsel zu YTDLnis das Vollbild. Der Player hält an, solange YTDLnis
+# vorne ist; zurück im Browser bleibt er offen (an der Stelle), und das nächste Antippen holt das Vollbild zurück.
+# Geht YTDLnis nur als Blatt über dem Browser auf (Seite sichtbar, nur ohne Fokus): ebenso. Teilen abgebrochen: bleibt offen.
 import time, os
 src = open('test_v8.py').read().split("results = []")[0]
 if os.environ.get('EVP_SCRIPT'): src = src.replace("open('../../userscript/video-assistent.user.js'", "open(os.environ['EVP_SCRIPT']")
@@ -41,12 +42,32 @@ with sync_playwright() as p:
     pg.evaluate('() => { const v = %s.querySelector(".vv"); v.currentTime = 7; }' % R); time.sleep(0.6)
     pg.evaluate('() => { const r = %s; r.querySelector(".vp").classList.add("ctl"); r.querySelector("button[aria-label^=Herunterladen]").click(); }' % R); time.sleep(0.2)
     it = pg.evaluate('() => window.__intents')
-    hide(pg, True); time.sleep(0.6)
+    hide(pg, True)
+    pg.evaluate('() => document.fullscreenElement && document.exitFullscreen()'); time.sleep(0.8)   # Android: Vollbild weg
     ps = pg.evaluate('() => %s.querySelector(".vv").paused' % R)
     check('Download an YTDLnis: Intent abgeschickt, Player hält an, solange YTDLnis vorne ist', len(it) == 1 and 'ytdlnis' in it[0].lower() and ps, [it, ps])
-    hide(pg, False); time.sleep(0.9)
-    st = pg.evaluate('() => { const o = document.getElementById("v"); return [!!%s.querySelector(".vp"), o.paused, Math.round(o.currentTime)]; }' % R)
-    check('… zurück im Browser: Player zu, Seitenvideo angehalten an deiner Stelle', not st[0] and st[1] and 7 <= st[2] <= 9, st)
+    # wie auf dem Handy: ohne frisches Antippen verweigert der Browser das Vollbild
+    pg.evaluate('''() => { const rf = Element.prototype.requestFullscreen; window.__fsOk = false;
+        Element.prototype.requestFullscreen = function (o) { return window.__fsOk ? rf.call(this, o) : Promise.reject(new TypeError('Permissions check failed')); }; }''')
+    hide(pg, False); time.sleep(1.3)
+    st = pg.evaluate("""() => { const r = %s, v = r.querySelector(".vv"), t = r.querySelector(".toast");
+        return [!!r.querySelector(".vp"), v && v.paused, v && Math.round(v.currentTime), r.querySelector(".vp").classList.contains("ctl"), !!document.fullscreenElement, t ? t.textContent : ""]; }""" % R)
+    check('… zurück im Browser: Player bleibt offen, angehalten an deiner Stelle', st[0] and st[1] and 7 <= st[2] <= 9, st)
+    check('… ohne Vollbild: Bedienung da und Hinweis „Antippen für Vollbild“', st[3] and not st[4] and 'Vollbild' in st[5], st)
+    pg.evaluate('() => { window.__fsOk = true; }')
+    pg.touchscreen.tap(200, 300); time.sleep(0.8)
+    fs = pg.evaluate('() => !!document.fullscreenElement')
+    check('… Antippen holt das Vollbild zurück', fs, fs)
+    pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(1.0)
+    # 1b) YTDLnis als Blatt über dem Browser: Seite bleibt sichtbar, verliert nur den Fokus
+    openp()
+    pg.evaluate('() => { const r = %s; r.querySelector(".vp").classList.add("ctl"); r.querySelector("button[aria-label^=Herunterladen]").click(); }' % R); time.sleep(0.2)
+    pg.evaluate('() => window.dispatchEvent(new Event("blur"))'); time.sleep(0.5)
+    ps = pg.evaluate('() => %s.querySelector(".vv").paused' % R)
+    pg.evaluate('() => window.dispatchEvent(new Event("focus"))'); time.sleep(1.0)
+    op = pg.evaluate('() => !!%s.querySelector(".vp")' % R)
+    check('YTDLnis als Blatt darüber: Player hält an und bleibt offen', ps and op, [ps, op])
+    pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(1.0)
     # 2) Teilen-Menü, abgebrochen → Player bleibt offen
     pg.evaluate('''() => { Object.defineProperty(navigator, "share", { configurable: true, value: () => new Promise((res, rej) => { window.__rej = () => rej(new DOMException("abgebrochen", "AbortError")); }) }); }''')
     openp()

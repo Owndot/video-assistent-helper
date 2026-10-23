@@ -341,6 +341,7 @@
       pvBox.style.width = Math.round(w) + 'px'; pvBox.style.height = Math.round(hh) + 'px';
       const br = bar.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
       const pw = img ? w : 64;
+      prev.classList.toggle('timeonly', !img);   // ohne Bild (auch „Im Bild“): nur die Zeit, kein leerer/alter Kasten
       const x = br.left - wr.left + 7 + p * (br.width - 14);   // Mitte des Punkts
       prev.style.width = Math.round(pw) + 'px';
       prev.style.left = Math.round(clamp(x - pw / 2, 8, wr.width - pw - 8)) + 'px';

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.18
+// @version      19.19
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -2630,7 +2630,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vprev.img.stale .vpc{opacity:.55;filter:brightness(.8)}
 .vprev.live .vpv{opacity:1}
 .vprev.live .vpc{opacity:0}
-.vprev.noimg .vpbox,.vprev.tonly .vpbox{display:none}
+.vprev.noimg .vpbox,.vprev.tonly .vpbox,.vprev.timeonly .vpbox{display:none}
 .vprev b{white-space:nowrap;font:700 13px var(--font);font-variant-numeric:tabular-nums;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);padding:5px 11px;border-radius:13px;transition:background .15s ease}
 /* Spulen per Wischen: große, dünne Zeit mitten im Bild, darunter die Restzeit – nur Zahlen, kein Kasten */
 .vseek{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;color:#fff;pointer-events:none;opacity:0;transition:opacity .14s ease;z-index:3;white-space:nowrap;
@@ -4488,7 +4488,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     const SUB_HINT = /(subtitle|untertitel|caption|webvtt|ebutt|ttml|dfxp|\/ut\/|\/subs?\/|\/cc\/)/i;
     const NOT_SUB = /\.(m3u8|mpd|mp4|m4s|ts|webm|mp3|aac|js|mjs|css|png|jpe?g|gif|webp|svg|ico|woff2?|html?|json)(\?|#|$)/i;
     const subLike = (u) => SUB_EXT.test(u) || (SUB_HINT.test(u) && !NOT_SUB.test(u));
-    const pageSubs = { done: false, busy: false, list: [], cache: new Map() };
+    const pageSubs = { done: false, busy: false, list: [], cache: new Map(), near: new Map(), why: '' };
     function scanText(txt, found) {
       const t = String(txt || '').replace(/\\u002[fF]/g, '/').replace(/\\\//g, '/').replace(/&amp;/g, '&');
       const re = /https?:\/\/[^\s"'<>\\)]+/g;
@@ -4501,6 +4501,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         const all = near.match(/"(?:languageCode|language|lang|srclang|locale)"\s*:\s*"[a-zA-Z]{2,3}(?:[-_][a-zA-Z]+)?"/g);
         const lm = all ? /"([a-zA-Z]{2,3})(?:[-_][a-zA-Z]+)?"$/.exec(all[all.length - 1]) : null;   // die letzte davor
         found.set(u, lm ? lm[1].toLowerCase() : urlLang(u));
+        // lange Zahlen rundherum (Video-IDs): gehört die Datei zu DIESEM Video? (Facebook: viele Videos auf einer Seite)
+        pageSubs.near.set(u, t.slice(Math.max(0, m.index - 1500), m.index + u.length + 1500).match(/\d{12,}/g) || []);
       }
     }
     function urlLang(u) {
@@ -4533,14 +4535,27 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         const k = subKey(u), o = byKey.get(k);
         if (!o || (/vtt/i.test(u) && !/vtt/i.test(o[0]))) byKey.set(k, [u, lang || (o && o[1]) || '']);
       });
-      const list = [];
+      // Welche gehören zu DIESEM Video? Seine IDs (am Video, im Beitrag, aus dem Netzwerk) stehen nahe bei der Adresse.
+      // Und: Untertitel, die deutlich nach dem Ende des Videos noch weiterlaufen, gehören zu einem anderen Video.
+      const own = new Set();
+      try { videoIdsFor(orig).forEach((x) => own.add(x)); } catch (e) {}
+      try { const a = assetFor(orig).asset; if (a) own.add(a); } catch (e) {}
+      try { lastNear.forEach((c) => { if (c.asset) own.add(c.asset); }); } catch (e) {}
+      const md = M().duration;
+      let list = [], longer = 0;
       for (const [u, lang] of byKey.values()) {
         const txt = await gmText(u);
         const c = parseSubs(txt);
         if (c.length < 2) continue;
+        const end = c.reduce((x, q) => Math.max(x, q[1]), 0);
+        if (isFinite(md) && md > 5 && end > md + 3) { longer++; continue; }   // läuft länger als das Video → anderes Video
         pageSubs.cache.set(u, c);
-        list.push({ u: u, lang: lang });
+        list.push({ u: u, lang: lang, mine: own.size > 0 && (pageSubs.near.get(u) || []).some((x) => own.has(x)) });
       }
+      const mine = list.filter((x) => x.mine);
+      if (mine.length) list = mine;   // eindeutig zugeordnete gefunden → nur diese (die übrigen gehören zu anderen Videos)
+      st.subsWhy = pageSubs.why = list.length + ' passend' + (mine.length ? ' (über die Video-ID)' : '') + (longer ? ', ' + longer + '× länger als das Video verworfen' : '') +
+        (byKey.size - list.length - longer > 0 ? ', ' + (byKey.size - list.length - longer) + '× anderes Video/leer' : '');
       const counts = {};
       pageSubs.list = list.map((x, i) => {
         const name = LANG[x.lang] || (x.lang ? x.lang.toUpperCase() : 'Seite ' + (i + 1));
@@ -5345,6 +5360,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       pvBox.style.width = Math.round(w) + 'px'; pvBox.style.height = Math.round(hh) + 'px';
       const br = bar.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
       const pw = img ? w : 64;
+      prev.classList.toggle('timeonly', !img);   // ohne Bild (auch „Im Bild“): nur die Zeit, kein leerer/alter Kasten
       const x = br.left - wr.left + 7 + p * (br.width - 14);   // Mitte des Punkts
       prev.style.width = Math.round(pw) + 'px';
       prev.style.left = Math.round(clamp(x - pw / 2, 8, wr.width - pw - 8)) + 'px';
@@ -5604,19 +5620,16 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     const pauseAway = () => { const m = M(); if (!m.paused) { st.pausedAway = true; try { m.pause(); } catch (e) {} } };
     const onVisAway = () => {
       if (vp !== st) return;
-      // gerade an YTDLnis / eine andere App übergeben (Download): anhalten – beim Zurückkommen ist der Player zu
+      // gerade an YTDLnis / eine andere App übergeben (Download): anhalten, solange die andere App vorne ist. Zurück im
+      // Browser bleibt der Player offen (angehalten an der Stelle); das Vollbild holt er sich zurück, sobald der Browser
+      // es erlaubt – sonst mit dem nächsten Antippen (auch ▶).
       if (document.hidden && st.dlAt && Date.now() - st.dlAt < 5000) {
         markAway(); st.dlAway = true;
         st.userPauseAt = Date.now();
         try { M().pause(); } catch (e) {}
         return;
       }
-      if (!document.hidden && st.dlAway) {
-        st.dlAway = false;
-        // kurz warten: wurde das Teilen-Menü nur abgebrochen, bleibt der Player offen (wie nach einem App-Wechsel)
-        setTimeout(() => { if (vp !== st) return; if (st.dlCancel) { st.dlCancel = false; onVisAway(); return; } st.closePaused = true; closePlayer(); }, 350);
-        return;
-      }
+      if (!document.hidden && st.dlAway) { st.dlAway = false; st.dlAt = 0; st.dlCancel = false; }   // weiter wie nach einem App-Wechsel
       if (document.hidden) {
         markAway();
         if (pipIsOurs(vid)) return;   // läuft im kleinen Fenster weiter – genau dafür ist es da
@@ -5642,10 +5655,24 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       // nur, wenn der Browser es gerade erlauben würde (frische Berührung) – sonst nur eine Fehlermeldung in der Konsole
       [0, 250, 700].forEach((ms) => setTimeout(() => { if (vp === st && st.fsLost && !isFs() && !document.hidden && !pipIsOurs(vid) && touchFresh()) regainFs(); }, ms));
     }
-    const onFocusBack = () => { if (vp === st && st.fsLost && !isFs() && !document.hidden) tryRegain(); };
+    const onFocusBack = () => {
+      if (vp !== st || document.hidden) return;
+      const fromDl = st.dlAway; st.dlAway = false;
+      if (!st.fsLost || isFs()) return;
+      tryRegain();
+      // (YTDLnis als Blatt über dem Browser: die Seite war nie verdeckt, nur ohne Fokus) – Bedienung + Hinweis
+      if (fromDl) setTimeout(() => { if (vp === st && !isFs()) { showControls(); toast('Antippen für Vollbild'); } }, 900);
+    };
+    // Download an eine andere App, die nur als Blatt darüber aufgeht (Seite bleibt sichtbar): auch dann anhalten
+    const onBlurDl = () => {
+      if (vp !== st || document.hidden || !st.dlAt || Date.now() - st.dlAt > 5000) return;
+      st.dlAway = true; st.userPauseAt = Date.now();
+      try { M().pause(); } catch (e) {}
+    };
     addEventListener('focus', onFocusBack);
     addEventListener('pageshow', onFocusBack);
-    st.cleanup.push(() => { removeEventListener('focus', onFocusBack); removeEventListener('pageshow', onFocusBack); });
+    addEventListener('blur', onBlurDl);
+    st.cleanup.push(() => { removeEventListener('focus', onFocusBack); removeEventListener('pageshow', onFocusBack); removeEventListener('blur', onBlurDl); });
     // Jede Berührung holt ein verlorenes Vollbild zurück – auch Wischen, Spulen, Zoomen (Tippen und Knöpfe tun es
     // schon selbst). Ausgelöst am Ende der Berührung: erst dann erlaubt der Browser das Vollbild.
     const onAnyTouch = (e) => {
@@ -6522,7 +6549,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.18',
+      'Video-Assistent 19.19',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
@@ -6538,7 +6565,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         ' | im Player: ' + (vp ? (vp.pipOk ? 'erlaubt' : 'aus') + ' (' + (vp.mode === 'capture' ? 'gespiegelt' + (kadriPage() ? ', Schild' : '') : 'eigener Player') + ')' : 'zu') +
         ' | Vorschau: ' + (vp ? (vp.prevWhy || (vp.mode === 'own' ? 'noch nicht gespult' : vp.fbPrev && (vp.fbBad || []).indexOf(vp.fbPrev) < 0 ? 'Bilder aus der MP4 (gespiegelt)' : 'nur Zeit (gespiegelt)')) : '-') +
         (vp && vp.prevFirst ? ' · erstes Bild nach ' + (vp.prevFirst / 1000).toFixed(1) + ' s' : '') + (vp && vp.prevMiss ? ' · ' + vp.prevMiss + '× ohne Bild' : '') +
-        ' | Lupe: ' + (vp ? vp.lupeWhy || 'noch nicht gespult' : '-'),
+        ' | Lupe: ' + (vp ? vp.lupeWhy || 'noch nicht gespult' : '-') + (vp && vp.subsWhy ? ' | Untertitel der Seite: ' + vp.subsWhy : ''),
       'Stream-Nachweis: ' + (r.proof || '-') + ' | Listen gelesen: ' + plInfo.size + ' | Stück-Ordner: ' + segHits.size +
         (function () { const p = playingStream(navAt); return p ? ' | lädt gerade: ' + hostOf(p.u) + ' …' + p.u.slice(-40) : ''; })(),
       'Kodierung: ' + (r.best ? encTag(r.best) || '-' : '-'),
