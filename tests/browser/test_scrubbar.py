@@ -2,7 +2,7 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 # Spulen auf der Leiste (19.4–19.7): antippen = hinspringen · ziehen = Stelle unter dem Finger, Leiste wird dick,
 # Abstand zur alten Stelle steht da („+18 s“) · nach oben weg = abbrechen (Hinweis, loslassen = zurück) · zurück nach
 # unten = weiter · zurück an die alte Stelle rastet ein · Enden der Leiste = Anfang/Ende ·
-# Lupe (19.8, wie iPhone): Finger beim Ziehen unter die Leiste = „Lupe“, tiefer = „Fein“, wieder hoch = normal; Leiste
+# Lupe (19.8/19.13, wie iPhone): Finger beim Ziehen unter die Leiste = „Lupe“ (eine Stufe), wieder hoch = normal; Leiste
 # zeigt den Ausschnitt, Grenzen links/rechts; am Ende der Leiste wandert er mit; nur bei Videos ab 1,5 min ·
 # großer Punkt nur beim Ziehen, unter dem Finger (kein Punkt für die alte Stelle) · Zeit und Punkt im Glas des Designs.
 import time
@@ -44,7 +44,7 @@ with sync_playwright() as p:
     pg.mouse.move(fx + 0.2 * W, y, steps=5); time.sleep(0.2); pg.mouse.up(); time.sleep(0.6)
     check('nach oben und zurück: spult doch (unter dem Finger)', abs(t() - at(x, fx + 0.2 * W, W)) < 1, [t(), round(at(x, fx + 0.2 * W, W), 1)])
     def lv_y(y, k):   # Höhe für Stufe k (wie im Skript: Platz unter der Leiste)
-        room = max(60, 800 - y - 8); return y + [0, min(42, room * 0.32) + 14, min(92, room * 0.68) + 14][k]
+        room = max(60, 800 - y - 8); return y + [0, min(42, room * 0.4) + 14, min(92, room * 0.75) + 14][k]   # (2 = tief unten)
     # 5) großer Punkt nur beim Ziehen, unter dem Finger; kurzes Video: nach unten → keine Lupe
     setT(20); x, y, W = geo(); fx = x + 7 + (20 / D) * W
     k0 = pg.evaluate('() => [getComputedStyle(%s.querySelector(".vknob")).opacity, %s.querySelector(".vp").classList.contains("ctl")]' % (R, R))
@@ -113,9 +113,9 @@ with sync_playwright() as p:
     k3 = stuck(); ind = pg.evaluate('() => (%s.querySelector(".vind") || {}).textContent || ""' % R)
     pg.mouse.up(); time.sleep(0.5)
     check('anderes Video beim Spulen: abgebrochen mit Hinweis, kein Sprung', not any(k3) and 'gewechselt' in ind and t() < 5, [k3, ind, t()])
-    # ---------- Lupe (langes Video, 4 min → Lupe 40 s, Fein 10 s) ----------
+    # ---------- Lupe (langes Video, 4 min → Lupe 40 s) ----------
     open_player(pg, 'long.html'); time.sleep(0.4)
-    D = pg.evaluate('() => %s.querySelector(".vv").duration' % R); Z1 = min(max(D / 6, 20), 60); Z2 = max(5, Z1 / 4)
+    D = pg.evaluate('() => %s.querySelector(".vv").duration' % R); Z1 = min(max(D / 6, 20), 60)
     def times(): return pg.evaluate('() => { const r = %s; return [...r.querySelectorAll(".vtime")].map(e => [e.textContent, e.classList.contains("vtz"), e.classList.contains("g")]); }' % R)
     def mmss(v): v = int(v); return '%d:%02d' % (v // 60, v % 60)
     def sec(tx): return int(tx.split(':')[0]) * 60 + int(tx.split(':')[1].split(',')[0])
@@ -130,16 +130,16 @@ with sync_playwright() as p:
     pg.mouse.move(x1 + 0.2 * W, lv_y(y, 1), steps=4); time.sleep(0.3)
     zt = sec(state()[3].split(' · ')[1])
     check('… in der Lupe fein: 20 % der Leiste = 20 % des Ausschnitts', abs(zt - (t1 + 0.2 * Z1)) <= 1.2, [zt, round(t1 + 0.2 * Z1, 1)])
-    # Z3) noch tiefer → Fein (Zehntelsekunden), 20 % der Leiste = 20 % von 10 s
+    # Z3) noch tiefer: weiter die Lupe (keine zweite Stufe mehr)
     pg.mouse.move(x1 + 0.2 * W, lv_y(y, 2), steps=4); time.sleep(0.3)
-    z3 = state(); pg.mouse.move(x1 + 0.4 * W, lv_y(y, 2), steps=4); time.sleep(0.3); z3b = state()
-    check('… noch tiefer: „Fein“ mit Zehntelsekunden', z3[3].startswith('Fein') and ',' in z3[3].split(' · ')[1], z3)
-    check('… in „Fein“: 20 %% der Leiste = 20 %% von %d s' % Z2, abs(sec(z3b[3].split(' · ')[1]) - (zt + 0.2 * Z2)) <= 1.2, [z3b, zt + 0.2 * Z2])
+    z3 = state(); pg.mouse.move(x1 + 0.3 * W, lv_y(y, 2), steps=4); time.sleep(0.3); z3b = state()   # (nicht ans Ende – dort wandert es)
+    check('… noch tiefer: weiter „Lupe“ (keine zweite Stufe)', z3[2] and z3[3].startswith('Lupe') and z3b[3].startswith('Lupe'), [z3, z3b])
+    check('… 10 %% der Leiste = 10 %% von %d s' % Z1, abs(sec(z3b[3].split(' · ')[1]) - (zt + 0.1 * Z1)) <= 1.2, [z3b, zt + 0.1 * Z1])
     # Z4) wieder hoch auf die Leiste → normal (keine Lupe, Zeiten normal), Stelle bleibt; weiterziehen → wieder unter dem Finger
     tz4 = sec(z3b[3].split(' · ')[1])
-    pg.mouse.move(x1 + 0.4 * W, y, steps=5); time.sleep(0.3)
+    pg.mouse.move(x1 + 0.3 * W, y, steps=5); time.sleep(0.3)
     z4 = state(); tm4 = times()
-    check('wieder hoch: zurück zu normal, Stelle bleibt', not z4[2] and not z4[3].startswith(('Lupe', 'Fein')) and abs(sec(z4[3].split(' · ')[0]) - tz4) <= 1 and not tm4[1][1], [z4, tz4, tm4])
+    check('wieder hoch: zurück zu normal, Stelle bleibt', not z4[2] and not z4[3].startswith('Lupe') and abs(sec(z4[3].split(' · ')[0]) - tz4) <= 1 and not tm4[1][1], [z4, tz4, tm4])
     pg.mouse.move(x1 + 0.6 * W, y, steps=6); time.sleep(0.1); pg.mouse.move(x1 + 0.45 * W, y, steps=6); time.sleep(0.3)
     pg.mouse.up(); time.sleep(0.6)
     check('… weiterziehen: Stelle gleitet wieder unter den Finger', abs(t() - at(x, x1 + 0.45 * W, W)) < 1.5, [t(), round(at(x, x1 + 0.45 * W, W), 1)])

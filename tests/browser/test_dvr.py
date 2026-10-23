@@ -27,10 +27,10 @@ with sync_playwright() as p:
     pg.mouse.move(X(0.4), y); pg.mouse.down(); pg.mouse.move(X(1.0) + 20, y, steps=4); time.sleep(0.3)
     i3 = info(); pg.mouse.up(); time.sleep(1.5); ctl(pg); i4 = info()
     check('ganz nach rechts: wieder live („LIVE“)', i3['lab'] == 'LIVE' and i4['b'] - i4['t'] < 25 and i4['times'][0] == 'LIVE', [i3['lab'], i4])
-    # Lupe gibt es bei Live nicht (Sprünge dort nur stückweise genau)
+    # Lupe auch bei Live (Bereich ≥ 1,5 min): Grenzen als „−m:ss“
     pg.mouse.move(X(0.6), y); pg.mouse.down(); pg.mouse.move(X(0.5), y, steps=3); pg.mouse.move(X(0.5), y + 90, steps=4); time.sleep(0.3)
-    z = pg.evaluate('() => %s.querySelector(".vp").classList.contains("zoom")' % R); pg.mouse.up(); time.sleep(0.5)
-    check('Live: nach unten → keine Lupe', not z, z)
+    z = pg.evaluate('() => { const r = %s; return [r.querySelector(".vp").classList.contains("zoom"), r.querySelector(".vprev b").textContent, [...r.querySelectorAll(".vtime")].map(e => e.textContent)]; }' % R); pg.mouse.up(); time.sleep(0.5)
+    check('Live: nach unten → Lupe, Grenzen „−m:ss“', z[0] and z[1].startswith('Lupe') and z[2][0].startswith('−'), z)
     check('keine Fehler', not errs, errs)
     b.close()
 srv.shutdown()

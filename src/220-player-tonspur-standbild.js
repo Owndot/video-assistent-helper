@@ -109,11 +109,11 @@
     //  - ziehen = die Stelle (großer Punkt im Glas des Designs) steht unter dem Finger; die Leiste wird dick. Über der
     //    Vorschau steht, wie weit es von der laufenden Stelle weg ist („0:38 · +18 s“) – das Video läuft beim Spulen
     //    weiter. Kein Einrasten (19.11): der Punkt folgt immer nur dem Finger.
-    //  - Lupe in Stufen (nur bei Videos ab 1,5 min, abschaltbar): Finger beim Ziehen unter die Leiste = „Lupe“
-    //    (Ausschnitt ~1 min), noch tiefer = „Fein“ (~15 s). Die Leiste zeigt dann nur den Ausschnitt, links/rechts stehen
-    //    dessen Grenzen, im Schild „Lupe“/„Fein“, beim Wechsel ein kurzes Vibrieren (abschaltbar). Wieder hoch = eine
-    //    Stufe zurück, auf Höhe der Leiste = normal (die Stelle gleitet beim Weiterziehen wieder unter den Finger).
-    //    Finger an ein Ende der Leiste = der Ausschnitt wandert mit.
+    //  - Lupe (nur bei Videos ab 1,5 min, auch bei Live, abschaltbar): Finger beim Ziehen unter die Leiste = „Lupe“
+    //    (Ausschnitt ~1 min). Die Leiste zeigt dann nur den Ausschnitt, links/rechts stehen dessen Grenzen, im Schild
+    //    „Lupe“, beim Wechsel ein kurzes Vibrieren (abschaltbar). Wieder hoch auf die Leiste = normal (die Stelle gleitet
+    //    beim Weiterziehen wieder unter den Finger). Finger an ein Ende der Leiste = der Ausschnitt wandert mit.
+    //    (Die zweite Stufe „Fein“ gibt es seit 19.13 nicht mehr – eine Stufe ist einfacher und genau genug.)
     //  - weit nach oben weg vom Balken = abbrechen („Loslassen = abbrechen“, keine kleine Vorschau – das große Video zeigt
     //    die laufende Stelle); loslassen dort = nichts ändern. Zurück nach unten = weiter spulen.
     //  - Live-Stream mit Zurückspulen: die Leiste ist der Bereich, den der Stream zurückhält; „−5:30“ = so weit hinter
@@ -130,7 +130,6 @@
     const buzz = () => { try { if (CONFIG.seekBuzz !== false && navigator.vibrate && touchFresh()) navigator.vibrate(12); } catch (e) {} };
     // Abstand: „+12 s“, „−1:05“
     const delta = (x) => { const a = Math.round(Math.abs(x)); return (x < 0 ? '−' : '+') + (a < 60 ? a + ' s' : fmtTime(a)); };
-    const tenth = (t) => fmtTime(t) + ',' + Math.floor((t % 1) * 10);   // „2:11,4“ (für „Fein“)
     const barBack = () => {
       const m = M(), r = seekRange(m);
       if (!r) return;
@@ -139,23 +138,20 @@
       tCur.textContent = r.live ? behind(r, m.currentTime) : fmtTime(m.currentTime);
     };
     const geom = () => { const br = bar.getBoundingClientRect(); return { br: br, L: br.left + 7, w: Math.max(60, br.width - 14) }; };
-    // Ausschnitt je Stufe in Sekunden (0 = ganzer Bereich): Lupe ≈ Länge ÷ 6 (20–60 s), Fein = Lupe ÷ 4 (mind. 5 s).
-    // Nicht bei Live (Sprünge dort nur stückweise genau, der Bereich wandert) und nicht bei Videos unter 1,5 min.
-    const lupeWhy = (r) => (r.live ? 'aus (Live-Stream)' : CONFIG.seekZoom === false ? 'aus (Einstellung)' : r.len < 90 ? 'nein – Video kürzer als 1:30 (' + fmtTime(r.len) + ')' : 'ja');
-    const spanFor = (lv, len) => { if (!lv || len < 90 || CONFIG.seekZoom === false || (scr.r && scr.r.live)) return 0; const z1 = clamp(len / 6, 20, 60); return lv === 1 ? z1 : Math.max(5, z1 / 4); };
-    // Stufe aus der Höhe des Fingers unter der Leiste (Querformat: weniger Platz → Stufen näher beieinander)
+    // Ausschnitt der Lupe in Sekunden (0 = ganzer Bereich): Länge ÷ 6, 20–60 s. Nicht bei Videos unter 1,5 min.
+    const lupeWhy = (r) => (CONFIG.seekZoom === false ? 'aus (Einstellung)' : r.len < 90 ? 'nein – ' + (r.live ? 'Live-Bereich' : 'Video') + ' kürzer als 1:30 (' + fmtTime(r.len) + ')' : 'ja');
+    const spanFor = (lv, len) => (!lv || len < 90 || CONFIG.seekZoom === false ? 0 : clamp(len / 6, 20, 60));
+    // Lupe an, wenn der Finger ein Stück unter der Leiste ist (Querformat: weniger Platz → näher), 8 px Spielraum
     function levelFor(dy) {
       const room = Math.max(60, innerHeight - scr.y0 - 8);
-      const s1 = Math.min(42, room * 0.32), s2 = Math.min(92, room * 0.68), hy = 8;
-      const cur = scr.lv;
-      if (dy > s2 + (cur === 2 ? -hy : hy)) return 2;
-      if (dy > s1 + (cur >= 1 ? -hy : hy)) return 1;
+      const s1 = Math.min(42, room * 0.4), hy = 8;
+      if (dy > s1 + (scr.lv ? -hy : hy)) return 1;
       return 0;
     }
     const posX = (p) => { const g = geom(), rr = bar.parentNode.getBoundingClientRect(); return g.L - rr.left + clamp(p, 0, 1) * g.w; };
     // Läuft noch dasselbe Video? (Quelle, Art, Länge – bei Live nur Quelle und Art)
     const vidKey = () => { const m = M(), r = seekRange(m); return st.mode + '|' + (m.currentSrc || '') + '|' + (r ? (r.live ? 'L' : Math.round(r.len)) : '-'); };
-    const tlabel = (t) => (scr.r && scr.r.live ? behind(scr.r, t) : scr.lv === 2 ? tenth(t) : fmtTime(t));
+    const tlabel = (t) => (scr.r && scr.r.live ? behind(scr.r, t) : fmtTime(t));
     function scrubShow(t) {
       const r = scr.r;
       if (!r) return;
@@ -179,7 +175,7 @@
       if (scr.mode === 'cancel') pvTime.textContent = tr('Loslassen = abbrechen');
       else if (scr.moved) {
         const tx = r.live ? behind(r, t) : tlabel(t) + ' · ' + delta(t - M().currentTime);
-        pvTime.textContent = scr.lv ? tr(scr.lv === 2 ? 'Fein' : 'Lupe') + ' · ' + tx : tx;
+        pvTime.textContent = scr.lv ? tr('Lupe') + ' · ' + tx : tx;
       }
     }
     // Stufe wechseln: der Ausschnitt wird so gelegt, dass die aktuelle Stelle unter dem Finger bleibt
