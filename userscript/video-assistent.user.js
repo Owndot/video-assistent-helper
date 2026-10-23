@@ -6259,6 +6259,9 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (s.done) return;
       if (performance.now() - s.at > 3000) { softFail(st); return; }
       if (v.paused && !v.ended) { try { v.play().catch(() => {}); } catch (e) {} }
+      // dein Video selbst hängt (lädt nach)? Dann bringt das Überbrücken nichts – gleich wie früher
+      if (v.currentTime !== s.lastV) { s.lastV = v.currentTime; s.lastAt = performance.now(); }
+      else if (performance.now() - (s.lastAt || s.at) > 600) { softFail(st); return; }
       if (o.seeking || o.readyState < 3) {   // Seite lädt noch – läuft dein Video schon an der Stelle vorbei? weiter voraus
         if (v.currentTime > s.T + 0.05) { s.tries++; s.lead = Math.min(2.5, s.lead * 1.8); if (s.tries > 3) softFail(st); else aim(); }
         return;
@@ -6272,6 +6275,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   }
   function softSwap(st) {
     const s = st.soft, v = s.v, o = s.o;
+    if (s.swapped) return;
+    s.swapped = true; clearInterval(s.iv);   // (ab jetzt nicht mehr nachsteuern – die Seite spielt)
     try { if (typeof st.origMuted === 'boolean') o.muted = st.origMuted; const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
     const gone = () => softEnd(st, 'nahtlos');
     // erst weg, wenn die Seite ihr erstes Bild an der Stelle zeigt (sonst blitzt kurz das alte Bild auf)
@@ -6291,24 +6296,30 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   }
   function softEnd(st, how) {
     const s = st.soft;
-    if (!s || s.done) return;
-    s.done = true;
-    clearInterval(s.iv);
-    removeEventListener('resize', s.place); removeEventListener('scroll', s.place, true);
-    try { s.v.muted = true; s.v.pause(); } catch (e) {}
+    if (!s) return;
+    if (!s.done) {
+      s.done = true;
+      clearInterval(s.iv);
+      removeEventListener('resize', s.place); removeEventListener('scroll', s.place, true);
+      try { s.v.muted = true; s.v.pause(); } catch (e) {}
+      if (openTimes && how) openTimes.back = how + ' nach ' + Math.round(performance.now() - s.at) + ' ms';
+    }
+    // Bei der Zurück-Geste ist das Schließen noch nicht sicher (vielleicht war es eine Drehung): dann das Video nur
+    // verstecken – kommt der Player zurück, macht er an der Stelle der Seite weiter
+    if (!st.closing) { s.parked = true; try { s.v.style.display = 'none'; } catch (e) {} return; }
     try { s.v.remove(); } catch (e) {}
-    if (openTimes) openTimes.back = how + ' nach ' + Math.round(performance.now() - s.at) + ' ms';
     st.soft = null; if (softSt === st) softSt = null;
     s.after.forEach((f) => { try { f(); } catch (e) {} });
   }
   // doch nicht zurück (Drehen …): dein Video zurück in den Player, die Seite wieder still
   function softCancel(st) {
     const s = st.soft;
-    if (!s || s.done) return;
+    if (!s) return;
+    if (!s.done) { clearInterval(s.iv); removeEventListener('resize', s.place); removeEventListener('scroll', s.place, true); }
     s.done = true;
-    clearInterval(s.iv);
-    removeEventListener('resize', s.place); removeEventListener('scroll', s.place, true);
     try { s.v.style.cssText = s.css; if (s.parent) s.parent.insertBefore(s.v, s.next && s.next.parentNode === s.parent ? s.next : null); } catch (e) {}
+    // hatte die Seite schon übernommen: dort weitermachen, wo sie jetzt ist (mit Ton)
+    if (s.parked) { try { s.v.currentTime = s.o.currentTime; s.v.muted = false; } catch (e) {} }
     try { s.v.play().catch(() => {}); } catch (e) {}
     st.soft = null; if (softSt === st) softSt = null;
   }
@@ -6409,16 +6420,23 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Mit ✕ geschlossen: unseren Verlaufseintrag wieder entfernen, damit "Zurück" danach normal funktioniert
     if (st.histPushed) { try { history.back(); } catch (e) {} }
     if (toastEl && root) { root.append(toastEl); toastEl.style.top = ''; toastEl.classList.remove('g'); toastEl.style.removeProperty('--lens'); toastEl.style.removeProperty('--gb'); if (lensRO) lensRO.unobserve(toastEl); }
-    const rest = () => {
-      if (st.hls) { try { st.hls.destroy(); } catch (e) {} }
-      if (st.actx) { try { st.actx.close(); } catch (e) {} }
-      try { st.vid.srcObject = null; st.vid.removeAttribute('src'); st.vid.load(); } catch (e) {}
+    const restUi = () => {
+      if (st.uiGone) return;
+      st.uiGone = true;
       if (!vp) kadriShield(false);   // Seite bekommt „verdeckt/sichtbar“ wieder selbst (außer ein neuer Player spiegelt schon)
       st.cleanup.forEach((f) => { try { f(); } catch (e) {} });
       st.wrap.remove();
     };
-    // nahtlos zurück läuft noch: aufräumen erst danach (es braucht das eigene Video bis zur Übergabe)
-    if (st.soft) { st.soft.after.push(rest); return; }
+    const restVid = () => {
+      if (st.hls) { try { st.hls.destroy(); } catch (e) {} }
+      if (st.actx) { try { st.actx.close(); } catch (e) {} }
+      try { st.vid.srcObject = null; st.vid.removeAttribute('src'); st.vid.load(); } catch (e) {}
+    };
+    const rest = () => { restVid(); restUi(); };
+    st.closing = true;
+    if (st.soft && st.soft.parked) softEnd(st, '');   // (Übergabe war schon fertig – Video jetzt wirklich weg)
+    // nahtlos zurück läuft noch: Player gleich abbauen, das eigene Video erst nach der Übergabe (es läuft ja noch)
+    if (st.soft) { restUi(); st.soft.after.push(restVid); return; }
     if (softOk) { try { st.vid.muted = true; st.vid.pause(); } catch (e) {} }   // (nicht nahtlos geworden: jetzt still)
     // nach dem nächsten Bild (Bildschirm ist dann schon frei); im Hintergrund gibt es keine Bilder → gleich
     if (document.hidden || typeof requestAnimationFrame !== 'function') rest();
