@@ -11,7 +11,7 @@
     let pvcx = null;
     try { pvcx = pvc.getContext('2d'); } catch (e) {}
     const pvBox = h('div', { class: 'vpbox g' }, pv, pvc);
-    const pvTime = h('b', null, '0:00');
+    const pvTime = h('b', { class: 'g' }, '0:00');   // im Glas des Designs (Glas/Schlicht)
     const prev = h('div', { class: 'vprev', 'aria-hidden': 'true' }, pvBox, pvTime);
     wrap.append(prev);
     const pvs = { key: '', src: '', hls: null, want: -1, lastWant: -1, busy: false, kind: '', grid: [], gridOn: false, autoGrid: false, userDone: false };
@@ -257,10 +257,11 @@
       if (back) { st.userSeekAt = Date.now(); try { M().currentTime = live.t0; } catch (e) {} }
     }
     st.liveTo = liveTo; st.liveEnd = liveEnd; st.liveMode = liveMode;
-    function prevShow(p) {
+    // p: Stelle auf der Leiste (0…1, für den Platz der Vorschau) · tt: Zeit (mit Lupe nicht p × Länge)
+    function prevShow(p, tt) {
       const d = M().duration;
       if (!isFinite(d) || d <= 0) return;
-      const t = p * d;
+      const t = tt != null ? tt : p * d;
       pvTime.textContent = fmtTime(t);
       if (liveMode() && !wrap.classList.contains('scrubx')) liveTo(t);
       const img = !liveMode() && prevLoad() && !prev.classList.contains('noimg');

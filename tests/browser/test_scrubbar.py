@@ -1,8 +1,9 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Spulen auf der Leiste (19.4–19.6): antippen = hinspringen · ziehen = Stelle unter dem Finger, Leiste wird dick,
+# Spulen auf der Leiste (19.4–19.7): antippen = hinspringen · ziehen = Stelle unter dem Finger, Leiste wird dick,
 # Abstand zur alten Stelle steht da („+18 s“) · nach oben weg = abbrechen (Hinweis, loslassen = zurück) · zurück nach
-# unten = weiter · langsam kriechen = fein, danach gleitet die Stelle wieder unter den Finger · zurück an die alte
-# Stelle rastet ein · Enden der Leiste = Anfang/Ende.
+# unten = weiter · zurück an die alte Stelle rastet ein · Enden der Leiste = Anfang/Ende ·
+# Lupe (19.7): beim Ziehen ½ s stillhalten (oder Leiste gedrückt halten) → Leiste zeigt einen Ausschnitt (fein),
+# Grenzen links/rechts; am Ende der Leiste wandert der Ausschnitt mit; nur bei Videos ab 1,5 min · Zeit im Glas des Designs.
 import time
 exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])
 with sync_playwright() as p:
@@ -16,7 +17,7 @@ with sync_playwright() as p:
     def geo():
         ctl(pg); r = pg.evaluate('() => { const r = %s.querySelector(".vbar").getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; }' % R)
         return r[0], r[1] + r[3] / 2, r[2] - 14
-    def state(): return pg.evaluate('() => { const w = %s.querySelector(".vp"); return [w.classList.contains("thick"), w.classList.contains("scrubx"), w.classList.contains("scrubfine"), %s.querySelector(".vprev b").textContent, w.classList.contains("scrubsnap")]; }' % (R, R))
+    def state(): return pg.evaluate('() => { const w = %s.querySelector(".vp"); return [w.classList.contains("thick"), w.classList.contains("scrubx"), w.classList.contains("zoom"), %s.querySelector(".vprev b").textContent, w.classList.contains("scrubsnap")]; }' % (R, R))
     D = pg.evaluate('() => %s.querySelector(".vv").duration' % R)
     def at(x, X, W): return min(max((X - x - 7) / W, 0), 1) * D   # Stelle unter dem Finger
     # 1) antippen = hinspringen
@@ -40,16 +41,11 @@ with sync_playwright() as p:
     pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(fx + 0.2 * W, y, steps=5); pg.mouse.move(fx + 0.2 * W, y - 120, steps=5)
     pg.mouse.move(fx + 0.2 * W, y, steps=5); time.sleep(0.2); pg.mouse.up(); time.sleep(0.6)
     check('nach oben und zurück: spult doch (unter dem Finger)', abs(t() - at(x, fx + 0.2 * W, W)) < 1, [t(), round(at(x, fx + 0.2 * W, W), 1)])
-    # 5) langsam kriechen = fein; danach im selben Zug normal weiter → Stelle gleitet wieder unter den Finger
-    setT(20); x, y, W = geo(); fx = x + 7 + (20 / D) * W; n = int(0.3 * W)
-    pg.mouse.move(fx, y); pg.mouse.down()
-    for i in range(n): pg.mouse.move(fx + (i + 1), y); time.sleep(0.04)   # ~25 px/s
-    s5 = state(); t5 = pg.evaluate('() => %s.querySelector(".vbar").value / 1000' % R) * D
-    fine = at(x, fx + 8, W) + max(D / W / 8, 0.08) * (n - 8); grob = at(x, fx + n, W)   # (die ersten 8 px: Stelle unter dem Finger)
-    check('langsam kriechen: fein (deutlich weniger als unter dem Finger)', s5[2] and abs(t5 - fine) < 2 and t5 - 20 < 0.6 * (grob - 20), [s5, round(t5, 1), round(fine, 1), 'unter dem Finger wäre', round(grob, 1)])
-    pg.mouse.move(fx + n + 0.25 * W, y, steps=6); time.sleep(0.1); pg.mouse.move(fx + n + 0.15 * W, y, steps=4); time.sleep(0.2)
-    pg.mouse.up(); time.sleep(0.6)
-    check('… danach normal weiterziehen: wieder unter dem Finger', abs(t() - at(x, fx + n + 0.15 * W, W)) < 1, [t(), round(at(x, fx + n + 0.15 * W, W), 1)])
+    # 5) kurzes Video (1 min): stillhalten beim Ziehen → keine Lupe (die Leiste reicht)
+    setT(20); x, y, W = geo(); fx = x + 7 + (20 / D) * W
+    pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(fx + 0.2 * W, y, steps=3); time.sleep(0.9)
+    s5 = state(); pg.mouse.up(); time.sleep(0.6)
+    check('kurzes Video: stillhalten → keine Lupe', not s5[2] and abs(t() - at(x, fx + 0.2 * W, W)) < 1, [s5, t()])
     check('… Abstand zur alten Stelle steht da', '+' in s5[3], s5)
     # 6) weg und zurück an die alte Stelle: rastet ein („± 0“), loslassen = nichts ändern
     setT(20); x, y, W = geo(); fx = x + 7 + (20 / D) * W
@@ -69,6 +65,44 @@ with sync_playwright() as p:
     pg.mouse.move(x + 7 + 0.3 * W, y); pg.mouse.down(); pg.mouse.move(x - 10, y, steps=4); time.sleep(0.2)
     pg.mouse.up(); time.sleep(0.6)
     check('bis zum linken Ende: Anfang', t() < 0.5, t())
+    # ---------- Lupe (langes Video, 4 min → Ausschnitt 30 s) ----------
+    open_player(pg, 'long.html'); time.sleep(0.4)
+    D = pg.evaluate('() => %s.querySelector(".vv").duration' % R); Z = min(max(D / 8, 20), 60)
+    def times(): return pg.evaluate('() => { const r = %s; return [...r.querySelectorAll(".vtime")].map(e => [e.textContent, e.classList.contains("vtz"), e.classList.contains("g")]); }' % R)
+    def mmss(v): v = int(v); return '%d:%02d' % (v // 60, v % 60)
+    # Z1) ziehen, dann stillhalten → Lupe: Leiste violett-Schild, Grenzen des Ausschnitts links/rechts
+    setT(100); x, y, W = geo(); fx = x + 7 + (100 / D) * W; x1 = fx + 0.1 * W; t1 = at(x, x1, W)
+    pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(x1, y, steps=3); time.sleep(0.8)
+    z1 = state(); tz = times(); f = (x1 - x - 7) / W; ws = min(max(t1 - f * Z, 0), D - Z)
+    check('Lupe: ziehen, ½ s stillhalten → Lupe an', z1[2], z1)
+    check('… links/rechts die Grenzen des Ausschnitts im Glas', tz[0][1] and tz[1][1] and tz[0][2] and abs(int(tz[0][0].split(':')[0]) * 60 + int(tz[0][0].split(':')[1]) - ws) <= 1 and abs(int(tz[1][0].split(':')[0]) * 60 + int(tz[1][0].split(':')[1]) - (ws + Z)) <= 1, [tz, mmss(ws), mmss(ws + Z)])
+    # Z2) mit Lupe weiter: 20 % der Leiste = 20 % des Ausschnitts (6 s statt 48 s)
+    pg.mouse.move(x1 + 0.2 * W, y, steps=4); time.sleep(0.3)
+    pg.mouse.up(); time.sleep(0.6)
+    check('… mit Lupe fein: 20 % der Leiste = 20 % des Ausschnitts', abs(t() - (t1 + 0.2 * Z)) < 1.2, [t(), round(t1 + 0.2 * Z, 1), 'ohne Lupe', round(t1 + 0.2 * D, 1)])
+    tz2 = times()
+    check('… danach Zeiten wieder normal (Länge rechts, ohne Schild)', tz2[1][0] == mmss(D) and not tz2[0][1] and not tz2[1][1], tz2)
+    # Z3) Leiste gedrückt halten (ohne Ziehen) → Lupe um die aktuelle Stelle; kleiner Zug = kleiner Sprung
+    setT(150); x, y, W = geo(); fx = x + 7 + 0.3 * W
+    pg.mouse.move(fx, y); pg.mouse.down(); time.sleep(0.8)
+    z3 = state(); pg.mouse.move(fx + 0.1 * W, y, steps=3); time.sleep(0.3); pg.mouse.up(); time.sleep(0.6)
+    check('Leiste gedrückt halten: Lupe um die aktuelle Stelle', z3[2] and abs(t() - (150 + 0.1 * Z)) < 1.2, [z3, t(), 150 + 0.1 * Z])
+    # Z4) mit Lupe ans rechte Ende der Leiste → Ausschnitt wandert mit
+    setT(60); x, y, W = geo(); fx = x + 7 + (60 / D) * W
+    pg.mouse.move(fx, y); pg.mouse.down(); time.sleep(0.8)
+    pg.mouse.move(x + 7 + W - 2, y, steps=4); time.sleep(0.2); a4 = times(); time.sleep(1.2); b4 = times()
+    pg.mouse.up(); time.sleep(0.6)
+    wsec = lambda tt: int(tt[0][0].split(':')[0]) * 60 + int(tt[0][0].split(':')[1])
+    check('Lupe am Ende der Leiste: Ausschnitt wandert mit', wsec(b4) > wsec(a4) + 5 and t() > wsec(a4) + Z, [a4, b4, t()])
+    # Z5) Design: Zeit über der Vorschau im selben Glas wie das Vorschaubild – bei „Glas“ und bei „Schlicht“ (Milchglas)
+    for flat in (False, True):
+        pg.evaluate('(f) => %s.host.classList.toggle("flat", f)' % R, flat)
+        setT(100); x, y, W = geo(); fx = x + 7 + (100 / D) * W
+        pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(fx + 0.1 * W, y, steps=3); time.sleep(0.3)
+        bg = pg.evaluate('() => [".vprev b", ".vpbox"].map(q => { const c = getComputedStyle(%s.querySelector(q)); return [c.backgroundColor, c.backdropFilter || c.webkitBackdropFilter]; })' % R)
+        pg.mouse.up(); time.sleep(0.5)
+        if flat: check('Schlicht (Milchglas): Zeit über der Vorschau im selben Milchglas wie das Vorschaubild', bg[0] == bg[1], bg)
+        else: check('Glas: Zeit über der Vorschau im Glas (Lichtbrechung wie die Knöpfe)', bg[0][1].startswith('url(') and bg[1][1].startswith('url('), bg)
     check('keine Fehler', not errs, errs)
     b.close()
 srv.shutdown()

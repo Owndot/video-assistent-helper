@@ -133,8 +133,12 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vp.thick .vbar::-moz-range-thumb{transform:scale(0) !important}
 /* Abbrechen-Bereich (Finger weit über der Leiste) und Fein-Spulen (unter der Leiste) */
 .vp.scrubx .vbar{opacity:.4}
-.vp.scrubx .vprev b{background:rgba(205,45,45,.82)}
-.vp.scrubfine .vprev b{background:rgba(96,74,214,.78)}
+/* Zeit über der Vorschau: im Glas des Designs (.g, „Schlicht“ = Milchglas) – rot getönt beim Abbrechen, violett mit Lupe */
+.vp.scrubx .vprev b.g{background:rgba(205,45,45,.62)!important}
+.vp.zoom .vprev b.g{background:rgba(110,86,226,.5)!important}
+/* Lupe: Grenzen des Ausschnitts links/rechts als kleine Glas-Schilder */
+.vtime.vtz{color:#fff;font-weight:700;padding:4px 6px;border-radius:11px;min-width:34px;box-shadow:0 2px 10px rgba(0,0,0,.22)}
+.vbarmk.off{display:none}
 /* alte Stelle beim Ziehen (dorthin zurück rastet ein) */
 .vbarmk{position:absolute;top:50%;left:0;width:3px;height:26px;margin-top:-13px;border-radius:2px;background:#fff;box-shadow:0 0 4px rgba(0,0,0,.6);opacity:0;pointer-events:none;z-index:1;transition:opacity .15s ease,transform .15s ease}
 .vp.thick .vbarmk{opacity:.85}
@@ -160,7 +164,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vprev.live .vpv{opacity:1}
 .vprev.live .vpc{opacity:0}
 .vprev.noimg .vpbox{display:none}
-.vprev b{white-space:nowrap;font:700 13px var(--font);font-variant-numeric:tabular-nums;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);padding:4px 10px;border-radius:12px;background:rgba(18,20,28,.5)}
+.vprev b{white-space:nowrap;font:700 13px var(--font);font-variant-numeric:tabular-nums;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);padding:5px 11px;border-radius:13px;transition:background .15s ease}
 /* Spulen per Wischen: große, dünne Zeit mitten im Bild, darunter die Restzeit – nur Zahlen, kein Kasten */
 .vseek{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;color:#fff;pointer-events:none;opacity:0;transition:opacity .14s ease;z-index:3;white-space:nowrap;
  text-shadow:0 2px 14px rgba(0,0,0,.45),0 0 2px rgba(0,0,0,.4);font-variant-numeric:tabular-nums}
