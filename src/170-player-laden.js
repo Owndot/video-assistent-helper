@@ -16,6 +16,89 @@
     // weg, sobald das eigene Video wirklich läuft (an der richtigen Stelle) – oder beim Spiegeln
     vid.addEventListener('playing', () => { if (st.mode === 'own' && (!st.startTime || Math.abs(vid.currentTime - st.startTime) < 3 || vid.currentTime > 0.5)) dropPoster(); });
     st.cleanup.push(dropPoster);
+    // ----- Nahtloser Start (auf allen Seiten): Bis die eigene Kopie an derselben Stelle läuft, zeigt der Player das
+    // LAUFENDE Bild der Seite (gespiegelt), der Ton kommt so lange weiter von der Seite. Die eigene Kopie läuft stumm
+    // dahinter und holt auf – etwas schneller oder langsamer, große Abstände per Sprung. Stimmt es auf unter 0,1 s,
+    // wird umgeschaltet: eigener Ton an, Seite still – man merkt nichts. Klappt das nicht (die Seite hält an, du
+    // bedienst schon, nach 10 s): sofort umschalten wie früher (Standbild, bis die Kopie läuft).
+    // Firefox: das Spiegeln nimmt dort der Seite den Ton – dort bleibt es beim Standbild.
+    function startBridge() {
+      if (GECKO || orig.paused || orig.ended || !(orig.readyState >= 2) || !orig.captureStream) return false;
+      let ms = null;
+      try { ms = orig.captureStream(); } catch (e) { return false; }
+      if (!ms) return false;
+      const el = document.createElement('video');
+      el.className = 'vposter vbridge';
+      el.muted = true; el.setAttribute('playsinline', '');
+      el.srcObject = ms;
+      el.play().catch(() => {});
+      el.addEventListener('playing', () => { if (!st.openStat.live) st.openStat.live = performance.now(); }, { once: true });
+      (st.posterCv || vid).after(el);
+      const b = { el: el, ms: ms, at: Date.now(), seeks: 0, seekAt: 0, lead: 0.35, tm: 0, iv: 0 };
+      st.bridge = b;
+      vid.muted = true;
+      b.tm = setTimeout(() => bridgeEnd('nach 10 s'), 10000);
+      b.iv = setInterval(bridgeTick, 50);
+      st.openStat.how = 'nahtlos (läuft)';
+      return true;
+    }
+    function bridgeTick() {
+      const b = st.bridge;
+      if (!b || vp !== st) return;
+      if (st.mode !== 'own') { bridgeDrop(); return; }
+      if (orig.paused || orig.ended) { bridgeEnd('Seite hält an'); return; }
+      if ((st.userSeekAt || 0) > b.at || (st.userPauseAt || 0) > b.at) { bridgeEnd('du bedienst'); return; }
+      if (vid.readyState < 3 || vid.seeking) return;   // eigene Kopie lädt noch
+      if (vid.paused) { bridgeEnd('eigene Kopie angehalten'); return; }
+      const base = orig.playbackRate || 1;
+      const d = orig.currentTime - vid.currentTime;   // > 0: die eigene Kopie ist noch hinten
+      if (Math.abs(d) <= 0.08) { bridgeSwap(d); return; }
+      if (Math.abs(d) > 1.5) {
+        if (b.seeks >= 3) { bridgeEnd('holt nicht auf'); return; }
+        b.seeks++; b.seekAt = performance.now();
+        try { vid.currentTime = orig.currentTime + b.lead * base; } catch (e) {}   // etwas voraus springen (Springen dauert)
+        return;
+      }
+      vid.playbackRate = base * clamp(1 + d, 0.5, 2);   // aufholen (stumm – die Tonhöhe ist egal)
+    }
+    vid.addEventListener('seeked', () => {
+      const b = st.bridge;
+      if (b && b.seekAt) { b.lead = Math.min(3, (performance.now() - b.seekAt) / 1000 + 0.1); b.seekAt = 0; }   // so lange dauert ein Sprung hier
+    });
+    vid.addEventListener('playing', () => { if (st.mode === 'own' && !st.openStat.own) st.openStat.own = performance.now(); });
+    function bridgeSwap(d) {
+      vid.playbackRate = st.speed;
+      vid.muted = false;
+      try { orig.muted = true; orig.pause(); } catch (e) {}
+      st.openStat.swap = performance.now(); st.openStat.gap = d; st.openStat.how = 'nahtlos';
+      bridgeDrop();
+      dropPoster();
+    }
+    // sofort umschalten (wie früher): Standbild an der aktuellen Stelle, bis die eigene Kopie dort läuft
+    function bridgeEnd(why) {
+      const b = st.bridge;
+      if (!b) return;
+      const t = orig.currentTime;
+      if (st.mode === 'own') {
+        dropPoster(); showPoster();
+        try { orig.muted = true; orig.pause(); } catch (e) {}
+        vid.muted = false; vid.playbackRate = st.speed;
+        st.startTime = t;
+        if (vid.readyState >= 1 && Math.abs(vid.currentTime - t) > 0.3 && !((st.userSeekAt || 0) > b.at)) { try { vid.currentTime = t; } catch (e) {} }
+        if (vid.readyState >= 3 && !vid.paused) dropPoster();
+      }
+      st.openStat.how = 'umgeschaltet (' + why + ')'; st.openStat.swap = performance.now();
+      bridgeDrop();
+    }
+    function bridgeDrop() {
+      const b = st.bridge;
+      if (!b) return;
+      st.bridge = null;
+      clearTimeout(b.tm); clearInterval(b.iv);
+      try { b.el.srcObject = null; b.el.remove(); } catch (e) {}
+      try { b.ms.getTracks().forEach((tr) => tr.stop()); } catch (e) {}
+    }
+    st.cleanup.push(bridgeDrop);
     // ----- Laden: Quellen der Reihe nach, zuletzt Bild vom Original übernehmen -----
     function tryNext() {
       clearTimeout(st.loadTimer);
@@ -88,7 +171,9 @@
         }
         st.lenOk = true;
       }
-      if (!st.hls && st.startTime > 1 && isFinite(vid.duration) && vid.duration > st.startTime) { try { vid.currentTime = st.startTime; } catch (e) {} }
+      // (nahtloser Start: gleich an die Stelle, an der die Seite JETZT ist – etwas voraus, Springen dauert)
+      const t0 = st.bridge ? orig.currentTime + 0.3 : st.startTime;
+      if (!st.hls && t0 > 1 && isFinite(vid.duration) && vid.duration > t0) { try { vid.currentTime = t0; } catch (e) {} }
       vid.playbackRate = st.speed;
       autoOrient(vid.videoWidth, vid.videoHeight);
       refreshQual();
@@ -102,7 +187,9 @@
 
     function useCapture() {
       clearTimeout(st.loadTimer);
+      bridgeDrop();
       dropPoster();
+      if (!st.openStat.swap) st.openStat.how = 'gespiegelt';
       let ms = null;
       try { ms = orig.captureStream ? orig.captureStream() : (orig.mozCaptureStream ? orig.mozCaptureStream() : null); } catch (e) {}
       if (!ms) { toast('Dieses Video lässt sich hier nicht im eigenen Player zeigen'); closePlayer(); return; }

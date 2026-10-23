@@ -122,6 +122,7 @@
   }
 
   let lastIntent = { url: '', t: 0, how: '' };
+  let tapAt = 0, openTimes = null;   // Zeitmessung beim Öffnen des Players (Diagnose)
   function copyText(text, okMsg) {
     const ok = () => toast(okMsg);
     const fallback = () => {

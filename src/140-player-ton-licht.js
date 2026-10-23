@@ -17,7 +17,7 @@
         if (k <= 0) page = 0;
         else if (k === 1) page = pos;   // zwischen Stille und der leisesten Stufe: einfach linear
         else page = Math.pow(10, (volDb(pos, mx) - volDb(k, mx)) / 20);
-        try { m.volume = clamp(page, 0, 1); m.muted = lv === 0; if (st.mode === 'capture' && !FF_CAP) vid.muted = true; } catch (e) {}
+        try { m.volume = clamp(page, 0, 1); m.muted = lv === 0; if ((st.mode === 'capture' && !FF_CAP) || st.bridge) vid.muted = true; } catch (e) {}
         if (st.gain) st.gain.gain.value = 1;
         st.level = lv;
         if (k !== st.sysK) { st.sysK = k; helperSend('vol', k / mx); }
@@ -35,7 +35,7 @@
       }
       m.volume = Math.min(1, lv);
       m.muted = lv === 0;
-      if (st.mode === 'capture' && !FF_CAP) vid.muted = true;
+      if ((st.mode === 'capture' && !FF_CAP) || st.bridge) vid.muted = true;   // (beim nahtlosen Start kommt der Ton noch von der Seite)
       if (st.gain) st.gain.gain.value = Math.max(1, lv);
       st.level = lv;
       return lv;

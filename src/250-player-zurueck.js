@@ -354,7 +354,7 @@
     const onOrigPlay = () => {
       if (vp !== st || st.handed) return;   // schon an die Seite übergeben (Zurück-Geste): die Seite darf spielen
       // eigener Player: Original bleibt still · gespiegelt und am Ende angehalten: die Seite darf nicht von selbst neu starten
-      if (st.mode === 'own' || (st.mode === 'capture' && st.endHold)) { try { orig.pause(); } catch (e) {} }
+      if ((st.mode === 'own' && !st.bridge) || (st.mode === 'capture' && st.endHold)) { try { orig.pause(); } catch (e) {} }
     };
     orig.addEventListener('play', onOrigPlay);
     orig.addEventListener('playing', onOrigPlay);
@@ -375,8 +375,14 @@
     st.cleanup.push(() => ['ended', 'timeupdate', 'pause'].forEach((t) => window.removeEventListener(t, gate, true)));
 
     // Original anhalten (außer wir übernehmen dessen Bild) und mit dem Laden beginnen
-    if (st.sources.length) { showPoster(); try { orig.muted = true; orig.pause(); } catch (e) {} tryNext(); }
+    // (alle Seiten: läuft das Video, zeigt der Player gleich sein laufendes Bild – nahtloser Start, siehe startBridge)
+    if (st.sources.length) {
+      showPoster();
+      if (!startBridge()) { st.openStat.how = GECKO ? 'Standbild (Firefox)' : orig.paused ? 'Standbild (Video stand)' : 'Standbild'; try { orig.muted = true; orig.pause(); } catch (e) {} }
+      tryNext();
+    }
     else useCapture();
+    requestAnimationFrame(() => { if (!st.openStat.vis) st.openStat.vis = performance.now(); });
     // Beim Öffnen: „Nur Bild“ (wie Samsung – ruhig, Bedienung erst nach dem ersten Antippen) oder gleich mit Bedienung.
     // Läuft das Video nach 2 s nicht (angehalten, wartet auf dich), kommt die Bedienung trotzdem.
     if (CONFIG.openUi === 'controls') showControls();

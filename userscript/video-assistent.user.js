@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.19
+// @version      19.20
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -61,7 +61,7 @@
     fbMirror: true,
     // Lupen-Glas wie bei iOS 26 / macOS: das Bild hinter Knöpfen und Reglern wird am Rand gebogen und leicht vergrößert.
     // false = einfaches Milchglas (spart etwas Rechenleistung)
-    lensGlass: true,
+    lensGlass: false,
     progressLine: true,   // dünne Fortschrittslinie ganz unten, wenn die Leisten ausgeblendet sind (im Format-Menü umschaltbar)
     ambient: true,   // Ambient-Modus: Farben des Bildes leuchten weich in die schwarzen Ränder (im Format-Menü umschaltbar)
     autoRotate: false,  // true = Querformat-Videos im Vollbild automatisch drehen
@@ -1863,6 +1863,7 @@
   }
 
   let lastIntent = { url: '', t: 0, how: '' };
+  let tapAt = 0, openTimes = null;   // Zeitmessung beim Öffnen des Players (Diagnose)
   function copyText(text, okMsg) {
     const ok = () => toast(okMsg);
     const fallback = () => {
@@ -2812,6 +2813,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       framed: IN_FRAME, rfs: false, fsWait: null,   // eingebettetes Fenster: Hauptseite übernimmt Vollbild/Drehen
     };
     vp = st;
+    // Zeitmessung fürs Öffnen (Diagnose): ab dem Antippen des Knopfs
+    st.openStat = openTimes = { t0: tapAt && performance.now() - tapAt < 4000 ? tapAt : performance.now(), how: '' };
     // Tonverstärkung vorbereiten, solange der Tipp auf "Player" noch "frisch" ist (sonst startet der Ton stumm)
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -2943,7 +2946,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         if (k <= 0) page = 0;
         else if (k === 1) page = pos;   // zwischen Stille und der leisesten Stufe: einfach linear
         else page = Math.pow(10, (volDb(pos, mx) - volDb(k, mx)) / 20);
-        try { m.volume = clamp(page, 0, 1); m.muted = lv === 0; if (st.mode === 'capture' && !FF_CAP) vid.muted = true; } catch (e) {}
+        try { m.volume = clamp(page, 0, 1); m.muted = lv === 0; if ((st.mode === 'capture' && !FF_CAP) || st.bridge) vid.muted = true; } catch (e) {}
         if (st.gain) st.gain.gain.value = 1;
         st.level = lv;
         if (k !== st.sysK) { st.sysK = k; helperSend('vol', k / mx); }
@@ -2961,7 +2964,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       }
       m.volume = Math.min(1, lv);
       m.muted = lv === 0;
-      if (st.mode === 'capture' && !FF_CAP) vid.muted = true;
+      if ((st.mode === 'capture' && !FF_CAP) || st.bridge) vid.muted = true;   // (beim nahtlosen Start kommt der Ton noch von der Seite)
       if (st.gain) st.gain.gain.value = Math.max(1, lv);
       st.level = lv;
       return lv;
@@ -3426,6 +3429,89 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // weg, sobald das eigene Video wirklich läuft (an der richtigen Stelle) – oder beim Spiegeln
     vid.addEventListener('playing', () => { if (st.mode === 'own' && (!st.startTime || Math.abs(vid.currentTime - st.startTime) < 3 || vid.currentTime > 0.5)) dropPoster(); });
     st.cleanup.push(dropPoster);
+    // ----- Nahtloser Start (auf allen Seiten): Bis die eigene Kopie an derselben Stelle läuft, zeigt der Player das
+    // LAUFENDE Bild der Seite (gespiegelt), der Ton kommt so lange weiter von der Seite. Die eigene Kopie läuft stumm
+    // dahinter und holt auf – etwas schneller oder langsamer, große Abstände per Sprung. Stimmt es auf unter 0,1 s,
+    // wird umgeschaltet: eigener Ton an, Seite still – man merkt nichts. Klappt das nicht (die Seite hält an, du
+    // bedienst schon, nach 10 s): sofort umschalten wie früher (Standbild, bis die Kopie läuft).
+    // Firefox: das Spiegeln nimmt dort der Seite den Ton – dort bleibt es beim Standbild.
+    function startBridge() {
+      if (GECKO || orig.paused || orig.ended || !(orig.readyState >= 2) || !orig.captureStream) return false;
+      let ms = null;
+      try { ms = orig.captureStream(); } catch (e) { return false; }
+      if (!ms) return false;
+      const el = document.createElement('video');
+      el.className = 'vposter vbridge';
+      el.muted = true; el.setAttribute('playsinline', '');
+      el.srcObject = ms;
+      el.play().catch(() => {});
+      el.addEventListener('playing', () => { if (!st.openStat.live) st.openStat.live = performance.now(); }, { once: true });
+      (st.posterCv || vid).after(el);
+      const b = { el: el, ms: ms, at: Date.now(), seeks: 0, seekAt: 0, lead: 0.35, tm: 0, iv: 0 };
+      st.bridge = b;
+      vid.muted = true;
+      b.tm = setTimeout(() => bridgeEnd('nach 10 s'), 10000);
+      b.iv = setInterval(bridgeTick, 50);
+      st.openStat.how = 'nahtlos (läuft)';
+      return true;
+    }
+    function bridgeTick() {
+      const b = st.bridge;
+      if (!b || vp !== st) return;
+      if (st.mode !== 'own') { bridgeDrop(); return; }
+      if (orig.paused || orig.ended) { bridgeEnd('Seite hält an'); return; }
+      if ((st.userSeekAt || 0) > b.at || (st.userPauseAt || 0) > b.at) { bridgeEnd('du bedienst'); return; }
+      if (vid.readyState < 3 || vid.seeking) return;   // eigene Kopie lädt noch
+      if (vid.paused) { bridgeEnd('eigene Kopie angehalten'); return; }
+      const base = orig.playbackRate || 1;
+      const d = orig.currentTime - vid.currentTime;   // > 0: die eigene Kopie ist noch hinten
+      if (Math.abs(d) <= 0.08) { bridgeSwap(d); return; }
+      if (Math.abs(d) > 1.5) {
+        if (b.seeks >= 3) { bridgeEnd('holt nicht auf'); return; }
+        b.seeks++; b.seekAt = performance.now();
+        try { vid.currentTime = orig.currentTime + b.lead * base; } catch (e) {}   // etwas voraus springen (Springen dauert)
+        return;
+      }
+      vid.playbackRate = base * clamp(1 + d, 0.5, 2);   // aufholen (stumm – die Tonhöhe ist egal)
+    }
+    vid.addEventListener('seeked', () => {
+      const b = st.bridge;
+      if (b && b.seekAt) { b.lead = Math.min(3, (performance.now() - b.seekAt) / 1000 + 0.1); b.seekAt = 0; }   // so lange dauert ein Sprung hier
+    });
+    vid.addEventListener('playing', () => { if (st.mode === 'own' && !st.openStat.own) st.openStat.own = performance.now(); });
+    function bridgeSwap(d) {
+      vid.playbackRate = st.speed;
+      vid.muted = false;
+      try { orig.muted = true; orig.pause(); } catch (e) {}
+      st.openStat.swap = performance.now(); st.openStat.gap = d; st.openStat.how = 'nahtlos';
+      bridgeDrop();
+      dropPoster();
+    }
+    // sofort umschalten (wie früher): Standbild an der aktuellen Stelle, bis die eigene Kopie dort läuft
+    function bridgeEnd(why) {
+      const b = st.bridge;
+      if (!b) return;
+      const t = orig.currentTime;
+      if (st.mode === 'own') {
+        dropPoster(); showPoster();
+        try { orig.muted = true; orig.pause(); } catch (e) {}
+        vid.muted = false; vid.playbackRate = st.speed;
+        st.startTime = t;
+        if (vid.readyState >= 1 && Math.abs(vid.currentTime - t) > 0.3 && !((st.userSeekAt || 0) > b.at)) { try { vid.currentTime = t; } catch (e) {} }
+        if (vid.readyState >= 3 && !vid.paused) dropPoster();
+      }
+      st.openStat.how = 'umgeschaltet (' + why + ')'; st.openStat.swap = performance.now();
+      bridgeDrop();
+    }
+    function bridgeDrop() {
+      const b = st.bridge;
+      if (!b) return;
+      st.bridge = null;
+      clearTimeout(b.tm); clearInterval(b.iv);
+      try { b.el.srcObject = null; b.el.remove(); } catch (e) {}
+      try { b.ms.getTracks().forEach((tr) => tr.stop()); } catch (e) {}
+    }
+    st.cleanup.push(bridgeDrop);
     // ----- Laden: Quellen der Reihe nach, zuletzt Bild vom Original übernehmen -----
     function tryNext() {
       clearTimeout(st.loadTimer);
@@ -3498,7 +3584,9 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         }
         st.lenOk = true;
       }
-      if (!st.hls && st.startTime > 1 && isFinite(vid.duration) && vid.duration > st.startTime) { try { vid.currentTime = st.startTime; } catch (e) {} }
+      // (nahtloser Start: gleich an die Stelle, an der die Seite JETZT ist – etwas voraus, Springen dauert)
+      const t0 = st.bridge ? orig.currentTime + 0.3 : st.startTime;
+      if (!st.hls && t0 > 1 && isFinite(vid.duration) && vid.duration > t0) { try { vid.currentTime = t0; } catch (e) {} }
       vid.playbackRate = st.speed;
       autoOrient(vid.videoWidth, vid.videoHeight);
       refreshQual();
@@ -3512,7 +3600,9 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 
     function useCapture() {
       clearTimeout(st.loadTimer);
+      bridgeDrop();
       dropPoster();
+      if (!st.openStat.swap) st.openStat.how = 'gespiegelt';
       let ms = null;
       try { ms = orig.captureStream ? orig.captureStream() : (orig.mozCaptureStream ? orig.mozCaptureStream() : null); } catch (e) {}
       if (!ms) { toast('Dieses Video lässt sich hier nicht im eigenen Player zeigen'); closePlayer(); return; }
@@ -5946,7 +6036,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     const onOrigPlay = () => {
       if (vp !== st || st.handed) return;   // schon an die Seite übergeben (Zurück-Geste): die Seite darf spielen
       // eigener Player: Original bleibt still · gespiegelt und am Ende angehalten: die Seite darf nicht von selbst neu starten
-      if (st.mode === 'own' || (st.mode === 'capture' && st.endHold)) { try { orig.pause(); } catch (e) {} }
+      if ((st.mode === 'own' && !st.bridge) || (st.mode === 'capture' && st.endHold)) { try { orig.pause(); } catch (e) {} }
     };
     orig.addEventListener('play', onOrigPlay);
     orig.addEventListener('playing', onOrigPlay);
@@ -5967,8 +6057,14 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     st.cleanup.push(() => ['ended', 'timeupdate', 'pause'].forEach((t) => window.removeEventListener(t, gate, true)));
 
     // Original anhalten (außer wir übernehmen dessen Bild) und mit dem Laden beginnen
-    if (st.sources.length) { showPoster(); try { orig.muted = true; orig.pause(); } catch (e) {} tryNext(); }
+    // (alle Seiten: läuft das Video, zeigt der Player gleich sein laufendes Bild – nahtloser Start, siehe startBridge)
+    if (st.sources.length) {
+      showPoster();
+      if (!startBridge()) { st.openStat.how = GECKO ? 'Standbild (Firefox)' : orig.paused ? 'Standbild (Video stand)' : 'Standbild'; try { orig.muted = true; orig.pause(); } catch (e) {} }
+      tryNext();
+    }
     else useCapture();
+    requestAnimationFrame(() => { if (!st.openStat.vis) st.openStat.vis = performance.now(); });
     // Beim Öffnen: „Nur Bild“ (wie Samsung – ruhig, Bedienung erst nach dem ersten Antippen) oder gleich mit Bedienung.
     // Läuft das Video nach 2 s nicht (angehalten, wartet auf dich), kommt die Bedienung trotzdem.
     if (CONFIG.openUi === 'controls') showControls();
@@ -6073,7 +6169,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     try {
       const t = st.vid.currentTime, vd = st.vid.duration, od = o.duration;
       const sameLen = !isFinite(od) || !isFinite(vd) || Math.abs(od - vd) < 3;
-      if (st.mode === 'own' && t > 0 && sameLen) {
+      if (st.mode === 'own' && !st.bridge && t > 0 && sameLen) {   // (nahtloser Start noch nicht fertig: die Seite steht schon richtig)
         target = t;
         // am Ende: kurz VOR das Ende stellen und angehalten lassen – sonst springt eine Reels-Seite zum nächsten Video
         if (isFinite(vd) && (st.vid.ended || t >= vd - 1)) { atEnd = true; target = Math.max(0, (isFinite(od) ? od : vd) - 0.3); }
@@ -6200,6 +6296,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 
   // Tipp auf "Player": eingebauter Player (Standard) oder externe App
   function onPlayerTap() {
+    tapAt = performance.now();
     const v = active;
     if (!v) return;
     if (CONFIG.defaultPlayer === 'external' && !DOWNLOAD_ONLY) { onPillMain(); return; }
@@ -6549,7 +6646,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.19',
+      'Video-Assistent 19.20',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
@@ -6559,6 +6656,13 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       'Spiegeln: ' + (vp && vp.mode === 'capture' ? 'aktiv, ' + (vp.mirrorFix || 0) + '× neu verbunden' + (vp.mirrorWhy ? ' (zuletzt: ' + vp.mirrorWhy + ')' : '') : (FB_MIRROR ? 'bereit' : 'aus')),
       'Puffer-Spur: ' + (function () { if (!v) return '-'; const m = creditsFor(v, 0); const l = (bufCredit.get(v) || []).length; return l + ' Zuwächse | ' + (Array.from(m.entries()).map((e) => e[0].slice(-6) + ':' + e[1].toFixed(1)).join(', ') || '-'); })(),
       'HD nachladen: ' + hdLog + ' | Weiterleitung: ' + lastResolve + (PH ? ' | Pornhub-MP4: ' + phLog : '') + (IG ? ' | Instagram-MP4: ' + igLog : '') + (TT ? ' | TikTok: ' + ttLog + ' · ' + (ttPostUrl(v) || 'kein Link') : ''),
+      'Öffnen (zuletzt): ' + (function () {
+        const o = openTimes;
+        if (!o) return '-';
+        const ms = (x) => (x ? Math.round(x - o.t0) + ' ms' : '–');
+        return 'sichtbar nach ' + ms(o.vis) + ' · Bild der Seite live nach ' + ms(o.live) + ' · eigenes Video nach ' + ms(o.own) +
+          ' · ' + (o.how || '-') + (o.swap ? ' nach ' + ms(o.swap) : '') + (typeof o.gap === 'number' ? ' (Abstand ' + Math.abs(o.gap).toFixed(2) + ' s)' : '');
+      })(),
       'Zuletzt geöffnet: ' + (lastIntent.t ? Math.round((Date.now() - lastIntent.t) / 1000) + ' s her | ' + lastIntent.how + ' | ' + hostOf(lastIntent.url) + ' …' + lastIntent.url.slice(-50) : '-'),
       'Nächstes-Reel-Countdown abgebrochen: ' + nextCancels + '×',
       'Bild-in-Bild: Browser ' + (document.pictureInPictureEnabled ? 'kann es' : 'kann es für Webseiten nicht (nur Wischen zum Startbildschirm)') +

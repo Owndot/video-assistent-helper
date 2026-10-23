@@ -18,7 +18,7 @@
     fbMirror: true,
     // Lupen-Glas wie bei iOS 26 / macOS: das Bild hinter Knöpfen und Reglern wird am Rand gebogen und leicht vergrößert.
     // false = einfaches Milchglas (spart etwas Rechenleistung)
-    lensGlass: true,
+    lensGlass: false,
     progressLine: true,   // dünne Fortschrittslinie ganz unten, wenn die Leisten ausgeblendet sind (im Format-Menü umschaltbar)
     ambient: true,   // Ambient-Modus: Farben des Bildes leuchten weich in die schwarzen Ränder (im Format-Menü umschaltbar)
     autoRotate: false,  // true = Querformat-Videos im Vollbild automatisch drehen

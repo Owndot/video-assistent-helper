@@ -17,6 +17,8 @@
       framed: IN_FRAME, rfs: false, fsWait: null,   // eingebettetes Fenster: Hauptseite übernimmt Vollbild/Drehen
     };
     vp = st;
+    // Zeitmessung fürs Öffnen (Diagnose): ab dem Antippen des Knopfs
+    st.openStat = openTimes = { t0: tapAt && performance.now() - tapAt < 4000 ? tapAt : performance.now(), how: '' };
     // Tonverstärkung vorbereiten, solange der Tipp auf "Player" noch "frisch" ist (sonst startet der Ton stumm)
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
