@@ -17,13 +17,23 @@ GRID = '''(el) => { const c = document.createElement('canvas'); c.width = 16; c.
 def same_frame(pg, _t=None):
     # Liefert das Vorschau-Video an seiner Stelle das richtige Bild? (Hauptvideo angehalten dorthin; die gemerkten
     # Bilder in Chrome tragen nur ungefähre Zeiten, darum das Video selbst – in Firefox-Handy ist es das gezeigte Bild)
-    pg.wait_for_function('() => !%s.querySelector(".vprev video").seeking' % R, timeout=5000)
-    time.sleep(0.2)
-    a, t = pg.evaluate('() => { const pr = %s.querySelector(".vprev"), v = pr.querySelector("video"); const live = pr.classList.contains("live"); return [(%s)(v), v.currentTime]; }' % (R, GRID))
-    pg.evaluate('(t) => new Promise((res) => { const v = %s.querySelector(".vv"); v.pause(); v.addEventListener("seeked", () => setTimeout(res, 150), { once: true }); v.currentTime = t; setTimeout(res, 3000); })' % R, t)
-    b = pg.evaluate('() => (%s)(%s.querySelector(".vv"))' % (GRID, R))
-    if not a or not b: return 999
-    return round(sum(abs(x - y) for x, y in zip(a, b)) / len(a), 1)
+    # Robust: erst vergleichen, wenn das Vorschau-Video wirklich ein Bild an seiner Stelle hat (nicht mehr springt,
+    # Bilddaten da, Zeit steht still). Weicht es dann ab, noch EIN zweiter Blick nach kurzer Pause – ein falsches Bild
+    # bleibt falsch, ein noch ladendes ist dann da.
+    READY = """() => { const v = %s.querySelector(".vprev video"); if (!v || v.seeking || v.readyState < 2) return false;
+        const t = v.currentTime; if (window.__pvT !== t) { window.__pvT = t; window.__pvAt = performance.now(); return false; }
+        return performance.now() - window.__pvAt > 250; }""" % R
+    d = 999
+    for attempt in range(2):
+        try: pg.wait_for_function(READY, timeout=15000, polling=100)
+        except Exception: pass
+        a, t = pg.evaluate('() => { const v = %s.querySelector(".vprev video"); return [(%s)(v), v.currentTime]; }' % (R, GRID))
+        pg.evaluate('(t) => new Promise((res) => { const v = %s.querySelector(".vv"); v.pause(); v.addEventListener("seeked", () => setTimeout(res, 150), { once: true }); v.currentTime = t; setTimeout(res, 3000); })' % R, t)
+        b = pg.evaluate('() => (%s)(%s.querySelector(".vv"))' % (GRID, R))
+        d = round(sum(abs(x - y) for x, y in zip(a, b)) / len(a), 1) if a and b else 999
+        if d < 12: return d
+        if attempt == 0: print('   (Abweichung %s – Vorschau lud wohl noch, zweiter Blick)' % d); time.sleep(1.0)
+    return d
 def band(path, box):
     im = Image.open(path).convert('L').crop(box); return round(ImageStat.Stat(im).mean[0], 1)
 with sync_playwright() as p:
