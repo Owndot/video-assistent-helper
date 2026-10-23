@@ -1,0 +1,24 @@
+   vorher: {'paused': False, 'top': 288, 'bottom': 513, 'left': 0, 'right': 400, 'H': 800, 'W': 400}
+   Zoom: {'paused': False, 'top': -0.0, 'bottom': 800, 'left': -613, 'right': 809, 'H': 800, 'W': 400}
+OK   hochkant: Doppeltipp Mitte – Bild füllt die Höhe  – {'paused': False, 'top': -0.0, 'bottom': 800, 'left': -613, 'right': 809, 'H': 800, 'W': 400}
+OK   läuft weiter (kein Play/Pause)  – False
+OK   zum Finger hin: rechte Seite des Bildes sichtbar  – [-613, 809]
+OK   keine schwarzen Ränder seitlich  – [-613, 809]
+   zurück: {'paused': False, 'top': 288, 'bottom': 513, 'left': 0, 'right': 400, 'H': 800, 'W': 400}
+OK   noch einmal: ganzes Bild  – {'paused': False, 'top': 288, 'bottom': 513, 'left': 0, 'right': 400, 'H': 800, 'W': 400}
+   gedreht: {'paused': False, 'top': 0, 'bottom': 400, 'left': 44, 'right': 756, 'H': 400, 'W': 800}
+OK   gedreht: Doppeltipp-Zoom aufgehoben  – [{'paused': False, 'top': -0.0, 'bottom': 800, 'left': -409, 'right': 1013, 'H': 800, 'W': 400}, {'paused': False, 'top': 0, 'bottom': 400, 'left': 44, 'right': 756, 'H': 400, 'W': 800}]
+   quer: {'paused': False, 'top': -360, 'bottom': 720, 'left': -640, 'right': 1280, 'H': 360, 'W': 640}
+OK   quer: Doppeltipp Mitte = 3× Zoom, läuft weiter  – {'paused': False, 'top': -360, 'bottom': 720, 'left': -640, 'right': 1280, 'H': 360, 'W': 640}
+   verschoben: {'paused': False, 'top': -360, 'bottom': 720, 'left': -740, 'right': 1180, 'H': 360, 'W': 640}
+OK   Zoom: ein Finger verschiebt das Bild  – [-640, -740]
+OK   Zoom: Verschieben ändert die Lautstärke nicht
+   ohne Widerstand wären es 150 px, tatsächlich 50
+   über die Kante: {'paused': False, 'top': -360, 'bottom': 720, 'left': 50, 'right': 1970, 'H': 360, 'W': 640} -> {'paused': False, 'top': -360, 'bottom': 720, 'left': 0, 'right': 1920, 'H': 360, 'W': 640}
+OK   über die Kante: gibt mit Widerstand nach (⅓)  – [150, 50]
+OK   beim Loslassen zurück an die Kante  – {'paused': False, 'top': -360, 'bottom': 720, 'left': 0, 'right': 1920, 'H': 360, 'W': 640}
+   Schwung: Finger 100 px, Bild 196 px
+OK   Schwung: gleitet weiter als der Finger  – [0, -196]
+OK   noch einmal: ganzes Bild  – {'paused': False, 'top': 0, 'bottom': 360, 'left': 0, 'right': 640, 'H': 360, 'W': 640}
+OK   keine Fehler  – []
+ERGEBNIS: 14 von 14

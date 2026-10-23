@@ -1,0 +1,5 @@
+OK   hoch Einstellungen: links/rechts gleich, Texte bündig  – {'oben': 292, 'unten': 12, 'links': 12, 'rechts': 12, 'rechtsText': [14], 'linksText': [14]}
+OK   hoch Qualität: links/rechts gleich, Texte bündig  – {'oben': 594, 'unten': 12, 'links': 12, 'rechts': 12, 'rechtsText': [14], 'linksText': [14]}
+OK   quer Einstellungen: oben/unten gleich, Texte links/rechts gleicher Abstand  – {'oben': 14, 'unten': 14, 'links': 468, 'rechts': 14, 'rechtsText': [14], 'linksText': [14]}
+OK   quer Qualität: oben/unten gleich, Texte links/rechts gleicher Abstand  – {'oben': 103, 'unten': 103, 'links': 468, 'rechts': 14, 'rechtsText': [14], 'linksText': [14]}
+ERGEBNIS: 4 von 4

@@ -1,0 +1,19 @@
+OK   Stummes Video: kein Button  – False
+OK   Ton an: Button erscheint  – [True, 288.438, 280.4375]
+OK   Button sitzt unter dem Video  – [True, 288.438, 280.4375]
+OK   Beim Scrollen ausgeblendet  – True
+OK   Nach dem Scrollen wieder da  – [False, True]
+OK   Lange drücken: 2× schneller  – [2, '2× schneller']
+OK   Loslassen: wieder normal  – 1
+OK   Langes Drücken blendet die Leisten nicht um
+OK   Lautstärke: senkrecht rechts mit Füllstand  – [True, True, '100%', True, True, '100%']
+OK   Helligkeit: senkrecht links  – [True, True, True, True, '100%']
+OK   Titel nur so breit wie der Text  – [143.015625, 141, 386]
+OK   Bildformat: Tipp schaltet Füllen → Strecken → Original (ohne Menü)  – [['cover', 'Füllen'], ['fill', 'Strecken'], ['contain', 'Original']]
+OK   Zwei Finger auseinander: Zoom  – translate(0px, 0px) scale(4)
+OK   Qualität-Knopf erscheint bei mehreren Stufen  – [False, 'Auto 360p']
+OK   ⋮-Menü hat „Qualität“ mit Stufe  – ['Link teilen', 'In App öffnenz. B. VLC', 'QualitätAuto 360p', 'Geschwindigkeit1×', 'Sleep-TimerAus', 'Dialog-VerstärkerAus', 'Standbild speichern', 'Einstellungen']
+OK   Qualitäts-Menü: Automatisch, 360p, 180p  – ['Automatisch', '360p', '180p']
+OK   180p gewählt: Knopf zeigt 180p  – 180p
+Fehler der Seite: []
+ERGEBNIS: 17 von 17 Tests bestanden

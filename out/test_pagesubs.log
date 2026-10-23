@@ -1,0 +1,10 @@
+OK   ARD-artig: „Deutsch“ von der Seite, nur einmal  – [['Aus', '', True], ['Deutsch', 'von der Seite', False], ['Datei laden …', '.srt, .vtt oder .ttml vom Handy', False], ['Größe', 'mittel', False], ['Lage', 'unten im Bild', False]]
+OK   ARD-artig: richtige Zeile (WebVTT bevorzugt)  – ARD Zeile 10
+OK   EBU-TT (XML) mit 10:00:00-Versatz: richtige Zeile  – ['EBU Zeile 20', [['Aus', '', True], ['Deutsch', 'von der Seite', False], ['Datei laden …', '.srt, .vtt oder .ttml vom Handy', False], ['Größe', 'mittel', False], ['Lage', 'unten im Bild', False]]]
+OK   ZDF-artig: aus der nachgeladenen Konfiguration  – [['Aus', '', True], ['Deutsch', 'von der Seite', False], ['Datei laden …', '.srt, .vtt oder .ttml vom Handy', False], ['Größe', 'mittel', False], ['Lage', 'unten im Bild', False]]
+OK   TTML: Ticks, Versatz, zwei Zeilen  – 'ZDF oben 6\nunten'
+OK   vom Seiten-Player geladen: „English“  – [['Aus', '', True], ['English', 'von der Seite', False], ['Datei laden …', '.srt, .vtt oder .ttml vom Handy', False], ['Größe', 'mittel', False], ['Lage', 'unten im Bild', False]]
+OK   richtige Zeile  – Loaded by page 6
+OK   Seite ohne Untertitel: nur Aus und Datei  – [['Aus', '', True], ['Datei laden …', '.srt, .vtt oder .ttml vom Handy', False], ['Größe', 'mittel', False], ['Lage', 'unten im Bild', False]]
+OK   keine Fehler  – []
+ERGEBNIS: 9 von 9

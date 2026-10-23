@@ -1,0 +1,8 @@
+OK   Leiste ziehen: Video springt schon beim Ziehen mit (36 s)  – [36, 36.0]
+OK   … dabei nur die Zeit über der Leiste, kein kleines Vorschaubild  – [True, False, '0:36 · +30 s']
+OK   … nach dem Loslassen genau dort  – [36, 36.0]
+OK   Hochwischen über die Leiste: zurück an die alte Stelle  – [36, 36]
+OK   seitlich übers Bild wischen: Video springt beim Wischen mit  – [36, 60]
+OK   gespiegelt: das Video der Seite springt beim Ziehen mit  – [27, 26.2]
+OK   keine Fehler  – []
+ERGEBNIS: 7 von 7

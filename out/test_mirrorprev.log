@@ -1,0 +1,8 @@
+   Seitendaten mit Datei: Spiegeln True · weit [False, None, '0:42 · +37 s'] · gesehen [False, None, '0:04 · +3 s'] · Abrufe 0
+OK   Spiegeln aktiv (Facebook)
+OK   nie gesehene Stelle: nur die Zeit  – [False, None, '0:42 · +37 s']
+OK   angeschaute Stelle: ebenso nur die Zeit (gleich aussehend)  – [False, None, '0:04 · +3 s']
+OK   über Angeschautes und Neues ziehen: kein Flackern (immer gleich)  – ['false/64px']
+OK   Datei aus den Seitendaten wird nicht geladen  – [0]
+OK   keine Fehler  – []
+ERGEBNIS: 6 von 6

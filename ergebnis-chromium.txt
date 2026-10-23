@@ -1,0 +1,52 @@
+Test-Streams fertig.
+Übersetzt nach classes/
+test_amb.py               8s ok   4 von 4
+test_cutout.py            7s ok   2 von 2
+test_dl.py                9s ok   6 von 6
+test_dl2.py              17s ok   4 von 4
+test_dl3.py              17s ok   6 von 6
+test_dlclose.py          11s ok   4 von 4
+test_e2e.py              13s ok   6 von 6
+test_embed.py            17s ok   10 von 10
+test_embed_nofs.py        7s ok   2 von 2
+test_extras.py           50s ok   37 von 37
+test_fb.py               25s ok   ERGEBNIS neu: bestanden
+test_fbhd.py             11s ok   ERGEBNIS neu: bestanden
+test_fbshare.py           9s ok   3 von 3
+test_helper.py           15s ok   15 von 15
+test_hide.py             16s ok   3 von 3
+test_idle.py             40s ok   3 von 3
+test_ig.py               12s ok   2 von 2
+test_leave.py            35s ok   20 von 20
+test_livescrub.py        14s ok   7 von 7
+test_menu.py              6s ok   4 von 4
+test_menuback.py         60s ok   21 von 21
+test_menufade.py         13s ok   6 von 6
+test_menusym.py          16s ok   4 von 4
+test_mfb.py              11s ok   ERGEBNIS neu: bestanden
+test_mirror.py           13s ok   bestanden
+test_mirrorprev.py       17s ok   6 von 6
+test_nextreel.py         18s ok   4 von 4
+test_pagesubs.py         24s ok   9 von 9
+test_pair.py             14s ok   11 von 11
+test_pip.py              12s ok   8 von 8
+test_pipkeep.py          18s ok   9 von 9
+test_pixel.py            50s ok   14 von 14
+test_player.py           65s ok   40 von 40 Tests bestanden
+test_prev.py             18s ok   15 von 15
+test_proof.py             7s ok   5 von 5
+test_reelend.py          25s ok   8 von 8
+test_scrubbar.py         20s ok   15 von 15
+test_seekpos.py          11s ok   8 von 8
+test_sfx.py               7s ok   6 von 6
+test_sfx2.py             10s ok   7 von 7
+test_spaswitch.py        10s ok   4 von 4
+test_tapzoom.py          15s ok   14 von 14
+test_topguard.py         27s ok   12 von 12
+test_tt.py               19s ok   3 von 3
+test_ui.py               27s ok   21 von 21
+test_unlock.py           12s ok   5 von 5
+test_v8.py               24s ok   17 von 17 Tests bestanden
+
+GESAMT: alles bestanden
+mess_perf.py           Messung:    Leisten            {"Skript": 177, "Layout": 18, "Stil": 101, "gesamt": 727, "Bilder/s": 60, "Video verworfen": "0/200"}    Leisten schlicht   {"Skript": 182

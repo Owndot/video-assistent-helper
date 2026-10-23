@@ -1,0 +1,10 @@
+OK   ck: Seite spielt (Browser hat die Sitzung)
+   Helfer-Protokoll: /download c=pub=1 | /download p=1 c=pub=1 | /pull  | /pull  | /pull  | /pull 
+   Hinweise: ['Download läuft – siehe Benachrichtigung', 'Server verlangt die Browser-Sitzung – lädt über den Browser, Seite offen lassen']
+OK   ck: erst direkt (abgewiesen), dann über den Browser
+OK   ck: Datei über den Browser vollständig gespeichert  – ['../java/out_e2e/job102/video.mp4']
+OK   ck: Hinweis „Server verlangt die Browser-Sitzung“  – ['Download läuft – siehe Benachrichtigung', 'Server verlangt die Browser-Sitzung – lädt über den Browser, Seite offen lassen']
+OK   pub: Seite spielt (Browser hat die Sitzung)
+OK   pub: Cookie der Seite reicht – direkt, ohne Umweg  – [['../java/out_e2e/job103/video.mp4'], 0]
+Fehler der Seite: []
+ERGEBNIS: 6 von 6

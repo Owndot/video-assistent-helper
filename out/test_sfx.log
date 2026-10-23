@@ -1,0 +1,8 @@
+OK   Doppeltipp rechts: +10 s, Anzeige "10 s" rechts  – [25, 36, [True, '10']]
+OK   noch ein schneller Tipp: +20 s insgesamt, "20 s"  – [46, [True, '20']]
+OK   danach blendet die Anzeige aus
+OK   Leisten bleiben dabei unverändert
+OK   Doppeltipp links: −10 s, Anzeige "10 s" links  – [37, [True, '10']]
+OK   einzelner Tipp später: keine Serie mehr, Leisten erscheinen
+Fehler: []
+ERGEBNIS: 6 von 6

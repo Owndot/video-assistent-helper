@@ -1,0 +1,27 @@
+   Datei Ambient-Element: CANVAS
+   Datei Ambient: Rand hell an 53.4 / aus 0.0, Ambient-Bild (Mittel, Streuung) [78, 32], Videorand 288 px
+OK   Datei: Ambient-Bild hat Inhalt  – [78, 32]
+OK   Datei: Ambient-Licht sichtbar im Rand  – [53.4, 0.0]
+   Datei Vorschau: Abweichung zum echten Bild an der Stelle 3.7
+OK   Datei: Vorschaubild passt zur Stelle  – 3.7
+   Datei Vorschau: Video bereit 1, Zeit 9.0, Breite 640, Bild-Flag True, Vorschau-Video [124, 71], gezeigtes Bild [128, 71]
+OK   Datei: Vorschau zeigt ein echtes Bild  – [128, 71]
+   Datei nach 13 s: Abweichung zum echten Bild 3.2
+OK   Datei: nach 13 s Vorschaubild passt zur Stelle  – 3.2
+   Datei nach 13 s: Ambient [76, 33] · Vorschau bereit 4, Zeit 7.9, gezeigt bei 7.9, Vorschau-Video [126, 69], gezeigtes Bild [126, 69]
+OK   Datei: nach 13 s Ambient-Bild hat Inhalt  – [76, 33]
+OK   Datei: nach 13 s Vorschau an der neuen Stelle  – [4, '7.9', '7.9', [126, 69], [126, 69]]
+   Stream Ambient-Element: CANVAS
+   Stream Ambient: Rand hell an 54.2 / aus 0.0, Ambient-Bild (Mittel, Streuung) [78, 31], Videorand 288 px
+OK   Stream: Ambient-Bild hat Inhalt  – [78, 31]
+OK   Stream: Ambient-Licht sichtbar im Rand  – [54.2, 0.0]
+   Stream Vorschau: Abweichung zum echten Bild an der Stelle 3.8
+OK   Stream: Vorschaubild passt zur Stelle  – 3.8
+   Stream Vorschau: Video bereit 4, Zeit 36.3, Breite 320, Bild-Flag True, Vorschau-Video [129, 61], gezeigtes Bild [130, 62]
+OK   Stream: Vorschau zeigt ein echtes Bild  – [130, 62]
+   Stream nach 13 s: Abweichung zum echten Bild 2.9
+OK   Stream: nach 13 s Vorschaubild passt zur Stelle  – 2.9
+   Stream nach 13 s: Ambient [78, 31] · Vorschau bereit 4, Zeit 7.9, gezeigt bei 7.9, Vorschau-Video [127, 60], gezeigtes Bild [127, 61]
+OK   Stream: nach 13 s Ambient-Bild hat Inhalt  – [78, 31]
+OK   Stream: nach 13 s Vorschau an der neuen Stelle  – [4, '7.9', '7.9', [127, 60], [127, 61]]
+ERGEBNIS: 14 von 14

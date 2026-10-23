@@ -1,0 +1,11 @@
+fullscreen: True pipEnabled: True
+OK   Werkzeuge nur als Symbole  – [[44, 1], [44, 1], [44, 1], [44, 1], [44, 1]]
+OK   Bild-in-Bild: Player bleibt offen  – [True, True, False, 'vp ctl amb']
+OK   Bild-in-Bild aktiv oder Hinweis sichtbar im Player  – [True, True, False, 'vp ctl amb']
+OK   Vollbild-Ende nach Bild-in-Bild schließt Player nicht
+OK   Abgespielter Teil der Leiste ist weiß  – linear-gradient(to right,#000 10.33%,rgba(0,0,0,.42) 10.33%,
+OK   Player zu: kleines Fenster schließt mit
+OK   Nach Schließen: Hinweis-Blase wieder auf der Seite
+OK   Gleiches helles Glas auf dunkler und heller Seite  – radial-gradient(85% 55% at 24% 0%, rgba(0, 0, 0, 0
+Fehler: []
+ERGEBNIS: 8 von 8

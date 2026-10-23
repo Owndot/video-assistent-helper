@@ -1,0 +1,5 @@
+OK   Countdown „Next reel in 3“ bei offenem Player: sofort abgebrochen, bleibt beim Reel  – {'adv': 0, 'cancelled': 7, 'dlg': 0, 'src': 'reel1.webm', 'open': True}
+OK   … anderer Dialog mit „Cancel“ (ohne Countdown) wird nicht angetippt  – {'adv': 0, 'cancelled': 7, 'dlg': 0, 'src': 'reel1.webm', 'open': True}
+OK   nach dem Schließen am Ende: Seite springt nicht weiter  – {'adv': 0, 'src': 'reel1.webm'}
+OK   keine Fehler  – []
+ERGEBNIS: 4 von 4

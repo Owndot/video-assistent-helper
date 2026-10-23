@@ -1,0 +1,5 @@
+OK   Download an YTDLnis: Intent abgeschickt, Player hält an, solange YTDLnis vorne ist  – [['intent://www.xvideos.com/video12345/test_clip#Intent;scheme=https;action=android.intent.action.VIEW;type=video/*;package=com.deniscerri.ytdl;S.browser_fallback_url=https%3A%2F%2Fgithub.com%2Fdeniscerri%2Fytdlnis%2Freleases%2Flatest;S.title=Testclip%20XV;end'], True]
+OK   … zurück im Browser: Player zu, Seitenvideo angehalten an deiner Stelle  – [False, True, 8]
+OK   Teilen-Menü abgebrochen: Player bleibt offen  – [True, True]
+OK   keine Fehler  – []
+ERGEBNIS: 4 von 4

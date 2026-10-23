@@ -1,0 +1,5 @@
+OK   Gleiche Seite: Download direkt im Browser  – [[{'name': 'Testvideo direkt.webm', 'href': 'http://127.0.0.1:8775/clip.webm'}], 'Download läuft im Browser – du kannst die Seite verlassen']
+OK   Fremder Server mit Download-Kennzeichnung: direkt im Browser  – [[{'name': 'Fremd mit.webm', 'href': 'http://127.0.0.1:8776/att/clip.webm'}], 'Download läuft im Browser – du kannst die Seite verlassen', False]
+OK   Ohne Kennzeichnung: Auswahl erscheint  – ['Im Browser öffnen', 'Hier speichern', 'Teilen …']
+OK   "Im Browser öffnen" öffnet die Datei im neuen Tab  – ['http://127.0.0.1:8776/clip.webm']
+ERGEBNIS: 4 von 4

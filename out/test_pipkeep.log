@@ -1,0 +1,10 @@
+OK   Startbildschirm: angehalten kurz VOR dem kleinen Fenster → läuft darin weiter
+OK   … im kleinen Fenster von außen angehalten → läuft weiter
+OK   … eigene Pause im kleinen Fenster bleibt
+OK   ✕ im kleinen Fenster: angehalten
+OK   „Anhalten“-Einstellung: verdeckt angehalten, im kleinen Fenster läuft es weiter  – [True, False]
+OK   … ohne kleines Fenster: bleibt angehalten
+OK   Facebook (gespiegelt): kein Bild-in-Bild – kein Knopf, weder Player noch Seitenvideo ins kleine Fenster (18.6)  – ['none', True, True]
+OK   … nach dem Schließen: Seitenvideo wieder wie vorher  – False
+OK   keine Fehler  – []
+ERGEBNIS: 9 von 9

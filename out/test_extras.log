@@ -1,0 +1,40 @@
+OK   Mehr (oben rechts): Teilen, Standbild, Einstellungen (keine Tonspur bei einer Spur)  – [['Link teilen', '', False], ['In App öffnen', 'z. B. VLC', False], ['Geschwindigkeit', '1×', False], ['Sleep-Timer', 'Aus', False], ['Dialog-Verstärker', 'Aus', False], ['Standbild speichern', '', False], ['Einstellungen', '', False]]
+OK   Untertitel-Menü: Aus, Deutsch, English, Datei laden  – [['Aus', '', True], ['Deutsch', '', False], ['English', '', False], ['Datei laden …', '.srt, .vtt oder .ttml vom Handy', False], ['Größe', 'mittel', False], ['Lage', 'unten im Bild', False]]
+OK   Deutsch: richtige Zeile, ohne HTML, &amp; als &  – Seite Zeile 6 & mehr
+OK   zwischen zwei Zeilen: nichts
+OK   hochkant: Untertitel unten IM Bild  – [288, 513, 483, 502]
+OK   hochkant: Schrift nach Bildhöhe (225 px Bild → kleiner als im Querformat, aber ≥ 14 px)  – 14.0
+OK   Größe umschalten (bleibt im Menü): groß = 1,25 × mittel  – [['l', '17.5px'], 14.0]
+OK   Lage: oben
+OK   oben: Untertitel oben IM Bild  – [288, 513, 298, 321]
+OK   quer: Schrift ≈ 5 % der Bildhöhe (400 px → ≈ 21 px)  – 20.8
+OK   quer (Bild füllt die Höhe): oben am Bildrand  – [0, 400, 17, 52]
+   quer oben: mit Leisten ab 63 | Titel/Knöpfe bis 58
+OK   quer oben: Leisten an – direkt unter Titel/Knöpfen  – [63, 58]
+   quer: ohne Leisten [338, 373] → mit Leisten [262, 297] Zeitleiste ab 302
+OK   quer: Leisten an – Untertitel direkt über der Zeitleiste (nicht höher als nötig)  – [[0, 400, 338, 373], [262, 297, 302]]
+OK   Verschiebung: früher zeigen (+0,5 s)  – Seite Zeile 9 & mehr
+OK   English (.vtt)  – English line 9
+OK   eigene .srt-Datei, zweizeilig  – 'Eigene Datei\nzweite Zeile'
+OK   eigene Datei steht in der Liste (gewählt)  – [['Aus', '', False], ['Deutsch', '', False], ['English', '', False], ['eigene', 'eigene Datei', True], ['Datei laden …', '.srt, .vtt oder .ttml vom Handy', False]]
+OK   Aus: nichts mehr
+OK   Benachrichtigung: Titel, Seite, spielt, Bild  – ['Film mit Untertiteln', '127.0.0.1', 'playing', 1]
+OK   Standbild: JPG mit Titel und Zeit im Namen  – ['Film mit Untertiteln 0-22.jpg', 13934]
+OK   Einstellungen (kurz): Sprungweite 10 s, Wischsperre oben/unten Mittel  – [['Design', 'Glas', False], ['Ambient', 'An', False], ['Fortschrittslinie', 'An', False], ['Vollbild', 'An', False], ['Sprungweite', '10 s', False], ['Spul-Vorschau', 'Kleines Bild', False], ['Halten', '2×', False], ['Wischsperre oben', 'Mittel', False], ['Wischsperre unten', 'Mittel', False], ['Auto-Drehen', 'Aus', False], ['Beim Verlassen', 'Weiter', False], ['Download', 'YTDLnis', False], ['Helper-App', 'An', False], ['Sprache', 'Auto', False], ['Zurücksetzen', '', False]]
+OK   Design → Schlicht: überall Milchglas, ohne Kante/Glanz/Lupe  – [[False, 'block', 'url("#ldp9axw2") blur(2px) saturate(1.4) brightness(1.1)', 'block', 'url(#ldp9axw2)'], [True, 'none', 'blur(22px) saturate(1.7) brightness(1.06)', 'none', '']]
+OK   Design-Eintrag zeigt „Schlicht“  – [['Design', 'Schlicht', False], ['Ambient', 'An', False], ['Fortschrittslinie', 'An', False], ['Vollbild', 'An', False], ['Sprungweite', '10 s', False], ['Spul-Vorschau', 'Kleines Bild', False], ['Halten', '2×', False], ['Wischsperre oben', 'Mittel', False], ['Wischsperre unten', 'Mittel', False], ['Auto-Drehen', 'Aus', False], ['Beim Verlassen', 'Weiter', False], ['Download', 'YTDLnis', False], ['Helper-App', 'An', False], ['Sprache', 'Auto', False], ['Zurücksetzen', '', False]]
+OK   Design → Glas: Kante zurück  – [False, 'block', 'url("#ldp9axw2") blur(2px) saturate(1.4) brightness(1.1)', 'block', 'url(#ldp9axw2)']
+OK   auf 15 s: Knöpfe zeigen 15  – ['15 s vor', '15']
+OK   Sprung-Knopf springt 15 s  – 15.2
+OK   gespeichert  – {"subSize":"s","subHigh":false,"lensGlass":true,"skipSeconds":15}
+OK   nach Neuladen (andere Seite) gilt es weiter
+OK   Zurücksetzen: wieder 10 s
+OK   kein Weiterschauen: nichts gemerkt, kein Knopf, nicht im Menü
+OK   Player zu: Benachrichtigung aufgeräumt  – [None, 'none']
+OK   Stream: Tonspur im Menü (Deutsch)  – [['Link teilen', '', False], ['In App öffnen', 'z. B. VLC', False], ['Geschwindigkeit', '1×', False], ['Sleep-Timer', 'Aus', False], ['Dialog-Verstärker', 'Aus', False], ['Tonspur', 'Deutsch', False], ['Standbild speichern', '', False], ['Einstellungen', '', False]]
+OK   Tonspur-Liste: Deutsch (gewählt), English  – [['Deutsch', 'DE', True], ['English', 'EN', False]]
+OK   auf English umgeschaltet  – [['Link teilen', '', False], ['In App öffnen', 'z. B. VLC', False], ['Geschwindigkeit', '1×', False], ['Sleep-Timer', 'Aus', False], ['Dialog-Verstärker', 'Aus', False], ['Tonspur', 'English', False], ['Standbild speichern', '', False], ['Einstellungen', '', False]]
+OK   Stream-Untertitel in der Liste  – [['Aus', '', True], ['Deutsch (Stream)', '', False], ['Datei laden …', '.srt, .vtt oder .ttml vom Handy', False], ['Größe', 'mittel', False], ['Lage', 'unten im Bild', False]]
+OK   Stream-Untertitel werden gezeigt  – Stream-Untertitel 4
+OK   keine Fehler  – []
+ERGEBNIS: 37 von 37

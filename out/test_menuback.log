@@ -1,0 +1,22 @@
+OK   ⋮-Menü ohne Überschrift  – {'on': True, 'head': None, 'back': False, 'items': ['Link teilen', 'In App öffnen', 'Geschwindigkeit', 'Sleep-Timer', 'Dialog-Verstärker', 'Standbild speichern', 'Einstellungen']}
+OK   zweiter Tipp auf ⋮ schließt das Menü  – {'on': False, 'head': None, 'back': False, 'items': ['Link teilen', 'In App öffnen', 'Geschwindigkeit', 'Sleep-Timer', 'Dialog-Verstärker', 'Standbild speichern', 'Einstellungen']}
+OK   Einstellungen: Überschrift mit ‹ zurück  – {'on': True, 'head': 'Einstellungen', 'back': True, 'items': ['Design', 'Ambient', 'Fortschrittslinie', 'Vollbild', 'Sprungweite', 'Spul-Vorschau', 'Halten', 'Wischsperre oben', 'Wischsperre unten', 'Auto-Drehen', 'Beim Verlassen', 'Download', 'Helper-App', 'Sprache', 'Zurücksetzen']}
+OK   ‹ führt zurück ins ⋮-Menü  – {'on': True, 'head': None, 'back': False, 'items': ['Link teilen', 'In App öffnen', 'Geschwindigkeit', 'Sleep-Timer', 'Dialog-Verstärker', 'Standbild speichern', 'Einstellungen']}
+OK   Geschwindigkeit: auch mit ‹ zurück  – {'on': True, 'head': 'Geschwindigkeit', 'back': True, 'items': ['0,5×', '0,75×', '1× · Normal', '1,25×', '1,5×', '2×']}
+OK   Zurück-Taste (Vollbild) in den Einstellungen: zurück ins ⋮-Menü, Player bleibt offen  – [True, True, {'on': True, 'head': None, 'back': False, 'items': ['Link teilen', 'In App öffnen', 'Geschwindigkeit', 'Sleep-Timer', 'Dialog-Verstärker', 'Standbild speichern', 'Einstellungen']}]
+OK   nochmal Zurück (Verlauf): Menü zu, Player bleibt offen  – [True, {'on': False, 'head': None, 'back': False, 'items': ['Link teilen', 'In App öffnen', 'Geschwindigkeit', 'Sleep-Timer', 'Dialog-Verstärker', 'Standbild speichern', 'Einstellungen']}]
+OK   noch einmal Zurück: Player zu
+OK   ein Tipp: Leisten sofort da  – True
+OK   Doppeltipp rechts: springt vor, Leisten bleiben aus  – [False, 30]
+OK   Wiederholen: Aus → 1× → ∞ → Aus (Zeichen am Knopf)  – [[True, '1', 'Wiederholen: 1×'], [True, '∞', 'Wiederholen: endlos'], [False, '', 'Wiederholen aus']]
+OK   1× wiederholen: am Ende von vorn, Zahl weg  – [[False, 1, False], [False, '', 'Wiederholen: 1×']]
+OK   … beim zweiten Ende: Schluss (bleibt am Ende stehen)  – [True, 60, True]
+OK   ∞: nach jedem Ende wieder von vorn  – [[[False, 1, False], [False, 1, False]], [True, '∞', 'Wiederholen: endlos']]
+OK   Sleep-Timer-Menü: Aus, 15–60 min, Ende des Videos (mit ‹)  – {'on': True, 'head': 'Sleep-Timer', 'back': True, 'items': ['Aus', '15 min', '30 min', '45 min', '60 min', 'Ende des Videos']}
+OK   Sleep-Timer „Ende des Videos“: hält am Ende an statt zu wiederholen  – [[['Sleep-Timer', 'Ende des Videos', False]], [True, 60, True], 'Sleep-Timer: angehalten']
+OK   Sleep-Timer 15 min: Menü zeigt Rest, wird leiser, hält an, Lautstärke wieder wie vorher  – [[['Sleep-Timer', 'noch 15 min', False]], 1, [False, 0.39], [True, 1]]
+OK   Dialog-Verstärker an (Datei derselben Seite: Ton bearbeitbar)  – [[['Dialog-Verstärker', 'An', False]], 'Dialog-Verstärker an']
+OK   … und wieder aus  – [['Dialog-Verstärker', 'Aus', False]]
+OK   fremder Server: „hier nicht möglich“, bleibt aus  – [[['Dialog-Verstärker', 'Aus', False]], 'Dialog-Verstärker: hier nicht möglich (die Seite gibt den Ton nicht frei)']
+OK   keine Fehler  – []
+ERGEBNIS: 21 von 21

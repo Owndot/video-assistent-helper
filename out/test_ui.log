@@ -1,0 +1,23 @@
+OK   oben nur Download und ⋮, unten CC · Wiederholen · Format · Bild-in-Bild · Drehen  – [['Herunterladen (z. B. mit YTDLnis)', 'Mehr'], ['Untertitel', 'Wiederholen', 'Bildformat', 'Bild-in-Bild', 'Drehen'], ['Film mit Untertiteln', True]]
+OK   Titel ganz lesbar (nicht abgeschnitten)  – ['Film mit Untertiteln', True]
+OK   ⋮: Teilen, Standbild, Einstellungen (Einstellungen zuletzt)  – ['Link teilen', 'In App öffnen', 'Geschwindigkeit', 'Sleep-Timer', 'Dialog-Verstärker', 'Standbild speichern', 'Einstellungen']
+OK   Untertitel an: Knopf leuchtet
+   Hinweis: [True, 644, 690, 702, 800, 'Füllen', True]
+OK   Füllen: Hinweis knapp über der unteren Leiste, im Glas der Knöpfe  – [True, 644, 690, 702, 800, 'Füllen', True]
+OK   Original: Hinweis mit Abstand unter der Unterkante des Bildes  – [True, 527, 573, 702, 513, 'Original', True]
+OK   Hochwischen über die Zeitleiste: Stelle bleibt  – 20
+OK   zur Seite ziehen: spult (Stelle unter dem Finger)  – [36.3, 36.3]
+OK   Halten mit Wackler nach oben, dann seitlich: spult  – [49.0, 49.0]
+OK   Zeitleiste über der Knopfreihe  – [740, 744]
+OK   Teilen-Knopf: teilt Link und Titel  – [{'url': 'http://127.0.0.1:8775/subs.html', 'title': 'Film mit Untertiteln'}]
+OK   … ohne Teilen-Menü: Link kopiert  – ['http://127.0.0.1:8775/subs.html', 'Link kopiert']
+OK   Wischsperre oben: Stufe in Worten, Erklärung über dem Menü  – ['Wischsperre obenBreit', 'Oberste 20 %: kein Wischen für Helligkeit/Lautstärke', 280, 292]
+OK   Einstellung „Sprache“: Auto → Deutsch → English (Menü sofort englisch)  – [['Design', 'Glass', False], ['Ambient', 'On', False], ['Progress line', 'On', False], ['Full screen', 'On', False], ['Skip', '10 s', False], ['Seek preview', 'Thumbnail', False], ['Hold', '2×', False], ['Swipe guard top', 'Medium', False], ['Swipe guard bottom', 'Medium', False], ['Auto-rotate', 'Off', False], ['When leaving', 'Keep playing', False], ['Download', 'YTDLnis', False], ['Helper app', 'On', False], ['Language', 'English', False], ['Reset', '', False]]
+OK   nach Umschalten: Knöpfe englisch  – ['Close', 'Download (e.g. with YTDLnis)', 'More', '10 s back', 'Play', '10 s forward', 'Lock controls', 'Subtitles', 'Repeat', 'Aspect ratio', 'Picture-in-picture', 'Rotate', 'Share link', 'Open in external app', 'Quality', 'Speed', 'Unlock']
+OK   Einstellungen englisch und kurz  – [['Design', 'Glass', False], ['Ambient', 'On', False], ['Progress line', 'On', False], ['Full screen', 'On', False], ['Skip', '10 s', False], ['Seek preview', 'Thumbnail', False], ['Hold', '2×', False], ['Swipe guard top', 'Medium', False], ['Swipe guard bottom', 'Medium', False], ['Auto-rotate', 'Off', False], ['When leaving', 'Keep playing', False], ['Download', 'YTDLnis', False], ['Helper app', 'On', False], ['Language', 'English', False], ['Reset', '', False]]
+OK   englischer Browser: Knopf auf der Seite englisch
+OK   Untertitel-Menü englisch  – [['Off', '', True], ['Deutsch', '', False], ['English', '', False], ['Load file …', '.srt, .vtt or .ttml from your phone', False], ['Size', 'medium', False], ['Position', 'bottom of picture', False]]
+OK   Hinweis englisch  – Subtitles: English
+OK   Bildformat-Hinweis englisch
+OK   keine Fehler  – []
+ERGEBNIS: 21 von 21

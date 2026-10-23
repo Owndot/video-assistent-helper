@@ -1,0 +1,10 @@
+   am Ende: {'adv': 0, 'src': 'reel1.webm', 'paused': True, 'left': 0.16, 'open': True, 'play': 'Wiedergabe'}
+OK   gespiegelt: kurz vor dem Ende angehalten (Seite springt NICHT zum nächsten Reel)  – {'adv': 0, 'src': 'reel1.webm', 'paused': True, 'left': 0.16, 'open': True, 'play': 'Wiedergabe'}
+OK   … Player bleibt offen und zeigt „Play“  – {'adv': 0, 'src': 'reel1.webm', 'paused': True, 'left': 0.16, 'open': True, 'play': 'Wiedergabe'}
+OK   … Anzeige wie fertig: Zeit = Länge, Leiste voll, Symbol „noch einmal“ (18.2)  – {'cur': '1:00', 'dur': '1:00', 'bar': '1000', 'mini': 'scaleX(1)', 'icon': 'M12 5V1'}
+OK   … zurückgespult: normale Anzeige, Play spielt ab dort (nicht von vorn)  – [{'cur': '0:52', 'dur': '1:00', 'bar': '867', 'mini': 'scaleX(0.867)', 'icon': 'M8 5v14'}, [52.9, False, 60]]
+OK   nach dem Schließen: noch dasselbe Reel  – {'adv': 0, 'src': 'reel1.webm'}
+OK   Wiederholen 1× beim Spiegeln: von vorn, Seite springt nicht weiter  – {'adv': 0, 'src': 'reel1.webm', 'paused': False, 't': 1.5}
+OK   eigener Player am Ende geschlossen: Seite bleibt beim Reel (angehalten kurz vor dem Ende)  – [True, {'adv': 0, 'src': 'reel1.webm', 'paused': True, 'left': 0.3}]
+OK   keine Fehler  – []
+ERGEBNIS: 8 von 8

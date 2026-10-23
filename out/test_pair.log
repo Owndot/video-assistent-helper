@@ -1,0 +1,12 @@
+OK   Vor dem Koppeln: alter Schlüssel geht noch
+OK   Falscher Schlüssel: nichts gespeichert, Hinweis  – Verbinden hat nicht geklappt – läuft der Helper? In der App nochmal auf „Verbinden“ tippen.
+OK   Koppeln: Schlüssel gespeichert, Seite bestätigt  – [['✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helper benutzen. Du kannst diese Seite schließen.', 'http://127.0.0.1:47811/pair'], {'helperKey': '0123456789abcdef0123456789abcdef'}]
+OK   … Schlüssel aus der Adresse entfernt  – http://127.0.0.1:47811/pair
+OK   Nach dem Koppeln: alter Schlüssel abgelehnt
+OK   … neuer Schlüssel gilt
+OK   Fremder Host-Name wird abgelehnt
+OK   Player spricht mit neuem Schlüssel
+OK   Eigene Seite: mit Sitzung (Cookie)  – ['http://127.0.0.1:8792/ck/film.webm COOKIE=ja', 'http://127.0.0.1:8792/ck/film.webm COOKIE=ja']
+OK   Fremde Adresse aus der „Playlist“: OHNE Cookie  – ['http://localhost:8792/ck/film.webm COOKIE=nein']
+OK   Video trotzdem vollständig gespeichert
+ERGEBNIS: 11 von 11
