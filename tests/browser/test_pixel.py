@@ -61,7 +61,8 @@ with sync_playwright() as p:
         br = pg.evaluate('() => { const r = %s.querySelector(".vbar").getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; }' % R)
         y = br[1] + br[3] / 2
         pg.mouse.move(br[0] + br[2] * 0.1, y); pg.mouse.down(); pg.mouse.move(br[0] + br[2] * 0.6, y, steps=3)
-        try: pg.wait_for_function('() => %s.querySelector(".vprev").classList.contains("img")' % R, timeout=6000)
+        # (bis das richtige Bild da ist – solange es lädt, ist ein gemerktes Bild abgedunkelt zu sehen, 19.11)
+        try: pg.wait_for_function('() => { const p = %s.querySelector(".vprev"); return p.classList.contains("img") && !p.classList.contains("stale"); }' % R, timeout=8000)
         except Exception: pass
         time.sleep(1.2)
         pv = pg.evaluate('() => { const pr = %s.querySelector(".vprev"), v = pr.querySelector("video"); return [v.readyState, v.currentTime.toFixed(1), v.videoWidth, pr.classList.contains("img"), (%s)(v), (%s)(pr.classList.contains("live") ? v : pr.querySelector("canvas"))]; }' % (R, STATS, STATS))
@@ -81,6 +82,8 @@ with sync_playwright() as p:
         pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R); time.sleep(0.3)
         # (zurück ziehen: Ziehen spult von der aktuellen Stelle aus – vorwärts landete es am Ende, wo der Bildvergleich wackelt)
         pg.mouse.move(br[0] + br[2] * 0.33, y); pg.mouse.down(); pg.mouse.move(br[0] + br[2] * 0.15, y, steps=3)
+        try: pg.wait_for_function('() => { const p = %s.querySelector(".vprev"); return p.classList.contains("img") && !p.classList.contains("stale"); }' % R, timeout=8000)
+        except Exception: pass
         time.sleep(1.5)
         pv2 = pg.evaluate('() => { const pr = %s.querySelector(".vprev"), v = pr.querySelector("video"); return [v.readyState, v.currentTime.toFixed(1), pr.dataset.t, (%s)(v), (%s)(pr.classList.contains("live") ? v : pr.querySelector("canvas"))]; }' % (R, STATS, STATS))
         want2 = pg.evaluate('() => %s.querySelector(".vbar").value / 1000 * %s.querySelector(".vv").duration' % (R, R))
