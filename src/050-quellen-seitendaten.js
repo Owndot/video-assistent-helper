@@ -75,9 +75,9 @@
   const RX_URL = /"(browser_native_hd_url|browser_native_sd_url|playable_url_quality_hd|playable_url|hd_src|sd_src)"\s*:\s*"(https?:[^"]+)"/g;
   const RX_ID = /"(videoId|video_id|videoID|id)"\s*:\s*"?(\d{6,})"?/g;
   function regexScan(text) {
-    let m;
+    let m, n = 0;
     RX_URL.lastIndex = 0;
-    while ((m = RX_URL.exec(text))) {
+    while ((m = RX_URL.exec(text)) && n++ < 3000) {   // (höchstens 3000 Fundstellen – nie stundenlang suchen)
       const from = Math.max(0, m.index - 3000);
       const win = text.slice(from, m.index + 3000);
       let best = null, bestDist = 1e9, im;

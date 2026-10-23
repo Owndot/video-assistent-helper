@@ -2,7 +2,7 @@
   // Die App lauscht nur auf dem Handy selbst (127.0.0.1). Ohne App kommt schlicht keine Antwort – dann bleibt alles wie bisher.
   const HELPER = 'http://127.0.0.1:47811';
   // Schlüssel: nach dem Koppeln (Knopf „Verbinden“ in der Helfer-App) der eigene Zufallsschlüssel der App –
-  // dauerhaft gespeichert, übersteht auch Updates des Skripts. Vorher der alte feste Schlüssel.
+  // dauerhaft gespeichert, übersteht auch Updates des Skripts. Bis zum Koppeln der feste Startschlüssel.
   let helperKey = 'evp-1';
   try { if (typeof GM_getValue === 'function') helperKey = GM_getValue('helperKey', '') || 'evp-1'; } catch (e) {}
   // to = Wartezeit in ms (Abholen beim Laden über den Browser wartet bis zu 8 s), body = Daten für POST /push

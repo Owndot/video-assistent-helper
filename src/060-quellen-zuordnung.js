@@ -273,7 +273,7 @@
     const s = startAt.get(v);
     if (!s) return '';
     // Haupt-Playlists werden oft schon vor dem Videostart geladen – darum weiter zurückschauen,
-    // aber nie vor einen Videowechsel auf der Seite (sonst käme schnell hintereinander das VORIGE Video, 18.0)
+    // aber nie vor einen Videowechsel auf der Seite (sonst käme schnell hintereinander das VORIGE Video)
     const lo = Math.max(s - 15000, navAt);
     const c = sources.filter((x) => x.t >= lo && x.t <= Math.max(s, navAt) + 6000).map((x) => x.u).filter((u) => PLAYLIST_RE.test(u));
     return rankPlaylists(c)[0] || '';

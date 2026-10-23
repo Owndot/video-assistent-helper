@@ -1,5 +1,5 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Live-Stream mit Zurückspulen (19.11, z. B. ARD live): die Leiste ist der Bereich, den der Stream zurückhält.
+# Live-Stream mit Zurückspulen (z. B. ARD live): die Leiste ist der Bereich, den der Stream zurückhält.
 # Rechts „Live“, links „LIVE“ bzw. „−5:30“ (so weit hinter live – „live“ ist, wo hls.js live spielt, etwas vor dem
 # Ende der Liste); Spulen zeigt „−1:30“; ganz rechts = wieder live.
 import time

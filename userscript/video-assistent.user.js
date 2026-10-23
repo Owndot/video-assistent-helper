@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.13
+// @version      19.14
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -57,7 +57,7 @@
     // false = als Fenster ohne Vollbild-Hinweis des Browsers; Vollbild/Querformat dann nur über den Drehen-Knopf.
     startFullscreen: true,
     // Facebook: Bild direkt von Facebooks eigenem Player spiegeln (immer das richtige Video, gleiche Qualität wie im
-    // Browser). false = wie früher selbst nach der Videodatei suchen.
+    // Browser). false = selbst nach der Videodatei suchen.
     fbMirror: true,
     // Lupen-Glas wie bei iOS 26 / macOS: das Bild hinter Knöpfen und Reglern wird am Rand gebogen und leicht vergrößert.
     // false = einfaches Milchglas (spart etwas Rechenleistung)
@@ -101,7 +101,7 @@
       'xvideos.com', 'xhamster.com',
     ],
     // Wohin "Herunterladen" auf Seiten geht, die yt-dlp kennt: 'ytdlnis' = direkt in YTDLnis öffnen (ohne Teilen-Menü),
-    // 'share' = Teilen-Menü wie früher (z. B. für Seal oder andere Apps). Lange auf ⬇ drücken zeigt immer alle Wege.
+    // 'share' = Teilen-Menü (z. B. für Seal oder andere Apps). Lange auf ⬇ drücken zeigt immer alle Wege.
     downloader: 'ytdlnis',
     // true = Download-Button auf allen Seiten zeigen (yt-dlp versucht es dann mit seinem allgemeinen Modus)
     downloadEverywhere: false,
@@ -246,7 +246,24 @@
   const FK = '__evpFrame1';
   const IN_FRAME = (() => { try { return window.top !== window; } catch (e) { return true; } })();
   const fb = { up: null, ack: false, child: null, childWin: null, saved: null, onState: null };
-  const fpost = (w, m) => { try { m[FK] = 1; w.postMessage(m, '*'); } catch (e) {} };
+  // Schlüssel für Nachrichten nach OBEN (eingebettetes Fenster → Hauptseite): Nur das Skript kennt ihn (sein eigener
+  // Speicher, für Webseiten unlesbar). So kann eingebettete Werbung nicht so tun, als wäre sie der Player, und sich
+  // nicht selbst über den ganzen Bildschirm legen lassen. Nach unten geht er nie mit; täglich ein neuer (den macht nur
+  // die Hauptseite – eingebettete Fenster lesen ihn). Ohne Speicher des Managers (GM_…) gibt es keinen sicheren Ort:
+  // dann ohne Schlüssel (null).
+  const FSEC = (() => {
+    try {
+      if (typeof GM_getValue !== 'function' || typeof GM_setValue !== 'function') return null;
+      const o = GM_getValue('frameKey', null), now = Date.now();
+      if (o && typeof o.k === 'string' && o.k.length >= 24 && (IN_FRAME || now - (o.t || 0) < 864e5)) return o.k;
+      if (IN_FRAME) return '';
+      const a = new Uint8Array(18); crypto.getRandomValues(a);
+      const k = Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
+      GM_setValue('frameKey', { k: k, t: now });
+      return k;
+    } catch (e) { return ''; }
+  })();
+  const fpost = (w, m) => { try { m[FK] = 1; if (FSEC && w === window.parent && w !== window) m.k = FSEC; w.postMessage(m, '*'); } catch (e) {} };
   const pageTitle = () => String((IN_FRAME && fb.up && fb.up.title) || document.title || '').trim();
   const pageHost = () => String((IN_FRAME && fb.up && fb.up.host) || location.hostname).replace(/^(www|m)\./, '');
   const fsElem = () => document.fullscreenElement || document.webkitFullscreenElement || null;
@@ -368,7 +385,8 @@
       if (d.t === 'fsno') { if (fb.childWin) fpost(fb.childWin, { t: 'fsno' }); else if (fb.onFsNo) fb.onFsNo(); }
       return;
     }
-    // Nachricht von UNTEN (aus einem eingebetteten Fenster)
+    // Nachricht von UNTEN (aus einem eingebetteten Fenster) – nur mit dem Schlüssel des Skripts
+    if (FSEC !== null && (!FSEC || d.k !== FSEC)) return;
     const f = frameOf(e.source);
     if (!f) return;
     if (d.t === 'hello') { fpost(e.source, { t: 'info', title: pageTitle(), host: pageHost(), ins: safeInsets() }); return; }
@@ -426,7 +444,7 @@
   const DOWNLOAD_ONLY = onSite(CONFIG.downloadOnlySites);
   const SHOW_DOWNLOAD = DOWNLOAD_ONLY || CONFIG.downloadEverywhere || onSite(CONFIG.ytdlpSites);
   let vp = null;   // Zustand des eingebauten Players (muss vor dem ersten Prüfdurchlauf existieren)
-  // ----- Kadri: Spiegeln + Bild-in-Bild (19.0) -----
+  // ----- Kadri: Spiegeln + Bild-in-Bild -----
   // Facebook hält sein Video an, sobald die Seite verdeckt ist – beim Spiegeln stünde dann auch das kleine Fenster.
   // In Kadri läuft ein Skript IN der Seite (page.js): Solange gespiegelt wird, verbirgt es „verdeckt“ vor der Seite
   // („Schild“). Dabei hält es die Meldung an, bevor irgendwer sie bekommt – auch dieses Skript. Darum reicht es sie
@@ -462,7 +480,7 @@
   const META = /(^|\.)(facebook\.com|instagram\.com|threads\.net|threads\.com|messenger\.com)$/i.test(location.hostname);
   const FB_MIRROR = /(^|\.)facebook\.com$/i.test(location.hostname) && CONFIG.fbMirror !== false;
   // Kadri: auf Facebook zuerst der EIGENE Player mit der fertigen MP4 – aber nur, wenn sicher ist, dass sie zum
-  // laufenden Video gehört (gleiche Video-ID wie die gerade geladenen Stücke); sonst wie bisher spiegeln (19.0)
+  // laufenden Video gehört (gleiche Video-ID wie die gerade geladenen Stücke); sonst spiegeln
   const FB_TRY_OWN = FB_MIRROR && IS_KADRI;
   // Firefox spiegelt mit mozCaptureStream – dabei wandert der Ton in die Spiegelung (siehe Player: VOL)
   const FF_CAP = !HTMLMediaElement.prototype.captureStream && !!HTMLMediaElement.prototype.mozCaptureStream;
@@ -637,8 +655,8 @@
       if (list.length > 80) list.shift();
     }
   }
-  // oft genug, um Einspeisen und Ankunft sauber zu trennen – nur wo es gebraucht wird (Facebook spiegelt sonst ohnehin)
-  if (META && (!FB_MIRROR || FB_TRY_OWN)) setInterval(watchBuffers, 100);
+  // viermal pro Sekunde: genug, um Einspeisen und Ankunft zu trennen (spart Akku) – nur wo es gebraucht wird
+  if (META && (!FB_MIRROR || FB_TRY_OWN)) setInterval(watchBuffers, 250);
   ['loadstart', 'emptied'].forEach((t) => document.addEventListener(t, (e) => {
     const v = e.target; if (v && v.tagName === 'VIDEO') { bufCredit.delete(v); bufPrev.delete(v); }
   }, true));
@@ -694,7 +712,7 @@
     if (sources.length > 40) sources.shift();
   }
 
-  // ---------- Nachweis: welcher Stream läuft WIRKLICH? (18.1) ----------
+  // ---------- Nachweis: welcher Stream läuft WIRKLICH? ----------
   // Statt nach dem Zeitpunkt zu raten: Die Stream-Listen (m3u8/mpd), die die Seite ohnehin lädt, werden mitgelesen
   // (kein zusätzlicher Abruf). Daraus ist bekannt, in welchem Ordner die Stücke jedes Streams liegen, welche
   // Unter-Listen zu welcher Haupt-Liste gehören und wie lang das Video ist. Lädt die Seite dann Stücke aus einem
@@ -754,17 +772,20 @@
   // „content“) sieht das Skript diese Anfragen sonst nicht. Nur in der Erweiterung aktiv.
   if (IS_KADRI) {
     document.addEventListener('kadri-net', (e) => {
+      // (die Seite kann solche Meldungen auch selbst schicken: nur Text, höchstens ~8 MB, sonst nichts tun)
+      if (typeof e.detail !== 'string' || e.detail.length > 8e6) return;
       let d = null;
-      try { d = typeof e.detail === 'string' ? JSON.parse(e.detail) : null; } catch (x) { d = null; }
+      try { d = JSON.parse(e.detail); } catch (x) { d = null; }
       if (!d || typeof d.u !== 'string' || typeof d.t !== 'string') return;
       if (d.k === 'pl') notePlaylist(d.u, typeof d.f === 'string' ? d.f : '', d.t);
+      else if (d.k === 'src') { if (typeof KADRI_HOOKS !== 'undefined' && KADRI_HOOKS.onSrc) KADRI_HOOKS.onSrc(d.u, d.f === 'mpd' ? 'mpd' : 'm3u8'); }
       else if (d.k === 'api' && META) { bodiesRead++; try { scanText(d.t); } catch (x) {} }
     });
   }
   // Kadri: Der Hintergrund der Erweiterung meldet Stream-Listen, die der Tab lädt – nach dem, was der Server sagt
   // („Content-Type“), also auch ohne .m3u8 im Namen und aus Hintergrund-Skripten der Seite (Worker), die sonst
   // niemand sieht. Ohne Endung bekommt die Adresse ein Kennzeichen hinter „#“ (geht nicht an den Server), damit der
-  // Player sie als Stream lädt (19.0).
+  // Player sie als Stream lädt.
   if (IS_KADRI && typeof KADRI_HOOKS !== 'undefined') {
     KADRI_HOOKS.onSrc = (u, k) => {
       if (typeof u !== 'string' || !/^https?:/i.test(u) || SEGMENT_RE.test(u)) return;
@@ -772,6 +793,9 @@
       addSource(u);
     };
   }
+  // Kadri: page.js hebt seine letzten Meldungen auf – jetzt, wo alles zuhört, noch einmal schicken lassen
+  // (in eingebetteten Fenstern startet Kadri erst, wenn ein Video auftaucht)
+  if (IS_KADRI) { try { document.dispatchEvent(new Event('kadri-hello')); } catch (e) {} }
   function noteSegment(u) {
     if (PLAYLIST_RE.test(u) || !(SEGFILE_RE.test(u) || SEGMENT_RE.test(u))) return;
     if (vp && vp.mode === 'own') return;   // Stücke des eigenen Players zählen nicht
@@ -956,9 +980,9 @@
   const RX_URL = /"(browser_native_hd_url|browser_native_sd_url|playable_url_quality_hd|playable_url|hd_src|sd_src)"\s*:\s*"(https?:[^"]+)"/g;
   const RX_ID = /"(videoId|video_id|videoID|id)"\s*:\s*"?(\d{6,})"?/g;
   function regexScan(text) {
-    let m;
+    let m, n = 0;
     RX_URL.lastIndex = 0;
-    while ((m = RX_URL.exec(text))) {
+    while ((m = RX_URL.exec(text)) && n++ < 3000) {   // (höchstens 3000 Fundstellen – nie stundenlang suchen)
       const from = Math.max(0, m.index - 3000);
       const win = text.slice(from, m.index + 3000);
       let best = null, bestDist = 1e9, im;
@@ -1290,7 +1314,7 @@
     const s = startAt.get(v);
     if (!s) return '';
     // Haupt-Playlists werden oft schon vor dem Videostart geladen – darum weiter zurückschauen,
-    // aber nie vor einen Videowechsel auf der Seite (sonst käme schnell hintereinander das VORIGE Video, 18.0)
+    // aber nie vor einen Videowechsel auf der Seite (sonst käme schnell hintereinander das VORIGE Video)
     const lo = Math.max(s - 15000, navAt);
     const c = sources.filter((x) => x.t >= lo && x.t <= Math.max(s, navAt) + 6000).map((x) => x.u).filter((u) => PLAYLIST_RE.test(u));
     return rankPlaylists(c)[0] || '';
@@ -1520,7 +1544,7 @@
   // Die App lauscht nur auf dem Handy selbst (127.0.0.1). Ohne App kommt schlicht keine Antwort – dann bleibt alles wie bisher.
   const HELPER = 'http://127.0.0.1:47811';
   // Schlüssel: nach dem Koppeln (Knopf „Verbinden“ in der Helfer-App) der eigene Zufallsschlüssel der App –
-  // dauerhaft gespeichert, übersteht auch Updates des Skripts. Vorher der alte feste Schlüssel.
+  // dauerhaft gespeichert, übersteht auch Updates des Skripts. Bis zum Koppeln der feste Startschlüssel.
   let helperKey = 'evp-1';
   try { if (typeof GM_getValue === 'function') helperKey = GM_getValue('helperKey', '') || 'evp-1'; } catch (e) {}
   // to = Wartezeit in ms (Abholen beim Laden über den Browser wartet bis zu 8 s), body = Daten für POST /push
@@ -1755,7 +1779,8 @@
         fin(ok && (/content-disposition:\s*attachment/i.test(hd) || /content-type:\s*application\/(octet-stream|force-download|x-download)/i.test(hd)));
       };
       try {
-        req = x({ method: 'GET', url: u, headers: { Range: 'bytes=0-0', Referer: location.href },
+        // (Anmeldung/Cookies nur an die eigene Seite – fremde Server ohne)
+        req = x({ method: 'GET', url: u, headers: { Range: 'bytes=0-0', Referer: location.href }, anonymous: baseDomain(hostOf(u)) !== baseDomain(location.hostname),
           onreadystatechange: (r) => { if (r && r.readyState >= 2) look(r); },
           onload: (r) => { look(r); fin(false); }, onerror: () => fin(false), ontimeout: () => fin(false) });
       } catch (e) { fin(false); }
@@ -1796,7 +1821,7 @@
     const x = gmXhr();
     if (!x) { viaPage(); return; }
     try {
-      x({ method: 'GET', url: u, responseType: 'blob', headers: { Referer: location.href }, timeout: 0,
+      x({ method: 'GET', url: u, responseType: 'blob', headers: { Referer: location.href }, timeout: 0, anonymous: baseDomain(hostOf(u)) !== baseDomain(location.hostname),
         onprogress: prog,
         onload: (r) => { const b = r && r.response; if (r && r.status >= 200 && r.status < 300 && big(b)) ok(b); else viaPage(); },
         onerror: viaPage, onabort: fail });
@@ -2089,7 +2114,7 @@
   }
   function lensWatch(el) {
     if (!lensOn() || !el) return;
-    // Play, ±10 und das Menü bleiben wie in 12.7 (ohne Lupe) – so gewünscht
+    // Play, ±10 und das Menü ohne Lupen-Effekt – so gewünscht
     if (el.classList && (el.classList.contains('vplay') || el.classList.contains('vskip') || el.classList.contains('vmenu'))) return;
     applyLens(el);
     if (lensRO) lensRO.observe(el);
@@ -2478,7 +2503,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vcluster{display:flex;align-items:center;height:44px;border-radius:22px;padding:0 4px;transition:opacity .18s ease}
 .vb{all:unset;position:relative;display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:22px;cursor:pointer;color:#fff;flex:none;transition:transform .32s cubic-bezier(.34,1.56,.64,1)}
 /* "all:unset" oben nimmt runden Glasknöpfen sonst den Glas-Hintergrund – hier wieder dazu (mit Lupe).
-   Play und ±10 bleiben wie in 12.7: nur der feine Glasrand, kein Hintergrund */
+   Play und ±10: nur der feine Glasrand, kein Hintergrund */
 .vb.g:not(.vplay):not(.vskip){background:rgba(26,28,38,.14);-webkit-backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.4) brightness(1.1);backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.4) brightness(1.1);box-shadow:0 6px 22px rgba(0,0,0,.24)}
 .vb:active{transform:scale(.88)}
 .vb[hidden]{display:none !important}
@@ -2523,7 +2548,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vbar{flex:1;-webkit-appearance:none;appearance:none;height:38px;background:transparent;margin:0;cursor:pointer;filter:invert(1);--trk:rgba(0,0,0,.25);pointer-events:none;transition:opacity .15s ease}
 .vbar::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:var(--trk);transition:height .18s ease,border-radius .18s ease}
 .vbar::-moz-range-track{height:6px;border-radius:3px;background:var(--trk);transition:height .18s ease}
-/* Berührungsfläche der Leiste: groß (56 px hoch), über der ganzen Zeile – Spulen siehe 220 (19.4) */
+/* Berührungsfläche der Leiste: groß (56 px hoch), über der ganzen Zeile – Spulen siehe 220 */
 .vbarhit{position:absolute;left:0;right:0;top:50%;height:56px;transform:translateY(-50%);z-index:2;touch-action:none;cursor:pointer}
 /* beim Ziehen: dicke Leiste ohne Punkt (wie Samsung Internet) */
 .vp.thick .vbar::-webkit-slider-runnable-track{height:18px;border-radius:9px}
@@ -2670,14 +2695,14 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   }
   // Quellen für den eingebauten Player, die beste zuerst (DASH-Manifeste kann er nicht)
   // Kadri/Facebook: die MP4 nur nehmen, wenn sie sicher zum laufenden Video gehört – sonst keine (→ Spiegeln)
-  // Qualität zuerst (19.3): Die fertige Datei nur nehmen, wenn sie mindestens etwa so scharf ist wie das, was Facebook
+  // Qualität zuerst: Die fertige Datei nur nehmen, wenn sie mindestens etwa so scharf ist wie das, was Facebook
   // gerade zeigt (kurze Bildseite). Facebook spielt selbst oft HD als getrennte Bild-/Tonspur – die kann nur das Spiegeln.
   function fbRes(u) {
     const tag = encTag(u);
     const m = /(\d{3,4})p\b/.exec(tag) || /\.C3\.(\d{3,4})\./.exec(tag);
     return m ? +m[1] : 0;
   }
-  // forPrev (19.5): für das Vorschaubild beim Spiegeln – jede Schärfe recht, die kleinste zuerst (lädt am schnellsten)
+  // forPrev: für das Vorschaubild beim Spiegeln – jede Schärfe recht, die kleinste zuerst (lädt am schnellsten)
   function fbSureSources(v, resMap, forPrev) {
     try {
       const af = assetFor(v);
@@ -2825,8 +2850,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     const bFit = chip(P.fit, 'Format', 'Bildformat');
     const bRot = chip(P.rotate, 'Drehen', 'Drehen');
     const bLock = chip(P.lock, 'Sperren', 'Bedienung sperren');
-    // Aufteilung (16.4, „oben schlank“): oben nur Download und ⋮ (Titel bleibt lesbar), unten am Daumen CC,
-    // Bildformat, Bild-in-Bild, Drehen. Teilen, In App öffnen, Qualität, Tempo (16.5), Tonspur, Standbild, Einstellungen: im ⋮-Menü.
+    // Aufteilung („oben schlank“): oben nur Download und ⋮ (Titel bleibt lesbar), unten am Daumen CC,
+    // Bildformat, Bild-in-Bild, Drehen. Teilen, In App öffnen, Qualität, Tempo, Tonspur, Standbild, Einstellungen: im ⋮-Menü.
     // Teilen/In App/Qualität/Tempo bleiben als unsichtbare Knöpfe (.vstash) bestehen – das Menü löst sie aus.
     const bMore = ib(I.more, 'Mehr');
     const bSubs = chip(P.cc, 'Untertitel', 'Untertitel');   // unten: Untertitel (leuchtet, wenn an)
@@ -3164,7 +3189,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // ----- Ambient-Modus -----
     // Ein winziges Abbild des aktuellen Bildes (32 Pixel breit) hinter dem Video. Weichzeichnen, Farbe und der weiche
     // Rand werden IM Mini-Bild gerechnet (32 Pixel – kostet nichts); der Bildschirm vergrößert es nur. Früher machte das
-    // ein CSS-Weichzeichner über den ganzen Bildschirm – der kostete auf Handys flüssige Bilder (17.7).
+    // ein CSS-Weichzeichner über den ganzen Bildschirm – der kostet auf Handys flüssige Bilder.
     // 2–3 Mal pro Sekunde ein neues Bild, sanft überblendet (in einem zweiten Mini-Bild gesammelt).
     let actx = null, accC = null, accX = null;
     if (!FF_MOBILE) {
@@ -3175,7 +3200,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         if (!accX) actx = null;
       } catch (e) { actx = null; }
     }
-    // weicher, ovaler Rand wie früher per CSS-Maske: Ellipse 62 % × 58 %, voll bis 38 %, 45 % bei 66 %, weg bei 92 %
+    // weicher, ovaler Rand (wie eine CSS-Maske): Ellipse 62 % × 58 %, voll bis 38 %, 45 % bei 66 %, weg bei 92 %
     function ambMask(w, h) {
       actx.globalCompositeOperation = 'destination-in';
       actx.filter = 'none';
@@ -3266,7 +3291,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 
     // ----- Anzeige aktualisieren -----
     // Nur schreiben, was sich geändert hat – und Zeitleiste/Zeiten nur, solange sie zu sehen sind (beim Einblenden
-    // aktualisiert showControls sofort). Spart beim normalen Schauen ständige Stil-Neuberechnungen (17.7).
+    // aktualisiert showControls sofort). Spart beim normalen Schauen ständige Stil-Neuberechnungen.
     const uiLast = { cur: '', dur: '', play: null, len: null, mini: '' };
     // Am Ende angehalten (Reels: kurz VOR dem Ende, damit die Seite nicht zum nächsten springt) – aber nur, solange es
     // noch dort steht (nicht nach Zurückspulen)
@@ -3350,6 +3375,13 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       st.loadTimer = setTimeout(tryNext, 9000);   // lädt nicht? nächste Quelle
       try { vid.srcObject = null; vid.removeAttribute('src'); } catch (e) {}
       if (PLAYLIST_RE.test(u)) {
+        // Kadri lädt hls.js erst jetzt nach (spart auf jeder Seite ~620 KB) – danach dieselbe Quelle noch einmal
+        if (typeof Hls === 'undefined' && IS_KADRI && typeof KADRI_HOOKS !== 'undefined' && KADRI_HOOKS.loadHls && !st.hlsTried) {
+          st.hlsTried = true; st.idx--;
+          const again = () => { if (vp === st && st.cur === u && st.mode === 'own') tryNext(); };
+          KADRI_HOOKS.loadHls().then(again, again);
+          return;
+        }
         if (typeof Hls !== 'undefined' && Hls.isSupported()) {
           // Untertitel zeichnet der Player selbst (⋯ → Untertitel) – hls.js lädt sie nur
           const hls = new Hls({ enableWorker: false, subtitleDisplay: false, startPosition: st.startTime > 1 ? st.startTime : -1 });
@@ -3645,7 +3677,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       enterFs().then(() => { if (isFs()) { st.fsStart = true; hint(); } else toast('Bild-in-Bild ist hier nicht möglich'); });
     };
     // Bild-in-Bild nur, wo es zuverlässig läuft: NICHT beim Spiegeln und nicht auf Facebook/Instagram/Threads –
-    // dort hält die Seite ihr Video im Hintergrund an, das kleine Fenster stünde still (18.6). Dann gibt es weder den
+    // dort hält die Seite ihr Video im Hintergrund an, das kleine Fenster stünde still. Dann gibt es weder den
     // Knopf noch das automatische kleine Fenster beim Wischen zum Startbildschirm (auch nicht für das Seitenvideo).
     // (Kadri: im EIGENEN Player auch auf Facebook/Instagram – die Seite kann ihn dort nicht anhalten)
     st.pipOk = !!bPip && (!META || IS_KADRI);
@@ -3756,7 +3788,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     }
     // Alle Wege zum Speichern (langes Drücken auf ⬇, oder wenn der Browser nicht darf)
     // An YTDLnis / eine andere App übergeben: Der Browser verliert dabei das Vollbild (und holt es ohne Berührung nicht
-    // zurück). Darum: Player hält an, und kommst du zurück, ist er zu – die Seite steht an deiner Stelle (18.7).
+    // zurück). Darum: Player hält an, und kommst du zurück, ist er zu – die Seite steht an deiner Stelle.
     const dlOut = (f) => {
       st.dlAt = Date.now(); st.dlCancel = false;
       const r = f();
@@ -4670,23 +4702,22 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       bUnlock.addEventListener('contextmenu', (e) => e.preventDefault());
     })();
 
-    // Fortschrittsbalken – Spulen auf der Leiste (19.4, neu 19.8–19.11). Eigene, große Berührungsfläche statt des
+    // Fortschrittsbalken – Spulen auf der Leiste. Eigene, große Berührungsfläche statt des
     // Schiebereglers des Browsers. Vorbilder: YouTube (Punkt unter dem Finger) und iPhone (Finger nach unten = feiner,
     // in Stufen, wieder hoch = normal):
     //  - kurz antippen = an diese Stelle springen
     //  - ziehen = die Stelle (großer Punkt im Glas des Designs) steht unter dem Finger; die Leiste wird dick. Über der
     //    Vorschau steht, wie weit es von der laufenden Stelle weg ist („0:38 · +18 s“) – das Video läuft beim Spulen
-    //    weiter. Kein Einrasten (19.11): der Punkt folgt immer nur dem Finger.
+    //    weiter. Kein Einrasten: der Punkt folgt immer nur dem Finger.
     //  - Lupe (nur bei Videos ab 1,5 min, auch bei Live, abschaltbar): Finger beim Ziehen unter die Leiste = „Lupe“
     //    (Ausschnitt ~1 min). Die Leiste zeigt dann nur den Ausschnitt, links/rechts stehen dessen Grenzen, im Schild
     //    „Lupe“, beim Wechsel ein kurzes Vibrieren (abschaltbar). Wieder hoch auf die Leiste = normal (die Stelle gleitet
     //    beim Weiterziehen wieder unter den Finger). Finger an ein Ende der Leiste = der Ausschnitt wandert mit.
-    //    (Die zweite Stufe „Fein“ gibt es seit 19.13 nicht mehr – eine Stufe ist einfacher und genau genug.)
     //  - weit nach oben weg vom Balken = abbrechen („Loslassen = abbrechen“, keine kleine Vorschau – das große Video zeigt
     //    die laufende Stelle); loslassen dort = nichts ändern. Zurück nach unten = weiter spulen.
     //  - Live-Stream mit Zurückspulen: die Leiste ist der Bereich, den der Stream zurückhält; „−5:30“ = so weit hinter
     //    live, ganz rechts = wieder live.
-    //  Sicher (19.11): Hochwischen ist kein Spulen (erst ~10 px zur Seite). Abgebrochen wird, wenn Android die Geste
+    //  Sicher: Hochwischen ist kein Spulen (erst ~10 px zur Seite). Abgebrochen wird, wenn Android die Geste
     //  übernimmt, der Finger „verloren“ geht, 15 s lang nichts vom Finger kommt, du die App wechselst oder ein anderes
     //  Video zu laufen beginnt (Facebook lädt Reels neu, das nächste startet …). Gezeichnet wird einmal pro Bild.
     const barHit = h('div', { class: 'vbarhit', 'aria-hidden': 'true' });
@@ -4945,7 +4976,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       const low = st.sources.filter((u) => (st.srcRes[u] || 0) >= 144).sort((x, y) => st.srcRes[x] - st.srcRes[y])[0];
       return low && curRes && st.srcRes[low] < curRes ? low : st.cur;
     }
-    // Gespiegelt (Facebook in Kadri, 19.5): Facebook zeigt das Video schärfer als die fertige MP4 – deshalb spiegelt
+    // Gespiegelt (Facebook in Kadri): Facebook zeigt das Video schärfer als die fertige MP4 – deshalb spiegelt
     // Kadri. Die MP4 desselben Videos (sicher erkannt, gleiche Video-ID) taugt aber für das kleine Vorschaubild.
     // Passt ihre Länge nicht, wird sie nicht genommen (dann nur die Zeit). Neu geprüft höchstens alle 1,5 s.
     let fbPrevAt = 0;
@@ -5148,7 +5179,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (st.hls) { pvs.autoGrid = true; pvs.userDone = true; prevLoad(); if (pv.readyState >= 1) startGrid(); }
       else { pv.preload = 'metadata'; prevLoad(); }
     };
-    // ----- Spulen „im Bild“ (wie Samsung Internet, 19.3) -----
+    // ----- Spulen „im Bild“ (wie Samsung Internet) -----
     // Während du ziehst, springt das Video selbst an die Stelle – du siehst das echte Bild in voller Größe. Geht überall
     // gleich, auch beim Spiegeln (dann springt das Video der Seite), ohne zweite Kopie des Videos. Sicher: immer nur EIN
     // Sprung auf einmal; zieht der Finger weiter, wird danach nur die neueste Stelle angesprungen.
@@ -5461,7 +5492,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     };
     onVisChange(onVisAway);
     // Vollbild selbst zurückholen: sofort, nach 250 ms und nach 700 ms (und wenn das Fenster den Fokus bekommt) –
-    // ohne Berührung erlaubt das nicht jeder Browser; dann klappt es mit der nächsten Berührung (18.6)
+    // ohne Berührung erlaubt das nicht jeder Browser; dann klappt es mit der nächsten Berührung
     function tryRegain() {
       // nur, wenn der Browser es gerade erlauben würde (frische Berührung) – sonst nur eine Fehlermeldung in der Konsole
       [0, 250, 700].forEach((ms) => setTimeout(() => { if (vp === st && st.fsLost && !isFs() && !document.hidden && !pipIsOurs(vid) && touchFresh()) regainFs(); }, ms));
@@ -5509,7 +5540,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Browser, die von selbst ins kleine Fenster wechseln können (beim Verlassen der App), fragen über die Media Session
     try { if (navigator.mediaSession && document.pictureInPictureEnabled) navigator.mediaSession.setActionHandler('enterpictureinpicture', () => { if (!st.pipOk) return; vid.disablePictureInPicture = false; vid.requestPictureInPicture().catch(() => {}); }); } catch (e) {}
     st.cleanup.push(() => { try { navigator.mediaSession.setActionHandler('enterpictureinpicture', null); } catch (e) {} });
-    // ----- Im kleinen Fenster weiterlaufen lassen (18.5) -----
+    // ----- Im kleinen Fenster weiterlaufen lassen -----
     // Beim Wischen zum Startbildschirm wechselt der Browser ins kleine Fenster. Kurz davor oder danach halten aber
     // manche Seiten (Facebook: ihr Video, sobald sie verdeckt ist – beim Spiegeln steht dann auch das kleine Fenster),
     // der Browser selbst oder „Beim Verlassen: Anhalten“ das Video an. Hält es etwas anderes als du (Knopf, Knopf im
@@ -5672,7 +5703,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       document.removeEventListener('webkitfullscreenchange', onFs);
       removeEventListener('popstate', onPop);
     });
-    // Auf Wunsch (Einstellung startFullscreen) wie früher sofort im Vollbild starten
+    // Auf Wunsch (Einstellung startFullscreen) sofort im Vollbild starten
     if (CONFIG.startFullscreen) {
       enterFs().then(() => {
         if (isFs()) { st.fsStart = true; autoOrient(M().videoWidth, M().videoHeight); }
@@ -5710,8 +5741,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     };
     // Reels-Seiten (Facebook u. a.) springen beim Ende von selbst zum nächsten Video – manche schon kurz VOR „ended“
     // (sobald die Zeit fast am Ende ist). Dann wäre der Player schwarz und man stünde danach auf einem anderen Reel.
-    // Darum: 0,2 s vor dem Ende anhalten (letztes Bild bleibt stehen; früher 0,6 s – seit der Facebook-Countdown
-    // abgebrochen wird, reicht das, 18.4) und – siehe „Schleuse“ unten – der Seite die
+    // Darum: 0,2 s vor dem Ende anhalten (letztes Bild bleibt stehen; das reicht, weil der Facebook-Countdown
+    // abgebrochen wird) und – siehe „Schleuse“ unten – der Seite die
     // letzten Meldungen des Videos gar nicht erst zeigen. Nahe am Ende genauer hinschauen als „timeupdate“ (¼ s).
     const END_GAP = 0.2;
     let nearIv = 0;
@@ -5797,7 +5828,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ----- Reels: „Nächstes Reel in 3 … Abbrechen“ -----
   // Facebook zählt am Ende eines Reels selbst herunter und springt dann weiter – auch wenn das Video angehalten ist.
   // Solange der Player offen ist (und kurz danach), tippt das Skript sofort auf „Abbrechen“. Erkannt wird nur ein
-  // kleiner Kasten mit Countdown (Reel/Video … Zahl) UND einem Abbrechen-Knopf – sonst wird nichts angetippt (18.3).
+  // kleiner Kasten mit Countdown (Reel/Video … Zahl) UND einem Abbrechen-Knopf – sonst wird nichts angetippt.
   const NEXT_RE = /(reel|video|clip)[^\n]{0,40}?\b\d{1,2}\s*(s|sek|sec)?\.?\s*$/i;   // „Next reel in 2“, „Nächstes Video in 3 s“
   const NEXT_WORD_RE = /(next|nächst|weiter|suivant|siguiente|próxim|prossim|następn|volgend|nästa|seuraava|sonraki|следующ|наступн|შემდეგ)|\bin\s+\d/i;
   const CANCEL_RE = /^(cancel|abbrechen|annuler|cancelar|annulla|anuluj|annuleren|avbryt|peruuta|iptal|zrušit|mégse|отмена|скасувати|취소|キャンセル|取消|إلغاء|ביטול|გაუქმება)$/i;
@@ -5855,7 +5886,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 
   // ----- Übergabe an die Seite -----
   // Das Video der Seite springt an deine Stelle und läuft (mit Ton) weiter. Bis es dort ein Bild hat, liegt dein
-  // letztes Bild genau darüber – sonst sähe man kurz den Anfang des Videos und dann einen Sprung (17.9).
+  // letztes Bild genau darüber – sonst sähe man kurz den Anfang des Videos und dann einen Sprung.
   // Bei der Zurück-Geste passiert das schon in dem Moment, in dem sie erkannt wird (nicht erst nach der Prüfung).
   function handBack(st) {
     if (st.handed) return;
@@ -6152,7 +6183,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // TikTok-Feed: Link genau dieses Videos – NIE die Feed-Adresse (/foryou)
     if (TT) return ttPostUrl(v);
     // Eigene Seite für genau dieses Video (Mediatheken: /video/…, /clip/…) und nur ein Video drauf: die Seitenadresse.
-    // Links neben dem Player sind dort oft das nächste oder (nach einem Wechsel ohne Neuladen) das vorige Video (18.0).
+    // Links neben dem Player sind dort oft das nächste oder (nach einem Wechsel ohne Neuladen) das vorige Video.
     if (!META && VIDEO_PAGE_RE.test(location.pathname) && countEligible() <= 1) return location.href.split('#')[0];
     // Ganzer Beitrag als Einheit (Instagram, X und andere nutzen <article> pro Beitrag)
     const art = v.closest ? v.closest('article, [role="article"]') : null;
@@ -6334,7 +6365,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.13',
+      'Video-Assistent 19.14',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

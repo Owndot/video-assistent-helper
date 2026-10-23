@@ -57,7 +57,7 @@ with sync_playwright() as p:
     s5 = state(); pg.mouse.up(); time.sleep(0.6)
     check('kurzes Video: nach unten → keine Lupe', not s5[2] and abs(t() - at(x, fx + 0.2 * W, W)) < 1, [s5, t()])
     check('… Abstand zur alten Stelle steht da', '+' in s5[3], s5)
-    # 6) weg und zurück an die alte Stelle: kein Einrasten (19.11) – der Punkt folgt nur dem Finger („+0 s“)
+    # 6) weg und zurück an die alte Stelle: kein Einrasten – der Punkt folgt nur dem Finger („+0 s“)
     setT(20); x, y, W = geo(); fx = x + 7 + (20 / D) * W
     xr = fx + 0.3 * W; r1 = at(x, xr, W)
     pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(xr, y, steps=6); time.sleep(0.15)

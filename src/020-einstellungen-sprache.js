@@ -14,7 +14,7 @@
     // false = als Fenster ohne Vollbild-Hinweis des Browsers; Vollbild/Querformat dann nur über den Drehen-Knopf.
     startFullscreen: true,
     // Facebook: Bild direkt von Facebooks eigenem Player spiegeln (immer das richtige Video, gleiche Qualität wie im
-    // Browser). false = wie früher selbst nach der Videodatei suchen.
+    // Browser). false = selbst nach der Videodatei suchen.
     fbMirror: true,
     // Lupen-Glas wie bei iOS 26 / macOS: das Bild hinter Knöpfen und Reglern wird am Rand gebogen und leicht vergrößert.
     // false = einfaches Milchglas (spart etwas Rechenleistung)
@@ -58,7 +58,7 @@
       'xvideos.com', 'xhamster.com',
     ],
     // Wohin "Herunterladen" auf Seiten geht, die yt-dlp kennt: 'ytdlnis' = direkt in YTDLnis öffnen (ohne Teilen-Menü),
-    // 'share' = Teilen-Menü wie früher (z. B. für Seal oder andere Apps). Lange auf ⬇ drücken zeigt immer alle Wege.
+    // 'share' = Teilen-Menü (z. B. für Seal oder andere Apps). Lange auf ⬇ drücken zeigt immer alle Wege.
     downloader: 'ytdlnis',
     // true = Download-Button auf allen Seiten zeigen (yt-dlp versucht es dann mit seinem allgemeinen Modus)
     downloadEverywhere: false,

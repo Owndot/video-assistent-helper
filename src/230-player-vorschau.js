@@ -39,7 +39,7 @@
       const low = st.sources.filter((u) => (st.srcRes[u] || 0) >= 144).sort((x, y) => st.srcRes[x] - st.srcRes[y])[0];
       return low && curRes && st.srcRes[low] < curRes ? low : st.cur;
     }
-    // Gespiegelt (Facebook in Kadri, 19.5): Facebook zeigt das Video schärfer als die fertige MP4 – deshalb spiegelt
+    // Gespiegelt (Facebook in Kadri): Facebook zeigt das Video schärfer als die fertige MP4 – deshalb spiegelt
     // Kadri. Die MP4 desselben Videos (sicher erkannt, gleiche Video-ID) taugt aber für das kleine Vorschaubild.
     // Passt ihre Länge nicht, wird sie nicht genommen (dann nur die Zeit). Neu geprüft höchstens alle 1,5 s.
     let fbPrevAt = 0;
@@ -242,7 +242,7 @@
       if (st.hls) { pvs.autoGrid = true; pvs.userDone = true; prevLoad(); if (pv.readyState >= 1) startGrid(); }
       else { pv.preload = 'metadata'; prevLoad(); }
     };
-    // ----- Spulen „im Bild“ (wie Samsung Internet, 19.3) -----
+    // ----- Spulen „im Bild“ (wie Samsung Internet) -----
     // Während du ziehst, springt das Video selbst an die Stelle – du siehst das echte Bild in voller Größe. Geht überall
     // gleich, auch beim Spiegeln (dann springt das Video der Seite), ohne zweite Kopie des Videos. Sicher: immer nur EIN
     // Sprung auf einmal; zieht der Finger weiter, wird danach nur die neueste Stelle angesprungen.

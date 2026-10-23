@@ -16,7 +16,7 @@
     // ----- Ambient-Modus -----
     // Ein winziges Abbild des aktuellen Bildes (32 Pixel breit) hinter dem Video. Weichzeichnen, Farbe und der weiche
     // Rand werden IM Mini-Bild gerechnet (32 Pixel – kostet nichts); der Bildschirm vergrößert es nur. Früher machte das
-    // ein CSS-Weichzeichner über den ganzen Bildschirm – der kostete auf Handys flüssige Bilder (17.7).
+    // ein CSS-Weichzeichner über den ganzen Bildschirm – der kostet auf Handys flüssige Bilder.
     // 2–3 Mal pro Sekunde ein neues Bild, sanft überblendet (in einem zweiten Mini-Bild gesammelt).
     let actx = null, accC = null, accX = null;
     if (!FF_MOBILE) {
@@ -27,7 +27,7 @@
         if (!accX) actx = null;
       } catch (e) { actx = null; }
     }
-    // weicher, ovaler Rand wie früher per CSS-Maske: Ellipse 62 % × 58 %, voll bis 38 %, 45 % bei 66 %, weg bei 92 %
+    // weicher, ovaler Rand (wie eine CSS-Maske): Ellipse 62 % × 58 %, voll bis 38 %, 45 % bei 66 %, weg bei 92 %
     function ambMask(w, h) {
       actx.globalCompositeOperation = 'destination-in';
       actx.filter = 'none';

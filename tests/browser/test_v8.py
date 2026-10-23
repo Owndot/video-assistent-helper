@@ -141,7 +141,7 @@ with sync_playwright() as p:
     check('Qualität-Knopf erscheint bei mehreren Stufen', not qh[0], qh)
     if not page2.evaluate('() => %s.querySelector(".vp").classList.contains("ctl")' % R):
         page2.mouse.click(200, 300); time.sleep(0.5)
-    # seit 16.4 im ⋮-Menü: „Qualität“ (mit aktueller Stufe) → Stufen-Menü
+    # im ⋮-Menü: „Qualität“ (mit aktueller Stufe) → Stufen-Menü
     page2.locator('.vcluster button[aria-label="Mehr"]').click(); time.sleep(0.4)
     mq = page2.evaluate('() => Array.from(%s.querySelectorAll(".vmenu .vmi")).map(b => b.textContent)' % R)
     check('⋮-Menü hat „Qualität“ mit Stufe', any(x.startswith('Qualität') and 'p' in x for x in mq), mq)

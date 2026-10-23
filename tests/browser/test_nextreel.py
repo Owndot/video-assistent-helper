@@ -1,6 +1,6 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
 # Facebook-Reels zählen am Ende selbst herunter („Next reel in 3 … Cancel“) und springen dann weiter – auch wenn das
-# Video angehalten ist (18.3). Solange der Player offen ist, tippt das Skript sofort auf „Cancel“.
+# Video angehalten ist. Solange der Player offen ist, tippt das Skript sofort auf „Cancel“.
 # Gegenprobe: Ein anderer Dialog mit „Cancel“ (ohne Countdown) wird NICHT angetippt.
 import time, os
 src = open('test_v8.py').read().split("results = []")[0]

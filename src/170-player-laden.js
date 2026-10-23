@@ -12,6 +12,13 @@
       st.loadTimer = setTimeout(tryNext, 9000);   // lädt nicht? nächste Quelle
       try { vid.srcObject = null; vid.removeAttribute('src'); } catch (e) {}
       if (PLAYLIST_RE.test(u)) {
+        // Kadri lädt hls.js erst jetzt nach (spart auf jeder Seite ~620 KB) – danach dieselbe Quelle noch einmal
+        if (typeof Hls === 'undefined' && IS_KADRI && typeof KADRI_HOOKS !== 'undefined' && KADRI_HOOKS.loadHls && !st.hlsTried) {
+          st.hlsTried = true; st.idx--;
+          const again = () => { if (vp === st && st.cur === u && st.mode === 'own') tryNext(); };
+          KADRI_HOOKS.loadHls().then(again, again);
+          return;
+        }
         if (typeof Hls !== 'undefined' && Hls.isSupported()) {
           // Untertitel zeichnet der Player selbst (⋯ → Untertitel) – hls.js lädt sie nur
           const hls = new Hls({ enableWorker: false, subtitleDisplay: false, startPosition: st.startTime > 1 ? st.startTime : -1 });

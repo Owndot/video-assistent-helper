@@ -1,5 +1,5 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# App verlassen und Bild-in-Bild (16.6):
+# App verlassen und Bild-in-Bild:
 #  - Wechsel in eine andere App beendet das Vollbild → Player bleibt offen (nur die Zurück-Taste schließt ihn)
 #  - zurück im Browser: Hinweis „Antippen für Vollbild“, ein Tipp holt das Vollbild zurück
 #  - Einstellung „Beim Verlassen“: Weiter (läuft) / Anhalten
@@ -41,7 +41,7 @@ with sync_playwright() as p:
     auto = fs()
     check('zurück im Browser: Vollbild von selbst zurück – oder Hinweis „Antippen für Vollbild“', auto or t == 'Antippen für Vollbild', [auto, t])
     if not FF and not auto:
-        # Wischen (echte Berührung) holt es ebenfalls zurück – nicht nur Tippen (18.6)
+        # Wischen (echte Berührung) holt es ebenfalls zurück – nicht nur Tippen
         cdp = ctx.new_cdp_session(pg)
         for typ, y in [('touchStart', 300), ('touchMove', 340), ('touchMove', 380), ('touchEnd', 380)]:
             cdp.send('Input.dispatchTouchEvent', {'type': typ, 'touchPoints': [] if typ == 'touchEnd' else [{'x': 200, 'y': y}]}); time.sleep(0.05)

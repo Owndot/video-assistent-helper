@@ -1,5 +1,5 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Reels-Seiten springen beim Ende des Videos von selbst zum nächsten – manche schon kurz vor „ended“ (17.6): Der Player
+# Reels-Seiten springen beim Ende des Videos von selbst zum nächsten – manche schon kurz vor „ended“: Der Player
 # hält das gespiegelte Original 0,6 s vor dem Ende an und lässt die letzten Meldungen nicht zur Seite durch.
 import time
 exec(open('test_v8.py').read().split("results = []")[0])

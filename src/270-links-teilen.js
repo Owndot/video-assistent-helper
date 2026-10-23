@@ -140,7 +140,7 @@
     // TikTok-Feed: Link genau dieses Videos – NIE die Feed-Adresse (/foryou)
     if (TT) return ttPostUrl(v);
     // Eigene Seite für genau dieses Video (Mediatheken: /video/…, /clip/…) und nur ein Video drauf: die Seitenadresse.
-    // Links neben dem Player sind dort oft das nächste oder (nach einem Wechsel ohne Neuladen) das vorige Video (18.0).
+    // Links neben dem Player sind dort oft das nächste oder (nach einem Wechsel ohne Neuladen) das vorige Video.
     if (!META && VIDEO_PAGE_RE.test(location.pathname) && countEligible() <= 1) return location.href.split('#')[0];
     // Ganzer Beitrag als Einheit (Instagram, X und andere nutzen <article> pro Beitrag)
     const art = v.closest ? v.closest('article, [role="article"]') : null;

@@ -1,9 +1,8 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Spul-Vorschau beim Spiegeln (Facebook und Seiten ohne Adresse, 17.3): keine zweite Quelle → ruhig nur die Zeit.
-# (17.1/17.2 zeigten für Angeschautes gemerkte Bilder – der Wechsel Bild ↔ nur Zeit flackerte beim Spulen.)
+# Spul-Vorschau beim Spiegeln (Facebook und Seiten ohne Adresse): keine zweite Quelle → ruhig nur die Zeit.
 import time, json
 exec(open('test_v8.py').read().split("results = []")[0])
-SCRIPT = SCRIPT.replace("seekPreview: 'live'", "seekPreview: 'thumb'")   # dieser Test prüft das kleine Vorschaubild (19.3: Standard ist „im Bild“)
+SCRIPT = SCRIPT.replace("seekPreview: 'live'", "seekPreview: 'thumb'")   # dieser Test prüft das kleine Vorschaubild
 R = 'window.__evpRoot'; results = []
 def check(n, c, i=''): results.append(bool(c)); print(('OK   ' if c else 'FAIL ') + n + ('  – ' + str(i) if i != '' else ''))
 CLIP = open(WEB + '/clip.webm', 'rb').read()        # 60 s – das laufende Video
@@ -48,9 +47,9 @@ def run(cdn_body, tag):
         y = br[1] + br[3] / 2; X = lambda f: br[0] + 7 + f * (br[2] - 14)
         def drag(f):
             pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R); time.sleep(0.2)
-            # (19.4: am Punkt greifen – Ziehen spult von der aktuellen Stelle aus)
+            # (am Punkt greifen)
             f0 = pg.evaluate('() => { const v = document.getElementById("v"); return v.currentTime / v.duration; }')
-            pg.mouse.move(X(f0), y); pg.mouse.down(); pg.mouse.move(X(f), y, steps=2); time.sleep(2.0)   # (19.5: zügig = wie die Leiste)
+            pg.mouse.move(X(f0), y); pg.mouse.down(); pg.mouse.move(X(f), y, steps=2); time.sleep(2.0)   # (zügig = wie die Leiste)
             r = pg.evaluate('() => { const p = %s.querySelector(".vprev"); return [p.classList.contains("img"), p.dataset.t ? parseFloat(p.dataset.t) : null, p.querySelector("b").textContent]; }' % R)
             pg.mouse.up(); time.sleep(0.8)
             pg.evaluate('() => { document.getElementById("v").currentTime = 6; }'); time.sleep(0.5)

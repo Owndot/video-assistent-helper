@@ -6,7 +6,24 @@
   const FK = '__evpFrame1';
   const IN_FRAME = (() => { try { return window.top !== window; } catch (e) { return true; } })();
   const fb = { up: null, ack: false, child: null, childWin: null, saved: null, onState: null };
-  const fpost = (w, m) => { try { m[FK] = 1; w.postMessage(m, '*'); } catch (e) {} };
+  // Schlüssel für Nachrichten nach OBEN (eingebettetes Fenster → Hauptseite): Nur das Skript kennt ihn (sein eigener
+  // Speicher, für Webseiten unlesbar). So kann eingebettete Werbung nicht so tun, als wäre sie der Player, und sich
+  // nicht selbst über den ganzen Bildschirm legen lassen. Nach unten geht er nie mit; täglich ein neuer (den macht nur
+  // die Hauptseite – eingebettete Fenster lesen ihn). Ohne Speicher des Managers (GM_…) gibt es keinen sicheren Ort:
+  // dann ohne Schlüssel (null).
+  const FSEC = (() => {
+    try {
+      if (typeof GM_getValue !== 'function' || typeof GM_setValue !== 'function') return null;
+      const o = GM_getValue('frameKey', null), now = Date.now();
+      if (o && typeof o.k === 'string' && o.k.length >= 24 && (IN_FRAME || now - (o.t || 0) < 864e5)) return o.k;
+      if (IN_FRAME) return '';
+      const a = new Uint8Array(18); crypto.getRandomValues(a);
+      const k = Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
+      GM_setValue('frameKey', { k: k, t: now });
+      return k;
+    } catch (e) { return ''; }
+  })();
+  const fpost = (w, m) => { try { m[FK] = 1; if (FSEC && w === window.parent && w !== window) m.k = FSEC; w.postMessage(m, '*'); } catch (e) {} };
   const pageTitle = () => String((IN_FRAME && fb.up && fb.up.title) || document.title || '').trim();
   const pageHost = () => String((IN_FRAME && fb.up && fb.up.host) || location.hostname).replace(/^(www|m)\./, '');
   const fsElem = () => document.fullscreenElement || document.webkitFullscreenElement || null;
@@ -128,7 +145,8 @@
       if (d.t === 'fsno') { if (fb.childWin) fpost(fb.childWin, { t: 'fsno' }); else if (fb.onFsNo) fb.onFsNo(); }
       return;
     }
-    // Nachricht von UNTEN (aus einem eingebetteten Fenster)
+    // Nachricht von UNTEN (aus einem eingebetteten Fenster) – nur mit dem Schlüssel des Skripts
+    if (FSEC !== null && (!FSEC || d.k !== FSEC)) return;
     const f = frameOf(e.source);
     if (!f) return;
     if (d.t === 'hello') { fpost(e.source, { t: 'info', title: pageTitle(), host: pageHost(), ins: safeInsets() }); return; }

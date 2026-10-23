@@ -67,7 +67,7 @@ with sync_playwright() as p:
     print('   quer oben: mit Leisten ab', o1[0], '| Titel/Knöpfe bis', o1[1])
     check('quer oben: Leisten an – direkt unter Titel/Knöpfen', o1[1] <= o1[0] <= o1[1] + 12, o1)
     # quer + unten: Leisten einblenden schiebt die Untertitel nur so weit hoch, dass sie direkt über der Zeitleiste stehen
-    # (seit 16.1 liegt die Zeitleiste über den Knöpfen wie bei Samsung – also etwas höher als früher)
+    # (die Zeitleiste liegt über den Knöpfen wie bei Samsung)
     subsm(pg); pick(pg, 'Lage'); pg.evaluate('() => %s.querySelector(".vp").click()' % R)
     sub_at(pg, 7.5); a0 = place()
     pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R); time.sleep(0.5)

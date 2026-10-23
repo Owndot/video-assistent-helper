@@ -79,7 +79,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vcluster{display:flex;align-items:center;height:44px;border-radius:22px;padding:0 4px;transition:opacity .18s ease}
 .vb{all:unset;position:relative;display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:22px;cursor:pointer;color:#fff;flex:none;transition:transform .32s cubic-bezier(.34,1.56,.64,1)}
 /* "all:unset" oben nimmt runden Glasknöpfen sonst den Glas-Hintergrund – hier wieder dazu (mit Lupe).
-   Play und ±10 bleiben wie in 12.7: nur der feine Glasrand, kein Hintergrund */
+   Play und ±10: nur der feine Glasrand, kein Hintergrund */
 .vb.g:not(.vplay):not(.vskip){background:rgba(26,28,38,.14);-webkit-backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.4) brightness(1.1);backdrop-filter:var(--lens,blur(0px)) blur(var(--gb,12px)) saturate(1.4) brightness(1.1);box-shadow:0 6px 22px rgba(0,0,0,.24)}
 .vb:active{transform:scale(.88)}
 .vb[hidden]{display:none !important}
@@ -124,7 +124,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vbar{flex:1;-webkit-appearance:none;appearance:none;height:38px;background:transparent;margin:0;cursor:pointer;filter:invert(1);--trk:rgba(0,0,0,.25);pointer-events:none;transition:opacity .15s ease}
 .vbar::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:var(--trk);transition:height .18s ease,border-radius .18s ease}
 .vbar::-moz-range-track{height:6px;border-radius:3px;background:var(--trk);transition:height .18s ease}
-/* Berührungsfläche der Leiste: groß (56 px hoch), über der ganzen Zeile – Spulen siehe 220 (19.4) */
+/* Berührungsfläche der Leiste: groß (56 px hoch), über der ganzen Zeile – Spulen siehe 220 */
 .vbarhit{position:absolute;left:0;right:0;top:50%;height:56px;transform:translateY(-50%);z-index:2;touch-action:none;cursor:pointer}
 /* beim Ziehen: dicke Leiste ohne Punkt (wie Samsung Internet) */
 .vp.thick .vbar::-webkit-slider-runnable-track{height:18px;border-radius:9px}
@@ -271,14 +271,14 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   }
   // Quellen für den eingebauten Player, die beste zuerst (DASH-Manifeste kann er nicht)
   // Kadri/Facebook: die MP4 nur nehmen, wenn sie sicher zum laufenden Video gehört – sonst keine (→ Spiegeln)
-  // Qualität zuerst (19.3): Die fertige Datei nur nehmen, wenn sie mindestens etwa so scharf ist wie das, was Facebook
+  // Qualität zuerst: Die fertige Datei nur nehmen, wenn sie mindestens etwa so scharf ist wie das, was Facebook
   // gerade zeigt (kurze Bildseite). Facebook spielt selbst oft HD als getrennte Bild-/Tonspur – die kann nur das Spiegeln.
   function fbRes(u) {
     const tag = encTag(u);
     const m = /(\d{3,4})p\b/.exec(tag) || /\.C3\.(\d{3,4})\./.exec(tag);
     return m ? +m[1] : 0;
   }
-  // forPrev (19.5): für das Vorschaubild beim Spiegeln – jede Schärfe recht, die kleinste zuerst (lädt am schnellsten)
+  // forPrev: für das Vorschaubild beim Spiegeln – jede Schärfe recht, die kleinste zuerst (lädt am schnellsten)
   function fbSureSources(v, resMap, forPrev) {
     try {
       const af = assetFor(v);

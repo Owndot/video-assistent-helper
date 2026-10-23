@@ -1,5 +1,5 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Download an YTDLnis (18.7): Der Browser verliert beim Wechsel zu YTDLnis das Vollbild. Darum hält der Player an,
+# Download an YTDLnis: Der Browser verliert beim Wechsel zu YTDLnis das Vollbild. Darum hält der Player an,
 # und kommt man zurück, ist er zu – das Seitenvideo steht angehalten an der Stelle. Teilen-Menü abgebrochen: bleibt offen.
 import time, os
 src = open('test_v8.py').read().split("results = []")[0]

@@ -1,6 +1,6 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Menüs (17.4): ⋮-Menü ohne Überschrift, zweiter Tipp auf ⋮ schließt, Untermenüs mit ‹ zurück, die Zurück-Taste
-# (Vollbild-Ende bzw. Verlauf) geht bei offenem Menü nur eine Ebene zurück. Wiederholen: Aus → 1× → ∞ → Aus (17.5).
+# Menüs: ⋮-Menü ohne Überschrift, zweiter Tipp auf ⋮ schließt, Untermenüs mit ‹ zurück, die Zurück-Taste
+# (Vollbild-Ende bzw. Verlauf) geht bei offenem Menü nur eine Ebene zurück. Wiederholen: Aus → 1× → ∞ → Aus.
 import time
 exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])
 with sync_playwright() as p:
@@ -37,7 +37,7 @@ with sync_playwright() as p:
     check('nochmal Zurück (Verlauf): Menü zu, Player bleibt offen', opened() and not menu()['on'], [opened(), menu()])
     pg.evaluate('() => history.back()'); time.sleep(0.8)
     check('noch einmal Zurück: Player zu', not opened())
-    # Tippen (17.7): Leisten sofort (nicht erst nach 280 ms) · Doppeltipp rechts springt, Leisten bleiben aus
+    # Tippen: Leisten sofort (nicht erst nach 280 ms) · Doppeltipp rechts springt, Leisten bleiben aus
     open_player(pg, 'subs.html'); time.sleep(0.8)
     pg.evaluate('() => %s.querySelector(".vp").classList.remove("ctl")' % R); time.sleep(0.6)
     pg.mouse.click(200, 330); t1 = pg.evaluate('() => %s.querySelector(".vp").classList.contains("ctl")' % R)

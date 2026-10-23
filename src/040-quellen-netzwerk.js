@@ -1,7 +1,7 @@
   const DOWNLOAD_ONLY = onSite(CONFIG.downloadOnlySites);
   const SHOW_DOWNLOAD = DOWNLOAD_ONLY || CONFIG.downloadEverywhere || onSite(CONFIG.ytdlpSites);
   let vp = null;   // Zustand des eingebauten Players (muss vor dem ersten Prüfdurchlauf existieren)
-  // ----- Kadri: Spiegeln + Bild-in-Bild (19.0) -----
+  // ----- Kadri: Spiegeln + Bild-in-Bild -----
   // Facebook hält sein Video an, sobald die Seite verdeckt ist – beim Spiegeln stünde dann auch das kleine Fenster.
   // In Kadri läuft ein Skript IN der Seite (page.js): Solange gespiegelt wird, verbirgt es „verdeckt“ vor der Seite
   // („Schild“). Dabei hält es die Meldung an, bevor irgendwer sie bekommt – auch dieses Skript. Darum reicht es sie
@@ -37,7 +37,7 @@
   const META = /(^|\.)(facebook\.com|instagram\.com|threads\.net|threads\.com|messenger\.com)$/i.test(location.hostname);
   const FB_MIRROR = /(^|\.)facebook\.com$/i.test(location.hostname) && CONFIG.fbMirror !== false;
   // Kadri: auf Facebook zuerst der EIGENE Player mit der fertigen MP4 – aber nur, wenn sicher ist, dass sie zum
-  // laufenden Video gehört (gleiche Video-ID wie die gerade geladenen Stücke); sonst wie bisher spiegeln (19.0)
+  // laufenden Video gehört (gleiche Video-ID wie die gerade geladenen Stücke); sonst spiegeln
   const FB_TRY_OWN = FB_MIRROR && IS_KADRI;
   // Firefox spiegelt mit mozCaptureStream – dabei wandert der Ton in die Spiegelung (siehe Player: VOL)
   const FF_CAP = !HTMLMediaElement.prototype.captureStream && !!HTMLMediaElement.prototype.mozCaptureStream;
@@ -212,8 +212,8 @@
       if (list.length > 80) list.shift();
     }
   }
-  // oft genug, um Einspeisen und Ankunft sauber zu trennen – nur wo es gebraucht wird (Facebook spiegelt sonst ohnehin)
-  if (META && (!FB_MIRROR || FB_TRY_OWN)) setInterval(watchBuffers, 100);
+  // viermal pro Sekunde: genug, um Einspeisen und Ankunft zu trennen (spart Akku) – nur wo es gebraucht wird
+  if (META && (!FB_MIRROR || FB_TRY_OWN)) setInterval(watchBuffers, 250);
   ['loadstart', 'emptied'].forEach((t) => document.addEventListener(t, (e) => {
     const v = e.target; if (v && v.tagName === 'VIDEO') { bufCredit.delete(v); bufPrev.delete(v); }
   }, true));
@@ -269,7 +269,7 @@
     if (sources.length > 40) sources.shift();
   }
 
-  // ---------- Nachweis: welcher Stream läuft WIRKLICH? (18.1) ----------
+  // ---------- Nachweis: welcher Stream läuft WIRKLICH? ----------
   // Statt nach dem Zeitpunkt zu raten: Die Stream-Listen (m3u8/mpd), die die Seite ohnehin lädt, werden mitgelesen
   // (kein zusätzlicher Abruf). Daraus ist bekannt, in welchem Ordner die Stücke jedes Streams liegen, welche
   // Unter-Listen zu welcher Haupt-Liste gehören und wie lang das Video ist. Lädt die Seite dann Stücke aus einem
@@ -329,17 +329,20 @@
   // „content“) sieht das Skript diese Anfragen sonst nicht. Nur in der Erweiterung aktiv.
   if (IS_KADRI) {
     document.addEventListener('kadri-net', (e) => {
+      // (die Seite kann solche Meldungen auch selbst schicken: nur Text, höchstens ~8 MB, sonst nichts tun)
+      if (typeof e.detail !== 'string' || e.detail.length > 8e6) return;
       let d = null;
-      try { d = typeof e.detail === 'string' ? JSON.parse(e.detail) : null; } catch (x) { d = null; }
+      try { d = JSON.parse(e.detail); } catch (x) { d = null; }
       if (!d || typeof d.u !== 'string' || typeof d.t !== 'string') return;
       if (d.k === 'pl') notePlaylist(d.u, typeof d.f === 'string' ? d.f : '', d.t);
+      else if (d.k === 'src') { if (typeof KADRI_HOOKS !== 'undefined' && KADRI_HOOKS.onSrc) KADRI_HOOKS.onSrc(d.u, d.f === 'mpd' ? 'mpd' : 'm3u8'); }
       else if (d.k === 'api' && META) { bodiesRead++; try { scanText(d.t); } catch (x) {} }
     });
   }
   // Kadri: Der Hintergrund der Erweiterung meldet Stream-Listen, die der Tab lädt – nach dem, was der Server sagt
   // („Content-Type“), also auch ohne .m3u8 im Namen und aus Hintergrund-Skripten der Seite (Worker), die sonst
   // niemand sieht. Ohne Endung bekommt die Adresse ein Kennzeichen hinter „#“ (geht nicht an den Server), damit der
-  // Player sie als Stream lädt (19.0).
+  // Player sie als Stream lädt.
   if (IS_KADRI && typeof KADRI_HOOKS !== 'undefined') {
     KADRI_HOOKS.onSrc = (u, k) => {
       if (typeof u !== 'string' || !/^https?:/i.test(u) || SEGMENT_RE.test(u)) return;
@@ -347,6 +350,9 @@
       addSource(u);
     };
   }
+  // Kadri: page.js hebt seine letzten Meldungen auf – jetzt, wo alles zuhört, noch einmal schicken lassen
+  // (in eingebetteten Fenstern startet Kadri erst, wenn ein Video auftaucht)
+  if (IS_KADRI) { try { document.dispatchEvent(new Event('kadri-hello')); } catch (e) {} }
   function noteSegment(u) {
     if (PLAYLIST_RE.test(u) || !(SEGFILE_RE.test(u) || SEGMENT_RE.test(u))) return;
     if (vp && vp.mode === 'own') return;   // Stücke des eigenen Players zählen nicht

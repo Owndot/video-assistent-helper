@@ -102,23 +102,22 @@
       bUnlock.addEventListener('contextmenu', (e) => e.preventDefault());
     })();
 
-    // Fortschrittsbalken – Spulen auf der Leiste (19.4, neu 19.8–19.11). Eigene, große Berührungsfläche statt des
+    // Fortschrittsbalken – Spulen auf der Leiste. Eigene, große Berührungsfläche statt des
     // Schiebereglers des Browsers. Vorbilder: YouTube (Punkt unter dem Finger) und iPhone (Finger nach unten = feiner,
     // in Stufen, wieder hoch = normal):
     //  - kurz antippen = an diese Stelle springen
     //  - ziehen = die Stelle (großer Punkt im Glas des Designs) steht unter dem Finger; die Leiste wird dick. Über der
     //    Vorschau steht, wie weit es von der laufenden Stelle weg ist („0:38 · +18 s“) – das Video läuft beim Spulen
-    //    weiter. Kein Einrasten (19.11): der Punkt folgt immer nur dem Finger.
+    //    weiter. Kein Einrasten: der Punkt folgt immer nur dem Finger.
     //  - Lupe (nur bei Videos ab 1,5 min, auch bei Live, abschaltbar): Finger beim Ziehen unter die Leiste = „Lupe“
     //    (Ausschnitt ~1 min). Die Leiste zeigt dann nur den Ausschnitt, links/rechts stehen dessen Grenzen, im Schild
     //    „Lupe“, beim Wechsel ein kurzes Vibrieren (abschaltbar). Wieder hoch auf die Leiste = normal (die Stelle gleitet
     //    beim Weiterziehen wieder unter den Finger). Finger an ein Ende der Leiste = der Ausschnitt wandert mit.
-    //    (Die zweite Stufe „Fein“ gibt es seit 19.13 nicht mehr – eine Stufe ist einfacher und genau genug.)
     //  - weit nach oben weg vom Balken = abbrechen („Loslassen = abbrechen“, keine kleine Vorschau – das große Video zeigt
     //    die laufende Stelle); loslassen dort = nichts ändern. Zurück nach unten = weiter spulen.
     //  - Live-Stream mit Zurückspulen: die Leiste ist der Bereich, den der Stream zurückhält; „−5:30“ = so weit hinter
     //    live, ganz rechts = wieder live.
-    //  Sicher (19.11): Hochwischen ist kein Spulen (erst ~10 px zur Seite). Abgebrochen wird, wenn Android die Geste
+    //  Sicher: Hochwischen ist kein Spulen (erst ~10 px zur Seite). Abgebrochen wird, wenn Android die Geste
     //  übernimmt, der Finger „verloren“ geht, 15 s lang nichts vom Finger kommt, du die App wechselst oder ein anderes
     //  Video zu laufen beginnt (Facebook lädt Reels neu, das nächste startet …). Gezeichnet wird einmal pro Bild.
     const barHit = h('div', { class: 'vbarhit', 'aria-hidden': 'true' });

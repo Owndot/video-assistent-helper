@@ -268,7 +268,7 @@
   }
   function lensWatch(el) {
     if (!lensOn() || !el) return;
-    // Play, ±10 und das Menü bleiben wie in 12.7 (ohne Lupe) – so gewünscht
+    // Play, ±10 und das Menü ohne Lupen-Effekt – so gewünscht
     if (el.classList && (el.classList.contains('vplay') || el.classList.contains('vskip') || el.classList.contains('vmenu'))) return;
     applyLens(el);
     if (lensRO) lensRO.observe(el);

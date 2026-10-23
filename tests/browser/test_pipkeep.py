@@ -1,8 +1,8 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Bild-in-Bild beim Wechsel zum Startbildschirm (18.5): Hält etwas anderes als du das Video rund um den Wechsel ins
+# Bild-in-Bild beim Wechsel zum Startbildschirm: Hält etwas anderes als du das Video rund um den Wechsel ins
 # kleine Fenster an (Seite verdeckt, Browser, „Beim Verlassen: Anhalten“), läuft es weiter.
 # Gegenprobe: eigene Pause (auch im kleinen Fenster), Sleep-Timer und ✕ im kleinen Fenster halten an.
-# Beim Spiegeln (Facebook, Instagram) gibt es kein Bild-in-Bild (18.6) – dort hält die Seite ihr Video im Hintergrund an.
+# Beim Spiegeln (Facebook, Instagram) gibt es kein Bild-in-Bild – dort hält die Seite ihr Video im Hintergrund an.
 import time, os
 src = open('test_extras.py').read().split("with sync_playwright() as p:")[0]
 exec(src)

@@ -1,5 +1,5 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Welcher Stream läuft WIRKLICH? (18.1)
+# Welcher Stream läuft WIRKLICH?
 #  - Seite lädt das nächste Video vor (anderer Stream, andere Länge), spielt aber dieses: Nachweis über die geladenen Stücke
 #  - Datei-Videos ohne Stream-Liste: Gegenprobe der Länge im Player (falsche Länge → nächste Quelle)
 import time, os

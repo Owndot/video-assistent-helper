@@ -61,7 +61,7 @@
     };
     onVisChange(onVisAway);
     // Vollbild selbst zurückholen: sofort, nach 250 ms und nach 700 ms (und wenn das Fenster den Fokus bekommt) –
-    // ohne Berührung erlaubt das nicht jeder Browser; dann klappt es mit der nächsten Berührung (18.6)
+    // ohne Berührung erlaubt das nicht jeder Browser; dann klappt es mit der nächsten Berührung
     function tryRegain() {
       // nur, wenn der Browser es gerade erlauben würde (frische Berührung) – sonst nur eine Fehlermeldung in der Konsole
       [0, 250, 700].forEach((ms) => setTimeout(() => { if (vp === st && st.fsLost && !isFs() && !document.hidden && !pipIsOurs(vid) && touchFresh()) regainFs(); }, ms));
@@ -109,7 +109,7 @@
     // Browser, die von selbst ins kleine Fenster wechseln können (beim Verlassen der App), fragen über die Media Session
     try { if (navigator.mediaSession && document.pictureInPictureEnabled) navigator.mediaSession.setActionHandler('enterpictureinpicture', () => { if (!st.pipOk) return; vid.disablePictureInPicture = false; vid.requestPictureInPicture().catch(() => {}); }); } catch (e) {}
     st.cleanup.push(() => { try { navigator.mediaSession.setActionHandler('enterpictureinpicture', null); } catch (e) {} });
-    // ----- Im kleinen Fenster weiterlaufen lassen (18.5) -----
+    // ----- Im kleinen Fenster weiterlaufen lassen -----
     // Beim Wischen zum Startbildschirm wechselt der Browser ins kleine Fenster. Kurz davor oder danach halten aber
     // manche Seiten (Facebook: ihr Video, sobald sie verdeckt ist – beim Spiegeln steht dann auch das kleine Fenster),
     // der Browser selbst oder „Beim Verlassen: Anhalten“ das Video an. Hält es etwas anderes als du (Knopf, Knopf im
@@ -272,7 +272,7 @@
       document.removeEventListener('webkitfullscreenchange', onFs);
       removeEventListener('popstate', onPop);
     });
-    // Auf Wunsch (Einstellung startFullscreen) wie früher sofort im Vollbild starten
+    // Auf Wunsch (Einstellung startFullscreen) sofort im Vollbild starten
     if (CONFIG.startFullscreen) {
       enterFs().then(() => {
         if (isFs()) { st.fsStart = true; autoOrient(M().videoWidth, M().videoHeight); }
@@ -310,8 +310,8 @@
     };
     // Reels-Seiten (Facebook u. a.) springen beim Ende von selbst zum nächsten Video – manche schon kurz VOR „ended“
     // (sobald die Zeit fast am Ende ist). Dann wäre der Player schwarz und man stünde danach auf einem anderen Reel.
-    // Darum: 0,2 s vor dem Ende anhalten (letztes Bild bleibt stehen; früher 0,6 s – seit der Facebook-Countdown
-    // abgebrochen wird, reicht das, 18.4) und – siehe „Schleuse“ unten – der Seite die
+    // Darum: 0,2 s vor dem Ende anhalten (letztes Bild bleibt stehen; das reicht, weil der Facebook-Countdown
+    // abgebrochen wird) und – siehe „Schleuse“ unten – der Seite die
     // letzten Meldungen des Videos gar nicht erst zeigen. Nahe am Ende genauer hinschauen als „timeupdate“ (¼ s).
     const END_GAP = 0.2;
     let nearIv = 0;

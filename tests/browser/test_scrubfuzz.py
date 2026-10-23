@@ -1,5 +1,5 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Zufalls-Test fürs Spulen auf der Leiste (19.11): viele zufällige Gesten – ziehen, hoch (abbrechen), runter (Lupe/Fein),
+# Zufalls-Test fürs Spulen auf der Leiste: viele zufällige Gesten – ziehen, hoch (abbrechen), runter (Lupe),
 # an die Enden, antippen, Finger „verloren“, App gewechselt, anderes Video mitten im Ziehen. Nach jeder Geste muss alles
 # sauber sein: nichts hängt (Leiste nicht mehr dick, keine Lupe, kein Abbrechen-Zustand, Zeiten normal), das Video steht
 # an einer gültigen Stelle, keine Fehler. Fester Startwert – ein Fehler lässt sich genau so wiederholen (FUZZ_SEED=…).

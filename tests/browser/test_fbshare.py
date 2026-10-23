@@ -1,5 +1,5 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Teilen in Facebook-Reels (17.6): Die Adresse bleibt beim ersten Reel stehen, gespielt wird aber ein anderes →
+# Teilen in Facebook-Reels: Die Adresse bleibt beim ersten Reel stehen, gespielt wird aber ein anderes →
 # geteilt wird das laufende Reel (seine ID aus dem eigenen Kasten), nicht die Seitenadresse.
 import time
 exec(open('test_v8.py').read().split("results = []")[0])

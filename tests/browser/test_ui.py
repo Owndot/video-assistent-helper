@@ -1,5 +1,5 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Neue Aufteilung (16.0): ⋮ oben rechts, Untertitel-Knopf unten, Hinweise an einer festen Stelle, Hochwischen über
+# Neue Aufteilung: ⋮ oben rechts, Untertitel-Knopf unten, Hinweise an einer festen Stelle, Hochwischen über
 # die Zeitleiste spult nicht, Oberfläche Deutsch/Englisch (automatisch nach Browsersprache oder per Einstellung).
 import time
 exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])
@@ -9,7 +9,7 @@ with sync_playwright() as p:
     ctx.add_init_script(PRE); ctx.add_init_script(HLS); ctx.add_init_script(SCRIPT)
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     open_player(pg, 'subs.html')
-    # Aufteilung „oben schlank“ (16.4): oben nur Download und ⋮, unten Tempo, CC, Bildformat, Bild-in-Bild, Drehen
+    # Aufteilung „oben schlank“: oben nur Download und ⋮, unten Tempo, CC, Bildformat, Bild-in-Bild, Drehen
     lay = pg.evaluate('''() => { const r = %s, vis = (b) => !b.hidden;
         return [Array.from(r.querySelectorAll(".vcluster button")).map(b => b.getAttribute("aria-label")),
                 Array.from(r.querySelectorAll(".vhead .vtools:not(.solo) button")).filter(vis).map(b => b.getAttribute("aria-label")),
@@ -22,7 +22,7 @@ with sync_playwright() as p:
     pg.evaluate('() => { %s.querySelector(".vmenu").classList.remove("on"); %s.querySelector(".vp").classList.remove("menu"); }' % (R, R)); time.sleep(0.3)
     subsm(pg); pick(pg, 'Deutsch'); time.sleep(0.5)
     check('Untertitel an: Knopf leuchtet', pg.evaluate('() => %s.querySelector("button[aria-label=Untertitel]").classList.contains("on")' % R))
-    # Hinweise (16.3): eine Stelle UNTER dem Bild, mit Abstand – im selben Glas wie die Knöpfe
+    # Hinweise: eine Stelle UNTER dem Bild, mit Abstand – im selben Glas wie die Knöpfe
     ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Bildformat]").click()' % R); time.sleep(0.3)
     NOTE = '''() => { const r = %s, t = r.querySelector(".toast"), tb = t.getBoundingClientRect(), bot = r.querySelector(".vbot").getBoundingClientRect(), vid = r.querySelector(".vv");
         const vr = vid.getBoundingClientRect(), fit = getComputedStyle(vid).objectFit, sc = Math.min(vr.width / vid.videoWidth, vr.height / vid.videoHeight);
@@ -46,14 +46,14 @@ with sync_playwright() as p:
     pg.mouse.move(br[0] + br[2] * 0.85, y); pg.mouse.down(); pg.mouse.move(br[0] + br[2] * 0.85, y - 70, steps=8); pg.mouse.up(); time.sleep(0.6)
     t1 = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
     check('Hochwischen über die Zeitleiste: Stelle bleibt', abs(t1 - 20) < 1, round(t1, 1))
-    # (19.6: beim Ziehen steht die Stelle unter dem Finger)
+    # (beim Ziehen steht die Stelle unter dem Finger)
     W = br[2] - 14
     tb = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
     ctl(pg); pg.mouse.move(br[0] + br[2] * 0.3, y); pg.mouse.down(); pg.mouse.move(br[0] + br[2] * 0.6, y, steps=8); pg.mouse.up(); time.sleep(0.6)
     t2 = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
     exp2 = (br[2] * 0.6 - 7) / W * 60
     check('zur Seite ziehen: spult (Stelle unter dem Finger)', abs(t2 - exp2) < 3, [round(t2, 1), round(exp2, 1)])
-    # Kreis halten, Finger wackelt beim Greifen etwas nach oben, dann zur Seite → spult trotzdem (16.1: milder Schutz)
+    # Kreis halten, Finger wackelt beim Greifen etwas nach oben, dann zur Seite → spult trotzdem (milder Schutz)
     pg.evaluate('() => { const v = %s.querySelector(".vv"); v.currentTime = 10; }' % R); time.sleep(0.4)
     tb = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
     ctl(pg); pg.mouse.move(br[0] + br[2] * 0.3, y); pg.mouse.down(); pg.mouse.move(br[0] + br[2] * 0.3 + 3, y - 22, steps=5)

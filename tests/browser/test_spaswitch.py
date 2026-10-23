@@ -1,5 +1,5 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Wechsel zu einem anderen Video ohne Neuladen (ARD-Mediathek, 18.0): schnell hintereinander gewechselt und gleich
+# Wechsel zu einem anderen Video ohne Neuladen (ARD-Mediathek): schnell hintereinander gewechselt und gleich
 # geöffnet → der Player spielt das NEUE Video (nicht den Stream des vorigen), und geteilt wird die neue Seitenadresse
 # (nicht ein Link neben dem Player auf das vorige Video).
 import time, os

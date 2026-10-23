@@ -4,7 +4,7 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 import time, json, sys
 from PIL import Image, ImageStat
 exec(open('test_v8.py').read().split("results = []")[0])
-SCRIPT = SCRIPT.replace("seekPreview: 'live'", "seekPreview: 'thumb'")   # dieser Test prüft das kleine Vorschaubild (19.3: Standard ist „im Bild“)
+SCRIPT = SCRIPT.replace("seekPreview: 'live'", "seekPreview: 'thumb'")   # dieser Test prüft das kleine Vorschaubild
 R = 'window.__evpRoot'; results = []
 def check(n, c, i=''): results.append(bool(c)); print(('OK   ' if c else 'FAIL ') + n + ('  – ' + str(i) if i != '' else ''))
 STATS = '''(el) => { const c = document.createElement('canvas'); c.width = 48; c.height = 27; const g = c.getContext('2d');
@@ -61,7 +61,7 @@ with sync_playwright() as p:
         br = pg.evaluate('() => { const r = %s.querySelector(".vbar").getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; }' % R)
         y = br[1] + br[3] / 2
         pg.mouse.move(br[0] + br[2] * 0.1, y); pg.mouse.down(); pg.mouse.move(br[0] + br[2] * 0.6, y, steps=3)
-        # (bis das richtige Bild da ist – solange es lädt, ist ein gemerktes Bild abgedunkelt zu sehen, 19.11)
+        # (bis das richtige Bild da ist – solange es lädt, ist ein gemerktes Bild abgedunkelt zu sehen)
         try: pg.wait_for_function('() => { const p = %s.querySelector(".vprev"); return p.classList.contains("img") && !p.classList.contains("stale"); }' % R, timeout=8000)
         except Exception: pass
         time.sleep(1.2)

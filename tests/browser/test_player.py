@@ -148,7 +148,7 @@ with sync_playwright() as p:
     # Geschwindigkeit
     if not c2:
         page.mouse.click(200, 650); time.sleep(0.5)
-    # seit 16.5 im ⋮-Menü: Geschwindigkeit → Liste
+    # im ⋮-Menü: Geschwindigkeit → Liste
     page.locator('.vcluster button[aria-label="Mehr"]').click(); time.sleep(0.4)
     page.evaluate('() => Array.from(window.__evpRoot.querySelectorAll(".vmenu .vmi")).find(b => b.firstChild.textContent === "Geschwindigkeit").click()'); time.sleep(0.4)
     sp = page.evaluate('() => Array.from(window.__evpRoot.querySelectorAll(".vmenu .vmi")).map(b => b.firstChild.textContent)')

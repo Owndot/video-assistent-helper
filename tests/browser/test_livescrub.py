@@ -1,5 +1,5 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
-# Spulen „im Bild“ (19.3, wie Samsung Internet): Beim Ziehen springt das Video selbst mit – auch beim Spiegeln
+# Spulen „im Bild“ (wie Samsung Internet): Beim Ziehen springt das Video selbst mit – auch beim Spiegeln
 # (dann das Video der Seite). Hochwischen über die Leiste = kein Spulen → zurück an die alte Stelle.
 import time
 exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])

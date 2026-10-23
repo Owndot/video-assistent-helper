@@ -95,8 +95,8 @@
     const bFit = chip(P.fit, 'Format', 'Bildformat');
     const bRot = chip(P.rotate, 'Drehen', 'Drehen');
     const bLock = chip(P.lock, 'Sperren', 'Bedienung sperren');
-    // Aufteilung (16.4, „oben schlank“): oben nur Download und ⋮ (Titel bleibt lesbar), unten am Daumen CC,
-    // Bildformat, Bild-in-Bild, Drehen. Teilen, In App öffnen, Qualität, Tempo (16.5), Tonspur, Standbild, Einstellungen: im ⋮-Menü.
+    // Aufteilung („oben schlank“): oben nur Download und ⋮ (Titel bleibt lesbar), unten am Daumen CC,
+    // Bildformat, Bild-in-Bild, Drehen. Teilen, In App öffnen, Qualität, Tempo, Tonspur, Standbild, Einstellungen: im ⋮-Menü.
     // Teilen/In App/Qualität/Tempo bleiben als unsichtbare Knöpfe (.vstash) bestehen – das Menü löst sie aus.
     const bMore = ib(I.more, 'Mehr');
     const bSubs = chip(P.cc, 'Untertitel', 'Untertitel');   // unten: Untertitel (leuchtet, wenn an)

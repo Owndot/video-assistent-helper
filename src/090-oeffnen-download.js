@@ -72,7 +72,8 @@
         fin(ok && (/content-disposition:\s*attachment/i.test(hd) || /content-type:\s*application\/(octet-stream|force-download|x-download)/i.test(hd)));
       };
       try {
-        req = x({ method: 'GET', url: u, headers: { Range: 'bytes=0-0', Referer: location.href },
+        // (Anmeldung/Cookies nur an die eigene Seite – fremde Server ohne)
+        req = x({ method: 'GET', url: u, headers: { Range: 'bytes=0-0', Referer: location.href }, anonymous: baseDomain(hostOf(u)) !== baseDomain(location.hostname),
           onreadystatechange: (r) => { if (r && r.readyState >= 2) look(r); },
           onload: (r) => { look(r); fin(false); }, onerror: () => fin(false), ontimeout: () => fin(false) });
       } catch (e) { fin(false); }
@@ -113,7 +114,7 @@
     const x = gmXhr();
     if (!x) { viaPage(); return; }
     try {
-      x({ method: 'GET', url: u, responseType: 'blob', headers: { Referer: location.href }, timeout: 0,
+      x({ method: 'GET', url: u, responseType: 'blob', headers: { Referer: location.href }, timeout: 0, anonymous: baseDomain(hostOf(u)) !== baseDomain(location.hostname),
         onprogress: prog,
         onload: (r) => { const b = r && r.response; if (r && r.status >= 200 && r.status < 300 && big(b)) ok(b); else viaPage(); },
         onerror: viaPage, onabort: fail });

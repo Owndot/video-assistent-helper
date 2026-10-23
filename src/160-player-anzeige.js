@@ -23,7 +23,7 @@
 
     // ----- Anzeige aktualisieren -----
     // Nur schreiben, was sich geändert hat – und Zeitleiste/Zeiten nur, solange sie zu sehen sind (beim Einblenden
-    // aktualisiert showControls sofort). Spart beim normalen Schauen ständige Stil-Neuberechnungen (17.7).
+    // aktualisiert showControls sofort). Spart beim normalen Schauen ständige Stil-Neuberechnungen.
     const uiLast = { cur: '', dur: '', play: null, len: null, mini: '' };
     // Am Ende angehalten (Reels: kurz VOR dem Ende, damit die Seite nicht zum nächsten springt) – aber nur, solange es
     // noch dort steht (nicht nach Zurückspulen)
