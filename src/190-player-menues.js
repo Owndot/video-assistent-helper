@@ -152,6 +152,7 @@
           try { localStorage.removeItem('evp-line'); } catch (e) {}
         }),
         it('Vollbild', yn(CONFIG.startFullscreen), () => setSetting('startFullscreen', !CONFIG.startFullscreen)),
+        it('Beim Öffnen', CONFIG.openUi === 'controls' ? 'Mit Bedienung' : 'Nur Bild', () => setSetting('openUi', CONFIG.openUi === 'controls' ? 'quiet' : 'controls')),
         it('Sprungweite', SKIP() + ' s', () => {
           next('skipSeconds', [5, 10, 15, 30]);
           [bFwd, bBack].forEach((b) => { const x = b.querySelector('text'); if (x) x.textContent = String(SKIP()); });

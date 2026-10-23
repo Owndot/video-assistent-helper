@@ -366,7 +366,10 @@
     // Original anhalten (außer wir übernehmen dessen Bild) und mit dem Laden beginnen
     if (st.sources.length) { showPoster(); try { orig.muted = true; orig.pause(); } catch (e) {} tryNext(); }
     else useCapture();
-    showControls();
+    // Beim Öffnen: „Nur Bild“ (wie Samsung – ruhig, Bedienung erst nach dem ersten Antippen) oder gleich mit Bedienung.
+    // Läuft das Video nach 2 s nicht (angehalten, wartet auf dich), kommt die Bedienung trotzdem.
+    if (CONFIG.openUi === 'controls') showControls();
+    else setTimeout(() => { if (vp === st && M().paused && !wrap.classList.contains('ctl')) showControls(); }, 2000);
   }
 
   // Wächter nach dem Schließen: Läuft das Video auf der Seite wirklich weiter? Hängt es, einmal anstupsen.
