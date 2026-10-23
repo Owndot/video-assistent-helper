@@ -224,14 +224,16 @@
     function veil(on) {
       if (on === wrap.classList.contains('vgone')) return;
       // Ton des Players aus/an – vor der Übergabe (die gibt der Seite ihren Ton zurück)
+      wrap.classList.toggle('vgone', on);
+      // Seite übernimmt sofort (an deiner Stelle, mit Ton) – war es doch kein Zurück, wieder zurücknehmen.
+      // (Läuft das nahtlose Zurück, spielt dein Video noch kurz mit Ton über der Seite – dann nicht stumm schalten.)
+      if (on) handBack(st);
       try {
         const m = VOL();
-        if (on) { st.veilMuted = m.muted; if (m !== orig) m.muted = true; }
+        if (on) { if (!st.soft) { st.veilMuted = m.muted; if (m !== orig) m.muted = true; } }
         else if (typeof st.veilMuted === 'boolean') { m.muted = st.veilMuted; st.veilMuted = null; }
       } catch (e) {}
-      wrap.classList.toggle('vgone', on);
-      // Seite übernimmt sofort (an deiner Stelle, mit Ton) – war es doch kein Zurück, wieder zurücknehmen
-      if (on) handBack(st); else unHand(st);
+      if (!on) unHand(st);
     }
     document.addEventListener('fullscreenchange', onFs);
     document.addEventListener('webkitfullscreenchange', onFs);
@@ -373,6 +375,20 @@
     };
     ['ended', 'timeupdate', 'pause'].forEach((t) => window.addEventListener(t, gate, true));
     st.cleanup.push(() => ['ended', 'timeupdate', 'pause'].forEach((t) => window.removeEventListener(t, gate, true)));
+
+    // Seite vorwärmen: Das angehaltene Video der Seite wird ab und zu still an deine Stelle geschoben (wenn du anhältst
+    // und spätestens jede Minute). Es lädt dort ein paar Sekunden vor – beim Schließen ist dann meist schon alles da.
+    // Nicht kurz vor dem Ende (Reels springen sonst weiter) und nicht, wenn es ohnehin nah dran steht.
+    const prewarm = () => {
+      if (vp !== st || st.mode !== 'own' || st.bridge || st.handed || document.hidden || !orig.paused || !orig.isConnected) return;
+      const t = vid.currentTime, d = vid.duration;
+      if (!isFinite(d) || t < 2 || t > d - 4 || Math.abs(orig.currentTime - t) < 3) return;
+      try { orig.currentTime = t + 0.5; st.warmAt = Date.now(); } catch (e) {}
+    };
+    const warmIv = setInterval(prewarm, 60000);
+    const onOwnPause = () => { if (st.userPauseAt && Date.now() - st.userPauseAt < 1500) setTimeout(prewarm, 400); };
+    vid.addEventListener('pause', onOwnPause);
+    st.cleanup.push(() => { clearInterval(warmIv); vid.removeEventListener('pause', onOwnPause); });
 
     // Original anhalten (außer wir übernehmen dessen Bild) und mit dem Laden beginnen
     // (alle Seiten: läuft das Video, zeigt der Player gleich sein laufendes Bild – nahtloser Start, siehe startBridge)

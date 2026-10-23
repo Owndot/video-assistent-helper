@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.21
+// @version      19.22
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -2797,6 +2797,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   function openBrowserPlayer(orig) {
     if (!orig) return;
     if (vp) closePlayer();
+    if (softSt) softFail(softSt);   // (das nahtlose Zurück vom letzten Mal läuft noch: sofort fertig machen)
     ui();
     hidePill();
     if (!root.querySelector('style.vpcss')) { const s = document.createElement('style'); s.className = 'vpcss'; s.textContent = VP_CSS; root.append(s); }
@@ -5918,14 +5919,16 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     function veil(on) {
       if (on === wrap.classList.contains('vgone')) return;
       // Ton des Players aus/an – vor der Übergabe (die gibt der Seite ihren Ton zurück)
+      wrap.classList.toggle('vgone', on);
+      // Seite übernimmt sofort (an deiner Stelle, mit Ton) – war es doch kein Zurück, wieder zurücknehmen.
+      // (Läuft das nahtlose Zurück, spielt dein Video noch kurz mit Ton über der Seite – dann nicht stumm schalten.)
+      if (on) handBack(st);
       try {
         const m = VOL();
-        if (on) { st.veilMuted = m.muted; if (m !== orig) m.muted = true; }
+        if (on) { if (!st.soft) { st.veilMuted = m.muted; if (m !== orig) m.muted = true; } }
         else if (typeof st.veilMuted === 'boolean') { m.muted = st.veilMuted; st.veilMuted = null; }
       } catch (e) {}
-      wrap.classList.toggle('vgone', on);
-      // Seite übernimmt sofort (an deiner Stelle, mit Ton) – war es doch kein Zurück, wieder zurücknehmen
-      if (on) handBack(st); else unHand(st);
+      if (!on) unHand(st);
     }
     document.addEventListener('fullscreenchange', onFs);
     document.addEventListener('webkitfullscreenchange', onFs);
@@ -6068,6 +6071,20 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     ['ended', 'timeupdate', 'pause'].forEach((t) => window.addEventListener(t, gate, true));
     st.cleanup.push(() => ['ended', 'timeupdate', 'pause'].forEach((t) => window.removeEventListener(t, gate, true)));
 
+    // Seite vorwärmen: Das angehaltene Video der Seite wird ab und zu still an deine Stelle geschoben (wenn du anhältst
+    // und spätestens jede Minute). Es lädt dort ein paar Sekunden vor – beim Schließen ist dann meist schon alles da.
+    // Nicht kurz vor dem Ende (Reels springen sonst weiter) und nicht, wenn es ohnehin nah dran steht.
+    const prewarm = () => {
+      if (vp !== st || st.mode !== 'own' || st.bridge || st.handed || document.hidden || !orig.paused || !orig.isConnected) return;
+      const t = vid.currentTime, d = vid.duration;
+      if (!isFinite(d) || t < 2 || t > d - 4 || Math.abs(orig.currentTime - t) < 3) return;
+      try { orig.currentTime = t + 0.5; st.warmAt = Date.now(); } catch (e) {}
+    };
+    const warmIv = setInterval(prewarm, 60000);
+    const onOwnPause = () => { if (st.userPauseAt && Date.now() - st.userPauseAt < 1500) setTimeout(prewarm, 400); };
+    vid.addEventListener('pause', onOwnPause);
+    st.cleanup.push(() => { clearInterval(warmIv); vid.removeEventListener('pause', onOwnPause); });
+
     // Original anhalten (außer wir übernehmen dessen Bild) und mit dem Laden beginnen
     // (alle Seiten: läuft das Video, zeigt der Player gleich sein laufendes Bild – nahtloser Start, siehe startBridge)
     if (st.sources.length) {
@@ -6187,6 +6204,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         if (isFinite(vd) && (st.vid.ended || t >= vd - 1)) { atEnd = true; target = Math.max(0, (isFinite(od) ? od : vd) - 0.3); }
       }
     } catch (e) {}
+    // Nahtlos zurück: dein Video läuft noch kurz (mit Ton) genau über dem der Seite weiter, bis die Seite bereit ist
+    if (target >= 0 && !atEnd && !st.closePaused && CONFIG.resumeAfterClose && softBack(st)) return;
     if (target >= 0 && Math.abs((o.currentTime || 0) - target) > 0.4) {
       coverOver(o, st.vid);
       try { o.currentTime = target; } catch (e) {}
@@ -6201,10 +6220,103 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       setTimeout(() => { try { const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {} watchStall(o); }, 200);
     }
   }
+  // ----- Nahtlos zurück zur Seite (Gegenstück zum nahtlosen Start) -----
+  // Bisher sprang das angehaltene Video der Seite an deine Stelle und musste dort erst laden – so lange lag ein
+  // Standbild darüber (wirkt wie eine Pause). Jetzt läuft DEIN Video (mit Ton) noch kurz genau über dem der Seite
+  // weiter; die Seite springt still etwas voraus und wartet angehalten. Erreicht dein Video diese Stelle, startet die
+  // Seite dort mit Ton und dein Video verschwindet – Bild und Ton laufen ohne Lücke weiter. Klappt es nicht in 3 s
+  // (lädt zu langsam), wie früher: Standbild, bis die Seite an deiner Stelle ist.
+  let softSt = null;   // läuft gerade ein nahtloses Zurück? (ein neuer Player beendet es sofort)
+  function softBack(st) {
+    const v = st.vid, o = st.orig;
+    try {
+      if (st.mode !== 'own' || st.bridge || v.paused || v.ended || v.readyState < 3 || !o.isConnected || document.hidden || pipIsOurs(v) || !root) return false;
+      if (!isFinite(v.duration) || v.currentTime > v.duration - 2.5) return false;   // (fast am Ende: lieber wie bisher)
+      const r = o.getBoundingClientRect();
+      if (r.width < 60 || r.height < 40) return false;
+    } catch (e) { return false; }
+    const s = { v: v, o: o, at: performance.now(), lead: 0.6, T: 0, tries: 0, iv: 0, done: false, after: [],
+      parent: v.parentNode, next: v.nextSibling, css: v.style.cssText, fit: getComputedStyle(o).objectFit || 'contain' };
+    st.soft = s; softSt = st;
+    const place = () => {
+      if (s.done) return;
+      const q = o.getBoundingClientRect();
+      v.style.cssText = 'position:fixed;left:' + q.left + 'px;top:' + q.top + 'px;width:' + q.width + 'px;height:' + q.height + 'px;margin:0;transform:none;' +
+        'object-fit:' + (s.fit === 'cover' ? 'cover' : 'contain') + ';background:#000;z-index:2147483646;pointer-events:none;filter:none';
+    };
+    s.place = place;
+    place();
+    root.append(v);   // aus dem (unsichtbaren) Player heraus, genau über das Video der Seite – es läuft dabei weiter
+    if (v.paused) v.play().catch(() => {});
+    addEventListener('resize', place); addEventListener('scroll', place, true);
+    requestAnimationFrame(place); setTimeout(place, 120); setTimeout(place, 400);   // (die Seite rückt sich nach dem Vollbild zurecht)
+    const aim = () => {
+      s.T = v.currentTime + s.lead * (v.playbackRate || 1);
+      try { o.muted = true; o.pause(); o.playbackRate = v.playbackRate || 1; o.currentTime = s.T; } catch (e) {}
+    };
+    aim();
+    s.iv = setInterval(() => {
+      if (s.done) return;
+      if (performance.now() - s.at > 3000) { softFail(st); return; }
+      if (v.paused && !v.ended) { try { v.play().catch(() => {}); } catch (e) {} }
+      if (o.seeking || o.readyState < 3) {   // Seite lädt noch – läuft dein Video schon an der Stelle vorbei? weiter voraus
+        if (v.currentTime > s.T + 0.05) { s.tries++; s.lead = Math.min(2.5, s.lead * 1.8); if (s.tries > 3) softFail(st); else aim(); }
+        return;
+      }
+      const d = s.T - v.currentTime;
+      if (d > 0.02) return;                     // noch nicht da
+      if (d < -0.12) { s.tries++; s.lead = Math.min(2.5, s.lead * 1.5); if (s.tries > 3) softFail(st); else aim(); return; }
+      softSwap(st);
+    }, 15);
+    return true;
+  }
+  function softSwap(st) {
+    const s = st.soft, v = s.v, o = s.o;
+    try { if (typeof st.origMuted === 'boolean') o.muted = st.origMuted; const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
+    const gone = () => softEnd(st, 'nahtlos');
+    // erst weg, wenn die Seite ihr erstes Bild an der Stelle zeigt (sonst blitzt kurz das alte Bild auf)
+    if (o.requestVideoFrameCallback) { o.requestVideoFrameCallback(() => gone()); setTimeout(gone, 300); } else setTimeout(gone, 80);
+    try { v.muted = true; } catch (e) {}
+    watchStall(o);
+  }
+  function softFail(st) {
+    const s = st.soft;
+    if (!s || s.done) return;
+    const v = s.v, o = s.o, t = v.currentTime;
+    coverOver(o, v);   // wie früher: dein letztes Bild darüber, bis die Seite an deiner Stelle ist
+    try { v.muted = true; v.pause(); } catch (e) {}
+    try { o.currentTime = t; if (typeof st.origMuted === 'boolean') o.muted = st.origMuted; const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
+    watchStall(o);
+    softEnd(st, 'Standbild');
+  }
+  function softEnd(st, how) {
+    const s = st.soft;
+    if (!s || s.done) return;
+    s.done = true;
+    clearInterval(s.iv);
+    removeEventListener('resize', s.place); removeEventListener('scroll', s.place, true);
+    try { s.v.muted = true; s.v.pause(); } catch (e) {}
+    try { s.v.remove(); } catch (e) {}
+    if (openTimes) openTimes.back = how + ' nach ' + Math.round(performance.now() - s.at) + ' ms';
+    st.soft = null; if (softSt === st) softSt = null;
+    s.after.forEach((f) => { try { f(); } catch (e) {} });
+  }
+  // doch nicht zurück (Drehen …): dein Video zurück in den Player, die Seite wieder still
+  function softCancel(st) {
+    const s = st.soft;
+    if (!s || s.done) return;
+    s.done = true;
+    clearInterval(s.iv);
+    removeEventListener('resize', s.place); removeEventListener('scroll', s.place, true);
+    try { s.v.style.cssText = s.css; if (s.parent) s.parent.insertBefore(s.v, s.next && s.next.parentNode === s.parent ? s.next : null); } catch (e) {}
+    try { s.v.play().catch(() => {}); } catch (e) {}
+    st.soft = null; if (softSt === st) softSt = null;
+  }
   // doch nicht geschlossen (Drehen, App-Wechsel): Seite wieder still und angehalten, Player übernimmt wieder
   function unHand(st) {
     if (!st.handed) return;
     st.handed = false;
+    softCancel(st);
     removeCover();
     if (st.mode !== 'own') return;
     try { st.orig.muted = true; st.orig.pause(); } catch (e) {}
@@ -6287,7 +6399,9 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     clearTimeout(st.loadTimer); clearTimeout(st.hideTimer); clearTimeout(st.u2);
     // Schneller zu: Ton aus, Player sofort unsichtbar, Vollbild aus – das Aufräumen (Seite übernimmt, Video und Stream
     // abbauen …) kommt direkt danach, wenn der Bildschirm schon frei ist
-    try { st.vid.muted = true; st.vid.pause(); } catch (e) {}
+    // (nahtlos zurück: dein Video läuft noch kurz über dem der Seite weiter – nicht stumm schalten)
+    const softOk = !st.handed && st.mode === 'own' && !st.vid.paused;
+    if (!softOk && !st.soft) { try { st.vid.muted = true; st.vid.pause(); } catch (e) {} }
     st.wrap.style.display = 'none';
     try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch (e) {}
     try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
@@ -6303,6 +6417,9 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       st.cleanup.forEach((f) => { try { f(); } catch (e) {} });
       st.wrap.remove();
     };
+    // nahtlos zurück läuft noch: aufräumen erst danach (es braucht das eigene Video bis zur Übergabe)
+    if (st.soft) { st.soft.after.push(rest); return; }
+    if (softOk) { try { st.vid.muted = true; st.vid.pause(); } catch (e) {} }   // (nicht nahtlos geworden: jetzt still)
     // nach dem nächsten Bild (Bildschirm ist dann schon frei); im Hintergrund gibt es keine Bilder → gleich
     if (document.hidden || typeof requestAnimationFrame !== 'function') rest();
     else { let done = false; const go = () => { if (!done) { done = true; rest(); } }; requestAnimationFrame(() => setTimeout(go, 0)); setTimeout(go, 250); }
@@ -6660,7 +6777,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.21',
+      'Video-Assistent 19.22',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
@@ -6675,7 +6792,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         if (!o) return '-';
         const ms = (x) => (x ? Math.round(x - o.t0) + ' ms' : '–');
         return 'sichtbar nach ' + ms(o.vis) + ' · Bild der Seite live nach ' + ms(o.live) + ' · eigenes Video nach ' + ms(o.own) +
-          ' · ' + (o.how || '-') + (o.swap ? ' nach ' + ms(o.swap) : '') + (typeof o.gap === 'number' ? ' (Abstand ' + Math.abs(o.gap).toFixed(2) + ' s)' : '');
+          ' · ' + (o.how || '-') + (o.swap ? ' nach ' + ms(o.swap) : '') + (typeof o.gap === 'number' ? ' (Abstand ' + Math.abs(o.gap).toFixed(2) + ' s)' : '') +
+          ' | Zurück zur Seite: ' + (o.back || '-');
       })(),
       'Zuletzt geöffnet: ' + (lastIntent.t ? Math.round((Date.now() - lastIntent.t) / 1000) + ' s her | ' + lastIntent.how + ' | ' + hostOf(lastIntent.url) + ' …' + lastIntent.url.slice(-50) : '-'),
       'Nächstes-Reel-Countdown abgebrochen: ' + nextCancels + '×',

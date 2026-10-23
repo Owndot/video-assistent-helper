@@ -101,6 +101,8 @@
         if (isFinite(vd) && (st.vid.ended || t >= vd - 1)) { atEnd = true; target = Math.max(0, (isFinite(od) ? od : vd) - 0.3); }
       }
     } catch (e) {}
+    // Nahtlos zurück: dein Video läuft noch kurz (mit Ton) genau über dem der Seite weiter, bis die Seite bereit ist
+    if (target >= 0 && !atEnd && !st.closePaused && CONFIG.resumeAfterClose && softBack(st)) return;
     if (target >= 0 && Math.abs((o.currentTime || 0) - target) > 0.4) {
       coverOver(o, st.vid);
       try { o.currentTime = target; } catch (e) {}
@@ -115,10 +117,103 @@
       setTimeout(() => { try { const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {} watchStall(o); }, 200);
     }
   }
+  // ----- Nahtlos zurück zur Seite (Gegenstück zum nahtlosen Start) -----
+  // Bisher sprang das angehaltene Video der Seite an deine Stelle und musste dort erst laden – so lange lag ein
+  // Standbild darüber (wirkt wie eine Pause). Jetzt läuft DEIN Video (mit Ton) noch kurz genau über dem der Seite
+  // weiter; die Seite springt still etwas voraus und wartet angehalten. Erreicht dein Video diese Stelle, startet die
+  // Seite dort mit Ton und dein Video verschwindet – Bild und Ton laufen ohne Lücke weiter. Klappt es nicht in 3 s
+  // (lädt zu langsam), wie früher: Standbild, bis die Seite an deiner Stelle ist.
+  let softSt = null;   // läuft gerade ein nahtloses Zurück? (ein neuer Player beendet es sofort)
+  function softBack(st) {
+    const v = st.vid, o = st.orig;
+    try {
+      if (st.mode !== 'own' || st.bridge || v.paused || v.ended || v.readyState < 3 || !o.isConnected || document.hidden || pipIsOurs(v) || !root) return false;
+      if (!isFinite(v.duration) || v.currentTime > v.duration - 2.5) return false;   // (fast am Ende: lieber wie bisher)
+      const r = o.getBoundingClientRect();
+      if (r.width < 60 || r.height < 40) return false;
+    } catch (e) { return false; }
+    const s = { v: v, o: o, at: performance.now(), lead: 0.6, T: 0, tries: 0, iv: 0, done: false, after: [],
+      parent: v.parentNode, next: v.nextSibling, css: v.style.cssText, fit: getComputedStyle(o).objectFit || 'contain' };
+    st.soft = s; softSt = st;
+    const place = () => {
+      if (s.done) return;
+      const q = o.getBoundingClientRect();
+      v.style.cssText = 'position:fixed;left:' + q.left + 'px;top:' + q.top + 'px;width:' + q.width + 'px;height:' + q.height + 'px;margin:0;transform:none;' +
+        'object-fit:' + (s.fit === 'cover' ? 'cover' : 'contain') + ';background:#000;z-index:2147483646;pointer-events:none;filter:none';
+    };
+    s.place = place;
+    place();
+    root.append(v);   // aus dem (unsichtbaren) Player heraus, genau über das Video der Seite – es läuft dabei weiter
+    if (v.paused) v.play().catch(() => {});
+    addEventListener('resize', place); addEventListener('scroll', place, true);
+    requestAnimationFrame(place); setTimeout(place, 120); setTimeout(place, 400);   // (die Seite rückt sich nach dem Vollbild zurecht)
+    const aim = () => {
+      s.T = v.currentTime + s.lead * (v.playbackRate || 1);
+      try { o.muted = true; o.pause(); o.playbackRate = v.playbackRate || 1; o.currentTime = s.T; } catch (e) {}
+    };
+    aim();
+    s.iv = setInterval(() => {
+      if (s.done) return;
+      if (performance.now() - s.at > 3000) { softFail(st); return; }
+      if (v.paused && !v.ended) { try { v.play().catch(() => {}); } catch (e) {} }
+      if (o.seeking || o.readyState < 3) {   // Seite lädt noch – läuft dein Video schon an der Stelle vorbei? weiter voraus
+        if (v.currentTime > s.T + 0.05) { s.tries++; s.lead = Math.min(2.5, s.lead * 1.8); if (s.tries > 3) softFail(st); else aim(); }
+        return;
+      }
+      const d = s.T - v.currentTime;
+      if (d > 0.02) return;                     // noch nicht da
+      if (d < -0.12) { s.tries++; s.lead = Math.min(2.5, s.lead * 1.5); if (s.tries > 3) softFail(st); else aim(); return; }
+      softSwap(st);
+    }, 15);
+    return true;
+  }
+  function softSwap(st) {
+    const s = st.soft, v = s.v, o = s.o;
+    try { if (typeof st.origMuted === 'boolean') o.muted = st.origMuted; const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
+    const gone = () => softEnd(st, 'nahtlos');
+    // erst weg, wenn die Seite ihr erstes Bild an der Stelle zeigt (sonst blitzt kurz das alte Bild auf)
+    if (o.requestVideoFrameCallback) { o.requestVideoFrameCallback(() => gone()); setTimeout(gone, 300); } else setTimeout(gone, 80);
+    try { v.muted = true; } catch (e) {}
+    watchStall(o);
+  }
+  function softFail(st) {
+    const s = st.soft;
+    if (!s || s.done) return;
+    const v = s.v, o = s.o, t = v.currentTime;
+    coverOver(o, v);   // wie früher: dein letztes Bild darüber, bis die Seite an deiner Stelle ist
+    try { v.muted = true; v.pause(); } catch (e) {}
+    try { o.currentTime = t; if (typeof st.origMuted === 'boolean') o.muted = st.origMuted; const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
+    watchStall(o);
+    softEnd(st, 'Standbild');
+  }
+  function softEnd(st, how) {
+    const s = st.soft;
+    if (!s || s.done) return;
+    s.done = true;
+    clearInterval(s.iv);
+    removeEventListener('resize', s.place); removeEventListener('scroll', s.place, true);
+    try { s.v.muted = true; s.v.pause(); } catch (e) {}
+    try { s.v.remove(); } catch (e) {}
+    if (openTimes) openTimes.back = how + ' nach ' + Math.round(performance.now() - s.at) + ' ms';
+    st.soft = null; if (softSt === st) softSt = null;
+    s.after.forEach((f) => { try { f(); } catch (e) {} });
+  }
+  // doch nicht zurück (Drehen …): dein Video zurück in den Player, die Seite wieder still
+  function softCancel(st) {
+    const s = st.soft;
+    if (!s || s.done) return;
+    s.done = true;
+    clearInterval(s.iv);
+    removeEventListener('resize', s.place); removeEventListener('scroll', s.place, true);
+    try { s.v.style.cssText = s.css; if (s.parent) s.parent.insertBefore(s.v, s.next && s.next.parentNode === s.parent ? s.next : null); } catch (e) {}
+    try { s.v.play().catch(() => {}); } catch (e) {}
+    st.soft = null; if (softSt === st) softSt = null;
+  }
   // doch nicht geschlossen (Drehen, App-Wechsel): Seite wieder still und angehalten, Player übernimmt wieder
   function unHand(st) {
     if (!st.handed) return;
     st.handed = false;
+    softCancel(st);
     removeCover();
     if (st.mode !== 'own') return;
     try { st.orig.muted = true; st.orig.pause(); } catch (e) {}
@@ -201,7 +296,9 @@
     clearTimeout(st.loadTimer); clearTimeout(st.hideTimer); clearTimeout(st.u2);
     // Schneller zu: Ton aus, Player sofort unsichtbar, Vollbild aus – das Aufräumen (Seite übernimmt, Video und Stream
     // abbauen …) kommt direkt danach, wenn der Bildschirm schon frei ist
-    try { st.vid.muted = true; st.vid.pause(); } catch (e) {}
+    // (nahtlos zurück: dein Video läuft noch kurz über dem der Seite weiter – nicht stumm schalten)
+    const softOk = !st.handed && st.mode === 'own' && !st.vid.paused;
+    if (!softOk && !st.soft) { try { st.vid.muted = true; st.vid.pause(); } catch (e) {} }
     st.wrap.style.display = 'none';
     try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch (e) {}
     try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
@@ -217,6 +314,9 @@
       st.cleanup.forEach((f) => { try { f(); } catch (e) {} });
       st.wrap.remove();
     };
+    // nahtlos zurück läuft noch: aufräumen erst danach (es braucht das eigene Video bis zur Übergabe)
+    if (st.soft) { st.soft.after.push(rest); return; }
+    if (softOk) { try { st.vid.muted = true; st.vid.pause(); } catch (e) {} }   // (nicht nahtlos geworden: jetzt still)
     // nach dem nächsten Bild (Bildschirm ist dann schon frei); im Hintergrund gibt es keine Bilder → gleich
     if (document.hidden || typeof requestAnimationFrame !== 'function') rest();
     else { let done = false; const go = () => { if (!done) { done = true; rest(); } }; requestAnimationFrame(() => setTimeout(go, 0)); setTimeout(go, 250); }
