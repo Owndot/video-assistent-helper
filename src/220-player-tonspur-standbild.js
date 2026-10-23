@@ -113,15 +113,15 @@
     //    Grenzen, im Schild „Lupe“/„Fein“, beim Wechsel ein kurzes Vibrieren. Wieder hoch = eine Stufe zurück, auf
     //    Höhe der Leiste = normal (die Stelle gleitet dann beim Weiterziehen wieder unter den Finger, kein Sprung).
     //    Finger an ein Ende der Leiste = der Ausschnitt wandert mit.
-    //  - alte Stelle = kleiner Punkt auf der Leiste; dorthin zurück rastet ein (kurzes Vibrieren, „± 0“) – loslassen
-    //    dort = nichts ändern
+    //  - zurück an die Anfangsstelle (wie YouTube „Release to cancel“): kurzes Vibrieren, Schild „Loslassen = abbrechen“
+    //    (rot) – loslassen dort = nichts ändern, das Video läuft einfach weiter. (Kein Punkt für die alte Stelle: das
+    //    Video läuft beim Spulen weiter, ein fester Punkt passte nach Sekunden nicht mehr.)
     //  - weit nach oben weg vom Balken = abbrechen (Hinweis erscheint); loslassen dort = zurück an die alte Stelle.
     //    Zurück nach unten = weiter spulen. Übernimmt Android die Geste (Hochwischen vom Rand), ebenfalls abbrechen.
     //    Hochwischen ist kein Spulen: die Stelle folgt dem Finger erst, wenn er ~10 px zur Seite gezogen hat.
     const barHit = h('div', { class: 'vbarhit', 'aria-hidden': 'true' });
-    const barMark = h('i', { class: 'vbarmk' });
     const barKnob = h('i', { class: 'vknob g' }, h('b'));
-    bar.parentNode.append(barHit, barMark, barKnob);
+    bar.parentNode.append(barHit, barKnob);
     bar.tabIndex = -1;
     const scr = { on: false, id: 0, x0: 0, y0: 0, lx: 0, t0: 0, t: 0, raw: 0, moved: false, first: true, mode: '', snap: false, away: false,
       lv: 0, z: 0, ws: 0, zt: 0, zx: 0, off: 0, pan: 0, pt: 0 };
@@ -152,14 +152,9 @@
         p = clamp((t - scr.ws) / scr.z, 0, 1);
         const P1 = (p * 100).toFixed(2);
         bar.style.setProperty('--trk', 'linear-gradient(to right,#000 ' + P1 + '%,rgba(0,0,0,.3) ' + P1 + '%)');   // (umgedreht per invert)
-        const m0 = (scr.t0 - scr.ws) / scr.z;
-        barMark.style.left = Math.round(posX(m0) - 5) + 'px';
-        barMark.classList.toggle('off', m0 < 0 || m0 > 1);
         tCur.textContent = fmtTime(scr.ws); tDur.textContent = fmtTime(scr.ws + scr.z);
       } else {
         paintBar(p);
-        barMark.style.left = Math.round(posX(scr.t0 / d) - 5) + 'px';
-        barMark.classList.remove('off');
         tCur.textContent = fmtTime(t);
         if (scr.on) tDur.textContent = fmtTime(d);
       }
@@ -169,9 +164,9 @@
       wrap.classList.toggle('scrubx', scr.mode === 'cancel');
       wrap.classList.toggle('scrubsnap', scr.snap && scr.mode !== 'cancel');
       wrap.classList.toggle('zoom', !!scr.z);
-      if (scr.mode === 'cancel') pvTime.textContent = tr('Loslassen = abbrechen');
+      if (scr.mode === 'cancel' || (scr.snap && scr.moved)) pvTime.textContent = tr('Loslassen = abbrechen');
       else if (scr.moved) {
-        const tx = (scr.lv === 2 ? tenth(t) : fmtTime(t)) + ' · ' + (scr.snap ? '± 0' : delta(t - scr.t0));
+        const tx = (scr.lv === 2 ? tenth(t) : fmtTime(t)) + ' · ' + delta(t - scr.t0);
         pvTime.textContent = scr.lv ? tr(scr.lv === 2 ? 'Fein' : 'Lupe') + ' · ' + tx : tx;
       }
     }
@@ -228,7 +223,6 @@
       if (scr.pan) { cancelAnimationFrame(scr.pan); scr.pan = 0; }
       scr.z = 0; scr.lv = 0; scr.off = 0;
       wrap.classList.remove('thick', 'scrubx', 'scrubsnap', 'zoom');
-      barMark.classList.remove('off');
       tCur.classList.remove('g', 'vtz'); tDur.classList.remove('g', 'vtz');
       const m = M(), d = durOk();
       uiLast.cur = ''; uiLast.dur = ''; tDur.textContent = fmtTime(d);   // Zeiten wieder normal
@@ -252,7 +246,6 @@
       const m = M();
       Object.assign(scr, { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, lx: e.clientX, t0: m.currentTime, t: m.currentTime, raw: m.currentTime,
         moved: false, first: true, mode: '', snap: false, away: false, lv: 0, z: 0, off: 0, pt: 0 });
-      barMark.style.left = Math.round(posX(m.currentTime / d) - 5) + 'px';
       barKnob.style.left = Math.round(posX(m.currentTime / d) - 17) + 'px';
       st.barDrag = true; clearTimeout(st.hideTimer);
       if (!liveMode()) { pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid(); }

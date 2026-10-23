@@ -134,21 +134,17 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 /* Abbrechen-Bereich (Finger weit über der Leiste) und Fein-Spulen (unter der Leiste) */
 .vp.scrubx .vbar{opacity:.4}
 /* Zeit über der Vorschau: im Glas des Designs (.g, „Schlicht“ = Milchglas) – rot getönt beim Abbrechen, violett mit Lupe */
-.vp.scrubx .vprev b.g{background:rgba(205,45,45,.62)!important}
+.vp.scrubx .vprev b.g,.vp.scrubsnap .vprev b.g{background:rgba(205,45,45,.62)!important}
 .vp.zoom .vprev b.g{background:rgba(110,86,226,.5)!important}
 /* Lupe: Grenzen des Ausschnitts links/rechts als kleine Glas-Schilder */
 .vtime.vtz{color:#fff;font-weight:700;padding:4px 6px;border-radius:11px;min-width:34px;box-shadow:0 2px 10px rgba(0,0,0,.22)}
-.vbarmk.off{display:none}
 /* alte Stelle beim Ziehen (dorthin zurück rastet ein) */
-.vbarmk{position:absolute;top:50%;left:0;width:10px;height:10px;margin-top:-5px;border-radius:50%;box-sizing:border-box;background:rgba(20,22,30,.5);border:2px solid rgba(255,255,255,.85);box-shadow:0 0 3px rgba(0,0,0,.45);opacity:0;pointer-events:none;z-index:1;transition:opacity .15s ease,transform .15s ease}
-.vp.thick .vbarmk{opacity:.8}
-.vp.scrubsnap .vbarmk{opacity:1;transform:scale(1.5)}
-.vp.scrubx .vbarmk{opacity:0}
 /* großer Punkt beim Ziehen: immer unter dem Finger, im Glas des Designs (Schlicht = Milchglas), weißer Kern */
 .vknob.g{position:absolute;top:50%;left:0;width:34px;height:34px;margin-top:-17px;border-radius:50%;pointer-events:none;z-index:3;opacity:0;transform:scale(.4);transition:opacity .12s ease,transform .2s cubic-bezier(.34,1.56,.64,1)}
 .vknob b{position:absolute;inset:9px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.45);z-index:2}
-.vp.thick .vknob{opacity:1;transform:none}
-.vp.scrubx .vknob{opacity:.35}
+.vp .vchrome .vknob.g{opacity:0}   /* (stärker als „Bedienung sichtbar → alles Glas sichtbar“) – nur beim Ziehen */
+.vp.thick .vchrome .vknob.g{opacity:1;transform:none}
+.vp.scrubx .vchrome .vknob.g{opacity:.35}
 .vp.zoom .vknob b{background:#e4dcff}
 .vbar::-webkit-slider-thumb{-webkit-appearance:none;margin-top:-6.5px;width:18px;height:18px;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1);transition:transform .2s cubic-bezier(.34,1.56,.64,1),margin .18s ease}
 .vbar::-moz-range-thumb{width:18px;height:18px;border:0;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1)}

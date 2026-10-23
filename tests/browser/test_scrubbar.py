@@ -4,7 +4,7 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 # unten = weiter · zurück an die alte Stelle rastet ein · Enden der Leiste = Anfang/Ende ·
 # Lupe (19.8, wie iPhone): Finger beim Ziehen unter die Leiste = „Lupe“, tiefer = „Fein“, wieder hoch = normal; Leiste
 # zeigt den Ausschnitt, Grenzen links/rechts; am Ende der Leiste wandert er mit; nur bei Videos ab 1,5 min ·
-# großer Punkt unter dem Finger, alte Stelle als kleiner Punkt · Zeit und Punkt im Glas des Designs.
+# großer Punkt nur beim Ziehen, unter dem Finger (kein Punkt für die alte Stelle) · Zeit und Punkt im Glas des Designs.
 import time
 exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])
 with sync_playwright() as p:
@@ -44,24 +44,26 @@ with sync_playwright() as p:
     check('nach oben und zurück: spult doch (unter dem Finger)', abs(t() - at(x, fx + 0.2 * W, W)) < 1, [t(), round(at(x, fx + 0.2 * W, W), 1)])
     def lv_y(y, k):   # Höhe für Stufe k (wie im Skript: Platz unter der Leiste)
         room = max(60, 800 - y - 8); return y + [0, min(42, room * 0.32) + 14, min(92, room * 0.68) + 14][k]
-    # 5) großer Punkt unter dem Finger, alte Stelle als kleiner Punkt; kurzes Video: nach unten → keine Lupe
+    # 5) großer Punkt nur beim Ziehen, unter dem Finger; kurzes Video: nach unten → keine Lupe
     setT(20); x, y, W = geo(); fx = x + 7 + (20 / D) * W
+    k0 = pg.evaluate('() => [getComputedStyle(%s.querySelector(".vknob")).opacity, %s.querySelector(".vp").classList.contains("ctl")]' % (R, R))
+    check('Bedienung sichtbar, ohne Ziehen: kein großer Punkt (überdeckt keine Zeit)', float(k0[0]) < 0.05 and k0[1], k0)
     pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(fx + 0.2 * W, y, steps=3); time.sleep(0.2)
-    kn = pg.evaluate('() => { const r = %s, k = r.querySelector(".vknob").getBoundingClientRect(), m = r.querySelector(".vbarmk").getBoundingClientRect(); return [k.left + k.width / 2, k.width, getComputedStyle(r.querySelector(".vknob")).opacity, m.left + m.width / 2, m.width]; }' % R)
+    kn = pg.evaluate('() => { const r = %s, k = r.querySelector(".vknob").getBoundingClientRect(), n = r.querySelectorAll(".vbarmk").length; return [k.left + k.width / 2, k.width, getComputedStyle(r.querySelector(".vknob")).opacity, n]; }' % R)
     check('großer Punkt beim Ziehen unter dem Finger', abs(kn[0] - (fx + 0.2 * W)) < 3 and kn[1] >= 30 and float(kn[2]) > 0.9, [kn, fx + 0.2 * W])
-    check('… alte Stelle als kleiner Punkt', abs(kn[3] - fx) < 3 and kn[4] <= 12, [kn, fx])
+    check('… kein zweiter Punkt für die alte Stelle', kn[3] == 0, kn)
     pg.mouse.move(fx + 0.2 * W, lv_y(y, 2), steps=4); time.sleep(0.2)
     s5 = state(); pg.mouse.up(); time.sleep(0.6)
     check('kurzes Video: nach unten → keine Lupe', not s5[2] and abs(t() - at(x, fx + 0.2 * W, W)) < 1, [s5, t()])
     check('… Abstand zur alten Stelle steht da', '+' in s5[3], s5)
-    # 6) weg und zurück an die alte Stelle: rastet ein („± 0“), loslassen = nichts ändern
+    # 6) weg und zurück an die alte Stelle: rastet ein („Loslassen = abbrechen“), loslassen = nichts ändern
     setT(20); x, y, W = geo(); fx = x + 7 + (20 / D) * W
     xr = fx + 0.3 * W; r1 = at(x, xr, W); back = fx + 0.003 * W
     pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(xr, y, steps=6); time.sleep(0.15)
     s6a = state(); pg.mouse.move(back, y, steps=6); time.sleep(0.2)
     s6 = state(); pg.mouse.up(); time.sleep(0.6)
     check('beim Ziehen: Abstand zur alten Stelle („+… s“)', any(('+%d s' % (round(r1 - 20) + k)) in s6a[3] for k in (-1, 0, 1)), [s6a, round(r1 - 20)])
-    check('zurück an der alten Stelle: rastet ein (± 0)', s6[4] and '± 0' in s6[3], s6)
+    check('zurück an der alten Stelle: rastet ein („Loslassen = abbrechen“)', s6[4] and 'abbrechen' in s6[3], s6)
     check('… loslassen dort: bleibt bei 20 s', abs(t() - 20) < 0.5, t())
     # 7) bis an den rechten Rand = Ende, an den linken = Anfang (egal, wo der Finger anfängt)
     setT(20); x, y, W = geo()
