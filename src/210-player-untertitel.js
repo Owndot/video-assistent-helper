@@ -237,7 +237,7 @@
         const txt = await gmText(u);
         const c = parseSubs(txt);
         if (c.length < 2) continue;
-        const end = c.reduce((x, q) => Math.max(x, q[1]), 0);
+        const end = fixStart(c).reduce((x, q) => Math.max(x, q[1]), 0);   // (Zählung ab 10:00:00 vorher abziehen)
         if (isFinite(md) && md > 5 && end > md + 3) { longer++; continue; }   // läuft länger als das Video → anderes Video
         pageSubs.cache.set(u, c);
         list.push({ u: u, lang: lang, mine: own.size > 0 && (pageSubs.near.get(u) || []).some((x) => own.has(x)) });
