@@ -4,12 +4,13 @@
     // ist, erlauben wir der Seite das Zeichnen bis an den Rand; Knöpfe weichen über safe-area weiterhin aus.
     (function edgeToEdge() {
       try {
-        let m = document.querySelector('meta[name="viewport"]'), made = false;
+        // Nur eine vorhandene Angabe ergänzen. Fehlt sie (Seiten fürs große Bild), NICHT neu anlegen: Das änderte die
+        // Breite der ganzen Seite – auf großen Seiten mehrere hundert Millisekunden Neuaufbau beim Öffnen und Schließen.
+        const m = document.querySelector('meta[name="viewport"]');
         const before = m ? m.getAttribute('content') : null;
-        if (!m) { m = document.createElement('meta'); m.name = 'viewport'; (document.head || document.documentElement).appendChild(m); made = true; }
-        const c = before || 'width=device-width, initial-scale=1';
-        if (!/viewport-fit\s*=\s*cover/i.test(c)) m.setAttribute('content', c.replace(/,?\s*viewport-fit\s*=\s*\w+/i, '') + ', viewport-fit=cover');
-        st.cleanup.push(() => { try { if (made) m.remove(); else if (before !== null) m.setAttribute('content', before); } catch (e) {} });
+        if (!m || before === null) return;
+        if (!/viewport-fit\s*=\s*cover/i.test(before)) m.setAttribute('content', before.replace(/,?\s*viewport-fit\s*=\s*\w+/i, '') + ', viewport-fit=cover');
+        st.cleanup.push(() => { try { m.setAttribute('content', before); } catch (e) {} });
       } catch (e) {}
     })();
 

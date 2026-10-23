@@ -40,6 +40,8 @@
 .vp.flash::after{content:"";position:absolute;inset:0;background:#fff;opacity:0;animation:vflash .35s ease;pointer-events:none;z-index:9}
 @keyframes vflash{0%{opacity:.55}100%{opacity:0}}
 .vv{position:absolute;inset:0;margin:auto;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;object-position:50% 50%;background:transparent;transform-origin:50% 50%}
+/* Sofortbild beim Öffnen (Bild des Seitenvideos), bis die eigene Kopie läuft */
+.vposter{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
 /* Ambient-Modus: die Farben des Bildes leuchten weich in die schwarzen Ränder (wie bei YouTube) */
 .vamb{position:absolute;left:-12%;top:-12%;width:124%;height:124%;opacity:0;transition:opacity .8s ease;pointer-events:none}
 /* Firefox-Handy (zweites Video statt Mini-Bild): Weichzeichnen und Rand per CSS. Sonst steckt beides schon im
@@ -178,6 +180,9 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vseek b{display:block;font:200 68px/1 var(--font);letter-spacing:.5px}
 .vseek small{display:block;margin-top:10px;font:300 21px/1 var(--font);color:rgba(255,255,255,.88)}
 .vseek i{display:block;margin-top:8px;font:500 13px/1 var(--font);font-style:normal;color:rgba(255,255,255,.7);letter-spacing:.3px}
+/* kleine Leiste beim Wischen: wo im Video (Stelle / Länge) */
+.vseekl{display:block;position:relative;width:150px;height:3px;margin:10px auto 0;border-radius:2px;background:rgba(255,255,255,.28);overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.vseekf{position:absolute;inset:0;background:#fff;transform-origin:0 50%;transform:scaleX(0)}
 .vp.seeking .vchrome{opacity:0 !important}
 /* Doppelt tippen links/rechts (wie Samsung Internet, in unserem Glas): runde Glasscheibe springt auf,
    der Kreispfeil dreht sich einmal in Sprungrichtung, ein feiner Lichtring breitet sich aus. Zahl = Sekunden. */

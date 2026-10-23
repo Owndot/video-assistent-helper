@@ -84,7 +84,7 @@
       if ((st.mode === 'capture') !== fromOrig) return;
       if (e.type === 'waiting') spin.classList.add('on');
       if (e.type === 'playing' || e.type === 'canplay') spin.classList.remove('on');
-      if (e.type === 'pause') showControls();
+      if (e.type === 'pause' && !st.swipeHold) showControls();   // (kurze Pause beim Wischen übers Video: Leisten nicht zeigen)
       updateUI();
     };
     ['timeupdate', 'durationchange', 'play', 'pause', 'waiting', 'playing', 'canplay', 'seeked'].forEach((t) => {

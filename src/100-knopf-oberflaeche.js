@@ -270,8 +270,9 @@
     if (!lensOn() || !el) return;
     // Play, ±10 und das Menü ohne Lupen-Effekt – so gewünscht
     if (el.classList && (el.classList.contains('vplay') || el.classList.contains('vskip') || el.classList.contains('vmenu'))) return;
-    applyLens(el);
-    if (lensRO) lensRO.observe(el);
+    // mit ResizeObserver: der meldet die Größe ohnehin gleich nach dem nächsten Aufbau – dann ohne erzwungenes
+    // Vermessen mitten im Öffnen (das kostete auf großen Seiten spürbar Zeit)
+    if (lensRO) lensRO.observe(el); else applyLens(el);
   }
 
   function ui() {

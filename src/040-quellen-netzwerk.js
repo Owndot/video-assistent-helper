@@ -9,7 +9,22 @@
   const VIS_EV = 'kadri-vis';
   function onVisChange(f, cap) { document.addEventListener('visibilitychange', f, cap); if (IS_KADRI) document.addEventListener(VIS_EV, f, cap); }
   function offVisChange(f, cap) { document.removeEventListener('visibilitychange', f, cap); if (IS_KADRI) document.removeEventListener(VIS_EV, f, cap); }
-  const kadriPage = () => { try { return IS_KADRI && document.documentElement.hasAttribute('data-kadri-page'); } catch (e) { return false; } };
+  // Läuft page.js in dieser Seite (Chrome/Vivaldi)? Kurz nachfragen – page.js antwortet sofort. (Kein Merkmal an der
+  // Seite, an dem Webseiten Kadri erkennen könnten.) Einmal „ja“ gilt für immer.
+  let kadriPageOk = false;
+  const kadriPage = () => {
+    if (!IS_KADRI) return false;
+    if (kadriPageOk) return true;
+    try {
+      let ok = false;
+      const f = () => { ok = true; };
+      document.addEventListener('kadri-pong', f);
+      document.dispatchEvent(new Event('kadri-ping'));
+      document.removeEventListener('kadri-pong', f);
+      kadriPageOk = ok;
+      return ok;
+    } catch (e) { return false; }
+  };
   function kadriShield(on) {
     if (!kadriPage()) return;
     try { document.dispatchEvent(new CustomEvent('kadri-ctl', { detail: JSON.stringify({ shield: !!on }) })); } catch (e) {}

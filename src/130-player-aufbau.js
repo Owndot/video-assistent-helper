@@ -43,7 +43,8 @@
     const indFill = h('i');
     const ind = h('div', { class: 'vind g', 'aria-live': 'polite' }, indTxt);
     const seekBig = h('b', null, '0:00'), seekRest = h('small', null, ''), seekDelta = h('i', null, '');
-    const seekBox = h('div', { class: 'vseek', 'aria-live': 'polite' }, seekBig, seekRest, seekDelta);
+    const seekFill = h('span', { class: 'vseekf' }), seekLine = h('span', { class: 'vseekl' }, seekFill);
+    const seekBox = h('div', { class: 'vseek', 'aria-live': 'polite' }, seekBig, seekRest, seekLine, seekDelta);
     // Anzeige fürs doppelte Tippen: Glasscheibe mit Kreispfeil (vor = gespiegelt) – die Zahl zeigt die Sekunden
     const mkSfx = (dir) => {
       const sv = document.createElementNS(NS, 'svg');

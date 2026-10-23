@@ -364,7 +364,7 @@
     st.cleanup.push(() => ['ended', 'timeupdate', 'pause'].forEach((t) => window.removeEventListener(t, gate, true)));
 
     // Original anhalten (außer wir übernehmen dessen Bild) und mit dem Laden beginnen
-    if (st.sources.length) { try { orig.muted = true; orig.pause(); } catch (e) {} tryNext(); }
+    if (st.sources.length) { showPoster(); try { orig.muted = true; orig.pause(); } catch (e) {} tryNext(); }
     else useCapture();
     showControls();
   }

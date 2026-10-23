@@ -71,10 +71,21 @@
 
   let lastNear = [];
   const byQuality = (a, b) => (b.res - a.res) || (b.br - a.br);
+  // Die ganze Seite nach Video-Adressen durchsuchen – auf großen Seiten (Facebook: viele MB) teuer. Darum nur einmal
+  // (der Seitentext enthält auch die Skripte) und das Ergebnis 1,5 s lang merken: beim Öffnen fragt der Player mehrmals.
+  let wholeMemo = { at: 0, href: '', n: -1, list: [] };
   function scanWholePage(out, seen) {
-    try { collectUrls(document.documentElement.innerHTML, out, seen, 'seite'); } catch (e) {}
-    const sc = document.getElementsByTagName('script');
-    for (let i = 0; i < sc.length; i++) collectUrls(sc[i].textContent, out, seen, 'script');
+    const now = Date.now(), n = document.getElementsByTagName('*').length;
+    if (now - wholeMemo.at > 1500 || wholeMemo.href !== location.href || wholeMemo.n !== n) {
+      const list = [];
+      try { collectUrls(document.documentElement.innerHTML, list, new Set(), 'seite'); } catch (e) {}
+      wholeMemo = { at: now, href: location.href, n: n, list: list };
+    }
+    for (const c of wholeMemo.list) {
+      if (out.length >= 400) break;
+      if (seen.has(c.u)) continue;
+      seen.add(c.u); out.push(Object.assign({}, c));
+    }
   }
   // ---------- Facebook: HD-Version mit Ton im Hintergrund nachladen ----------
   const hdCache = new Map();    // Video-ID (asset) -> {found, best, tries, at}
@@ -281,7 +292,14 @@
 
   // Videos auch in gekapselten Bereichen (Shadow DOM) finden – viele moderne Player verstecken sie dort.
   // Die Suche dort ist teurer, deshalb nur alle 3 Sekunden.
+  // Wie oft: in der ersten Minute (nach Laden oder Videowechsel) alle 3 s, danach alle 15 s – und gleich nach einem
+  // Tipp oder wenn etwas zu spielen beginnt (dann tauchen Player meist auf)
   let shadowVids = [], shadowAt = 0;
+  const shadowFrom = Date.now();
+  const shadowGap = () => (Date.now() - Math.max(shadowFrom, navAt || 0) < 60000 ? 3000 : 15000);
+  const shadowSoon = () => { if (Date.now() - shadowAt > 1000) shadowAt = 0; };
+  document.addEventListener('pointerdown', shadowSoon, true);
+  document.addEventListener('play', shadowSoon, true);
   function scanShadow() {
     const out = [];
     let budget = 8000;
@@ -328,7 +346,7 @@
   let lastVidCount = 0;
   function allVideos() {
     const list = Array.prototype.slice.call(document.getElementsByTagName('video'));
-    if (Date.now() - shadowAt > 3000) { shadowAt = Date.now(); shadowVids = scanShadow(); }
+    if (Date.now() - shadowAt > shadowGap()) { shadowAt = Date.now(); shadowVids = scanShadow(); }
     shadowVids = shadowVids.filter((v) => v.isConnected);
     shadowVids.forEach((v) => { if (list.indexOf(v) < 0) list.push(v); });
     if (Date.now() - frameAt > 1500) { frameAt = Date.now(); frameVids = blankFrameVideos(); }

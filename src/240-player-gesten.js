@@ -8,6 +8,7 @@
       if (pts.size === 2) {
         const a = Array.from(pts.values());
         if (g) clearTimeout(g.holdTimer);
+        if (g && g.seekOn) seekAbort(g);   // zweiter Finger mitten im Wischen: Wischen abbrechen, alles wie vorher
         pinch = { d0: Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1, d: 0, z0: st.zoom,
           mx: (a[0].x + a[1].x) / 2, my: (a[0].y + a[1].y) / 2, px: st.panX, py: st.panY };
         g = null; st.panFree = false;
@@ -78,10 +79,25 @@
       }
       const m = M();
       if (g.mode === 'seek') {
-        g.delta = dx / W * 90;   // ganze Bildschirmbreite = 90 Sekunden
-        const to = clamp(g.time + g.delta, 0, isFinite(m.duration) ? m.duration : g.time + g.delta);
-        showSeek(to, m.duration, g.delta);
-        if (st.liveMode && st.liveMode()) st.liveTo(to);   // Bild springt mit
+        // Wischen übers Video (wie Samsung Internet): Das Video hält an, das große Bild springt an die Stelle unter dem
+        // Wisch (immer nur ein Sprung auf einmal), die Zahlen zeigen genau den Sprung, der passiert. Loslassen: dort
+        // weiter (lief es vorher, läuft es wieder). Zurück zum Ausgangspunkt („+0 s“) = nichts ändern.
+        // Ganze Breite = 90 s; bei kurzen Videos die Länge (mindestens 20 s) – so geht es bei Reels nicht zu schnell
+        const d = m.duration, fin = isFinite(d) && d > 0;
+        if (!g.seekOn) {
+          g.seekOn = true; g.wasPlaying = !m.paused; g.edgeHit = 0;
+          st.swipeHold = true;
+          if (g.wasPlaying) { try { m.pause(); } catch (err) {} }
+        }
+        const span = fin ? clamp(d, 20, 90) : 90;
+        g.delta = dx / W * span;
+        const to = fin ? clamp(g.time + g.delta, 0, Math.max(0, d - 0.5)) : Math.max(0, g.time + g.delta);
+        const edge = fin && to <= 0 ? -1 : fin && to >= d - 0.5 ? 1 : 0;   // am Anfang/Ende: einmal kurz vibrieren
+        if (edge && edge !== g.edgeHit) { try { if (CONFIG.seekBuzz !== false && navigator.vibrate && touchFresh()) navigator.vibrate(10); } catch (err) {} }
+        g.edgeHit = edge;
+        g.to = to;
+        showSeek(to, d, to - g.time);
+        if (st.liveTo) st.liveTo(to);   // das große Bild springt mit (das Video steht ja)
       } else if (g.mode === 'vol' || g.mode === 'bright') {
         // gut ein Drittel der Bildschirmhöhe = 0 → 100 % (im Querformat mindestens 180 Pixel)
         const range = Math.max(H * 0.36, 180);
@@ -105,6 +121,14 @@
         }
       }
     });
+    // Wischen übers Video abbrechen (zweiter Finger …): zurück an den Ausgangspunkt, weiterlaufen wie vorher
+    function seekAbort(cur) {
+      hideSeek();
+      if (st.liveEnd) st.liveEnd(true);
+      st.swipeHold = false;
+      if (cur.wasPlaying) M().play().catch(() => {});
+    }
+    st.cleanup.push(() => { st.swipeHold = false; });
     const endGest = (e) => {
       const had = pts.has(e.pointerId);
       pts.delete(e.pointerId);
@@ -137,9 +161,13 @@
       if (cur.mode === 'seek') {
         const m = M();
         setTimeout(hideSeek, 350);   // kurz stehen lassen, dann weich ausblenden
-        if (st.liveEnd) st.liveEnd(false);
-        st.userSeekAt = Date.now();
-        try { m.currentTime = clamp(cur.time + cur.delta, 0, isFinite(m.duration) ? m.duration - 0.5 : cur.time + cur.delta); } catch (err) {}
+        const to = cur.to != null ? cur.to : cur.time;
+        // abbrechen: Android hat die Geste übernommen – oder zurück am Ausgangspunkt
+        const cancel = e.type === 'pointercancel' || Math.abs(to - cur.time) < 0.5;
+        if (st.liveEnd) st.liveEnd(cancel);
+        if (!cancel) { st.userSeekAt = Date.now(); try { m.currentTime = to; } catch (err) {} }
+        st.swipeHold = false;
+        if (cur.wasPlaying) m.play().catch(() => {});
         return;
       }
       if (cur.mode) return;

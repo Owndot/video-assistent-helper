@@ -197,18 +197,27 @@
       st.vid.disablePictureInPicture = true;   // beendet Bild-in-Bild auch dort, wo exitPictureInPicture nicht greift
     } catch (e) {}
     clearTimeout(st.loadTimer); clearTimeout(st.hideTimer); clearTimeout(st.u2);
-    handBack(st);   // Seite übernimmt an deiner Stelle (bei der Zurück-Geste schon geschehen)
-    if (st.hls) { try { st.hls.destroy(); } catch (e) {} }
-    if (st.actx) { try { st.actx.close(); } catch (e) {} }
-    try { st.vid.pause(); st.vid.srcObject = null; st.vid.removeAttribute('src'); st.vid.load(); } catch (e) {}
+    // Schneller zu: Ton aus, Player sofort unsichtbar, Vollbild aus – das Aufräumen (Seite übernimmt, Video und Stream
+    // abbauen …) kommt direkt danach, wenn der Bildschirm schon frei ist
+    try { st.vid.muted = true; st.vid.pause(); } catch (e) {}
+    st.wrap.style.display = 'none';
     try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch (e) {}
     try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
-    kadriShield(false);   // Seite bekommt „verdeckt/sichtbar“ wieder selbst
-    st.cleanup.forEach((f) => { try { f(); } catch (e) {} });
+    handBack(st);   // Seite übernimmt an deiner Stelle (bei der Zurück-Geste schon geschehen)
     // Mit ✕ geschlossen: unseren Verlaufseintrag wieder entfernen, damit "Zurück" danach normal funktioniert
     if (st.histPushed) { try { history.back(); } catch (e) {} }
     if (toastEl && root) { root.append(toastEl); toastEl.style.top = ''; toastEl.classList.remove('g'); toastEl.style.removeProperty('--lens'); toastEl.style.removeProperty('--gb'); if (lensRO) lensRO.unobserve(toastEl); }
-    st.wrap.remove();
+    const rest = () => {
+      if (st.hls) { try { st.hls.destroy(); } catch (e) {} }
+      if (st.actx) { try { st.actx.close(); } catch (e) {} }
+      try { st.vid.srcObject = null; st.vid.removeAttribute('src'); st.vid.load(); } catch (e) {}
+      if (!vp) kadriShield(false);   // Seite bekommt „verdeckt/sichtbar“ wieder selbst (außer ein neuer Player spiegelt schon)
+      st.cleanup.forEach((f) => { try { f(); } catch (e) {} });
+      st.wrap.remove();
+    };
+    // nach dem nächsten Bild (Bildschirm ist dann schon frei); im Hintergrund gibt es keine Bilder → gleich
+    if (document.hidden || typeof requestAnimationFrame !== 'function') rest();
+    else { let done = false; const go = () => { if (!done) { done = true; rest(); } }; requestAnimationFrame(() => setTimeout(go, 0)); setTimeout(go, 250); }
   }
 
   // Tipp auf "Player": eingebauter Player (Standard) oder externe App

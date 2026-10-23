@@ -1,3 +1,21 @@
+    // Sofortbild: Bis die eigene Kopie das erste Bild hat (neu laden + an die Stelle springen dauert auf langsamen
+    // Servern Sekunden), zeigt der Player das aktuelle Bild des Seitenvideos – er wirkt sofort da.
+    function showPoster() {
+      if (st.posterCv || !(orig.readyState >= 2) || !orig.videoWidth) return;
+      try {
+        const k = Math.min(1, 1280 / orig.videoWidth), c = document.createElement('canvas');
+        c.className = 'vposter';
+        c.width = Math.round(orig.videoWidth * k); c.height = Math.round(orig.videoHeight * k);
+        c.getContext('2d').drawImage(orig, 0, 0, c.width, c.height);
+        vid.after(c);
+        st.posterCv = c;
+        st.posterTm = setTimeout(dropPoster, 12000);
+      } catch (e) {}
+    }
+    function dropPoster() { clearTimeout(st.posterTm); if (st.posterCv) { st.posterCv.remove(); st.posterCv = null; } }
+    // weg, sobald das eigene Video wirklich läuft (an der richtigen Stelle) – oder beim Spiegeln
+    vid.addEventListener('playing', () => { if (st.mode === 'own' && (!st.startTime || Math.abs(vid.currentTime - st.startTime) < 3 || vid.currentTime > 0.5)) dropPoster(); });
+    st.cleanup.push(dropPoster);
     // ----- Laden: Quellen der Reihe nach, zuletzt Bild vom Original übernehmen -----
     function tryNext() {
       clearTimeout(st.loadTimer);
@@ -84,6 +102,7 @@
 
     function useCapture() {
       clearTimeout(st.loadTimer);
+      dropPoster();
       let ms = null;
       try { ms = orig.captureStream ? orig.captureStream() : (orig.mozCaptureStream ? orig.mozCaptureStream() : null); } catch (e) {}
       if (!ms) { toast('Dieses Video lässt sich hier nicht im eigenen Player zeigen'); closePlayer(); return; }

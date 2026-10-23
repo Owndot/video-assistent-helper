@@ -163,10 +163,15 @@
     };
     const hideInd = () => { clearTimeout(indTimer); ind.classList.remove('on'); };
     // Spul-Anzeige in der Mitte: Zielzeit groß, Restzeit klein (wie Samsung), dazu die Sprungweite
+    // Anzeige beim Wischen: große Zeit, darunter „Stelle / Länge“ mit kleiner Leiste, dann der Sprung („+3 s“)
     const showSeek = (to, dur, delta) => {
+      const fin = isFinite(dur) && dur > 0;
       seekBig.textContent = fmtTime(to);
-      seekRest.textContent = isFinite(dur) && dur > 0 ? '(−' + fmtTime(Math.max(0, dur - to)) + ')' : '';
-      seekDelta.textContent = (delta >= 0 ? '+' : '−') + Math.abs(Math.round(delta)) + ' s';
+      seekRest.textContent = fin ? '/ ' + fmtTime(dur) : '';   // (große Zahl = Stelle, darunter die Länge)
+      seekLine.style.display = fin ? '' : 'none';
+      if (fin) seekFill.style.transform = 'scaleX(' + clamp(to / dur, 0, 1).toFixed(3) + ')';
+      const a = Math.round(Math.abs(delta));
+      seekDelta.textContent = (delta < -0.4 ? '−' : '+') + (a < 60 ? a + ' s' : fmtTime(a));
       hideInd();
       wrap.classList.add('seeking');
       seekBox.classList.add('on');

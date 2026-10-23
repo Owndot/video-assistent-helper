@@ -92,6 +92,7 @@
       const k = Math.round(tt / bucketFor());
       thumbs.delete(k); thumbs.set(k, { c: c, t: tt });
       if (thumbs.size > 180) thumbs.delete(thumbs.keys().next().value);   // ~12 MB höchstens
+      prev.dataset.n = String(thumbs.size);   // (für Diagnose/Tests: so viele Bilder gemerkt)
       return c;
     }
     // Beim Anschauen nebenbei Bilder merken (je Fach eins, höchstens jede Sekunde): Gesehenes erscheint beim Spulen sofort
@@ -240,7 +241,14 @@
       if (st.mode === 'capture') { if (fbPrevSrc()) { pv.preload = 'metadata'; prevLoad(); } return; }   // Länge gleich prüfen
       if (st.mode !== 'own' || !st.cur) return;
       if (st.hls) { pvs.autoGrid = true; pvs.userDone = true; prevLoad(); if (pv.readyState >= 1) startGrid(); }
-      else { pv.preload = 'metadata'; prevLoad(); }
+      else {
+        // Dateien: im WLAN (ohne Datensparen) gleich das Raster vorholen, sonst nur das Inhaltsverzeichnis (wenige KB)
+        let wifi = false;
+        try { const c = navigator.connection; wifi = !!c && !c.saveData && (c.type === 'wifi' || c.type === 'ethernet'); } catch (e) {}
+        pv.preload = wifi ? 'auto' : 'metadata';
+        if (wifi) { pvs.autoGrid = true; pvs.userDone = true; }
+        prevLoad();
+      }
     };
     // ----- Spulen „im Bild“ (wie Samsung Internet) -----
     // Während du ziehst, springt das Video selbst an die Stelle – du siehst das echte Bild in voller Größe. Geht überall

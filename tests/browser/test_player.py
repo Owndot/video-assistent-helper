@@ -103,12 +103,12 @@ with sync_playwright() as p:
     t2 = page.evaluate('() => window.__evpRoot.querySelector(".vv").currentTime')
     check('Doppeltippen links spult ~10 s zurück', 7.5 <= (t1 - t2) <= 11.5, round(t1 - t2, 1))
 
-    # Waagerecht wischen: halbe Breite = +45 s
+    # Waagerecht wischen: ganze Breite = Länge (20–90 s) – hier 60 s, halbe Breite = +30 s
     t3 = page.evaluate('() => window.__evpRoot.querySelector(".vv").currentTime')
     page.mouse.move(100, 500); page.mouse.down(); page.mouse.move(300, 500, steps=8); page.mouse.up()
     time.sleep(0.6)
     t4 = page.evaluate('() => window.__evpRoot.querySelector(".vv").currentTime')
-    check('Wischen nach rechts spult ~45 s', 40 <= (t4 - t3) <= 50, round(t4 - t3, 1))
+    check('Wischen nach rechts spult ~30 s (halbe Breite bei 60 s Länge)', 26 <= (t4 - t3) <= 34, round(t4 - t3, 1))
 
     # Senkrecht wischen rechts: Lautstärke runter
     page.mouse.move(330, 300); page.mouse.down(); page.mouse.move(330, 540, steps=8); page.mouse.up()

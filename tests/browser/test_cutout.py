@@ -4,7 +4,8 @@ exec(open('test_v8.py').read().split("results = []")[0])
 R = 'window.__evpRoot'; ok = []
 with sync_playwright() as p:
     b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
-    for page in ['direct.html', 'direct_meta.html']:
+    # (Seite ohne Viewport-Angabe: keine anlegen – das baute die ganze Seite neu auf, auf großen Seiten langsam)
+    for page in ['direct.html', 'direct_meta.html', 'nometa.html']:
         ctx = b.new_context(viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True, device_scale_factor=2)
         ctx.add_init_script(PRE); ctx.add_init_script(HLS); ctx.add_init_script(SCRIPT)
         pg = ctx.new_page(); pg.goto('http://127.0.0.1:8775/' + page)
@@ -18,7 +19,7 @@ with sync_playwright() as p:
         pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.5)
         m2 = meta()
         print('%-17s vorher: %-55s | offen: %s | danach: %s' % (page, m0, m1, m2))
-        ok.append('viewport-fit=cover' in (m1 or '') and m2 == m0)
+        ok.append((m1 is None and m2 is None) if m0 is None else ('viewport-fit=cover' in (m1 or '') and m2 == m0))
         ctx.close()
     b.close()
 srv.shutdown()

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.14
+// @version      19.15
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -452,7 +452,22 @@
   const VIS_EV = 'kadri-vis';
   function onVisChange(f, cap) { document.addEventListener('visibilitychange', f, cap); if (IS_KADRI) document.addEventListener(VIS_EV, f, cap); }
   function offVisChange(f, cap) { document.removeEventListener('visibilitychange', f, cap); if (IS_KADRI) document.removeEventListener(VIS_EV, f, cap); }
-  const kadriPage = () => { try { return IS_KADRI && document.documentElement.hasAttribute('data-kadri-page'); } catch (e) { return false; } };
+  // Läuft page.js in dieser Seite (Chrome/Vivaldi)? Kurz nachfragen – page.js antwortet sofort. (Kein Merkmal an der
+  // Seite, an dem Webseiten Kadri erkennen könnten.) Einmal „ja“ gilt für immer.
+  let kadriPageOk = false;
+  const kadriPage = () => {
+    if (!IS_KADRI) return false;
+    if (kadriPageOk) return true;
+    try {
+      let ok = false;
+      const f = () => { ok = true; };
+      document.addEventListener('kadri-pong', f);
+      document.dispatchEvent(new Event('kadri-ping'));
+      document.removeEventListener('kadri-pong', f);
+      kadriPageOk = ok;
+      return ok;
+    } catch (e) { return false; }
+  };
   function kadriShield(on) {
     if (!kadriPage()) return;
     try { document.dispatchEvent(new CustomEvent('kadri-ctl', { detail: JSON.stringify({ shield: !!on }) })); } catch (e) {}
@@ -1112,10 +1127,21 @@
 
   let lastNear = [];
   const byQuality = (a, b) => (b.res - a.res) || (b.br - a.br);
+  // Die ganze Seite nach Video-Adressen durchsuchen – auf großen Seiten (Facebook: viele MB) teuer. Darum nur einmal
+  // (der Seitentext enthält auch die Skripte) und das Ergebnis 1,5 s lang merken: beim Öffnen fragt der Player mehrmals.
+  let wholeMemo = { at: 0, href: '', n: -1, list: [] };
   function scanWholePage(out, seen) {
-    try { collectUrls(document.documentElement.innerHTML, out, seen, 'seite'); } catch (e) {}
-    const sc = document.getElementsByTagName('script');
-    for (let i = 0; i < sc.length; i++) collectUrls(sc[i].textContent, out, seen, 'script');
+    const now = Date.now(), n = document.getElementsByTagName('*').length;
+    if (now - wholeMemo.at > 1500 || wholeMemo.href !== location.href || wholeMemo.n !== n) {
+      const list = [];
+      try { collectUrls(document.documentElement.innerHTML, list, new Set(), 'seite'); } catch (e) {}
+      wholeMemo = { at: now, href: location.href, n: n, list: list };
+    }
+    for (const c of wholeMemo.list) {
+      if (out.length >= 400) break;
+      if (seen.has(c.u)) continue;
+      seen.add(c.u); out.push(Object.assign({}, c));
+    }
   }
   // ---------- Facebook: HD-Version mit Ton im Hintergrund nachladen ----------
   const hdCache = new Map();    // Video-ID (asset) -> {found, best, tries, at}
@@ -1322,7 +1348,14 @@
 
   // Videos auch in gekapselten Bereichen (Shadow DOM) finden – viele moderne Player verstecken sie dort.
   // Die Suche dort ist teurer, deshalb nur alle 3 Sekunden.
+  // Wie oft: in der ersten Minute (nach Laden oder Videowechsel) alle 3 s, danach alle 15 s – und gleich nach einem
+  // Tipp oder wenn etwas zu spielen beginnt (dann tauchen Player meist auf)
   let shadowVids = [], shadowAt = 0;
+  const shadowFrom = Date.now();
+  const shadowGap = () => (Date.now() - Math.max(shadowFrom, navAt || 0) < 60000 ? 3000 : 15000);
+  const shadowSoon = () => { if (Date.now() - shadowAt > 1000) shadowAt = 0; };
+  document.addEventListener('pointerdown', shadowSoon, true);
+  document.addEventListener('play', shadowSoon, true);
   function scanShadow() {
     const out = [];
     let budget = 8000;
@@ -1369,7 +1402,7 @@
   let lastVidCount = 0;
   function allVideos() {
     const list = Array.prototype.slice.call(document.getElementsByTagName('video'));
-    if (Date.now() - shadowAt > 3000) { shadowAt = Date.now(); shadowVids = scanShadow(); }
+    if (Date.now() - shadowAt > shadowGap()) { shadowAt = Date.now(); shadowVids = scanShadow(); }
     shadowVids = shadowVids.filter((v) => v.isConnected);
     shadowVids.forEach((v) => { if (list.indexOf(v) < 0) list.push(v); });
     if (Date.now() - frameAt > 1500) { frameAt = Date.now(); frameVids = blankFrameVideos(); }
@@ -2116,8 +2149,9 @@
     if (!lensOn() || !el) return;
     // Play, ±10 und das Menü ohne Lupen-Effekt – so gewünscht
     if (el.classList && (el.classList.contains('vplay') || el.classList.contains('vskip') || el.classList.contains('vmenu'))) return;
-    applyLens(el);
-    if (lensRO) lensRO.observe(el);
+    // mit ResizeObserver: der meldet die Größe ohnehin gleich nach dem nächsten Aufbau – dann ohne erzwungenes
+    // Vermessen mitten im Öffnen (das kostete auf großen Seiten spürbar Zeit)
+    if (lensRO) lensRO.observe(el); else applyLens(el);
   }
 
   function ui() {
@@ -2464,6 +2498,8 @@
 .vp.flash::after{content:"";position:absolute;inset:0;background:#fff;opacity:0;animation:vflash .35s ease;pointer-events:none;z-index:9}
 @keyframes vflash{0%{opacity:.55}100%{opacity:0}}
 .vv{position:absolute;inset:0;margin:auto;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;object-position:50% 50%;background:transparent;transform-origin:50% 50%}
+/* Sofortbild beim Öffnen (Bild des Seitenvideos), bis die eigene Kopie läuft */
+.vposter{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
 /* Ambient-Modus: die Farben des Bildes leuchten weich in die schwarzen Ränder (wie bei YouTube) */
 .vamb{position:absolute;left:-12%;top:-12%;width:124%;height:124%;opacity:0;transition:opacity .8s ease;pointer-events:none}
 /* Firefox-Handy (zweites Video statt Mini-Bild): Weichzeichnen und Rand per CSS. Sonst steckt beides schon im
@@ -2602,6 +2638,9 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vseek b{display:block;font:200 68px/1 var(--font);letter-spacing:.5px}
 .vseek small{display:block;margin-top:10px;font:300 21px/1 var(--font);color:rgba(255,255,255,.88)}
 .vseek i{display:block;margin-top:8px;font:500 13px/1 var(--font);font-style:normal;color:rgba(255,255,255,.7);letter-spacing:.3px}
+/* kleine Leiste beim Wischen: wo im Video (Stelle / Länge) */
+.vseekl{display:block;position:relative;width:150px;height:3px;margin:10px auto 0;border-radius:2px;background:rgba(255,255,255,.28);overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.vseekf{position:absolute;inset:0;background:#fff;transform-origin:0 50%;transform:scaleX(0)}
 .vp.seeking .vchrome{opacity:0 !important}
 /* Doppelt tippen links/rechts (wie Samsung Internet, in unserem Glas): runde Glasscheibe springt auf,
    der Kreispfeil dreht sich einmal in Sprungrichtung, ein feiner Lichtring breitet sich aus. Zahl = Sekunden. */
@@ -2798,7 +2837,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     const indFill = h('i');
     const ind = h('div', { class: 'vind g', 'aria-live': 'polite' }, indTxt);
     const seekBig = h('b', null, '0:00'), seekRest = h('small', null, ''), seekDelta = h('i', null, '');
-    const seekBox = h('div', { class: 'vseek', 'aria-live': 'polite' }, seekBig, seekRest, seekDelta);
+    const seekFill = h('span', { class: 'vseekf' }), seekLine = h('span', { class: 'vseekl' }, seekFill);
+    const seekBox = h('div', { class: 'vseek', 'aria-live': 'polite' }, seekBig, seekRest, seekLine, seekDelta);
     // Anzeige fürs doppelte Tippen: Glasscheibe mit Kreispfeil (vor = gespiegelt) – die Zahl zeigt die Sekunden
     const mkSfx = (dir) => {
       const sv = document.createElementNS(NS, 'svg');
@@ -3048,10 +3088,15 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     };
     const hideInd = () => { clearTimeout(indTimer); ind.classList.remove('on'); };
     // Spul-Anzeige in der Mitte: Zielzeit groß, Restzeit klein (wie Samsung), dazu die Sprungweite
+    // Anzeige beim Wischen: große Zeit, darunter „Stelle / Länge“ mit kleiner Leiste, dann der Sprung („+3 s“)
     const showSeek = (to, dur, delta) => {
+      const fin = isFinite(dur) && dur > 0;
       seekBig.textContent = fmtTime(to);
-      seekRest.textContent = isFinite(dur) && dur > 0 ? '(−' + fmtTime(Math.max(0, dur - to)) + ')' : '';
-      seekDelta.textContent = (delta >= 0 ? '+' : '−') + Math.abs(Math.round(delta)) + ' s';
+      seekRest.textContent = fin ? '/ ' + fmtTime(dur) : '';   // (große Zahl = Stelle, darunter die Länge)
+      seekLine.style.display = fin ? '' : 'none';
+      if (fin) seekFill.style.transform = 'scaleX(' + clamp(to / dur, 0, 1).toFixed(3) + ')';
+      const a = Math.round(Math.abs(delta));
+      seekDelta.textContent = (delta < -0.4 ? '−' : '+') + (a < 60 ? a + ' s' : fmtTime(a));
       hideInd();
       wrap.classList.add('seeking');
       seekBox.classList.add('on');
@@ -3177,12 +3222,13 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // ist, erlauben wir der Seite das Zeichnen bis an den Rand; Knöpfe weichen über safe-area weiterhin aus.
     (function edgeToEdge() {
       try {
-        let m = document.querySelector('meta[name="viewport"]'), made = false;
+        // Nur eine vorhandene Angabe ergänzen. Fehlt sie (Seiten fürs große Bild), NICHT neu anlegen: Das änderte die
+        // Breite der ganzen Seite – auf großen Seiten mehrere hundert Millisekunden Neuaufbau beim Öffnen und Schließen.
+        const m = document.querySelector('meta[name="viewport"]');
         const before = m ? m.getAttribute('content') : null;
-        if (!m) { m = document.createElement('meta'); m.name = 'viewport'; (document.head || document.documentElement).appendChild(m); made = true; }
-        const c = before || 'width=device-width, initial-scale=1';
-        if (!/viewport-fit\s*=\s*cover/i.test(c)) m.setAttribute('content', c.replace(/,?\s*viewport-fit\s*=\s*\w+/i, '') + ', viewport-fit=cover');
-        st.cleanup.push(() => { try { if (made) m.remove(); else if (before !== null) m.setAttribute('content', before); } catch (e) {} });
+        if (!m || before === null) return;
+        if (!/viewport-fit\s*=\s*cover/i.test(before)) m.setAttribute('content', before.replace(/,?\s*viewport-fit\s*=\s*\w+/i, '') + ', viewport-fit=cover');
+        st.cleanup.push(() => { try { m.setAttribute('content', before); } catch (e) {} });
       } catch (e) {}
     })();
 
@@ -3352,7 +3398,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if ((st.mode === 'capture') !== fromOrig) return;
       if (e.type === 'waiting') spin.classList.add('on');
       if (e.type === 'playing' || e.type === 'canplay') spin.classList.remove('on');
-      if (e.type === 'pause') showControls();
+      if (e.type === 'pause' && !st.swipeHold) showControls();   // (kurze Pause beim Wischen übers Video: Leisten nicht zeigen)
       updateUI();
     };
     ['timeupdate', 'durationchange', 'play', 'pause', 'waiting', 'playing', 'canplay', 'seeked'].forEach((t) => {
@@ -3361,6 +3407,24 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       st.cleanup.push(() => orig.removeEventListener(t, onMediaEv));
     });
 
+    // Sofortbild: Bis die eigene Kopie das erste Bild hat (neu laden + an die Stelle springen dauert auf langsamen
+    // Servern Sekunden), zeigt der Player das aktuelle Bild des Seitenvideos – er wirkt sofort da.
+    function showPoster() {
+      if (st.posterCv || !(orig.readyState >= 2) || !orig.videoWidth) return;
+      try {
+        const k = Math.min(1, 1280 / orig.videoWidth), c = document.createElement('canvas');
+        c.className = 'vposter';
+        c.width = Math.round(orig.videoWidth * k); c.height = Math.round(orig.videoHeight * k);
+        c.getContext('2d').drawImage(orig, 0, 0, c.width, c.height);
+        vid.after(c);
+        st.posterCv = c;
+        st.posterTm = setTimeout(dropPoster, 12000);
+      } catch (e) {}
+    }
+    function dropPoster() { clearTimeout(st.posterTm); if (st.posterCv) { st.posterCv.remove(); st.posterCv = null; } }
+    // weg, sobald das eigene Video wirklich läuft (an der richtigen Stelle) – oder beim Spiegeln
+    vid.addEventListener('playing', () => { if (st.mode === 'own' && (!st.startTime || Math.abs(vid.currentTime - st.startTime) < 3 || vid.currentTime > 0.5)) dropPoster(); });
+    st.cleanup.push(dropPoster);
     // ----- Laden: Quellen der Reihe nach, zuletzt Bild vom Original übernehmen -----
     function tryNext() {
       clearTimeout(st.loadTimer);
@@ -3447,6 +3511,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 
     function useCapture() {
       clearTimeout(st.loadTimer);
+      dropPoster();
       let ms = null;
       try { ms = orig.captureStream ? orig.captureStream() : (orig.mozCaptureStream ? orig.mozCaptureStream() : null); } catch (e) {}
       if (!ms) { toast('Dieses Video lässt sich hier nicht im eigenen Player zeigen'); closePlayer(); return; }
@@ -5029,6 +5094,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       const k = Math.round(tt / bucketFor());
       thumbs.delete(k); thumbs.set(k, { c: c, t: tt });
       if (thumbs.size > 180) thumbs.delete(thumbs.keys().next().value);   // ~12 MB höchstens
+      prev.dataset.n = String(thumbs.size);   // (für Diagnose/Tests: so viele Bilder gemerkt)
       return c;
     }
     // Beim Anschauen nebenbei Bilder merken (je Fach eins, höchstens jede Sekunde): Gesehenes erscheint beim Spulen sofort
@@ -5177,7 +5243,14 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (st.mode === 'capture') { if (fbPrevSrc()) { pv.preload = 'metadata'; prevLoad(); } return; }   // Länge gleich prüfen
       if (st.mode !== 'own' || !st.cur) return;
       if (st.hls) { pvs.autoGrid = true; pvs.userDone = true; prevLoad(); if (pv.readyState >= 1) startGrid(); }
-      else { pv.preload = 'metadata'; prevLoad(); }
+      else {
+        // Dateien: im WLAN (ohne Datensparen) gleich das Raster vorholen, sonst nur das Inhaltsverzeichnis (wenige KB)
+        let wifi = false;
+        try { const c = navigator.connection; wifi = !!c && !c.saveData && (c.type === 'wifi' || c.type === 'ethernet'); } catch (e) {}
+        pv.preload = wifi ? 'auto' : 'metadata';
+        if (wifi) { pvs.autoGrid = true; pvs.userDone = true; }
+        prevLoad();
+      }
     };
     // ----- Spulen „im Bild“ (wie Samsung Internet) -----
     // Während du ziehst, springt das Video selbst an die Stelle – du siehst das echte Bild in voller Größe. Geht überall
@@ -5252,6 +5325,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (pts.size === 2) {
         const a = Array.from(pts.values());
         if (g) clearTimeout(g.holdTimer);
+        if (g && g.seekOn) seekAbort(g);   // zweiter Finger mitten im Wischen: Wischen abbrechen, alles wie vorher
         pinch = { d0: Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1, d: 0, z0: st.zoom,
           mx: (a[0].x + a[1].x) / 2, my: (a[0].y + a[1].y) / 2, px: st.panX, py: st.panY };
         g = null; st.panFree = false;
@@ -5322,10 +5396,25 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       }
       const m = M();
       if (g.mode === 'seek') {
-        g.delta = dx / W * 90;   // ganze Bildschirmbreite = 90 Sekunden
-        const to = clamp(g.time + g.delta, 0, isFinite(m.duration) ? m.duration : g.time + g.delta);
-        showSeek(to, m.duration, g.delta);
-        if (st.liveMode && st.liveMode()) st.liveTo(to);   // Bild springt mit
+        // Wischen übers Video (wie Samsung Internet): Das Video hält an, das große Bild springt an die Stelle unter dem
+        // Wisch (immer nur ein Sprung auf einmal), die Zahlen zeigen genau den Sprung, der passiert. Loslassen: dort
+        // weiter (lief es vorher, läuft es wieder). Zurück zum Ausgangspunkt („+0 s“) = nichts ändern.
+        // Ganze Breite = 90 s; bei kurzen Videos die Länge (mindestens 20 s) – so geht es bei Reels nicht zu schnell
+        const d = m.duration, fin = isFinite(d) && d > 0;
+        if (!g.seekOn) {
+          g.seekOn = true; g.wasPlaying = !m.paused; g.edgeHit = 0;
+          st.swipeHold = true;
+          if (g.wasPlaying) { try { m.pause(); } catch (err) {} }
+        }
+        const span = fin ? clamp(d, 20, 90) : 90;
+        g.delta = dx / W * span;
+        const to = fin ? clamp(g.time + g.delta, 0, Math.max(0, d - 0.5)) : Math.max(0, g.time + g.delta);
+        const edge = fin && to <= 0 ? -1 : fin && to >= d - 0.5 ? 1 : 0;   // am Anfang/Ende: einmal kurz vibrieren
+        if (edge && edge !== g.edgeHit) { try { if (CONFIG.seekBuzz !== false && navigator.vibrate && touchFresh()) navigator.vibrate(10); } catch (err) {} }
+        g.edgeHit = edge;
+        g.to = to;
+        showSeek(to, d, to - g.time);
+        if (st.liveTo) st.liveTo(to);   // das große Bild springt mit (das Video steht ja)
       } else if (g.mode === 'vol' || g.mode === 'bright') {
         // gut ein Drittel der Bildschirmhöhe = 0 → 100 % (im Querformat mindestens 180 Pixel)
         const range = Math.max(H * 0.36, 180);
@@ -5349,6 +5438,14 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         }
       }
     });
+    // Wischen übers Video abbrechen (zweiter Finger …): zurück an den Ausgangspunkt, weiterlaufen wie vorher
+    function seekAbort(cur) {
+      hideSeek();
+      if (st.liveEnd) st.liveEnd(true);
+      st.swipeHold = false;
+      if (cur.wasPlaying) M().play().catch(() => {});
+    }
+    st.cleanup.push(() => { st.swipeHold = false; });
     const endGest = (e) => {
       const had = pts.has(e.pointerId);
       pts.delete(e.pointerId);
@@ -5381,9 +5478,13 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (cur.mode === 'seek') {
         const m = M();
         setTimeout(hideSeek, 350);   // kurz stehen lassen, dann weich ausblenden
-        if (st.liveEnd) st.liveEnd(false);
-        st.userSeekAt = Date.now();
-        try { m.currentTime = clamp(cur.time + cur.delta, 0, isFinite(m.duration) ? m.duration - 0.5 : cur.time + cur.delta); } catch (err) {}
+        const to = cur.to != null ? cur.to : cur.time;
+        // abbrechen: Android hat die Geste übernommen – oder zurück am Ausgangspunkt
+        const cancel = e.type === 'pointercancel' || Math.abs(to - cur.time) < 0.5;
+        if (st.liveEnd) st.liveEnd(cancel);
+        if (!cancel) { st.userSeekAt = Date.now(); try { m.currentTime = to; } catch (err) {} }
+        st.swipeHold = false;
+        if (cur.wasPlaying) m.play().catch(() => {});
         return;
       }
       if (cur.mode) return;
@@ -5795,7 +5896,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     st.cleanup.push(() => ['ended', 'timeupdate', 'pause'].forEach((t) => window.removeEventListener(t, gate, true)));
 
     // Original anhalten (außer wir übernehmen dessen Bild) und mit dem Laden beginnen
-    if (st.sources.length) { try { orig.muted = true; orig.pause(); } catch (e) {} tryNext(); }
+    if (st.sources.length) { showPoster(); try { orig.muted = true; orig.pause(); } catch (e) {} tryNext(); }
     else useCapture();
     showControls();
   }
@@ -6000,18 +6101,27 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       st.vid.disablePictureInPicture = true;   // beendet Bild-in-Bild auch dort, wo exitPictureInPicture nicht greift
     } catch (e) {}
     clearTimeout(st.loadTimer); clearTimeout(st.hideTimer); clearTimeout(st.u2);
-    handBack(st);   // Seite übernimmt an deiner Stelle (bei der Zurück-Geste schon geschehen)
-    if (st.hls) { try { st.hls.destroy(); } catch (e) {} }
-    if (st.actx) { try { st.actx.close(); } catch (e) {} }
-    try { st.vid.pause(); st.vid.srcObject = null; st.vid.removeAttribute('src'); st.vid.load(); } catch (e) {}
+    // Schneller zu: Ton aus, Player sofort unsichtbar, Vollbild aus – das Aufräumen (Seite übernimmt, Video und Stream
+    // abbauen …) kommt direkt danach, wenn der Bildschirm schon frei ist
+    try { st.vid.muted = true; st.vid.pause(); } catch (e) {}
+    st.wrap.style.display = 'none';
     try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch (e) {}
     try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
-    kadriShield(false);   // Seite bekommt „verdeckt/sichtbar“ wieder selbst
-    st.cleanup.forEach((f) => { try { f(); } catch (e) {} });
+    handBack(st);   // Seite übernimmt an deiner Stelle (bei der Zurück-Geste schon geschehen)
     // Mit ✕ geschlossen: unseren Verlaufseintrag wieder entfernen, damit "Zurück" danach normal funktioniert
     if (st.histPushed) { try { history.back(); } catch (e) {} }
     if (toastEl && root) { root.append(toastEl); toastEl.style.top = ''; toastEl.classList.remove('g'); toastEl.style.removeProperty('--lens'); toastEl.style.removeProperty('--gb'); if (lensRO) lensRO.unobserve(toastEl); }
-    st.wrap.remove();
+    const rest = () => {
+      if (st.hls) { try { st.hls.destroy(); } catch (e) {} }
+      if (st.actx) { try { st.actx.close(); } catch (e) {} }
+      try { st.vid.srcObject = null; st.vid.removeAttribute('src'); st.vid.load(); } catch (e) {}
+      if (!vp) kadriShield(false);   // Seite bekommt „verdeckt/sichtbar“ wieder selbst (außer ein neuer Player spiegelt schon)
+      st.cleanup.forEach((f) => { try { f(); } catch (e) {} });
+      st.wrap.remove();
+    };
+    // nach dem nächsten Bild (Bildschirm ist dann schon frei); im Hintergrund gibt es keine Bilder → gleich
+    if (document.hidden || typeof requestAnimationFrame !== 'function') rest();
+    else { let done = false; const go = () => { if (!done) { done = true; rest(); } }; requestAnimationFrame(() => setTimeout(go, 0)); setTimeout(go, 250); }
   }
 
   // Tipp auf "Player": eingebauter Player (Standard) oder externe App
@@ -6365,7 +6475,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.14',
+      'Video-Assistent 19.15',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
