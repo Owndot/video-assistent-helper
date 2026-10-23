@@ -140,10 +140,16 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vtime.vtz{color:#fff;font-weight:700;padding:4px 6px;border-radius:11px;min-width:34px;box-shadow:0 2px 10px rgba(0,0,0,.22)}
 .vbarmk.off{display:none}
 /* alte Stelle beim Ziehen (dorthin zurück rastet ein) */
-.vbarmk{position:absolute;top:50%;left:0;width:3px;height:26px;margin-top:-13px;border-radius:2px;background:#fff;box-shadow:0 0 4px rgba(0,0,0,.6);opacity:0;pointer-events:none;z-index:1;transition:opacity .15s ease,transform .15s ease}
-.vp.thick .vbarmk{opacity:.85}
-.vp.scrubsnap .vbarmk{opacity:1;transform:scaleY(1.25)}
+.vbarmk{position:absolute;top:50%;left:0;width:10px;height:10px;margin-top:-5px;border-radius:50%;box-sizing:border-box;background:rgba(20,22,30,.5);border:2px solid rgba(255,255,255,.85);box-shadow:0 0 3px rgba(0,0,0,.45);opacity:0;pointer-events:none;z-index:1;transition:opacity .15s ease,transform .15s ease}
+.vp.thick .vbarmk{opacity:.8}
+.vp.scrubsnap .vbarmk{opacity:1;transform:scale(1.5)}
 .vp.scrubx .vbarmk{opacity:0}
+/* großer Punkt beim Ziehen: immer unter dem Finger, im Glas des Designs (Schlicht = Milchglas), weißer Kern */
+.vknob.g{position:absolute;top:50%;left:0;width:34px;height:34px;margin-top:-17px;border-radius:50%;pointer-events:none;z-index:3;opacity:0;transform:scale(.4);transition:opacity .12s ease,transform .2s cubic-bezier(.34,1.56,.64,1)}
+.vknob b{position:absolute;inset:9px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.45);z-index:2}
+.vp.thick .vknob{opacity:1;transform:none}
+.vp.scrubx .vknob{opacity:.35}
+.vp.zoom .vknob b{background:#e4dcff}
 .vbar::-webkit-slider-thumb{-webkit-appearance:none;margin-top:-6.5px;width:18px;height:18px;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1);transition:transform .2s cubic-bezier(.34,1.56,.64,1),margin .18s ease}
 .vbar::-moz-range-thumb{width:18px;height:18px;border:0;border-radius:50%;background:#000;box-shadow:0 0 8px rgba(0,0,0,.55);transform:scale(1)}
 .vbar:active::-moz-range-thumb{transform:scale(1.2)}

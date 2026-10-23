@@ -102,32 +102,48 @@
       bUnlock.addEventListener('contextmenu', (e) => e.preventDefault());
     })();
 
-    // Fortschrittsbalken – Spulen auf der Leiste (19.4, neu 19.7). Eigene, große Berührungsfläche statt des
-    // Schiebereglers des Browsers:
+    // Fortschrittsbalken – Spulen auf der Leiste (19.4, neu 19.8). Eigene, große Berührungsfläche statt des
+    // Schiebereglers des Browsers. Vorbilder: YouTube (Punkt unter dem Finger, zurück an die alte Stelle = abbrechen)
+    // und iPhone (Finger nach unten = feiner, in Stufen, wieder hoch = normal):
     //  - kurz antippen = an diese Stelle springen
-    //  - ziehen = die Stelle steht unter dem Finger (wie YouTube); die Leiste wird dabei dick. Über der Vorschau steht,
-    //    wie weit es von der alten Stelle weg ist („0:38 · +18 s“).
-    //  - Lupe (nach dem Vorbild von YouTubes „präzisem Spulen“: halten = genauer Modus): Finger beim Ziehen ~½ s
-    //    stillhalten (oder die Leiste gedrückt halten) → kurzes Vibrieren, die Leiste zeigt nur noch einen Ausschnitt
-    //    (20–60 s, links/rechts stehen dessen Grenzen). Jetzt geht es sekundengenau. Finger an ein Ende der Leiste =
-    //    der Ausschnitt wandert mit. Bleibt bis zum Loslassen. Nur bei Videos ab 1,5 min (sonst reicht die Leiste).
-    //  - zurück an die alte Stelle (weißer Strich): rastet ein (kurzes Vibrieren, „± 0“) – loslassen dort = nichts ändern
-    //  - nach oben weg vom Balken = abbrechen (Hinweis erscheint); loslassen dort = zurück an die alte Stelle.
+    //  - ziehen = die Stelle (großer Punkt im Glas des Designs) steht unter dem Finger; die Leiste wird dick. Über der
+    //    Vorschau steht, wie weit es von der alten Stelle weg ist („0:38 · +18 s“).
+    //  - Lupe in Stufen (nur bei Videos ab 1,5 min): Finger beim Ziehen unter die Leiste = „Lupe“ (Ausschnitt ~1 min),
+    //    noch tiefer = „Fein“ (Ausschnitt ~15 s). Die Leiste zeigt dann nur den Ausschnitt, links/rechts stehen dessen
+    //    Grenzen, im Schild „Lupe“/„Fein“, beim Wechsel ein kurzes Vibrieren. Wieder hoch = eine Stufe zurück, auf
+    //    Höhe der Leiste = normal (die Stelle gleitet dann beim Weiterziehen wieder unter den Finger, kein Sprung).
+    //    Finger an ein Ende der Leiste = der Ausschnitt wandert mit.
+    //  - alte Stelle = kleiner Punkt auf der Leiste; dorthin zurück rastet ein (kurzes Vibrieren, „± 0“) – loslassen
+    //    dort = nichts ändern
+    //  - weit nach oben weg vom Balken = abbrechen (Hinweis erscheint); loslassen dort = zurück an die alte Stelle.
     //    Zurück nach unten = weiter spulen. Übernimmt Android die Geste (Hochwischen vom Rand), ebenfalls abbrechen.
     //    Hochwischen ist kein Spulen: die Stelle folgt dem Finger erst, wenn er ~10 px zur Seite gezogen hat.
     const barHit = h('div', { class: 'vbarhit', 'aria-hidden': 'true' });
     const barMark = h('i', { class: 'vbarmk' });
-    bar.parentNode.append(barHit, barMark);
+    const barKnob = h('i', { class: 'vknob g' }, h('b'));
+    bar.parentNode.append(barHit, barMark, barKnob);
     bar.tabIndex = -1;
     const scr = { on: false, id: 0, x0: 0, y0: 0, lx: 0, t0: 0, t: 0, raw: 0, moved: false, first: true, mode: '', snap: false, away: false,
-      z: 0, ws: 0, zt: 0, zx: 0, hx: 0, holdTm: 0, pan: 0, pt: 0 };
+      lv: 0, z: 0, ws: 0, zt: 0, zx: 0, off: 0, pan: 0, pt: 0 };
     const buzz = () => { try { if (navigator.vibrate && touchFresh()) navigator.vibrate(12); } catch (e) {} };
     // Abstand zur alten Stelle: „+12 s“, „−1:05“
     const delta = (x) => { const a = Math.round(Math.abs(x)); return (x < 0 ? '−' : '+') + (a < 60 ? a + ' s' : fmtTime(a)); };
+    const tenth = (t) => fmtTime(t) + ',' + Math.floor((t % 1) * 10);   // „2:11,4“ (für „Fein“)
     const durOk = () => { const d = M().duration; return isFinite(d) && d > 0 ? d : 0; };
     const barBack = () => { const m = M(), d = durOk(); if (d) { bar.value = String(Math.round(m.currentTime / d * 1000)); paintBar(bar.value / 1000); tCur.textContent = fmtTime(m.currentTime); } };
     const geom = () => { const br = bar.getBoundingClientRect(); return { br: br, L: br.left + 7, w: Math.max(60, br.width - 14) }; };
-    const zoomSpan = (d) => (d >= 90 ? clamp(d / 8, 20, 60) : 0);   // Breite des Ausschnitts in Sekunden
+    // Ausschnitt je Stufe in Sekunden (0 = ganze Länge): Lupe ≈ Länge ÷ 6 (20–60 s), Fein = Lupe ÷ 4 (mind. 5 s)
+    const spanFor = (lv, d) => { if (!lv || d < 90) return 0; const z1 = clamp(d / 6, 20, 60); return lv === 1 ? z1 : Math.max(5, z1 / 4); };
+    // Stufe aus der Höhe des Fingers unter der Leiste (Querformat: weniger Platz → Stufen näher beieinander)
+    function levelFor(dy) {
+      const room = Math.max(60, innerHeight - scr.y0 - 8);
+      const s1 = Math.min(42, room * 0.32), s2 = Math.min(92, room * 0.68), hy = 8;
+      const cur = scr.lv;
+      if (dy > s2 + (cur === 2 ? -hy : hy)) return 2;
+      if (dy > s1 + (cur >= 1 ? -hy : hy)) return 1;
+      return 0;
+    }
+    const posX = (p) => { const g = geom(), rr = bar.parentNode.getBoundingClientRect(); return g.L - rr.left + clamp(p, 0, 1) * g.w; };
     function scrubShow(t) {
       const d = durOk();
       if (!d) return;
@@ -136,52 +152,60 @@
         p = clamp((t - scr.ws) / scr.z, 0, 1);
         const P1 = (p * 100).toFixed(2);
         bar.style.setProperty('--trk', 'linear-gradient(to right,#000 ' + P1 + '%,rgba(0,0,0,.3) ' + P1 + '%)');   // (umgedreht per invert)
-        const m0 = (scr.t0 - scr.ws) / scr.z, g = geom(), rr = bar.parentNode.getBoundingClientRect();
-        barMark.style.left = Math.round(g.L - rr.left + clamp(m0, 0, 1) * g.w - 1.5) + 'px';
+        const m0 = (scr.t0 - scr.ws) / scr.z;
+        barMark.style.left = Math.round(posX(m0) - 5) + 'px';
         barMark.classList.toggle('off', m0 < 0 || m0 > 1);
         tCur.textContent = fmtTime(scr.ws); tDur.textContent = fmtTime(scr.ws + scr.z);
       } else {
         paintBar(p);
+        barMark.style.left = Math.round(posX(scr.t0 / d) - 5) + 'px';
+        barMark.classList.remove('off');
         tCur.textContent = fmtTime(t);
+        if (scr.on) tDur.textContent = fmtTime(d);
       }
       bar.value = String(Math.round(p * 1000));
+      barKnob.style.left = Math.round(posX(p) - 17) + 'px';
       prevShow(p, t);
       wrap.classList.toggle('scrubx', scr.mode === 'cancel');
       wrap.classList.toggle('scrubsnap', scr.snap && scr.mode !== 'cancel');
+      wrap.classList.toggle('zoom', !!scr.z);
       if (scr.mode === 'cancel') pvTime.textContent = tr('Loslassen = abbrechen');
-      else if (scr.moved) pvTime.textContent = fmtTime(t) + ' · ' + (scr.snap ? '± 0' : delta(t - scr.t0));
+      else if (scr.moved) {
+        const tx = (scr.lv === 2 ? tenth(t) : fmtTime(t)) + ' · ' + (scr.snap ? '± 0' : delta(t - scr.t0));
+        pvTime.textContent = scr.lv ? tr(scr.lv === 2 ? 'Fein' : 'Lupe') + ' · ' + tx : tx;
+      }
     }
-    // Stelle aus der Fingerposition: ohne Lupe unter dem Finger, mit Lupe fein im Ausschnitt
-    function scrubAt(x) {
+    // Stufe wechseln: der Ausschnitt wird so gelegt, dass die aktuelle Stelle unter dem Finger bleibt
+    function setLevel(lv) {
+      const d = durOk(), z = spanFor(lv, d);
+      if (lv === scr.lv || (lv && !z)) return;
+      const g = geom(), f = clamp((scr.lx - g.L) / g.w, 0, 1);
+      scr.lv = lv; scr.z = z;
+      if (z) {
+        scr.zt = scr.raw; scr.zx = scr.lx;
+        scr.ws = clamp(scr.raw - f * z, 0, Math.max(0, d - z));
+        tCur.classList.add('g', 'vtz'); tDur.classList.add('g', 'vtz');
+      } else {
+        scr.off = scr.raw - f * d;   // zurück zu „normal“: Abstand zum Finger, schrumpft beim Weiterziehen
+        tCur.classList.remove('g', 'vtz'); tDur.classList.remove('g', 'vtz');
+      }
+      buzz();
+    }
+    // Stelle aus der Fingerposition: normal unter dem Finger, in der Lupe fein im Ausschnitt
+    function scrubAt(x, dx) {
       const d = durOk(), g = geom();
-      scr.raw = scr.z ? clamp(scr.zt + (x - scr.zx) * scr.z / g.w, 0, d) : clamp((x - g.L) / g.w, 0, 1) * d;
+      if (scr.z) scr.raw = clamp(scr.zt + (x - scr.zx) * scr.z / g.w, 0, d);
+      else {
+        if (scr.off) { scr.off *= Math.exp(-Math.abs(dx || 0) / 20); if (Math.abs(scr.off) < 0.05) scr.off = 0; }
+        scr.raw = clamp(clamp((x - g.L) / g.w, 0, 1) * d + scr.off, 0, d);
+      }
       // Einrasten an der alten Stelle (erst nachdem du einmal weg warst) – etwa 5 px der Leiste
-      const near = Math.abs(scr.raw - scr.t0) < Math.max(0.25, (scr.z || d) / g.w * 5);
+      const near = Math.abs(scr.raw - scr.t0) < Math.max(0.2, (scr.z || d) / g.w * 5);
       if (!near) scr.away = true;
       if (near && scr.away && !scr.snap) buzz();
       scr.snap = near && scr.away;
       scr.t = scr.snap ? scr.t0 : scr.raw;
       scrubShow(scr.t);
-    }
-    function zoomOn() {
-      scr.holdTm = 0;
-      const d = durOk(), z = zoomSpan(d);
-      if (!scr.on || scr.z || !z || scr.mode === 'cancel') return;
-      if (!scr.moved) { scr.moved = true; scr.first = false; wrap.classList.add('thick'); }   // Leiste gedrückt gehalten: um die aktuelle Stelle
-      const g = geom(), f = clamp((scr.lx - g.L) / g.w, 0, 1);
-      scr.z = z; scr.zt = scr.raw; scr.zx = scr.lx;
-      scr.ws = clamp(scr.raw - f * z, 0, Math.max(0, d - z));   // Ausschnitt so, dass die Stelle unter dem Finger bleibt
-      tCur.classList.add('g', 'vtz'); tDur.classList.add('g', 'vtz');
-      wrap.classList.add('zoom');
-      buzz();
-      scrubAt(scr.lx);
-    }
-    // Halten erkennen: bewegt sich der Finger ~½ s kaum (unter 6 px), kommt die Lupe
-    function holdArm(x) {
-      if (scr.z) return;
-      if (scr.holdTm && Math.abs(x - scr.hx) < 6) return;
-      clearTimeout(scr.holdTm); scr.hx = x;
-      scr.holdTm = setTimeout(zoomOn, 480);
     }
     // Lupe am Ende der Leiste: der Ausschnitt wandert mit (je weiter am Rand, desto schneller)
     function panTick(ts) {
@@ -192,24 +216,22 @@
       if (!dep) return;
       const dt = scr.pt ? Math.min(50, ts - scr.pt) : 16;
       scr.pt = ts;
-      const d = durOk(), v = clamp(dep, -1.5, 1.5) * scr.z * 0.6 * dt / 1000;   // bis ~einen Ausschnitt pro Sekunde
+      const d = durOk(), v = clamp(dep, -1.5, 1.5) * scr.z * 0.6 * dt / 1000;   // bis ~0,6 Ausschnitte pro Sekunde
       scr.zt += v;
       scr.ws = clamp(scr.ws + v, 0, Math.max(0, d - scr.z));
-      scrubAt(x);
+      scrubAt(x, 0);
       scr.pan = requestAnimationFrame(panTick);
     }
     function scrubEnd(how) {   // how: 'seek' | 'tap' | 'cancel'
       if (!scr.on) return;
       scr.on = false;
-      clearTimeout(scr.holdTm); scr.holdTm = 0;
       if (scr.pan) { cancelAnimationFrame(scr.pan); scr.pan = 0; }
-      const zoomed = !!scr.z;
-      scr.z = 0;
+      scr.z = 0; scr.lv = 0; scr.off = 0;
       wrap.classList.remove('thick', 'scrubx', 'scrubsnap', 'zoom');
       barMark.classList.remove('off');
       tCur.classList.remove('g', 'vtz'); tDur.classList.remove('g', 'vtz');
       const m = M(), d = durOk();
-      if (zoomed) { uiLast.cur = ''; uiLast.dur = ''; tDur.textContent = fmtTime(d); }   // Zeiten wieder normal
+      uiLast.cur = ''; uiLast.dur = ''; tDur.textContent = fmtTime(d);   // Zeiten wieder normal
       if (how === 'seek' && scr.snap) how = 'cancel';   // an der alten Stelle losgelassen: nichts ändern
       if (how === 'cancel') { liveEnd(true); barBack(); }
       else if (d) {
@@ -229,31 +251,29 @@
       try { barHit.setPointerCapture(e.pointerId); } catch (x) {}
       const m = M();
       Object.assign(scr, { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, lx: e.clientX, t0: m.currentTime, t: m.currentTime, raw: m.currentTime,
-        moved: false, first: true, mode: '', snap: false, away: false, z: 0, pt: 0 });
-      // weißer Strich: hier warst du (dorthin zurück rastet ein)
-      const g = geom(), rr = bar.parentNode.getBoundingClientRect();
-      barMark.style.left = Math.round(g.L - rr.left + clamp(m.currentTime / d, 0, 1) * g.w - 1.5) + 'px';
+        moved: false, first: true, mode: '', snap: false, away: false, lv: 0, z: 0, off: 0, pt: 0 });
+      barMark.style.left = Math.round(posX(m.currentTime / d) - 5) + 'px';
+      barKnob.style.left = Math.round(posX(m.currentTime / d) - 17) + 'px';
       st.barDrag = true; clearTimeout(st.hideTimer);
-      holdArm(e.clientX);
       if (!liveMode()) { pv.preload = 'auto'; pvs.autoGrid = true; if (prevLoad() && pv.readyState >= 1) startGrid(); }
     });
     barHit.addEventListener('pointermove', (e) => {
       if (!scr.on || e.pointerId !== scr.id) return;
       const d = durOk();
       if (!d) return;
-      const dy = e.clientY - scr.y0;
+      const dy = e.clientY - scr.y0, dx = e.clientX - scr.lx;
       scr.lx = e.clientX;
       if (!scr.moved) {
         if (Math.hypot(e.clientX - scr.x0, dy) < 8) return;
         scr.moved = true;
         wrap.classList.add('thick');
       }
-      holdArm(e.clientX);
       if (dy < -Math.max(70, geom().br.height * 1.5)) { scr.mode = 'cancel'; scrubShow(scr.t0); return; }
       scr.mode = '';
-      if (scr.first && Math.abs(e.clientX - scr.x0) < 10) { scrubShow(scr.t); return; }   // (noch) Hochwischen
-      scr.first = false;
-      scrubAt(e.clientX);
+      if (scr.first && Math.abs(e.clientX - scr.x0) < 10 && dy < 30) { scrubShow(scr.t); return; }   // (noch) Hochwischen
+      if (scr.first) { scr.first = false; scrubAt(e.clientX, 0); }   // erst unter den Finger, dann ggf. Lupe
+      setLevel(levelFor(dy));
+      scrubAt(e.clientX, dx);
       if (scr.z && !scr.pan) { scr.pt = 0; scr.pan = requestAnimationFrame(panTick); }
     });
     barHit.addEventListener('pointerup', (e) => {
