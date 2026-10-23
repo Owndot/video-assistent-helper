@@ -290,9 +290,57 @@
     // Sprung auf einmal; zieht der Finger weiter, wird danach nur die neueste Stelle angesprungen.
     const liveMode = () => CONFIG.seekPreview !== 'thumb';
     const live = { on: false, busy: false, want: -1, t0: 0, tm: 0 };
+    // Bild-Ebene beim Spulen im Bild: Manche Browser zeichnen beim schnellen Springen (besonders wenn die Seite dabei
+    // kurz eine niedrigere Qualität lädt) ein einzelnes Bild in seiner Pixelgröße – klein in der Mitte statt bildfüllend.
+    // Darum liegt während des Spulens eine Ebene über dem Video, in die jedes neue Bild selbst hineingezeichnet wird –
+    // immer richtig groß. Nach dem Loslassen weg, sobald das Video an der Stelle sein Bild zeigt. (Firefox-Handy kann
+    // Videobilder nicht kopieren – dort ohne Ebene.)
+    const layer = { cv: null, id: 0, sizes: new Set(), hideTm: 0 };
+    function layerDraw() {
+      const c = layer.cv;
+      if (!c || !vid.videoWidth || !vid.videoHeight) return;
+      const k = Math.min(1, 1280 / Math.max(vid.videoWidth, vid.videoHeight));
+      const w = Math.round(vid.videoWidth * k), h = Math.round(vid.videoHeight * k);
+      layer.sizes.add(vid.videoWidth + '×' + vid.videoHeight);
+      try {
+        if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+        c.getContext('2d').drawImage(vid, 0, 0, w, h);
+        c.style.objectFit = vid.style.objectFit || 'contain';
+        c.style.transform = vid.style.transform || '';
+        c.style.visibility = 'visible';
+      } catch (e) {}
+    }
+    function layerOn() {
+      if (FF_MOBILE || !vid.videoWidth) return;
+      clearTimeout(layer.hideTm);
+      if (!layer.cv) {
+        layer.cv = document.createElement('canvas');
+        layer.cv.className = 'vposter vlayer';
+        layer.cv.style.visibility = 'hidden';
+      }
+      if (layer.cv.previousSibling !== vid) vid.after(layer.cv);
+      layerDraw();
+      const id = ++layer.id;
+      if (vid.requestVideoFrameCallback) {
+        const cb = () => { if (id !== layer.id) return; layerDraw(); vid.requestVideoFrameCallback(cb); };
+        vid.requestVideoFrameCallback(cb);
+      }
+    }
+    function layerOff() {
+      if (!layer.cv) return;
+      const id = ++layer.id, c = layer.cv;
+      // erst weg, wenn das Video selbst das Bild an der neuen Stelle zeigt (sonst blitzt kurz das alte auf)
+      const gone = () => { if (id === layer.id && c.isConnected) c.remove(); };
+      if (vid.requestVideoFrameCallback) vid.requestVideoFrameCallback(() => setTimeout(gone, 30));
+      layer.hideTm = setTimeout(gone, 600);
+      if (layer.sizes.size > 1) st.scrubSizes = Array.from(layer.sizes).join(', ');
+      layer.sizes.clear();
+    }
+    vid.addEventListener('seeked', () => { if (live.on) layerDraw(); });
+    st.cleanup.push(() => { layer.id++; if (layer.cv) layer.cv.remove(); });
     function liveTo(t) {
       const m = M();
-      if (!live.on) { live.on = true; live.t0 = m.currentTime; }
+      if (!live.on) { live.on = true; live.t0 = m.currentTime; layerOn(); }
       live.want = t;
       if (!live.busy) livePump();
     }
@@ -311,6 +359,7 @@
     function liveEnd(back) {
       if (!live.on) return;
       live.on = false; live.want = -1;
+      layerOff();
       if (back) { st.userSeekAt = Date.now(); try { M().currentTime = live.t0; } catch (e) {} }
     }
     st.liveTo = liveTo; st.liveEnd = liveEnd; st.liveMode = liveMode;

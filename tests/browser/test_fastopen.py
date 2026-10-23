@@ -25,8 +25,8 @@ with sync_playwright() as p:
     slow['on'] = False
     time.sleep(1.0)
     c = pg.evaluate('''() => { const R = %s, w = R.querySelector(".vp"); R.querySelector("button[aria-label=Schließen]").click();
-        return [getComputedStyle(w).display, document.getElementById("v").muted]; }''' % R)
-    check('Schließen: Player im selben Augenblick weg', c[0] == 'none', c)
+        return [w.isConnected ? getComputedStyle(w).display : 'entfernt', document.getElementById("v").muted]; }''' % R)
+    check('Schließen: Player im selben Augenblick weg', c[0] in ('none', 'entfernt'), c)
     time.sleep(0.8)
     a = pg.evaluate('() => [!%s.querySelector(".vp"), !document.getElementById("v").paused, document.getElementById("v").muted]' % R)
     check('… danach aufgeräumt, Seite spielt weiter (mit Ton)', a[0] and a[1] and not a[2], a)

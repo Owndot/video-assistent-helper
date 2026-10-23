@@ -22,7 +22,12 @@ with sync_playwright() as p:
     check('beim Wischen: Video hält an', s1['paused'], s1)
     check('… das große Bild springt an die Stelle (Video steht dort)', abs(s1['t'] - want) < 1.5, [round(s1['t'], 1), round(want, 1)])
     check('… Zahlen: Stelle, „/ Länge“, Sprung, kleine Leiste', s1['big'] in (mmss(want), mmss(want + 1), mmss(want - 1)) and s1['rest'] == '/ ' + mmss(D) and s1['delta'].startswith('+') and 'scaleX' in s1['fill'], s1)
+    ly = pg.evaluate('''() => { const r = %s, c = r.querySelector(".vlayer"), w = r.querySelector(".vp").getBoundingClientRect(), v = r.querySelector(".vv");
+        if (!c) return null; const b = c.getBoundingClientRect(); return [getComputedStyle(c).visibility, Math.round(b.width), Math.round(b.height), Math.round(w.width), Math.round(w.height), c.width && Math.abs(c.width / c.height - v.videoWidth / v.videoHeight) < 0.02]; }''' % R)
+    check('… dabei liegt die Bild-Ebene bildfüllend über dem Video (nie ein kleines Bild in der Mitte)', ly and ly[0] == 'visible' and ly[1] == ly[3] and ly[2] == ly[4] and ly[5], ly)
     pg.mouse.up(); time.sleep(0.7)
+    gone = pg.evaluate('() => !%s.querySelector(".vlayer")' % R)
+    check('… nach dem Loslassen ist die Bild-Ebene weg', gone, gone)
     s2 = st()
     check('loslassen: dort weiter, läuft wieder', not s2['paused'] and abs(s2['t'] - want) < 1.8, [s2, round(want, 1)])
     # 2) am Ende begrenzt: angezeigter Sprung = echter Sprung (nicht „+30 s“, wenn nur noch 5 s bleiben)
