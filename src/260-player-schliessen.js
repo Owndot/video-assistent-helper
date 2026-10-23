@@ -122,6 +122,8 @@
     removeCover();
     if (st.mode !== 'own') return;
     try { st.orig.muted = true; st.orig.pause(); } catch (e) {}
+    // (der nahtlose Start war beim Übergeben noch nicht fertig: die eigene Kopie war stumm – jetzt hat sie den Ton)
+    if (st.bridgeMuted) { st.bridgeMuted = false; try { st.vid.muted = false; st.vid.play().catch(() => {}); } catch (e) {} }
   }
   let coverEl = null;
   function coverOver(o, src) {

@@ -3458,7 +3458,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     function bridgeTick() {
       const b = st.bridge;
       if (!b || vp !== st) return;
-      if (st.mode !== 'own') { bridgeDrop(); return; }
+      if (st.mode !== 'own' || st.handed) { if (st.handed) st.bridgeMuted = true; bridgeDrop(); return; }   // (wird gerade geschlossen: die Seite hat schon übernommen)
       if (orig.paused || orig.ended) { bridgeEnd('Seite hält an'); return; }
       if ((st.userSeekAt || 0) > b.at || (st.userPauseAt || 0) > b.at) { bridgeEnd('du bedienst'); return; }
       if (vid.readyState < 3 || vid.seeking) return;   // eigene Kopie lädt noch
@@ -3468,8 +3468,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (Math.abs(d) <= 0.08) { bridgeSwap(d); return; }
       if (Math.abs(d) > 1.5) {
         if (b.seeks >= 3) { bridgeEnd('holt nicht auf'); return; }
-        b.seeks++; b.seekAt = performance.now(); b.own = true;
-        try { vid.currentTime = orig.currentTime + b.lead * base; } catch (e) {}   // etwas voraus springen (Springen dauert)
+        b.seeks++; b.seekAt = performance.now(); b.to = orig.currentTime + b.lead * base;
+        try { vid.currentTime = b.to; } catch (e) {}   // etwas voraus springen (Springen dauert)
         return;
       }
       vid.playbackRate = base * clamp(1 + d, 0.5, 2);   // aufholen (stumm – die Tonhöhe ist egal)
@@ -3477,12 +3477,18 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     vid.addEventListener('seeked', () => {
       const b = st.bridge;
       if (b && b.seekAt) { b.lead = Math.min(3, (performance.now() - b.seekAt) / 1000 + 0.1); b.seekAt = 0; }   // so lange dauert ein Sprung hier
-      if (b) b.own = false;
     });
-    // Jemand anderes springt im eigenen Video (du, ein Knopf, die Media-Steuerung)? Dann gilt diese Stelle – sofort umschalten
-    vid.addEventListener('seeking', () => { const b = st.bridge; if (b && !b.own && vid.readyState >= 2) bridgeEnd('gespult'); });
+    // Jemand anderes springt im eigenen Video (du, ein Knopf, die Media-Steuerung) – also nicht an die Stelle, die die
+    // Brücke selbst gewählt hat? Dann gilt diese Stelle: sofort umschalten
+    vid.addEventListener('seeking', () => {
+      const b = st.bridge;
+      // (vor dem ersten Abspielen springt die Kopie beim Laden selbst an den Anfangspunkt – das zählt nur, wenn es weit weg ist)
+      if (!b || (typeof b.to === 'number' && Math.abs(vid.currentTime - b.to) < 0.5)) return;
+      if (st.openStat.own || Math.abs(vid.currentTime - orig.currentTime) > 3) bridgeEnd('gespult');
+    });
     vid.addEventListener('playing', () => { if (st.mode === 'own' && !st.openStat.own) st.openStat.own = performance.now(); });
     function bridgeSwap(d) {
+      if (st.handed) { st.bridgeMuted = true; bridgeDrop(); return; }
       vid.playbackRate = st.speed;
       vid.muted = false;
       try { orig.muted = true; orig.pause(); } catch (e) {}
@@ -3494,15 +3500,15 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     function bridgeEnd(why) {
       const b = st.bridge;
       if (!b) return;
+      if (st.handed) { st.bridgeMuted = true; bridgeDrop(); return; }
       const t = orig.currentTime;
       if (st.mode === 'own') {
-        dropPoster(); showPoster();
+        const moved = why === 'gespult' || (st.userSeekAt || 0) > b.at;   // du hast schon eine Stelle gewählt – die bleibt
+        dropPoster(); if (!moved) showPoster();   // (Standbild der Seite nur, wenn es auch die Stelle ist, an der es weitergeht)
         try { orig.muted = true; orig.pause(); } catch (e) {}
         vid.muted = false; vid.playbackRate = st.speed;
-        st.startTime = t;
-        const moved = why === 'gespult' || (st.userSeekAt || 0) > b.at;   // du hast schon eine Stelle gewählt – die bleibt
-        if (moved) st.startTime = vid.currentTime;
-        else if (vid.readyState >= 1 && Math.abs(vid.currentTime - t) > 0.3) { try { vid.currentTime = t; } catch (e) {} }
+        st.startTime = moved ? vid.currentTime : t;
+        if (!moved && vid.readyState >= 1 && Math.abs(vid.currentTime - t) > 0.3) { try { vid.currentTime = t; } catch (e) {} }
         if (vid.readyState >= 3 && !vid.paused) dropPoster();
       }
       st.openStat.how = 'umgeschaltet (' + why + ')'; st.openStat.swap = performance.now();
@@ -3591,7 +3597,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       }
       // (nahtloser Start: gleich an die Stelle, an der die Seite JETZT ist – etwas voraus, Springen dauert)
       const t0 = st.bridge ? orig.currentTime + 0.3 : st.startTime;
-      if (!st.hls && t0 > 1 && isFinite(vid.duration) && vid.duration > t0) { if (st.bridge) st.bridge.own = true; try { vid.currentTime = t0; } catch (e) {} }
+      if (!st.hls && t0 > 1 && isFinite(vid.duration) && vid.duration > t0) { if (st.bridge) st.bridge.to = t0; try { vid.currentTime = t0; } catch (e) {} }
       vid.playbackRate = st.speed;
       autoOrient(vid.videoWidth, vid.videoHeight);
       refreshQual();
@@ -6201,6 +6207,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     removeCover();
     if (st.mode !== 'own') return;
     try { st.orig.muted = true; st.orig.pause(); } catch (e) {}
+    // (der nahtlose Start war beim Übergeben noch nicht fertig: die eigene Kopie war stumm – jetzt hat sie den Ton)
+    if (st.bridgeMuted) { st.bridgeMuted = false; try { st.vid.muted = false; st.vid.play().catch(() => {}); } catch (e) {} }
   }
   let coverEl = null;
   function coverOver(o, src) {
