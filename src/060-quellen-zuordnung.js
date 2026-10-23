@@ -345,7 +345,7 @@
   let frameVids = [], frameAt = 0;
   let lastVidCount = 0;
   function allVideos() {
-    const list = Array.prototype.slice.call(document.getElementsByTagName('video'));
+    const list = Array.prototype.slice.call(document.getElementsByTagName('video')).filter((v) => !v.__evpOwn);   // (nicht das eigene beim nahtlosen Zurück)
     if (Date.now() - shadowAt > shadowGap()) { shadowAt = Date.now(); shadowVids = scanShadow(); }
     shadowVids = shadowVids.filter((v) => v.isConnected);
     shadowVids.forEach((v) => { if (list.indexOf(v) < 0) list.push(v); });

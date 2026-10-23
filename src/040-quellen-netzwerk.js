@@ -209,6 +209,7 @@
     const vids = document.getElementsByTagName('video');
     for (let i = 0; i < vids.length; i++) {
       const v = vids[i];
+      if (v.__evpOwn) continue;
       if (v.paused && !v.seeking) { bufPrev.set(v, bufTotal(v)); continue; }
       const cur = bufTotal(v), prev = bufPrev.get(v);
       bufPrev.set(v, cur);

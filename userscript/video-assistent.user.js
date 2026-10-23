@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.22
+// @version      19.23
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -653,6 +653,7 @@
     const vids = document.getElementsByTagName('video');
     for (let i = 0; i < vids.length; i++) {
       const v = vids[i];
+      if (v.__evpOwn) continue;
       if (v.paused && !v.seeking) { bufPrev.set(v, bufTotal(v)); continue; }
       const cur = bufTotal(v), prev = bufPrev.get(v);
       bufPrev.set(v, cur);
@@ -1402,7 +1403,7 @@
   let frameVids = [], frameAt = 0;
   let lastVidCount = 0;
   function allVideos() {
-    const list = Array.prototype.slice.call(document.getElementsByTagName('video'));
+    const list = Array.prototype.slice.call(document.getElementsByTagName('video')).filter((v) => !v.__evpOwn);   // (nicht das eigene beim nahtlosen Zurück)
     if (Date.now() - shadowAt > shadowGap()) { shadowAt = Date.now(); shadowVids = scanShadow(); }
     shadowVids = shadowVids.filter((v) => v.isConnected);
     shadowVids.forEach((v) => { if (list.indexOf(v) < 0) list.push(v); });
@@ -6286,17 +6287,26 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (r.width < 60 || r.height < 40) return false;
     } catch (e) { return false; }
     const s = { v: v, o: o, at: performance.now(), lead: 0.6, T: 0, tries: 0, iv: 0, done: false, after: [],
-      parent: v.parentNode, next: v.nextSibling, css: v.style.cssText, fit: getComputedStyle(o).objectFit || 'contain' };
+      parent: v.parentNode, next: v.nextSibling, css: v.style.cssText };
     st.soft = s; softSt = st;
+    // Dein Video kommt IN die Seite, direkt hinter deren Video und genau an dessen Platz: So schneidet die Seite es
+    // genauso ab (Instagram legt sein Video größer in einen Kasten) und ihre Knöpfe/Leisten liegen wie gewohnt darüber.
     const place = () => {
       if (s.done) return;
-      const q = o.getBoundingClientRect();
-      v.style.cssText = 'position:fixed;left:' + q.left + 'px;top:' + q.top + 'px;width:' + q.width + 'px;height:' + q.height + 'px;margin:0;transform:none;' +
-        'object-fit:' + (s.fit === 'cover' ? 'cover' : 'contain') + ';background:#000;z-index:2147483646;pointer-events:none;filter:none';
+      const cs = getComputedStyle(o), fixed = cs.position === 'fixed' || !o.offsetParent;
+      const q = fixed ? o.getBoundingClientRect() : { left: o.offsetLeft, top: o.offsetTop, width: o.offsetWidth, height: o.offsetHeight };
+      const I = ' !important;';
+      v.style.cssText = 'position:' + (fixed ? 'fixed' : 'absolute') + I + 'left:' + q.left + 'px' + I + 'top:' + q.top + 'px' + I + 'right:auto' + I + 'bottom:auto' + I +
+        'width:' + q.width + 'px' + I + 'height:' + q.height + 'px' + I + 'margin:0' + I + 'padding:0' + I + 'border:0' + I + 'max-width:none' + I + 'max-height:none' + I +
+        'transform:' + (cs.transform && cs.transform !== 'none' ? cs.transform : 'none') + I + 'transform-origin:' + cs.transformOrigin + I +
+        'object-fit:' + (cs.objectFit === 'cover' ? 'cover' : cs.objectFit === 'fill' ? 'fill' : 'contain') + I + 'object-position:' + (cs.objectPosition || '50% 50%') + I +
+        'border-radius:' + cs.borderRadius + I + 'background:#000' + I + 'z-index:' + (cs.zIndex === 'auto' ? 'auto' : cs.zIndex) + I +
+        'pointer-events:none' + I + 'filter:none' + I + 'opacity:1' + I + 'visibility:visible' + I + 'display:block' + I;
     };
     s.place = place;
+    v.__evpOwn = true;
+    try { o.parentNode.insertBefore(v, o.nextSibling); } catch (e) { st.soft = null; softSt = null; v.__evpOwn = false; return false; }
     place();
-    root.append(v);   // aus dem (unsichtbaren) Player heraus, genau über das Video der Seite – es läuft dabei weiter
     if (v.paused) v.play().catch(() => {});
     addEventListener('resize', place); addEventListener('scroll', place, true);
     requestAnimationFrame(place); setTimeout(place, 120); setTimeout(place, 400);   // (die Seite rückt sich nach dem Vollbild zurecht)
@@ -6307,7 +6317,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     aim();
     s.iv = setInterval(() => {
       if (s.done) return;
-      if (performance.now() - s.at > 3000) { softFail(st); return; }
+      if (performance.now() - s.at > 3000 || !v.isConnected) { softFail(st); return; }   // (die Seite hat es entfernt: wie früher)
       if (v.paused && !v.ended) { try { v.play().catch(() => {}); } catch (e) {} }
       // dein Video selbst hängt (lädt nach)? Dann bringt das Überbrücken nichts – gleich wie früher
       if (v.currentTime !== s.lastV) { s.lastV = v.currentTime; s.lastAt = performance.now(); }
@@ -6367,6 +6377,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     if (!s) return;
     if (!s.done) { clearInterval(s.iv); removeEventListener('resize', s.place); removeEventListener('scroll', s.place, true); }
     s.done = true;
+    s.v.__evpOwn = false;
     try { s.v.style.cssText = s.css; if (s.parent) s.parent.insertBefore(s.v, s.next && s.next.parentNode === s.parent ? s.next : null); } catch (e) {}
     // hatte die Seite schon übernommen: dort weitermachen, wo sie jetzt ist (mit Ton)
     if (s.parked) { try { s.v.currentTime = s.o.currentTime; s.v.muted = false; } catch (e) {} }
@@ -6845,7 +6856,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.22',
+      'Video-Assistent 19.23',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
