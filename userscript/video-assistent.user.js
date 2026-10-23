@@ -3468,7 +3468,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (Math.abs(d) <= 0.08) { bridgeSwap(d); return; }
       if (Math.abs(d) > 1.5) {
         if (b.seeks >= 3) { bridgeEnd('holt nicht auf'); return; }
-        b.seeks++; b.seekAt = performance.now();
+        b.seeks++; b.seekAt = performance.now(); b.own = true;
         try { vid.currentTime = orig.currentTime + b.lead * base; } catch (e) {}   // etwas voraus springen (Springen dauert)
         return;
       }
@@ -3477,7 +3477,10 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     vid.addEventListener('seeked', () => {
       const b = st.bridge;
       if (b && b.seekAt) { b.lead = Math.min(3, (performance.now() - b.seekAt) / 1000 + 0.1); b.seekAt = 0; }   // so lange dauert ein Sprung hier
+      if (b) b.own = false;
     });
+    // Jemand anderes springt im eigenen Video (du, ein Knopf, die Media-Steuerung)? Dann gilt diese Stelle – sofort umschalten
+    vid.addEventListener('seeking', () => { const b = st.bridge; if (b && !b.own && vid.readyState >= 2) bridgeEnd('gespult'); });
     vid.addEventListener('playing', () => { if (st.mode === 'own' && !st.openStat.own) st.openStat.own = performance.now(); });
     function bridgeSwap(d) {
       vid.playbackRate = st.speed;
@@ -3497,7 +3500,9 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         try { orig.muted = true; orig.pause(); } catch (e) {}
         vid.muted = false; vid.playbackRate = st.speed;
         st.startTime = t;
-        if (vid.readyState >= 1 && Math.abs(vid.currentTime - t) > 0.3 && !((st.userSeekAt || 0) > b.at)) { try { vid.currentTime = t; } catch (e) {} }
+        const moved = why === 'gespult' || (st.userSeekAt || 0) > b.at;   // du hast schon eine Stelle gewählt – die bleibt
+        if (moved) st.startTime = vid.currentTime;
+        else if (vid.readyState >= 1 && Math.abs(vid.currentTime - t) > 0.3) { try { vid.currentTime = t; } catch (e) {} }
         if (vid.readyState >= 3 && !vid.paused) dropPoster();
       }
       st.openStat.how = 'umgeschaltet (' + why + ')'; st.openStat.swap = performance.now();
@@ -3586,7 +3591,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       }
       // (nahtloser Start: gleich an die Stelle, an der die Seite JETZT ist – etwas voraus, Springen dauert)
       const t0 = st.bridge ? orig.currentTime + 0.3 : st.startTime;
-      if (!st.hls && t0 > 1 && isFinite(vid.duration) && vid.duration > t0) { try { vid.currentTime = t0; } catch (e) {} }
+      if (!st.hls && t0 > 1 && isFinite(vid.duration) && vid.duration > t0) { if (st.bridge) st.bridge.own = true; try { vid.currentTime = t0; } catch (e) {} }
       vid.playbackRate = st.speed;
       autoOrient(vid.videoWidth, vid.videoHeight);
       refreshQual();

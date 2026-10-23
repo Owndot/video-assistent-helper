@@ -80,6 +80,8 @@ with sync_playwright() as p:
     page.wait_for_function('() => !!(window.__evpRoot && window.__evpRoot.querySelector(".vp"))', timeout=5000)
     check('Eingebauter Player öffnet sich', True)
     page.wait_for_function('() => { const v = window.__evpRoot.querySelector(".vv"); return v && v.currentTime > 0.5 && !v.paused; }', timeout=15000)
+    # (nahtloser Start: bis die eigene Kopie aufgeholt hat, läuft die Seite sichtbar weiter – danach still)
+    page.wait_for_function('() => !window.__evpRoot.querySelector(".vbridge")', timeout=15000); time.sleep(0.2)
     st = page.evaluate('() => { const v = window.__evpRoot.querySelector(".vv"); const o = document.getElementById("v"); return { src: v.currentSrc, t: v.currentTime, paused: v.paused, origPaused: o.paused, fs: !!document.fullscreenElement }; }')
     check('Spielt eigene Quelle ab, Original pausiert', st['src'].endswith('clip.webm') and st['origPaused'], st)
     check('Startet im Vollbild', st['fs'], st['fs'])
