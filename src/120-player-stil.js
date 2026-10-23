@@ -133,10 +133,10 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vp.thick .vbar::-moz-range-thumb{transform:scale(0) !important}
 /* Abbrechen-Bereich (Finger weit über der Leiste) und Fein-Spulen (unter der Leiste) */
 .vp.scrubx .vbar{opacity:.4}
-/* an der laufenden Stelle (Abbrechen): keine kleine Vorschau – das große Video zeigt genau diese Stelle */
-.vp.scrubx .vprev .vpbox,.vp.scrubsnap .vprev .vpbox{display:none}
+/* Abbrechen-Bereich: keine kleine Vorschau – das große Video zeigt die laufende Stelle */
+.vp.scrubx .vprev .vpbox{display:none}
 /* Zeit über der Vorschau: im Glas des Designs (.g, „Schlicht“ = Milchglas) – rot getönt beim Abbrechen, violett mit Lupe */
-.vp.scrubx .vprev b.g,.vp.scrubsnap .vprev b.g{background:rgba(205,45,45,.62)!important}
+.vp.scrubx .vprev b.g{background:rgba(205,45,45,.62)!important}
 .vp.zoom .vprev b.g{background:rgba(110,86,226,.5)!important}
 /* Lupe: Grenzen des Ausschnitts links/rechts als kleine Glas-Schilder */
 .vtime.vtz{color:#fff;font-weight:700;padding:4px 6px;border-radius:11px;min-width:34px;box-shadow:0 2px 10px rgba(0,0,0,.22)}
@@ -165,6 +165,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vpv{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;pointer-events:none}
 .vpc{position:absolute;inset:0;width:100%;height:100%;border-radius:inherit;opacity:0;transition:opacity .1s ease}
 .vprev.img .vpc{opacity:1}
+/* Bild lädt noch (gezeigt wird ein gemerktes Bild einer anderen Stelle): leicht abgedunkelt, bis das richtige da ist */
+.vprev.img.stale .vpc{opacity:.55;filter:brightness(.8)}
 .vprev.live .vpv{opacity:1}
 .vprev.live .vpc{opacity:0}
 .vprev.noimg .vpbox{display:none}

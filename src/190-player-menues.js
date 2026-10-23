@@ -159,6 +159,8 @@
           bBack.setAttribute('aria-label', tr(SKIP() + ' s zurück')); bFwd.setAttribute('aria-label', tr(SKIP() + ' s vor'));
         }),
         it('Spul-Vorschau', CONFIG.seekPreview === 'thumb' ? 'Kleines Bild' : 'Im Bild', () => setSetting('seekPreview', CONFIG.seekPreview === 'thumb' ? 'live' : 'thumb')),
+        it('Spul-Lupe', yn(CONFIG.seekZoom !== false), () => setSetting('seekZoom', CONFIG.seekZoom === false)),
+        it('Vibration', yn(CONFIG.seekBuzz !== false), () => setSetting('seekBuzz', CONFIG.seekBuzz === false)),
         it('Halten', String(CONFIG.holdSpeed).replace('.', UI_EN() ? '.' : ',') + '×', () => next('holdSpeed', [1.5, 2, 3])),
         // Wischsperre: Streifen am Rand ohne Helligkeit/Lautstärke (Schnelleinstellungen, Home-Geste) – Stufe in Worten
         it('Wischsperre oben', zone(CONFIG.topGuard), () => { next('topGuard', ZONES); zoneTip('topGuard', 'Oberste', 'Oben'); }),

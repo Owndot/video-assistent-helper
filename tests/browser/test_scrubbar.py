@@ -57,30 +57,29 @@ with sync_playwright() as p:
     s5 = state(); pg.mouse.up(); time.sleep(0.6)
     check('kurzes Video: nach unten → keine Lupe', not s5[2] and abs(t() - at(x, fx + 0.2 * W, W)) < 1, [s5, t()])
     check('… Abstand zur alten Stelle steht da', '+' in s5[3], s5)
-    # 6) weg und zurück an die alte Stelle: rastet ein („Loslassen = abbrechen“), loslassen = nichts ändern
+    # 6) weg und zurück an die alte Stelle: kein Einrasten (19.11) – der Punkt folgt nur dem Finger („+0 s“)
     setT(20); x, y, W = geo(); fx = x + 7 + (20 / D) * W
-    xr = fx + 0.3 * W; r1 = at(x, xr, W); back = fx + 0.003 * W
+    xr = fx + 0.3 * W; r1 = at(x, xr, W)
     pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(xr, y, steps=6); time.sleep(0.15)
-    s6a = state(); pg.mouse.move(back, y, steps=6); time.sleep(0.2)
+    s6a = state(); pg.mouse.move(fx, y, steps=6); time.sleep(0.2)
     s6 = state(); pg.mouse.up(); time.sleep(0.6)
-    check('beim Ziehen: Abstand zur alten Stelle („+… s“)', any(('+%d s' % (round(r1 - 20) + k)) in s6a[3] for k in (-1, 0, 1)), [s6a, round(r1 - 20)])
-    check('zurück an der alten Stelle: rastet ein („Loslassen = abbrechen“)', s6[4] and 'abbrechen' in s6[3], s6)
-    check('… loslassen dort: bleibt bei 20 s', abs(t() - 20) < 0.5, t())
-    # 6b) Video läuft weiter: die Stelle zum Abbrechen wandert mit; dort eingerastet „klebt“ sie und läuft mit,
-    #     die kleine Vorschau ist weg; loslassen = nichts ändern (kein Sprung zurück)
+    check('beim Ziehen: Abstand zur laufenden Stelle („+… s“)', any(('+%d s' % (round(r1 - 20) + k)) in s6a[3] for k in (-1, 0, 1)), [s6a, round(r1 - 20)])
+    check('zurück an der alten Stelle: kein Einrasten, „+0 s“', not s6[4] and '+0 s' in s6[3] and 'abbrechen' not in s6[3], s6)
+    check('… loslassen dort: bei 20 s', abs(t() - 20) < 0.6, t())
+    # 6b) Video läuft weiter; Abbrechen nach oben zeigt die LAUFENDE Stelle (Zeit zählt mit), keine kleine Vorschau;
+    #     loslassen = nichts ändern (kein Sprung zurück)
     pg.evaluate('() => { const v = %s.querySelector(".vv"); v.currentTime = 10; v.play(); }' % R); time.sleep(0.6)
     x, y, W = geo(); tl = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R); fx = x + 7 + (tl / D) * W
-    pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(fx + 0.3 * W, y, steps=4); time.sleep(2.0)
-    live = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R) + 0.2
-    pg.mouse.move(x + 7 + (live / D) * W, y, steps=4); time.sleep(0.3)
-    p1 = pg.evaluate('() => { const r = %s; return [r.querySelector(".vp").classList.contains("scrubsnap"), r.querySelector(".vprev b").textContent, getComputedStyle(r.querySelector(".vpbox")).display, r.querySelector(".vv").currentTime]; }' % R)
+    pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(fx + 0.3 * W, y, steps=4); time.sleep(0.3)
+    pg.mouse.move(fx + 0.3 * W, y - 130, steps=4); time.sleep(0.3)
+    p1 = pg.evaluate('() => { const r = %s; return [r.querySelector(".vp").classList.contains("scrubx"), r.querySelector(".vprev b").textContent, getComputedStyle(r.querySelector(".vpbox")).display, r.querySelector(".vtime").textContent, r.querySelector(".vv").currentTime]; }' % R)
     time.sleep(1.5)
-    p2 = pg.evaluate('() => { const r = %s; return [r.querySelector(".vp").classList.contains("scrubsnap"), r.querySelector(".vprev b").textContent, r.querySelector(".vv").currentTime]; }' % R)
+    p2 = pg.evaluate('() => { const r = %s; return [r.querySelector(".vtime").textContent, r.querySelector(".vv").currentTime]; }' % R)
     pg.mouse.up(); time.sleep(0.4)
     after = pg.evaluate('() => { const v = %s.querySelector(".vv"); return [v.currentTime, v.paused]; }' % R)
-    check('läuft weiter: zurück zur LAUFENDEN Stelle → eingerastet, „Loslassen = abbrechen“, keine kleine Vorschau', p1[0] and 'abbrechen' in p1[1] and p1[2] == 'none' and abs(sec(p1[1].split(' · ')[0]) - p1[3]) <= 1.2, p1)
-    check('… Finger still: bleibt eingerastet, Zeit läuft mit dem Video mit', p2[0] and sec(p2[1].split(' · ')[0]) >= sec(p1[1].split(' · ')[0]) + 1, [p1, p2])
-    check('… loslassen: kein Sprung zurück, Video läuft weiter', not after[1] and after[0] >= p2[2] - 0.3, [p2, after])
+    check('läuft weiter: Abbrechen nach oben → „Loslassen = abbrechen“, keine kleine Vorschau, laufende Stelle', p1[0] and 'abbrechen' in p1[1] and p1[2] == 'none' and abs(sec(p1[3]) - p1[4]) <= 1.2, p1)
+    check('… Zeit läuft mit dem Video mit', sec(p2[0]) >= sec(p1[3]) + 1, [p1, p2])
+    check('… loslassen: kein Sprung zurück, Video läuft weiter', not after[1] and after[0] >= p2[1] - 0.3, [p2, after])
     pg.evaluate('() => %s.querySelector(".vv").pause()' % R)
     # 7) bis an den rechten Rand = Ende, an den linken = Anfang (egal, wo der Finger anfängt)
     setT(20); x, y, W = geo()
@@ -91,6 +90,29 @@ with sync_playwright() as p:
     pg.mouse.move(x + 7 + 0.3 * W, y); pg.mouse.down(); pg.mouse.move(x - 10, y, steps=4); time.sleep(0.2)
     pg.mouse.up(); time.sleep(0.6)
     check('bis zum linken Ende: Anfang', t() < 0.5, t())
+    # ---------- Sicherheit: nichts bleibt hängen ----------
+    def stuck(): return pg.evaluate('() => { const w = %s.querySelector(".vp"); return [w.classList.contains("thick"), w.classList.contains("scrub"), w.classList.contains("zoom"), w.classList.contains("scrubx")]; }' % R)
+    # S1) Finger „verloren“ (ohne Loslassen) → sauber abbrechen, Stelle bleibt
+    setT(20); x, y, W = geo(); fx = x + 7 + (20 / D) * W
+    pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(fx + 0.3 * W, y, steps=4); time.sleep(0.2)
+    pg.evaluate('() => { const h = %s.querySelector(".vbarhit"); try { h.releasePointerCapture(1); } catch (e) {} h.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 1, bubbles: true })); }' % R); time.sleep(0.3)
+    k1 = stuck(); pg.mouse.up(); time.sleep(0.4)
+    check('Finger verloren: sauber abgebrochen, nichts hängt, Stelle bleibt', not any(k1) and abs(t() - 20) < 0.6, [k1, t()])
+    # S2) App gewechselt während des Ziehens → abbrechen
+    setT(20); x, y, W = geo(); fx = x + 7 + (20 / D) * W
+    pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(fx + 0.3 * W, y, steps=4); time.sleep(0.2)
+    pg.evaluate('() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => true }); document.dispatchEvent(new Event("visibilitychange")); }'); time.sleep(0.3)
+    k2 = stuck()
+    pg.evaluate('() => { delete document.hidden; document.dispatchEvent(new Event("visibilitychange")); }'); pg.mouse.up(); time.sleep(0.4)
+    check('App gewechselt beim Ziehen: abgebrochen, Stelle bleibt', not any(k2) and abs(t() - 20) < 0.6, [k2, t()])
+    # S3) anderes Video beginnt mitten im Spulen → abbrechen (Hinweis), kein Sprung ins neue Video
+    setT(20); x, y, W = geo(); fx = x + 7 + (20 / D) * W
+    pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(fx + 0.3 * W, y, steps=4); time.sleep(0.2)
+    pg.evaluate('(u) => { const v = %s.querySelector(".vv"); v.src = u; }' % R, B + 'long.webm'); time.sleep(1.0)
+    pg.mouse.move(fx + 0.35 * W, y, steps=2); time.sleep(0.3)
+    k3 = stuck(); ind = pg.evaluate('() => (%s.querySelector(".vind") || {}).textContent || ""' % R)
+    pg.mouse.up(); time.sleep(0.5)
+    check('anderes Video beim Spulen: abgebrochen mit Hinweis, kein Sprung', not any(k3) and 'gewechselt' in ind and t() < 5, [k3, ind, t()])
     # ---------- Lupe (langes Video, 4 min → Lupe 40 s, Fein 10 s) ----------
     open_player(pg, 'long.html'); time.sleep(0.4)
     D = pg.evaluate('() => %s.querySelector(".vv").duration' % R); Z1 = min(max(D / 6, 20), 60); Z2 = max(5, Z1 / 4)
@@ -129,6 +151,14 @@ with sync_playwright() as p:
     pg.mouse.move(x + 7 + W - 2, lv_y(y, 1), steps=4); time.sleep(0.2); a4 = times(); time.sleep(1.2); b4 = times()
     pg.mouse.up(); time.sleep(0.6)
     check('Lupe am Ende der Leiste: Ausschnitt wandert mit', sec(b4[0][0]) > sec(a4[0][0]) + 5 and t() > sec(a4[0][0]) + Z1, [a4, b4, t()])
+    # Z5b) Einstellung „Spul-Lupe: Aus“ → nach unten keine Lupe
+    more(pg); pick(pg, 'Einstellungen'); lab = [i for i in items(pg) if i[0] in ('Spul-Lupe', 'Vibration')]
+    pick(pg, 'Spul-Lupe'); pg.evaluate('() => { const r = %s; r.querySelector(".vmenu").classList.remove("on"); r.querySelector(".vp").classList.remove("menu"); }' % R); time.sleep(0.3)
+    setT(100); x, y, W = geo(); fx = x + 7 + (100 / D) * W
+    pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(fx + 20, y, steps=2); pg.mouse.move(fx + 20, lv_y(y, 2), steps=4); time.sleep(0.3)
+    z5b = state(); pg.mouse.up(); time.sleep(0.5)
+    check('Einstellungen „Spul-Lupe“ und „Vibration“ da; Lupe aus → nach unten keine Lupe', len(lab) == 2 and not z5b[2], [lab, z5b])
+    more(pg); pick(pg, 'Einstellungen'); pick(pg, 'Spul-Lupe'); pg.evaluate('() => { const r = %s; r.querySelector(".vmenu").classList.remove("on"); r.querySelector(".vp").classList.remove("menu"); }' % R); time.sleep(0.3)
     # Z6) Design: Zeit über der Vorschau im selben Glas wie das Vorschaubild – bei „Glas“ und bei „Schlicht“ (Milchglas)
     for flat in (False, True):
         pg.evaluate('(f) => %s.host.classList.toggle("flat", f)' % R, flat)

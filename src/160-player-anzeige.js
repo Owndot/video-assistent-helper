@@ -33,11 +33,34 @@
       return !!st.endHold && m.paused && isFinite(d) && d > 0 && m.currentTime >= d - 1.5;
     }
     st.heldAtEnd = heldAtEnd;
+    // Spulbereich: Datei/Video = 0 … Länge. Live-Stream mit Zurückspulen (z. B. ARD live) = der Bereich, den der Stream
+    // zurückhält (ab 1 min; rechts ist „live“). Sonst (reines Live) kein Spulen.
+    // (hls.js gibt Live-Streams eine endliche, wachsende Länge – dort fragen, ob die Liste „live“ ist)
+    const hlsLive = () => {
+      try { const h = st.mode === 'own' && st.hls; if (!h) return false; const dt = h.latestLevelDetails || ((h.levels || [])[h.currentLevel] || {}).details; return !!(dt && dt.live); } catch (e) { return false; }
+    };
+    function seekRange(m) {
+      m = m || M();
+      const d = m.duration;
+      if (isFinite(d) && d > 0 && !(m === vid && hlsLive())) return { a: 0, b: d, len: d, live: false };
+      try {
+        const s = m.seekable;
+        if (s && s.length) {
+          const a = s.start(0), b = s.end(s.length - 1);
+          if (isFinite(a) && isFinite(b) && b - a >= 60) return { a: a, b: b, len: b - a, live: true };
+        }
+      } catch (e) {}
+      return null;
+    }
+    // Live-Rand: wo „live“ ist – hls.js spielt Live bewusst ein paar Stücke hinter dem Ende der Liste (liveSyncPosition)
+    const liveEdge = (r) => { try { const p = st.mode === 'own' && st.hls && st.hls.liveSyncPosition; if (isFinite(p) && p > r.a) return Math.min(r.b, p); } catch (e) {} return r.b; };
+    // Live: wie weit hinter live („−5:30“), nah am Live-Rand „LIVE“
+    const behind = (r, t) => { const e = liveEdge(r); return e - t < 8 ? tr('LIVE') : '−' + fmtTime(e - t); };
     function updateUI() {
       const m = M();
       const held = heldAtEnd(m);
       const d = m.duration, c = held ? d : m.currentTime;   // angehalten am Ende: als fertig zeigen (volle Leiste, Endzeit)
-      const hasLen = isFinite(d) && d > 0;
+      const hasLen = isFinite(d) && d > 0 && !(m === vid && hlsLive());
       if (uiLast.len !== hasLen) { uiLast.len = hasLen; wrap.classList.toggle('nolen', !hasLen); }   // Live-Stream: keine Linie
       if (hasLen) {
         const mf = 'scaleX(' + Math.min(1, Math.max(0, c / d)).toFixed(3) + ')';
@@ -46,11 +69,12 @@
       const pk = !m.paused ? 'pause' : (held || m.ended) ? 'replay' : 'play';   // am Ende: „noch einmal“ statt Play
       if (uiLast.play !== pk) { uiLast.play = pk; setIcon(bPlay, P[pk]); }
       if (!wrap.classList.contains('ctl') && !st.barDrag) return;   // Leisten aus: Zeiten und Zeitleiste ruhen lassen
-      const tc = fmtTime(c), td = isFinite(d) ? fmtTime(d) : 'Live';
+      const dvr = hasLen ? null : seekRange(m);   // Live mit Zurückspulen
+      const tc = dvr ? behind(dvr, c) : fmtTime(c), td = hasLen ? fmtTime(d) : 'Live';
       if (tc !== uiLast.cur) { uiLast.cur = tc; tCur.textContent = tc; }
       if (td !== uiLast.dur) { uiLast.dur = td; tDur.textContent = td; }
       if (!st.barDrag) {
-        const p = isFinite(d) && d > 0 ? c / d : 0;
+        const p = hasLen ? c / d : dvr ? clamp((c - dvr.a) / dvr.len, 0, 1) : 0;
         bar.value = String(Math.round(p * 1000));
         paintBar(p);
       }

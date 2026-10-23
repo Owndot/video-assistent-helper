@@ -119,6 +119,11 @@
       try { pvcx.drawImage(c, 0, 0); } catch (e) { return; }
       prev.dataset.t = String(Math.round(t * 10) / 10);
       prev.classList.add('img');
+      staleCheck();
+    }
+    // gezeigtes Bild weit weg von der Fingerstelle (das richtige lädt noch)? → abgedunkelt
+    function staleCheck() {
+      prev.classList.toggle('stale', pvs.shownT != null && pvs.lastWant >= 0 && Math.abs(pvs.shownT - pvs.lastWant) > Math.max(1.5, bucketFor() * 1.5));
     }
     function nearest(t) {
       const k = Math.round(t / bucketFor());
@@ -259,16 +264,18 @@
     st.liveTo = liveTo; st.liveEnd = liveEnd; st.liveMode = liveMode;
     // p: Stelle auf der Leiste (0…1, für den Platz der Vorschau) · tt: Zeit (mit Lupe nicht p × Länge)
     function prevShow(p, tt) {
-      const d = M().duration;
-      if (!isFinite(d) || d <= 0) return;
+      const d = M().duration, fin = isFinite(d) && d > 0;
+      if (!fin && tt == null) return;
       const t = tt != null ? tt : p * d;
       pvTime.textContent = fmtTime(t);
       if (liveMode() && !wrap.classList.contains('scrubx')) liveTo(t);
-      const img = !liveMode() && prevLoad() && !prev.classList.contains('noimg');
+      if (!fin) prev.classList.add('noimg');   // Live-Stream mit Zurückspulen: nur die Zeit
+      const img = fin && !liveMode() && prevLoad() && !prev.classList.contains('noimg');
       if (img) {
         pvs.lastWant = t;
         const n = nearest(t);
         if (n && better(n[1])) paint(n[0], n[1]);   // sofort das nächstgelegene gemerkte Bild …
+        staleCheck();
         prevSeek(t);                                // … und die genaue Stelle nachschärfen
         if (pv.readyState >= 1) startGrid(); else pvs.autoGrid = true;
       }
@@ -286,5 +293,5 @@
       prev.classList.add('on');
       wrap.classList.add('scrub');   // Knöpfe darüber kurz ausblenden, damit die Vorschau frei steht
     }
-    function prevHide() { prev.classList.remove('on'); wrap.classList.remove('scrub'); }
+    function prevHide() { prev.classList.remove('on', 'stale'); wrap.classList.remove('scrub'); }
 
