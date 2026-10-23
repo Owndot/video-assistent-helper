@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.15
+// @version      19.16
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -5026,6 +5026,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     function prevReset() {
       if (pvs.hls) { try { pvs.hls.destroy(); } catch (e) {} }
       pvs.hls = null; pvs.src = ''; pvs.key = ''; pvs.want = -1; pvs.lastWant = -1; pvs.busy = false; pvs.grid = []; pvs.gridOn = false; pvs.userDone = false;
+      pvs.reloaded = false; pvs.loadAt = 0;
       clearInterval(pvs.wd); clearTimeout(pvs.settle); pvs.target = -1; pvs.retried = -1;
       // gemerkte Bilder gehören zum Video, nicht zur Quelle der Vorschau – sie bleiben (auch bei anderer Qualität)
       prev.classList.remove('img', 'live');
@@ -5075,6 +5076,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         hp.attachMedia(pv);
       } else {
         pv.src = u;
+        pvs.loadAt = Date.now();
       }
       return true;
     }
@@ -5123,6 +5125,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       prev.dataset.t = String(Math.round(t * 10) / 10);
       prev.classList.add('img');
       st.prevWhy = st.mode === 'own' ? 'Bilder' : 'Bilder aus der MP4 (gespiegelt)';
+      if (pvs.t1st && !pvs.got) { pvs.got = true; st.prevFirst = Date.now() - pvs.t1st; }   // (Diagnose: wie lange bis zum ersten Bild)
       staleCheck();
     }
     // gezeigtes Bild weit weg von der Fingerstelle (das richtige lädt noch)? → abgedunkelt
@@ -5229,9 +5232,18 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       pump();
     }
     // Ladefehler: war es eine kleinere Qualität, die laufende Quelle nehmen (einmal); sonst nur die Zeit
+    // einmal neu laden (gleiche Quelle) – Server stockt beim ersten Mal manchmal, wenn der Player gerade selbst lädt
+    function pvReload() {
+      if (pvs.reloaded || !pvs.key || !pvs.src || pvs.hls) return false;
+      pvs.reloaded = true;
+      const k = pvs.key, s = pvs.src;
+      setTimeout(() => { if (pvs.key !== k) return; try { pv.removeAttribute('src'); pv.load(); } catch (e) {} pvs.loadAt = Date.now(); pv.src = s; }, 800);
+      return true;
+    }
     pv.addEventListener('error', () => {
       if (!pvs.key) return;   // (Quelle wurde absichtlich entfernt)
       if (st.mode === 'own' && pvs.src && st.cur && pvs.src !== st.cur && !st.hls) { const k = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = k; return; }
+      if (pvReload()) return;
       prev.classList.add('noimg');
       st.prevWhy = 'nur Zeit (Ladefehler ' + ((pv.error && pv.error.code) || '?') + ')';
     });
@@ -5244,12 +5256,20 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (st.mode !== 'own' || !st.cur) return;
       if (st.hls) { pvs.autoGrid = true; pvs.userDone = true; prevLoad(); if (pv.readyState >= 1) startGrid(); }
       else {
-        // Dateien: im WLAN (ohne Datensparen) gleich das Raster vorholen, sonst nur das Inhaltsverzeichnis (wenige KB)
+        // Dateien: das Inhaltsverzeichnis (wenige KB). Im WLAN, wenn das Video ein paar Sekunden ruhig läuft, dazu
+        // 8 Bilder über die Länge verteilt (wenige MB) – so zeigt schon das erste Spulen überall ein Bild. (Das ganze
+        // Raster gleich zu holen belegte bei großen Dateien das Netz – das erste Spulen musste dann warten.)
+        pv.preload = 'metadata';
+        prevLoad();
         let wifi = false;
         try { const c = navigator.connection; wifi = !!c && !c.saveData && (c.type === 'wifi' || c.type === 'ethernet'); } catch (e) {}
-        pv.preload = wifi ? 'auto' : 'metadata';
-        if (wifi) { pvs.autoGrid = true; pvs.userDone = true; }
-        prevLoad();
+        if (wifi) setTimeout(() => {
+          if (vp !== st || st.mode !== 'own' || vid.paused || vid.readyState < 3 || prev.classList.contains('on') || pvs.gridOn || pvs.grid.length) return;
+          const d = pv.duration;
+          if (!isFinite(d) || d <= 0 || pv.readyState < 1) return;
+          for (let i = 0; i < 8; i++) pvs.grid.push((i + 0.5) * d / 8);
+          pump();
+        }, 3000);
       }
     };
     // ----- Spulen „im Bild“ (wie Samsung Internet) -----
@@ -5292,6 +5312,9 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       prev.classList.toggle('tonly', !fin);   // Live-Stream mit Zurückspulen: nur die Zeit (eigene Klasse – bleibt nicht hängen)
       const img = fin && !liveMode() && prevLoad() && !prev.classList.contains('noimg');
       if (img) {
+        if (!pvs.t1st) { pvs.t1st = Date.now(); pvs.got = false; }
+        // Vorschau-Video lädt seit über 5 s nicht einmal sein Inhaltsverzeichnis? Einmal neu anstoßen
+        if (pv.readyState === 0 && pvs.loadAt && Date.now() - pvs.loadAt > 5000) pvReload();
         pvs.lastWant = t;
         const n = nearest(t);
         if (n && better(n[1])) paint(n[0], n[1]);   // sofort das nächstgelegene gemerkte Bild …
@@ -5313,7 +5336,12 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       prev.classList.add('on');
       wrap.classList.add('scrub');   // Knöpfe darüber kurz ausblenden, damit die Vorschau frei steht
     }
-    function prevHide() { prev.classList.remove('on', 'stale'); wrap.classList.remove('scrub'); }
+    function prevHide() {
+      // (Diagnose: Spulen ganz ohne Bild mitzählen)
+      if (pvs.t1st && !pvs.got && !prev.classList.contains('noimg')) st.prevMiss = (st.prevMiss || 0) + 1;
+      pvs.t1st = 0; pvs.got = false;
+      prev.classList.remove('on', 'stale'); wrap.classList.remove('scrub');
+    }
 
     // ----- Gesten (wie Just Player) -----
     const pts = new Map();
@@ -6475,7 +6503,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.15',
+      'Video-Assistent 19.16',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
@@ -6490,6 +6518,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       'Bild-in-Bild: Browser ' + (document.pictureInPictureEnabled ? 'kann es' : 'kann es für Webseiten nicht (nur Wischen zum Startbildschirm)') +
         ' | im Player: ' + (vp ? (vp.pipOk ? 'erlaubt' : 'aus') + ' (' + (vp.mode === 'capture' ? 'gespiegelt' + (kadriPage() ? ', Schild' : '') : 'eigener Player') + ')' : 'zu') +
         ' | Vorschau: ' + (vp ? (vp.prevWhy || (vp.mode === 'own' ? 'noch nicht gespult' : vp.fbPrev && (vp.fbBad || []).indexOf(vp.fbPrev) < 0 ? 'Bilder aus der MP4 (gespiegelt)' : 'nur Zeit (gespiegelt)')) : '-') +
+        (vp && vp.prevFirst ? ' · erstes Bild nach ' + (vp.prevFirst / 1000).toFixed(1) + ' s' : '') + (vp && vp.prevMiss ? ' · ' + vp.prevMiss + '× ohne Bild' : '') +
         ' | Lupe: ' + (vp ? vp.lupeWhy || 'noch nicht gespult' : '-'),
       'Stream-Nachweis: ' + (r.proof || '-') + ' | Listen gelesen: ' + plInfo.size + ' | Stück-Ordner: ' + segHits.size +
         (function () { const p = playingStream(navAt); return p ? ' | lädt gerade: ' + hostOf(p.u) + ' …' + p.u.slice(-40) : ''; })(),
