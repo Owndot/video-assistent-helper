@@ -18,6 +18,7 @@ with sync_playwright() as p:
     ok1 = r[0]==0 and r[1]==0 and r[2]==400 and r[3]==800 and r[5]=='f'
     print('OK  ' if ok1 else 'FAIL', 'ohne Vollbild: Fenster deckt alles', r)
     page.screenshot(path=OUT+'/emb_nofs.png')
+    page.frame_locator('#f').locator('.vp').evaluate('e => e.classList.add("ctl")'); time.sleep(0.3)   # Bedienung zeigen (öffnet ruhig)
     page.frame_locator('#f').locator('button[aria-label="Schließen"]').click(); time.sleep(0.8)
     r2 = page.evaluate('() => [document.getElementById("f").getBoundingClientRect().height, document.querySelector("div[style*=translateZ]").getAttribute("style"), scrollY]')
     ok2 = r2[0]==260 and 'important' not in r2[1] and not errs
