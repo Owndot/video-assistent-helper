@@ -36,6 +36,7 @@
       (st.posterCv || vid).after(el);
       const b = { el: el, ms: ms, at: Date.now(), seeks: 0, seekAt: 0, lead: 0.35, tm: 0, iv: 0 };
       st.bridge = b;
+      spin.classList.remove('on');   // das Bild läuft – kein Ladekreis
       vid.muted = true;
       b.tm = setTimeout(() => bridgeEnd('nach 10 s'), 10000);
       b.iv = setInterval(bridgeTick, 50);
@@ -96,7 +97,7 @@
         vid.muted = false; vid.playbackRate = st.speed;
         st.startTime = moved ? vid.currentTime : t;
         if (!moved && vid.readyState >= 1 && Math.abs(vid.currentTime - t) > 0.3) { try { vid.currentTime = t; } catch (e) {} }
-        if (vid.readyState >= 3 && !vid.paused) dropPoster();
+        if (vid.readyState >= 3 && !vid.paused) dropPoster(); else spin.classList.add('on');   // (jetzt wartet man wirklich auf die Kopie)
       }
       st.openStat.how = 'umgeschaltet (' + why + ')'; st.openStat.swap = performance.now();
       bridgeDrop();
@@ -120,7 +121,7 @@
       st.mode = 'own';
       if (st.setPipAllowed) st.setPipAllowed(true);
       kadriShield(false);
-      spin.classList.add('on');
+      if (!st.bridge) spin.classList.add('on');   // (nahtloser Start: das Bild läuft ja schon – kein Ladekreis)
       st.loadTimer = setTimeout(tryNext, 9000);   // lädt nicht? nächste Quelle
       try { vid.srcObject = null; vid.removeAttribute('src'); } catch (e) {}
       if (PLAYLIST_RE.test(u)) {

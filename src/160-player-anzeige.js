@@ -82,7 +82,7 @@
     const onMediaEv = (e) => {
       const fromOrig = e.currentTarget === orig;
       if ((st.mode === 'capture') !== fromOrig) return;
-      if (e.type === 'waiting') spin.classList.add('on');
+      if (e.type === 'waiting' && !st.bridge) spin.classList.add('on');   // (die stumme Kopie hinter dem nahtlosen Start lädt unsichtbar)
       if (e.type === 'playing' || e.type === 'canplay') spin.classList.remove('on');
       if (e.type === 'pause' && !st.swipeHold) showControls();   // (kurze Pause beim Wischen übers Video: Leisten nicht zeigen)
       updateUI();

@@ -7,7 +7,8 @@ exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])
 SAMPLE = '''() => { const R = %s, o = document.getElementById("v"); window.__seen = []; window.__swapAt = 0;
   const iv = setInterval(() => { const v = R.querySelector(".vv"); if (!v) return; const br = R.querySelector(".vbridge");
     if (!br && !window.__swapAt) window.__swapAt = performance.now();
-    window.__seen.push([performance.now(), br ? o.currentTime : v.currentTime, !!br, o.paused, o.muted, v.muted]); }, 20);
+    const sp = R.querySelector(".vspin");
+    window.__seen.push([performance.now(), br ? o.currentTime : v.currentTime, !!br, o.paused, o.muted, v.muted, !!(sp && sp.classList.contains("on") && getComputedStyle(sp).opacity !== "0")]); }, 20);
   setTimeout(() => clearInterval(iv), 9000); }''' % R
 def jumps(seen):
     back = fwd = 0
@@ -40,6 +41,8 @@ with sync_playwright() as p:
         bk, fw = jumps(seen)
         nb = sum(1 for s in seen if s[2])
         check('%s: umgeschaltet ohne Sprung (zurück %.2f s, vor %.2f s)' % (tag, bk, fw), bk < 0.2 and fw < 0.35 and nb > 2, [bk, fw, nb, len(seen)])
+        spun = sum(1 for s in seen if s[6])
+        check('%s: kein Ladekreis (das Bild läuft ja)' % tag, spun == 0, [spun, len(seen)])
         dbl = sum(1 for s in seen if not s[2] and not s[3] and not s[4] and not s[5])
         check('%s: danach eigenes Video mit Ton, Seite still (kein doppelter Ton)' % tag, after[0] and after[1] and after[2] and after[3] and dbl == 0, [after, dbl])
         ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(1.0)

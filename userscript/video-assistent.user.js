@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.20
+// @version      19.21
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -3400,7 +3400,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     const onMediaEv = (e) => {
       const fromOrig = e.currentTarget === orig;
       if ((st.mode === 'capture') !== fromOrig) return;
-      if (e.type === 'waiting') spin.classList.add('on');
+      if (e.type === 'waiting' && !st.bridge) spin.classList.add('on');   // (die stumme Kopie hinter dem nahtlosen Start lädt unsichtbar)
       if (e.type === 'playing' || e.type === 'canplay') spin.classList.remove('on');
       if (e.type === 'pause' && !st.swipeHold) showControls();   // (kurze Pause beim Wischen übers Video: Leisten nicht zeigen)
       updateUI();
@@ -3449,6 +3449,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       (st.posterCv || vid).after(el);
       const b = { el: el, ms: ms, at: Date.now(), seeks: 0, seekAt: 0, lead: 0.35, tm: 0, iv: 0 };
       st.bridge = b;
+      spin.classList.remove('on');   // das Bild läuft – kein Ladekreis
       vid.muted = true;
       b.tm = setTimeout(() => bridgeEnd('nach 10 s'), 10000);
       b.iv = setInterval(bridgeTick, 50);
@@ -3509,7 +3510,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         vid.muted = false; vid.playbackRate = st.speed;
         st.startTime = moved ? vid.currentTime : t;
         if (!moved && vid.readyState >= 1 && Math.abs(vid.currentTime - t) > 0.3) { try { vid.currentTime = t; } catch (e) {} }
-        if (vid.readyState >= 3 && !vid.paused) dropPoster();
+        if (vid.readyState >= 3 && !vid.paused) dropPoster(); else spin.classList.add('on');   // (jetzt wartet man wirklich auf die Kopie)
       }
       st.openStat.how = 'umgeschaltet (' + why + ')'; st.openStat.swap = performance.now();
       bridgeDrop();
@@ -3533,7 +3534,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       st.mode = 'own';
       if (st.setPipAllowed) st.setPipAllowed(true);
       kadriShield(false);
-      spin.classList.add('on');
+      if (!st.bridge) spin.classList.add('on');   // (nahtloser Start: das Bild läuft ja schon – kein Ladekreis)
       st.loadTimer = setTimeout(tryNext, 9000);   // lädt nicht? nächste Quelle
       try { vid.srcObject = null; vid.removeAttribute('src'); } catch (e) {}
       if (PLAYLIST_RE.test(u)) {
@@ -6659,7 +6660,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.20',
+      'Video-Assistent 19.21',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
