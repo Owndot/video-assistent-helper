@@ -5412,10 +5412,11 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     // Sprung auf einmal; zieht der Finger weiter, wird danach nur die neueste Stelle angesprungen.
     const liveMode = () => CONFIG.seekPreview !== 'thumb';
     const live = { on: false, busy: false, want: -1, t0: 0, tm: 0 };
-    // Bild-Ebene beim Spulen im Bild: Manche Browser zeichnen beim schnellen Springen (besonders wenn die Seite dabei
-    // kurz eine niedrigere Qualität lädt) ein einzelnes Bild in seiner Pixelgröße – klein in der Mitte statt bildfüllend.
-    // Darum liegt während des Spulens eine Ebene über dem Video, in die jedes neue Bild selbst hineingezeichnet wird –
-    // immer richtig groß. Nach dem Loslassen weg, sobald das Video an der Stelle sein Bild zeigt. (Firefox-Handy kann
+    // Bild-Ebene beim Spulen im Bild: Chrome auf Android zeichnet ein Video als eigene Ebene am Bildschirm vorbei.
+    // Ändert sich darüber etwas (die großen Zahlen beim Wischen), erneuert es beim schnellen Springen manchmal nur das
+    // Rechteck um die Zahlen – dort steht dann ein Bild einer anderen Stelle, wie ausgeschnitten. Darum liegt während
+    // des Spulens eine gewöhnliche Ebene über dem Video, in die jedes neue Bild ganz hineingezeichnet wird – Zahlen
+    // und Bild werden so immer gemeinsam und vollständig erneuert. Nach dem Loslassen weg, sobald das Video an der Stelle sein Bild zeigt. (Firefox-Handy kann
     // Videobilder nicht kopieren – dort ohne Ebene.)
     const layer = { cv: null, id: 0, sizes: new Set(), hideTm: 0 };
     function layerDraw() {
