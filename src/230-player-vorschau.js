@@ -55,7 +55,7 @@
     }
     function prevLoad() {
       const key = st.mode === 'own' ? st.cur : fbPrevSrc();
-      if (!key) { prev.classList.add('noimg'); return false; }   // gespiegelt ohne passende Datei: keine eigene Quelle → nur die Zeit
+      if (!key) { prev.classList.add('noimg'); st.prevWhy = st.mode === 'own' ? 'keine Quelle' : 'nur Zeit (gespiegelt, keine passende Datei)'; return false; }   // gespiegelt ohne passende Datei: keine eigene Quelle → nur die Zeit
       if (pvs.key === key) return !prev.classList.contains('noimg');
       prev.classList.remove('noimg');
       // gespiegelt und ein anderes Video (Facebook spielt schon das nächste Reel)? Gemerkte Bilder gehören zum alten
@@ -68,7 +68,7 @@
         const hp = new Hls({ enableWorker: false, startLevel: 0, maxBufferLength: 2, maxMaxBufferLength: 4, backBufferLength: 0 });
         pvs.hls = hp;
         hp.on(Hls.Events.MANIFEST_PARSED, () => { try { hp.currentLevel = 0; hp.autoLevelEnabled = false; } catch (e) {} });   // kleinste Stufe
-        hp.on(Hls.Events.ERROR, (ev, d) => { if (d && d.fatal) prev.classList.add('noimg'); });
+        hp.on(Hls.Events.ERROR, (ev, d) => { if (d && d.fatal) { prev.classList.add('noimg'); st.prevWhy = 'nur Zeit (Stream-Fehler der Vorschau)'; } });
         hp.loadSource(u);
         hp.attachMedia(pv);
       } else {
@@ -119,6 +119,7 @@
       try { pvcx.drawImage(c, 0, 0); } catch (e) { return; }
       prev.dataset.t = String(Math.round(t * 10) / 10);
       prev.classList.add('img');
+      st.prevWhy = st.mode === 'own' ? 'Bilder' : 'Bilder aus der MP4 (gespiegelt)';
       staleCheck();
     }
     // gezeigtes Bild weit weg von der Fingerstelle (das richtige lädt noch)? → abgedunkelt
@@ -194,7 +195,10 @@
       const md = M().duration;
       const off = isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > 3;
       if (st.mode !== 'own') {   // gespiegelt: Datei passt nicht zum Video → nie wieder nehmen, nur die Zeit zeigen
-        if (off || !isFinite(md)) { (st.fbBad || (st.fbBad = [])).push(pvs.src); const k = pvs.key; prevReset(); pvs.key = k; prev.classList.add('noimg'); prev.classList.remove('img'); return; }
+        if (off || !isFinite(md)) {
+          st.prevWhy = isFinite(md) ? 'nur Zeit (Datei ' + Math.round(pv.duration) + ' s, Video ' + Math.round(md) + ' s – anderes Video)' : 'nur Zeit (Länge des Videos unbekannt)';
+          (st.fbBad || (st.fbBad = [])).push(pvs.src); const k = pvs.key; prevReset(); pvs.key = k; prev.classList.add('noimg'); prev.classList.remove('img'); return;
+        }
       } else if (pvs.src !== st.cur && off) {
         const key = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = key; return;
       }
@@ -221,7 +225,13 @@
       }
       pump();
     }
-    pv.addEventListener('error', () => { prev.classList.add('noimg'); });
+    // Ladefehler: war es eine kleinere Qualität, die laufende Quelle nehmen (einmal); sonst nur die Zeit
+    pv.addEventListener('error', () => {
+      if (!pvs.key) return;   // (Quelle wurde absichtlich entfernt)
+      if (st.mode === 'own' && pvs.src && st.cur && pvs.src !== st.cur && !st.hls) { const k = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = k; return; }
+      prev.classList.add('noimg');
+      st.prevWhy = 'nur Zeit (Ladefehler ' + ((pv.error && pv.error.code) || '?') + ')';
+    });
     // Streams: Raster gleich nach dem Start vorholen (kleinste Stufe, wenig Daten)
     // Vorwärmen nach dem Start: Streams holen gleich das Raster (kleinste Stufe, wenig Daten),
     // Dateien nur ihr Inhaltsverzeichnis (wenige KB) – dann wartet auch das erste Ziehen nicht darauf
@@ -269,7 +279,7 @@
       const t = tt != null ? tt : p * d;
       pvTime.textContent = fmtTime(t);
       if (liveMode() && !wrap.classList.contains('scrubx')) liveTo(t);
-      if (!fin) prev.classList.add('noimg');   // Live-Stream mit Zurückspulen: nur die Zeit
+      prev.classList.toggle('tonly', !fin);   // Live-Stream mit Zurückspulen: nur die Zeit (eigene Klasse – bleibt nicht hängen)
       const img = fin && !liveMode() && prevLoad() && !prev.classList.contains('noimg');
       if (img) {
         pvs.lastWant = t;

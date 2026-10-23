@@ -139,8 +139,10 @@
       tCur.textContent = r.live ? behind(r, m.currentTime) : fmtTime(m.currentTime);
     };
     const geom = () => { const br = bar.getBoundingClientRect(); return { br: br, L: br.left + 7, w: Math.max(60, br.width - 14) }; };
-    // Ausschnitt je Stufe in Sekunden (0 = ganzer Bereich): Lupe ≈ Länge ÷ 6 (20–60 s), Fein = Lupe ÷ 4 (mind. 5 s)
-    const spanFor = (lv, len) => { if (!lv || len < 90 || CONFIG.seekZoom === false) return 0; const z1 = clamp(len / 6, 20, 60); return lv === 1 ? z1 : Math.max(5, z1 / 4); };
+    // Ausschnitt je Stufe in Sekunden (0 = ganzer Bereich): Lupe ≈ Länge ÷ 6 (20–60 s), Fein = Lupe ÷ 4 (mind. 5 s).
+    // Nicht bei Live (Sprünge dort nur stückweise genau, der Bereich wandert) und nicht bei Videos unter 1,5 min.
+    const lupeWhy = (r) => (r.live ? 'aus (Live-Stream)' : CONFIG.seekZoom === false ? 'aus (Einstellung)' : r.len < 90 ? 'nein – Video kürzer als 1:30 (' + fmtTime(r.len) + ')' : 'ja');
+    const spanFor = (lv, len) => { if (!lv || len < 90 || CONFIG.seekZoom === false || (scr.r && scr.r.live)) return 0; const z1 = clamp(len / 6, 20, 60); return lv === 1 ? z1 : Math.max(5, z1 / 4); };
     // Stufe aus der Höhe des Fingers unter der Leiste (Querformat: weniger Platz → Stufen näher beieinander)
     function levelFor(dy) {
       const room = Math.max(60, innerHeight - scr.y0 - 8);
@@ -305,6 +307,7 @@
       Object.assign(scr, { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, lx: e.clientX, mx: e.clientX, my: e.clientY, t0: m.currentTime, t: m.currentTime,
         raw: m.currentTime, moved: false, first: true, mode: '', r: r, key: vidKey(), lv: 0, z: 0, off: 0, pt: 0, last: Date.now() });
       barKnob.style.left = Math.round(posX((m.currentTime - r.a) / r.len) - 17) + 'px';
+      st.lupeWhy = lupeWhy(r);
       st.barDrag = true; clearTimeout(st.hideTimer);
       onVisChange(onScrubVis);
       // Notbremse: kommt 15 s lang gar nichts vom Finger (Loslassen verloren), sauber abbrechen

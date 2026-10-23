@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.11
+// @version      19.12
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -2568,7 +2568,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vprev.img.stale .vpc{opacity:.55;filter:brightness(.8)}
 .vprev.live .vpv{opacity:1}
 .vprev.live .vpc{opacity:0}
-.vprev.noimg .vpbox{display:none}
+.vprev.noimg .vpbox,.vprev.tonly .vpbox{display:none}
 .vprev b{white-space:nowrap;font:700 13px var(--font);font-variant-numeric:tabular-nums;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);padding:5px 11px;border-radius:13px;transition:background .15s ease}
 /* Spulen per Wischen: große, dünne Zeit mitten im Bild, darunter die Restzeit – nur Zahlen, kein Kasten */
 .vseek{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;color:#fff;pointer-events:none;opacity:0;transition:opacity .14s ease;z-index:3;white-space:nowrap;
@@ -4707,8 +4707,10 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       tCur.textContent = r.live ? behind(r, m.currentTime) : fmtTime(m.currentTime);
     };
     const geom = () => { const br = bar.getBoundingClientRect(); return { br: br, L: br.left + 7, w: Math.max(60, br.width - 14) }; };
-    // Ausschnitt je Stufe in Sekunden (0 = ganzer Bereich): Lupe ≈ Länge ÷ 6 (20–60 s), Fein = Lupe ÷ 4 (mind. 5 s)
-    const spanFor = (lv, len) => { if (!lv || len < 90 || CONFIG.seekZoom === false) return 0; const z1 = clamp(len / 6, 20, 60); return lv === 1 ? z1 : Math.max(5, z1 / 4); };
+    // Ausschnitt je Stufe in Sekunden (0 = ganzer Bereich): Lupe ≈ Länge ÷ 6 (20–60 s), Fein = Lupe ÷ 4 (mind. 5 s).
+    // Nicht bei Live (Sprünge dort nur stückweise genau, der Bereich wandert) und nicht bei Videos unter 1,5 min.
+    const lupeWhy = (r) => (r.live ? 'aus (Live-Stream)' : CONFIG.seekZoom === false ? 'aus (Einstellung)' : r.len < 90 ? 'nein – Video kürzer als 1:30 (' + fmtTime(r.len) + ')' : 'ja');
+    const spanFor = (lv, len) => { if (!lv || len < 90 || CONFIG.seekZoom === false || (scr.r && scr.r.live)) return 0; const z1 = clamp(len / 6, 20, 60); return lv === 1 ? z1 : Math.max(5, z1 / 4); };
     // Stufe aus der Höhe des Fingers unter der Leiste (Querformat: weniger Platz → Stufen näher beieinander)
     function levelFor(dy) {
       const room = Math.max(60, innerHeight - scr.y0 - 8);
@@ -4873,6 +4875,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       Object.assign(scr, { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, lx: e.clientX, mx: e.clientX, my: e.clientY, t0: m.currentTime, t: m.currentTime,
         raw: m.currentTime, moved: false, first: true, mode: '', r: r, key: vidKey(), lv: 0, z: 0, off: 0, pt: 0, last: Date.now() });
       barKnob.style.left = Math.round(posX((m.currentTime - r.a) / r.len) - 17) + 'px';
+      st.lupeWhy = lupeWhy(r);
       st.barDrag = true; clearTimeout(st.hideTimer);
       onVisChange(onScrubVis);
       // Notbremse: kommt 15 s lang gar nichts vom Finger (Loslassen verloren), sauber abbrechen
@@ -4962,7 +4965,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     }
     function prevLoad() {
       const key = st.mode === 'own' ? st.cur : fbPrevSrc();
-      if (!key) { prev.classList.add('noimg'); return false; }   // gespiegelt ohne passende Datei: keine eigene Quelle → nur die Zeit
+      if (!key) { prev.classList.add('noimg'); st.prevWhy = st.mode === 'own' ? 'keine Quelle' : 'nur Zeit (gespiegelt, keine passende Datei)'; return false; }   // gespiegelt ohne passende Datei: keine eigene Quelle → nur die Zeit
       if (pvs.key === key) return !prev.classList.contains('noimg');
       prev.classList.remove('noimg');
       // gespiegelt und ein anderes Video (Facebook spielt schon das nächste Reel)? Gemerkte Bilder gehören zum alten
@@ -4975,7 +4978,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         const hp = new Hls({ enableWorker: false, startLevel: 0, maxBufferLength: 2, maxMaxBufferLength: 4, backBufferLength: 0 });
         pvs.hls = hp;
         hp.on(Hls.Events.MANIFEST_PARSED, () => { try { hp.currentLevel = 0; hp.autoLevelEnabled = false; } catch (e) {} });   // kleinste Stufe
-        hp.on(Hls.Events.ERROR, (ev, d) => { if (d && d.fatal) prev.classList.add('noimg'); });
+        hp.on(Hls.Events.ERROR, (ev, d) => { if (d && d.fatal) { prev.classList.add('noimg'); st.prevWhy = 'nur Zeit (Stream-Fehler der Vorschau)'; } });
         hp.loadSource(u);
         hp.attachMedia(pv);
       } else {
@@ -5026,6 +5029,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       try { pvcx.drawImage(c, 0, 0); } catch (e) { return; }
       prev.dataset.t = String(Math.round(t * 10) / 10);
       prev.classList.add('img');
+      st.prevWhy = st.mode === 'own' ? 'Bilder' : 'Bilder aus der MP4 (gespiegelt)';
       staleCheck();
     }
     // gezeigtes Bild weit weg von der Fingerstelle (das richtige lädt noch)? → abgedunkelt
@@ -5101,7 +5105,10 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       const md = M().duration;
       const off = isFinite(md) && isFinite(pv.duration) && Math.abs(pv.duration - md) > 3;
       if (st.mode !== 'own') {   // gespiegelt: Datei passt nicht zum Video → nie wieder nehmen, nur die Zeit zeigen
-        if (off || !isFinite(md)) { (st.fbBad || (st.fbBad = [])).push(pvs.src); const k = pvs.key; prevReset(); pvs.key = k; prev.classList.add('noimg'); prev.classList.remove('img'); return; }
+        if (off || !isFinite(md)) {
+          st.prevWhy = isFinite(md) ? 'nur Zeit (Datei ' + Math.round(pv.duration) + ' s, Video ' + Math.round(md) + ' s – anderes Video)' : 'nur Zeit (Länge des Videos unbekannt)';
+          (st.fbBad || (st.fbBad = [])).push(pvs.src); const k = pvs.key; prevReset(); pvs.key = k; prev.classList.add('noimg'); prev.classList.remove('img'); return;
+        }
       } else if (pvs.src !== st.cur && off) {
         const key = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = key; return;
       }
@@ -5128,7 +5135,13 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       }
       pump();
     }
-    pv.addEventListener('error', () => { prev.classList.add('noimg'); });
+    // Ladefehler: war es eine kleinere Qualität, die laufende Quelle nehmen (einmal); sonst nur die Zeit
+    pv.addEventListener('error', () => {
+      if (!pvs.key) return;   // (Quelle wurde absichtlich entfernt)
+      if (st.mode === 'own' && pvs.src && st.cur && pvs.src !== st.cur && !st.hls) { const k = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = k; return; }
+      prev.classList.add('noimg');
+      st.prevWhy = 'nur Zeit (Ladefehler ' + ((pv.error && pv.error.code) || '?') + ')';
+    });
     // Streams: Raster gleich nach dem Start vorholen (kleinste Stufe, wenig Daten)
     // Vorwärmen nach dem Start: Streams holen gleich das Raster (kleinste Stufe, wenig Daten),
     // Dateien nur ihr Inhaltsverzeichnis (wenige KB) – dann wartet auch das erste Ziehen nicht darauf
@@ -5176,7 +5189,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       const t = tt != null ? tt : p * d;
       pvTime.textContent = fmtTime(t);
       if (liveMode() && !wrap.classList.contains('scrubx')) liveTo(t);
-      if (!fin) prev.classList.add('noimg');   // Live-Stream mit Zurückspulen: nur die Zeit
+      prev.classList.toggle('tonly', !fin);   // Live-Stream mit Zurückspulen: nur die Zeit (eigene Klasse – bleibt nicht hängen)
       const img = fin && !liveMode() && prevLoad() && !prev.classList.contains('noimg');
       if (img) {
         pvs.lastWant = t;
@@ -6325,7 +6338,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.11',
+      'Video-Assistent 19.12',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
@@ -6339,7 +6352,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       'Nächstes-Reel-Countdown abgebrochen: ' + nextCancels + '×',
       'Bild-in-Bild: Browser ' + (document.pictureInPictureEnabled ? 'kann es' : 'kann es für Webseiten nicht (nur Wischen zum Startbildschirm)') +
         ' | im Player: ' + (vp ? (vp.pipOk ? 'erlaubt' : 'aus') + ' (' + (vp.mode === 'capture' ? 'gespiegelt' + (kadriPage() ? ', Schild' : '') : 'eigener Player') + ')' : 'zu') +
-        ' | Vorschau: ' + (vp ? (vp.mode === 'own' ? 'Bilder' : vp.fbPrev && (vp.fbBad || []).indexOf(vp.fbPrev) < 0 ? 'Bilder aus der MP4 (gespiegelt)' : 'nur Zeit (gespiegelt)') : '-'),
+        ' | Vorschau: ' + (vp ? (vp.prevWhy || (vp.mode === 'own' ? 'noch nicht gespult' : vp.fbPrev && (vp.fbBad || []).indexOf(vp.fbPrev) < 0 ? 'Bilder aus der MP4 (gespiegelt)' : 'nur Zeit (gespiegelt)')) : '-') +
+        ' | Lupe: ' + (vp ? vp.lupeWhy || 'noch nicht gespult' : '-'),
       'Stream-Nachweis: ' + (r.proof || '-') + ' | Listen gelesen: ' + plInfo.size + ' | Stück-Ordner: ' + segHits.size +
         (function () { const p = playingStream(navAt); return p ? ' | lädt gerade: ' + hostOf(p.u) + ' …' + p.u.slice(-40) : ''; })(),
       'Kodierung: ' + (r.best ? encTag(r.best) || '-' : '-'),
