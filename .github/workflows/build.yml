@@ -28,6 +28,27 @@ jobs:
         run: |
           tests/java/build.sh
           java -cp tests/java/classes TestPortConflict
+      - name: Compare rapid-restart regression with previous listener
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/MiniServer.java?ref=e7672d277f1c0488bb4c187c0ead6a2d3f07fa57' --jq .content | base64 --decode > "$work/MiniServer.java"
+          javac -cp tests/java/classes -d "$work/old" "$work/MiniServer.java"
+          reproduced=false
+          for trial in 1 2 3 4 5; do
+            if java -cp "$work/old:tests/java/classes" TestPortConflict > "$work/previous.log" 2>&1; then continue; fi
+            grep -Eq 'Endpoint not released after shutdown|Rapid restart failed' "$work/previous.log"
+            reproduced=true
+            echo "Previous listener race reproduced:"
+            cat "$work/previous.log"
+            break
+          done
+          if [ "$reproduced" = false ]; then echo "::warning::Previous timing race did not reproduce in this run"; fi
+          java -cp tests/java/classes TestPortConflict
       - name: JVM media tests
         run: |
           sudo apt-get update

@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [codex/security-phase-1]
-    paths: ['tools/profile-helper.py', '.github/workflows/helper-performance.yml']
+    paths: ['app/**', 'tools/profile-helper.py', '.github/workflows/helper-performance.yml']
 permissions:
   contents: read
 jobs:
