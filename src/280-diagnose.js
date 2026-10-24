@@ -24,7 +24,12 @@
         ' | Button: ' + (pill ? pill.className + ' @ ' + pill.style.left + ',' + pill.style.top + ' | Breite ' + pill.offsetWidth : '-') +
         ' | Bereich: ' + (typeof GM_info !== 'undefined' && GM_info && GM_info.injectInto ? GM_info.injectInto : '?')));
     } catch (e) {}
-    return lines.join('\n');
+    return maskUrls(lines.join('\n'));
+  }
+  // Datenschutz: Adressen in der Diagnose ohne die Werte nach „?“ und „#“ (dort stehen oft Zugangsschlüssel,
+  // Sitzungs- oder Nutzerkennungen). Die Namen der Angaben bleiben sichtbar – für die Fehlersuche reicht das.
+  function maskUrls(text) {
+    return String(text).replace(/([?&#;][A-Za-z0-9_.\-\[\]%]{1,40}=)[^&#\s|…'")]+/g, '$1…').replace(/(#)[A-Za-z0-9_\-]{16,}/g, '$1…');
   }
   function showDiagBox(text) {
     ui();
@@ -66,7 +71,7 @@
 
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
-    return [
+    return maskUrls([
       'Video-Assistent 19.26',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
@@ -107,6 +112,6 @@
       'Adressen zu diesem Video (' + lastNear.length + '):',
     ]).concat(lastNear.slice(0, 12).map((c, i) =>
       ' ' + (i + 1) + '. ' + c.kind + ' ' + (c.res ? c.res + 'p' : '?') + ' | ID ' + (c.asset || '-') + ' | ' + (c.tag || 'kein Tag').slice(0, 50) + ' | ' + String(c.from || '').slice(0, 40)
-    )).join('\n');
+    )).join('\n'));
   }
 })();
