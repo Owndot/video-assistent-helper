@@ -1,3 +1,7 @@
+# Owner policy update
+
+Security takes priority over seamless legacy updates. Android 8.x support is desirable, but reinstall/separate migration is explicitly permitted; API 28-32 legacy rotation is not the default. Proposed paths: minSdk33 v3.1 modern artifact, fresh-key clean installation for API26-32. Production rotation/publication is still prohibited pending approval and physical-device validation. See MIGRATION-VALIDATION.md; the prior alternatives below are background, not an open legacy-compatibility requirement.
+
 # Signing incident: decision required, no rotation performed
 
 The supported minimum is Android 8.0 / API 26, and APKs are sideloaded through GitHub Releases. The current key must be treated as compromised. Do not use it for PR/CI signing. Safe validation uses SDK debug signing and an ephemeral CI identity; no production secrets are referenced.

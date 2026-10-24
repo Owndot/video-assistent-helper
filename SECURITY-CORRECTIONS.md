@@ -1,6 +1,6 @@
 # Current incident update
 
-The historical report below predates the repository becoming public. Main still exposes signing material until containment PR #2 is merged. Validation now uses disposable keys only and has no release job; browser CI no longer writes result branches. See VALIDATION-SAFETY.md and SIGNING-ROTATION-DECISION.md for current evidence and pending decisions.
+The historical report below predates the repository becoming public. Containment PR #2 is now merged; current main no longer exposes signing files or credentials, but public historical copies remain compromised. Validation now uses disposable keys only and has no release job; browser CI no longer writes result branches. See VALIDATION-SAFETY.md and SIGNING-ROTATION-DECISION.md for current evidence and pending decisions.
 
 # Phase 1 corrections — 2026-10-24
 
