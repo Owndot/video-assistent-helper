@@ -4,9 +4,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish a new version from main (never replace an existing release)'
+        type: boolean
+        default: false
+        required: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -59,17 +65,28 @@ jobs:
           name: VideoAssistent-Helfer
           path: VideoAssistent-Helper.apk
 
-      # Immer unter derselben Adresse: Releases → "Neueste Version" → VideoAssistent-Helper.apk
-      - name: Als Release veröffentlichen
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete neueste -y --cleanup-tag || true
-          gh release create neueste VideoAssistent-Helper.apk \
-            --title "Video-Assistent Helper 1.0.${{ github.run_number }}" \
-            --notes "Auf dem Handy öffnen, VideoAssistent-Helper.apk antippen und installieren. Neue Versionen lassen sich einfach drüber installieren. / Open on your phone, tap VideoAssistent-Helper.apk and install. New versions install over the old one." \
-            --latest
-
       - name: Remove temporary signing files
         if: always()
         run: rm -f "$RUNNER_TEMP/evp-release.jks" "$RUNNER_TEMP/evp-cert.der"
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VideoAssistent-Helfer
+      - name: Publish a new immutable version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_VERSION: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          gh release create "v1.0.$RELEASE_VERSION" VideoAssistent-Helper.apk \
+            --target "$RELEASE_COMMIT" --title "Video-Assistent Helper 1.0.$RELEASE_VERSION" \
+            --notes "Signed update: install over the existing production app." --latest
