@@ -59,6 +59,10 @@ def verifyReleaseSigning = tasks.register('verifyReleaseSigning') {
         if (runNo <= 0) throw new GradleException('Release versionCode must be positive.')
         def expected = System.getenv('EVP_CERT_SHA256').replaceAll('[:\\s]', '').toLowerCase(java.util.Locale.ROOT)
         if (!(expected ==~ /[0-9a-f]{64}/)) throw new GradleException('Invalid expected production certificate SHA-256.')
+        // Verified compromised identity: never sign another ordinary release with this key.
+        if (expected == 'ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5') {
+            throw new GradleException('Exposed production signing identity is blocked. Migration requires separate approval; use a disposable test identity for validation.')
+        }
         def ks = java.security.KeyStore.getInstance('JKS')
         file(System.getenv('EVP_KEYSTORE_PATH')).withInputStream { input ->
             ks.load(input, System.getenv('EVP_STORE_PASSWORD').toCharArray())

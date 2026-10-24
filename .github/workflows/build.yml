@@ -123,6 +123,11 @@ jobs:
           keytool -genkeypair -keystore "$EVP_KEYSTORE_PATH" -storetype JKS -storepass:env EVP_STORE_PASSWORD -keypass:env EVP_KEY_PASSWORD -alias "$EVP_KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 2 -dname CN=CI-TEST-ONLY
           keytool -exportcert -keystore "$EVP_KEYSTORE_PATH" -storepass:env EVP_STORE_PASSWORD -alias "$EVP_KEY_ALIAS" > "$RUNNER_TEMP/test-cert.der"
           export EVP_CERT_SHA256="$(sha256sum "$RUNNER_TEMP/test-cert.der" | cut -d ' ' -f 1)"
+          if EVP_CERT_SHA256=ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5 gradle :app:verifyReleaseSigning --no-daemon > "$RUNNER_TEMP/blocked-signer.log" 2>&1; then
+            echo 'Exposed signer was not blocked'; exit 1
+          fi
+          grep -q 'Exposed production signing identity is blocked' "$RUNNER_TEMP/blocked-signer.log"
+          echo 'PASS: compromised identity blocked using a disposable keystore only'
           gradle :app:assembleRelease --no-daemon
           # Never upload or distribute this test-signed production-ID APK.
       - uses: actions/upload-artifact@v4
