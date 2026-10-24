@@ -25,6 +25,20 @@ jobs:
           python3 -m unittest discover -s tests/security -v
           python3 -m py_compile tools/profile-helper.py tools/check-update.py tools/compare-exposed-signature.py
           for script in tools/collect-device-snapshot.sh tools/build-migration-fixtures.sh tools/test-migration-device.sh; do bash -n "$script"; done
+      - name: Userscript credential boundary regression
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          node tools/build.js --check
+          node tests/cookie_sites.js
+          old="$RUNNER_TEMP/old-cookie-sites.js"
+          gh api 'repos/Owndot/video-assistent-helper/contents/src/070-extern-ytdlnis.js?ref=6111df1a96854f659d7ab94bbaed399230cf1435' --jq .content | base64 --decode > "$old"
+          if node tests/cookie_sites.js "$old" > "$RUNNER_TEMP/old-cookie-sites.log" 2>&1; then
+            echo 'Old userscript boundary unexpectedly passed'; exit 1
+          fi
+          grep -q 'foreign eu.org tenant was trusted' "$RUNNER_TEMP/old-cookie-sites.log"
+          echo 'PASS: old userscript tenant scope fails the new regression'
       - name: JVM compilation and exclusive-port test
         run: |
           tests/java/build.sh

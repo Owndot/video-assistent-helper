@@ -26,8 +26,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api 'repos/Owndot/video-assistent-helper/contents/userscript/video-assistent.user.js?ref=b05fd2de60d27d368eda60ff32be8b361a695f45' --jq .content | base64 --decode > stable-player.js
-          sha256sum stable-player.js userscript/video-assistent.user.js
-          cmp stable-player.js userscript/video-assistent.user.js
+          gh api 'repos/Owndot/video-assistent-helper/contents/userscript/video-assistent.user.js?ref=6111df1a96854f659d7ab94bbaed399230cf1435' --jq .content | base64 --decode > pre-cookie-player.js
+          sha256sum stable-player.js pre-cookie-player.js
+          cmp stable-player.js pre-cookie-player.js
           cp stable-player.js userscript/video-assistent.user.js
       - name: Execute previously failing cases without changing assertions
         env:
