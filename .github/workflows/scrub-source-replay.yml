@@ -34,10 +34,19 @@ jobs:
         run: |
           cd tests/browser
           BROWSER=chromium TESTS="test_metadata_seek.py test_seamless.py test_player.py test_dvr.py" ./run_all.sh
+          mkdir -p ../../validation-results
+          cp out/test_metadata_seek.log ../../validation-results/current-metadata.log
       - name: Stable-current counterbalanced replay
         shell: bash
         run: |
           mkdir -p validation-results
+          cp "$RUNNER_TEMP/stable.js" userscript/video-assistent.user.js
+          if (cd tests/browser && BROWSER=chromium TESTS=test_metadata_seek.py ./run_all.sh) > validation-results/stable-metadata-summary.log 2>&1; then
+            echo 'Stable source unexpectedly passed explicit metadata-position regression'; exit 1
+          fi
+          cp tests/browser/out/test_metadata_seek.log validation-results/stable-metadata.log
+          grep -q '^FAIL new source does not inherit opening position' validation-results/stable-metadata.log
+          echo 'PASS: deterministic native source-position test fails stable and passes corrected source'
           bad=0
           index=0
           for label in stable current current stable; do
@@ -48,7 +57,9 @@ jobs:
             (cd tests/browser && BROWSER=chromium timeout -k 15 300 python3 -u _scrub_observe.py) > "$log" 2>&1 || rc=$?
             cat "$log"
             if [ "$label" = stable ]; then
-              if [ "$rc" -ne 0 ] || ! grep -q '^FAIL anderes Video beim Spulen' "$log"; then bad=1; fi
+              # The older composite gesture scenario depends on whether the opening bridge already ended.
+              # Its known source-position failure may or may not trigger; the explicit native case above is decisive.
+              if [ "$rc" -ne 0 ] || grep '^FAIL' "$log" | grep -v '^FAIL anderes Video beim Spulen'; then bad=1; fi
             else
               if [ "$rc" -ne 0 ] || grep -q '^FAIL' "$log" || ! grep -q '^ERGEBNIS: 36 von 36' "$log"; then bad=1; fi
             fi
@@ -60,7 +71,7 @@ jobs:
         with:
           name: source-switch-observations
           path: |
-            validation-results/scrub-*.log
+            validation-results/*.log
             tests/browser/out/test_metadata_seek.log
             tests/browser/out/test_seamless.log
             tests/browser/out/test_player.log
