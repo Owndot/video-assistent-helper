@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.25
+// @version      19.26
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -167,7 +167,7 @@
     'Füllen': 'Fill', 'Strecken': 'Stretch',
     // Einstellungen (kurz)
     'Design': 'Design', 'Glas': 'Glass', 'Schlicht': 'Plain', 'Vollbild': 'Full screen', 'Ambient': 'Ambient',
-    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Halten': 'Hold', 'Loslassen = abbrechen': 'Release to cancel', 'Lupe': 'Zoom', 'Spul-Lupe': 'Seek zoom', 'Beim Öffnen': 'On open', 'Nur Bild': 'Picture only', 'Mit Bedienung': 'With controls', 'Vibration': 'Vibration', 'LIVE': 'LIVE', 'Video hat gewechselt – Spulen abgebrochen': 'Video changed – seeking cancelled', 'Spul-Vorschau': 'Seek preview', 'Im Bild': 'In video', 'Kleines Bild': 'Thumbnail', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
+    'Fortschrittslinie': 'Progress line', 'Sprungweite': 'Skip', 'Abbrechen': 'Cancel', 'Halten': 'Hold', 'Lupe': 'Zoom', 'Spul-Lupe': 'Seek zoom', 'Beim Öffnen': 'On open', 'Nur Bild': 'Picture only', 'Mit Bedienung': 'With controls', 'Vibration': 'Vibration', 'LIVE': 'LIVE', 'Video hat gewechselt – Spulen abgebrochen': 'Video changed – seeking cancelled', 'Spul-Vorschau': 'Seek preview', 'Im Bild': 'In video', 'Kleines Bild': 'Thumbnail', 'Wischsperre oben': 'Swipe guard top', 'Wischsperre unten': 'Swipe guard bottom', 'Schmal': 'Narrow', 'Mittel': 'Medium', 'Breit': 'Wide', 'Sehr breit': 'Extra wide',
     'Link teilen': 'Share link', 'Zurück': 'Back', 'Wiederholen': 'Repeat', 'Wiederholen aus': 'Repeat off', 'Wiederholen: endlos': 'Repeat: endless', 'Sleep-Timer': 'Sleep timer', 'Ende des Videos': 'End of video', 'Läuft': 'Running', 'Sleep-Timer aus': 'Sleep timer off', 'Sleep-Timer: angehalten': 'Sleep timer: paused', 'Sleep-Timer: Ende des Videos': 'Sleep timer: end of video', 'Dialog-Verstärker': 'Dialogue boost', 'Dialog-Verstärker an': 'Dialogue boost on', 'Dialog-Verstärker aus': 'Dialogue boost off', 'Dialog-Verstärker: hier nicht möglich (die Seite gibt den Ton nicht frei)': 'Dialogue boost: not possible here (the site doesn’t release the sound)', 'In App öffnen': 'Open in app', 'Beim Verlassen': 'When leaving', 'Weiter': 'Keep playing', 'Anhalten': 'Pause', 'Antippen für Vollbild': 'Tap for full screen', 'z. B. VLC': 'e.g. VLC', 'Link kopiert': 'Link copied', 'Kein Link zu diesem Video gefunden': 'No link to this video found',
     'Oben: Wischen bis ganz an den Rand': 'Top: swiping works right up to the edge', 'Unten: Wischen bis ganz an den Rand': 'Bottom: swiping works right down to the edge',
     '✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helper benutzen. Du kannst diese Seite schließen.': '✓ Connected. From now on only this script can use the helper. You can close this page.',
@@ -358,6 +358,16 @@
   }
   // Würde der Browser jetzt Vollbild erlauben (frische Berührung, auch in einem eingebetteten Fenster)? Ohne die
   // Angabe (ältere Browser) einfach versuchen.
+  // Kurz vibrieren (Spulen: Lupe, Abbrechen, Anfang/Ende). Chrome erlaubt das, sobald man die Seite überhaupt einmal
+  // angetippt hat – NICHT nur direkt nach einem Tipp (Ziehen zählt nicht als Tipp: daran lag es, dass es oft still blieb)
+  function seekBuzz(ms) {
+    try {
+      if (CONFIG.seekBuzz === false || !navigator.vibrate) return;
+      const ua = navigator.userActivation;
+      if (ua && !ua.hasBeenActive) return;
+      navigator.vibrate(ms || 12);
+    } catch (e) {}
+  }
   function touchFresh() { try { return !navigator.userActivation || navigator.userActivation.isActive; } catch (e) { return true; } }
   function frameFs(f) {
     try {
@@ -4905,7 +4915,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     //    (Ausschnitt ~1 min). Die Leiste zeigt dann nur den Ausschnitt, links/rechts stehen dessen Grenzen, im Schild
     //    „Lupe“, beim Wechsel ein kurzes Vibrieren (abschaltbar). Wieder hoch auf die Leiste = normal (die Stelle gleitet
     //    beim Weiterziehen wieder unter den Finger). Finger an ein Ende der Leiste = der Ausschnitt wandert mit.
-    //  - weit nach oben weg vom Balken = abbrechen („Loslassen = abbrechen“, keine kleine Vorschau – das große Video zeigt
+    //  - weit nach oben weg vom Balken = abbrechen („Abbrechen“, keine kleine Vorschau – das große Video zeigt
     //    die laufende Stelle); loslassen dort = nichts ändern. Zurück nach unten = weiter spulen.
     //  - Live-Stream mit Zurückspulen: die Leiste ist der Bereich, den der Stream zurückhält; „−5:30“ = so weit hinter
     //    live, ganz rechts = wieder live.
@@ -4918,7 +4928,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     bar.tabIndex = -1;
     const scr = { on: false, id: 0, x0: 0, y0: 0, lx: 0, my: 0, mx: 0, raf: 0, t0: 0, t: 0, raw: 0, moved: false, first: true, mode: '',
       r: null, key: '', lv: 0, z: 0, ws: 0, zt: 0, zx: 0, off: 0, pan: 0, pt: 0, tk: 0, last: 0, wd: 0 };
-    const buzz = () => { try { if (CONFIG.seekBuzz !== false && navigator.vibrate && touchFresh()) navigator.vibrate(12); } catch (e) {} };
+    const buzz = (ms) => seekBuzz(ms || 12);
     // Abstand: „+12 s“, „−1:05“
     const delta = (x) => { const a = Math.round(Math.abs(x)); return (x < 0 ? '−' : '+') + (a < 60 ? a + ' s' : fmtTime(a)); };
     const barBack = () => {
@@ -4963,7 +4973,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       prevShow(p, t);
       wrap.classList.toggle('scrubx', scr.mode === 'cancel');
       wrap.classList.toggle('zoom', !!scr.z);
-      if (scr.mode === 'cancel') pvTime.textContent = tr('Loslassen = abbrechen');
+      if (scr.mode === 'cancel') pvTime.textContent = tr('Abbrechen');
       else if (scr.moved) {
         const tx = r.live ? behind(r, t) : tlabel(t) + ' · ' + delta(t - M().currentTime);
         pvTime.textContent = scr.lv ? tr('Lupe') + ' · ' + tx : tx;
@@ -5078,7 +5088,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         scr.moved = true;
         wrap.classList.add('thick');
       }
-      if (dy < -Math.max(70, geom().br.height * 1.5)) { const was = scr.mode; scr.mode = 'cancel'; scrubShow(M().currentTime); if (was !== 'cancel') cancelTick(); return; }
+      if (dy < -Math.max(70, geom().br.height * 1.5)) { const was = scr.mode; scr.mode = 'cancel'; scrubShow(M().currentTime); if (was !== 'cancel') { cancelTick(); buzz(20); } return; }
+      if (scr.mode === 'cancel') buzz(8);   // zurück aus „Abbrechen“
       scr.mode = '';
       if (scr.first && Math.abs(x - scr.x0) < 10 && dy < 30) { scrubShow(scr.t); return; }   // (noch) Hochwischen
       if (scr.first) { scr.first = false; scrubAt(x, 0); }   // erst unter den Finger, dann ggf. Lupe
@@ -5630,7 +5641,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         g.delta = dx / W * span;
         const to = fin ? clamp(g.time + g.delta, 0, Math.max(0, d - 0.5)) : Math.max(0, g.time + g.delta);
         const edge = fin && to <= 0 ? -1 : fin && to >= d - 0.5 ? 1 : 0;   // am Anfang/Ende: einmal kurz vibrieren
-        if (edge && edge !== g.edgeHit) { try { if (CONFIG.seekBuzz !== false && navigator.vibrate && touchFresh()) navigator.vibrate(10); } catch (err) {} }
+        if (edge && edge !== g.edgeHit) seekBuzz(10);
         g.edgeHit = edge;
         g.to = to;
         showSeek(to, d, to - g.time);
@@ -6730,7 +6741,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.25',
+      'Video-Assistent 19.26',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),

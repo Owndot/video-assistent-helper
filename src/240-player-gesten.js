@@ -93,7 +93,7 @@
         g.delta = dx / W * span;
         const to = fin ? clamp(g.time + g.delta, 0, Math.max(0, d - 0.5)) : Math.max(0, g.time + g.delta);
         const edge = fin && to <= 0 ? -1 : fin && to >= d - 0.5 ? 1 : 0;   // am Anfang/Ende: einmal kurz vibrieren
-        if (edge && edge !== g.edgeHit) { try { if (CONFIG.seekBuzz !== false && navigator.vibrate && touchFresh()) navigator.vibrate(10); } catch (err) {} }
+        if (edge && edge !== g.edgeHit) seekBuzz(10);
         g.edgeHit = edge;
         g.to = to;
         showSeek(to, d, to - g.time);

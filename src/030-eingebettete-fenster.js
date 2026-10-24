@@ -117,6 +117,16 @@
   }
   // Würde der Browser jetzt Vollbild erlauben (frische Berührung, auch in einem eingebetteten Fenster)? Ohne die
   // Angabe (ältere Browser) einfach versuchen.
+  // Kurz vibrieren (Spulen: Lupe, Abbrechen, Anfang/Ende). Chrome erlaubt das, sobald man die Seite überhaupt einmal
+  // angetippt hat – NICHT nur direkt nach einem Tipp (Ziehen zählt nicht als Tipp: daran lag es, dass es oft still blieb)
+  function seekBuzz(ms) {
+    try {
+      if (CONFIG.seekBuzz === false || !navigator.vibrate) return;
+      const ua = navigator.userActivation;
+      if (ua && !ua.hasBeenActive) return;
+      navigator.vibrate(ms || 12);
+    } catch (e) {}
+  }
   function touchFresh() { try { return !navigator.userActivation || navigator.userActivation.isActive; } catch (e) { return true; } }
   function frameFs(f) {
     try {

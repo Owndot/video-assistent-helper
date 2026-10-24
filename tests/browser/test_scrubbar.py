@@ -35,9 +35,12 @@ with sync_playwright() as p:
     check('… Leiste dabei dick', s2[0], s2)
     # 3) abbrechen: zur Seite, dann weit nach oben → Hinweis; loslassen = zurück
     setT(20); x, y, W = geo(); fx = x + 7 + (20 / D) * W
+    pg.evaluate('() => { window.__vib = []; navigator.vibrate = (ms) => { window.__vib.push(ms); return true; }; }')
     pg.mouse.move(fx, y); pg.mouse.down(); pg.mouse.move(fx + 0.3 * W, y, steps=6); pg.mouse.move(fx + 0.3 * W, y - 120, steps=6); time.sleep(0.3)
     s3 = state(); pg.mouse.up(); time.sleep(0.6)
-    check('nach oben weg: Abbrechen-Hinweis', s3[1] and 'abbrechen' in s3[3], s3)
+    check('nach oben weg: Hinweis „Abbrechen“', s3[1] and 'Abbrechen' in s3[3], s3)
+    vib = pg.evaluate('() => window.__vib')
+    check('… dabei kurz vibriert (auch ohne frisches Antippen)', 20 in vib, vib)
     check('… loslassen dort: zurück an die alte Stelle', abs(t() - 20) < 1, t())
     # 4) nach oben und wieder zurück: weiter spulen
     setT(20); x, y, W = geo(); fx = x + 7 + (20 / D) * W
@@ -65,7 +68,7 @@ with sync_playwright() as p:
     s6a = state(); pg.mouse.move(fx, y, steps=6); time.sleep(0.2)
     s6 = state(); pg.mouse.up(); time.sleep(0.6)
     check('beim Ziehen: Abstand zur laufenden Stelle („+… s“)', any(('+%d s' % (round(r1 - 20) + k)) in s6a[3] for k in (-1, 0, 1)), [s6a, round(r1 - 20)])
-    check('zurück an der alten Stelle: kein Einrasten, „+0 s“', not s6[4] and '+0 s' in s6[3] and 'abbrechen' not in s6[3], s6)
+    check('zurück an der alten Stelle: kein Einrasten, „+0 s“', not s6[4] and '+0 s' in s6[3] and 'Abbrechen' not in s6[3], s6)
     check('… loslassen dort: bei 20 s', abs(t() - 20) < 0.6, t())
     # 6b) Video läuft weiter; Abbrechen nach oben zeigt die LAUFENDE Stelle (Zeit zählt mit), keine kleine Vorschau;
     #     loslassen = nichts ändern (kein Sprung zurück)
@@ -78,7 +81,7 @@ with sync_playwright() as p:
     p2 = pg.evaluate('() => { const r = %s; return [r.querySelector(".vtime").textContent, r.querySelector(".vv").currentTime]; }' % R)
     pg.mouse.up(); time.sleep(0.4)
     after = pg.evaluate('() => { const v = %s.querySelector(".vv"); return [v.currentTime, v.paused]; }' % R)
-    check('läuft weiter: Abbrechen nach oben → „Loslassen = abbrechen“, keine kleine Vorschau, laufende Stelle', p1[0] and 'abbrechen' in p1[1] and p1[2] == 'none' and abs(sec(p1[3]) - p1[4]) <= 1.2, p1)
+    check('läuft weiter: Abbrechen nach oben → „Abbrechen“, keine kleine Vorschau, laufende Stelle', p1[0] and 'Abbrechen' in p1[1] and p1[2] == 'none' and abs(sec(p1[3]) - p1[4]) <= 1.2, p1)
     check('… Zeit läuft mit dem Video mit', sec(p2[0]) >= sec(p1[3]) + 1, [p1, p2])
     check('… loslassen: kein Sprung zurück, Video läuft weiter', not after[1] and after[0] >= p2[1] - 0.3, [p2, after])
     pg.evaluate('() => %s.querySelector(".vv").pause()' % R)

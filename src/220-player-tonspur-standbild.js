@@ -113,7 +113,7 @@
     //    (Ausschnitt ~1 min). Die Leiste zeigt dann nur den Ausschnitt, links/rechts stehen dessen Grenzen, im Schild
     //    „Lupe“, beim Wechsel ein kurzes Vibrieren (abschaltbar). Wieder hoch auf die Leiste = normal (die Stelle gleitet
     //    beim Weiterziehen wieder unter den Finger). Finger an ein Ende der Leiste = der Ausschnitt wandert mit.
-    //  - weit nach oben weg vom Balken = abbrechen („Loslassen = abbrechen“, keine kleine Vorschau – das große Video zeigt
+    //  - weit nach oben weg vom Balken = abbrechen („Abbrechen“, keine kleine Vorschau – das große Video zeigt
     //    die laufende Stelle); loslassen dort = nichts ändern. Zurück nach unten = weiter spulen.
     //  - Live-Stream mit Zurückspulen: die Leiste ist der Bereich, den der Stream zurückhält; „−5:30“ = so weit hinter
     //    live, ganz rechts = wieder live.
@@ -126,7 +126,7 @@
     bar.tabIndex = -1;
     const scr = { on: false, id: 0, x0: 0, y0: 0, lx: 0, my: 0, mx: 0, raf: 0, t0: 0, t: 0, raw: 0, moved: false, first: true, mode: '',
       r: null, key: '', lv: 0, z: 0, ws: 0, zt: 0, zx: 0, off: 0, pan: 0, pt: 0, tk: 0, last: 0, wd: 0 };
-    const buzz = () => { try { if (CONFIG.seekBuzz !== false && navigator.vibrate && touchFresh()) navigator.vibrate(12); } catch (e) {} };
+    const buzz = (ms) => seekBuzz(ms || 12);
     // Abstand: „+12 s“, „−1:05“
     const delta = (x) => { const a = Math.round(Math.abs(x)); return (x < 0 ? '−' : '+') + (a < 60 ? a + ' s' : fmtTime(a)); };
     const barBack = () => {
@@ -171,7 +171,7 @@
       prevShow(p, t);
       wrap.classList.toggle('scrubx', scr.mode === 'cancel');
       wrap.classList.toggle('zoom', !!scr.z);
-      if (scr.mode === 'cancel') pvTime.textContent = tr('Loslassen = abbrechen');
+      if (scr.mode === 'cancel') pvTime.textContent = tr('Abbrechen');
       else if (scr.moved) {
         const tx = r.live ? behind(r, t) : tlabel(t) + ' · ' + delta(t - M().currentTime);
         pvTime.textContent = scr.lv ? tr('Lupe') + ' · ' + tx : tx;
@@ -286,7 +286,8 @@
         scr.moved = true;
         wrap.classList.add('thick');
       }
-      if (dy < -Math.max(70, geom().br.height * 1.5)) { const was = scr.mode; scr.mode = 'cancel'; scrubShow(M().currentTime); if (was !== 'cancel') cancelTick(); return; }
+      if (dy < -Math.max(70, geom().br.height * 1.5)) { const was = scr.mode; scr.mode = 'cancel'; scrubShow(M().currentTime); if (was !== 'cancel') { cancelTick(); buzz(20); } return; }
+      if (scr.mode === 'cancel') buzz(8);   // zurück aus „Abbrechen“
       scr.mode = '';
       if (scr.first && Math.abs(x - scr.x0) < 10 && dy < 30) { scrubShow(scr.t); return; }   // (noch) Hochwischen
       if (scr.first) { scr.first = false; scrubAt(x, 0); }   // erst unter den Finger, dann ggf. Lupe
