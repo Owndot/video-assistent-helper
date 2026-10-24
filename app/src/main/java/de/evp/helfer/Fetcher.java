@@ -71,7 +71,7 @@ public interface Fetcher {
                 int code;
                 try { code=c.getResponseCode(); }
                 catch(IOException e){c.disconnect();throw e;}
-                if(code!=301&&code!=302&&code!=303&&code!=307&&code!=308)return c;
+                if(code!=300&&code!=301&&code!=302&&code!=303&&code!=307&&code!=308)return c;
                 String location=c.getHeaderField("Location");
                 c.disconnect();
                 if(location==null||location.isEmpty())throw new IOException("Redirect without Location");

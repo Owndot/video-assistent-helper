@@ -87,6 +87,21 @@ jobs:
             echo 'Confirmed old native HTTP redirect cookie leak'
           fi
           java -cp tests/java/classes de.evp.helfer.TestRedirectCookies
+      - name: Preserve HTTP 300 redirect compatibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/Fetcher.java?ref=b647432e549993a6674cf4ddbc9f1803f02be0a1' --jq .content | base64 --decode > "$work/Fetcher.java"
+          javac -cp tests/java/classes -d "$work/old" "$work/Fetcher.java"
+          if java -cp "$work/old:tests/java/classes" de.evp.helfer.TestRedirectCookies > "$work/old-300.log" 2>&1; then
+            echo 'Previous missing HTTP300 branch unexpectedly passed'; exit 1
+          fi
+          grep -q 'HTTP 300 redirect failed' "$work/old-300.log"
+          java -cp tests/java/classes de.evp.helfer.TestRedirectCookies
+          echo 'PASS: HTTP300 compatibility regression fails predecessor and passes corrected client'
       - name: JVM media tests
         run: |
           sudo apt-get update
