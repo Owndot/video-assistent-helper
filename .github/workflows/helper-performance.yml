@@ -1,0 +1,57 @@
+name: Helper stable baseline observations
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/security-phase-1]
+    paths: ['tools/profile-helper.py', '.github/workflows/helper-performance.yml']
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build source comparison with debug signing only
+        run: |
+          mkdir -p validation-results "$RUNNER_TEMP/helper-stable"
+          git archive b05fd2de60d27d368eda60ff32be8b361a695f45 | tar -x -C "$RUNNER_TEMP/helper-stable"
+          rm -f "$RUNNER_TEMP/helper-stable/keystore.jks"
+          # Never execute the stable Gradle file with its embedded signing credentials.
+          cp app/build.gradle "$RUNNER_TEMP/helper-stable/app/build.gradle"
+          (cd "$RUNNER_TEMP/helper-stable" && gradle :app:assembleDebug --no-daemon)
+          cp "$RUNNER_TEMP/helper-stable/app/build/outputs/apk/debug/app-debug.apk" validation-results/stable.apk
+          gradle :app:assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk validation-results/current.apk
+          git rev-parse HEAD > validation-results/current-commit.txt
+          echo b05fd2de60d27d368eda60ff32be8b361a695f45 > validation-results/stable-source.txt
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          arch: x86_64
+          target: default
+          disable-animations: true
+          script: |
+            for label in stable current current stable stable current; do python3 tools/profile-helper.py --apk validation-results/$label.apk --label $label --output validation-results/helper-raw.jsonl || exit 1; done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: helper-emulator-baseline-observations
+          path: |
+            validation-results/*.jsonl
+            validation-results/*.txt
