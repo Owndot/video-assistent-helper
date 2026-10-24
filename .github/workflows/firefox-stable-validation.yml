@@ -1,0 +1,43 @@
+name: Reproduce Firefox failures on stable player source
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/security-phase-1]
+    paths: ['.github/workflows/firefox-stable-validation.yml']
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Pin the same Firefox engine as the failed run
+        run: |
+          pip install playwright==1.64.1 pillow==13.0.0
+          python -m playwright install --with-deps firefox
+      - name: Fetch only stable script (no signing history)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api 'repos/Owndot/video-assistent-helper/contents/userscript/video-assistent.user.js?ref=b05fd2de60d27d368eda60ff32be8b361a695f45' --jq .content | base64 --decode > stable-player.js
+          sha256sum stable-player.js userscript/video-assistent.user.js
+          cmp stable-player.js userscript/video-assistent.user.js
+          cp stable-player.js userscript/video-assistent.user.js
+      - name: Execute previously failing cases without changing assertions
+        env:
+          BROWSER: firefox
+          TESTS: 'test_dvr.py test_framekey.py test_mirrorprev.py test_prevretry.py test_scrubbar.py test_scrubfuzz.py test_seamless.py test_swipeseek.py'
+        run: tests/browser/run_all.sh | tee firefox-stable-results.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firefox-stable-failure-evidence
+          path: |
+            firefox-stable-results.txt
+            tests/browser/out/*.log

@@ -13,7 +13,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-java@v4
         with:
@@ -23,9 +22,11 @@ jobs:
         with:
           gradle-version: '8.9'
       - name: Build source comparison with debug signing only
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p validation-results "$RUNNER_TEMP/helper-stable"
-          git archive b05fd2de60d27d368eda60ff32be8b361a695f45 app/src build.gradle settings.gradle gradle.properties | tar -x -C "$RUNNER_TEMP/helper-stable"
+          python3 .github/scripts/fetch-helper-baseline.py "$RUNNER_TEMP/helper-stable"
           # Archive only sources and root build configuration: never retrieve the historical signing material.
           cp app/build.gradle "$RUNNER_TEMP/helper-stable/app/build.gradle"
           (cd "$RUNNER_TEMP/helper-stable" && gradle :app:assembleDebug --no-daemon)

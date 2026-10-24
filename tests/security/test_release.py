@@ -38,7 +38,11 @@ class UpdateCompatibility(unittest.TestCase):
 class PublicationPolicy(unittest.TestCase):
     def test_baseline_never_archives_signing_material(self):
         workflow = (ROOT / ".github/workflows/helper-performance.yml").read_text()
-        self.assertIn("app/src build.gradle settings.gradle gradle.properties | tar", workflow)
+        self.assertIn(".github/scripts/fetch-helper-baseline.py", workflow)
+        self.assertNotIn("fetch-depth: 0", workflow)
+        fetcher=(ROOT / ".github/scripts/fetch-helper-baseline.py").read_text()
+        self.assertIn('path.startswith("app/src/")', fetcher)
+        self.assertIn('{"build.gradle","settings.gradle","gradle.properties"}', fetcher)
         for forbidden in ("keystore.jks", "EVP_KEYSTORE_", "secrets.", "contents: write", "gh release"):
             self.assertNotIn(forbidden, workflow)
     def test_validation_has_no_production_access_or_publication(self):
