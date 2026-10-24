@@ -12,6 +12,7 @@ with sync_playwright() as p:
     opening=pg.evaluate('''()=>{const v=document.getElementById("v");v.pause();v.muted=false;
       const t=Math.min(10,v.duration/2);v.currentTime=t;return t;}''')
     pg.wait_for_function('()=>!document.getElementById("v").seeking')
+    pg.wait_for_function('()=>!!window.__evpRoot')
     pg.wait_for_function('()=>!!window.__evpRoot.querySelector("button[aria-label=\\"Im Videoplayer öffnen\\"]")')
     pg.evaluate('()=>window.__evpRoot.querySelector("button[aria-label=\\"Im Videoplayer öffnen\\"]").click()')
     pg.wait_for_function('()=>{const v=window.__evpRoot.querySelector(".vv");return v&&v.readyState>=2&&v.currentTime>1;}')
