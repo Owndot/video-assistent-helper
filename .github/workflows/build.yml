@@ -20,6 +20,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check update compatibility and publication policy
+        run: python3 -m unittest discover -s tests/security -v
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

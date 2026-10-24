@@ -296,6 +296,7 @@ public class HelferService extends Service {
     };
 
     static void start(Context c) {
+        if (!running) startupError = null;
         Intent i = new Intent(c, HelferService.class);
         c.startForegroundService(i);
     }

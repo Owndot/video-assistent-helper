@@ -8,6 +8,7 @@ python3 srv.py & SRV=$!
 trap 'kill $SRV' EXIT
 sleep 1
 rm -rf out
+java -cp classes TestPortConflict
 java -cp classes de.evp.helfer.TestCookie
 java -cp classes TestMain
 echo "--- Prüfung der Ergebnisse mit ffprobe:"
