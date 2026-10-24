@@ -16,7 +16,9 @@ jobs:
         name: Identify available Android platforms without claiming skipped coverage
         shell: bash
         run: |
-          sdkmanager --list > "$RUNNER_TEMP/sdk-packages.txt"
+          manager=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | sort -V | tail -1)
+          test -n "$manager"
+          "$manager" --list > "$RUNNER_TEMP/sdk-packages.txt"
           if grep -q 'platforms;android-37' "$RUNNER_TEMP/sdk-packages.txt" && grep -q 'system-images;android-37;default;x86_64' "$RUNNER_TEMP/sdk-packages.txt"; then
             echo 'apis=[26,28,31,32,33,35,37]' >> "$GITHUB_OUTPUT"
           else
