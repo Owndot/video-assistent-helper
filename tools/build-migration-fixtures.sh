@@ -12,6 +12,8 @@ gradle :app:assembleDebug -PmigrationFixtureVersion=100 --no-daemon
 "$signer" sign --ks "$work/old.jks" --ks-pass pass:fixture-password --out migration-fixtures/old.apk app/build/outputs/apk/debug/app-debug.apk
 gradle :app:assembleDebug -PmigrationFixtureVersion=101 --no-daemon
 "$signer" sign --ks "$work/new.jks" --ks-pass pass:fixture-password --out migration-fixtures/fresh.apk app/build/outputs/apk/debug/app-debug.apk
+gradle :app:assembleDebug -PmigrationFixtureVersion=102 --no-daemon
+"$signer" sign --ks "$work/old.jks" --ks-pass pass:fixture-password --out migration-fixtures/old-key-higher-version.apk app/build/outputs/apk/debug/app-debug.apk
 "$signer" rotate --out "$work/lineage" --old-signer --ks "$work/old.jks" --ks-pass pass:fixture-password --new-signer --ks "$work/new.jks" --ks-pass pass:fixture-password
 gradle :app:assembleDebug -PmigrationFixtureVersion=101 -PmigrationFixtureMinSdk=33 --no-daemon
 "$signer" sign --ks "$work/old.jks" --ks-pass pass:fixture-password --next-signer --ks "$work/new.jks" --ks-pass pass:fixture-password --lineage "$work/lineage" --rotation-min-sdk-version 33 --out migration-fixtures/modern.apk app/build/outputs/apk/debug/app-debug.apk
