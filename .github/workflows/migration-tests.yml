@@ -7,6 +7,23 @@ on:
 permissions:
   contents: read
 jobs:
+  platforms:
+    runs-on: ubuntu-latest
+    outputs:
+      apis: ${{ steps.sdk.outputs.apis }}
+    steps:
+      - id: sdk
+        name: Identify available Android platforms without claiming skipped coverage
+        shell: bash
+        run: |
+          sdkmanager --list > "$RUNNER_TEMP/sdk-packages.txt"
+          if grep -q 'platforms;android-37' "$RUNNER_TEMP/sdk-packages.txt" && grep -q 'system-images;android-37;default;x86_64' "$RUNNER_TEMP/sdk-packages.txt"; then
+            echo 'apis=[26,28,31,32,33,35,37]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'apis=[26,28,31,32,33,35]' >> "$GITHUB_OUTPUT"
+            echo '::warning::NOT TESTED: Android 17/API37 SDK or default x86_64 image unavailable'
+            echo 'Android 17/API37: NOT TESTED — required SDK/image unavailable; physical S26 validation remains mandatory.' >> "$GITHUB_STEP_SUMMARY"
+          fi
   fixtures:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -28,13 +45,13 @@ jobs:
           path: migration-fixtures
           retention-days: 2
   emulator:
-    needs: fixtures
+    needs: [fixtures, platforms]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        api: [26, 28, 31, 32, 33, 35, 37]
+        api: ${{ fromJSON(needs.platforms.outputs.apis) }}
     steps:
       - uses: actions/checkout@v4
         with:
