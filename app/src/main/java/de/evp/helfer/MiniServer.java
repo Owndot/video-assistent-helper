@@ -62,20 +62,30 @@ public class MiniServer {
         return h.equals("127.0.0.1") || h.equals("localhost");
     }
 
-    public void start() {
+    /** Bind before reporting readiness. A competing helper must never appear ready. */
+    public synchronized boolean start() {
+        if (server != null && !server.isClosed()) return true;
+        try {
+            server = new ServerSocket();
+            server.setReuseAddress(true);
+            server.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 32);
+        } catch (java.io.IOException e) {
+            stop();
+            return false;
+        }
+        final ServerSocket bound = server;
         Thread t = new Thread(() -> {
             try {
-                server = new ServerSocket();
-                server.setReuseAddress(true);
-                server.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 32);
-                while (!server.isClosed()) {
-                    final Socket s = server.accept();
+                while (!bound.isClosed()) {
+                    final Socket s = bound.accept();
                     pool.execute(() -> handle(s));
                 }
-            } catch (Exception ignored) {
+            } catch (java.io.IOException ignored) {
+                // Closing the listener during normal shutdown interrupts accept().
             }
         }, "evp-helfer");
         t.start();
+        return true;
     }
 
     public void stop() {

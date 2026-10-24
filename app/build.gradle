@@ -98,4 +98,4 @@ def verifyReleaseApk = tasks.register('verifyReleaseApk') {
         }
     }
 }
-tasks.named('assembleRelease').configure { dependsOn verifyReleaseApk }
+tasks.configureEach { if (name == 'assembleRelease') dependsOn verifyReleaseApk }

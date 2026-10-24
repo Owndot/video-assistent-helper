@@ -133,6 +133,7 @@ public class MainActivity extends Activity {
             root.postDelayed(this::build, 400);
         }));
         root.addView(head);
+        if (HelferService.startupError != null) root.addView(text(HelferService.startupError, 15, false, WARN));
 
         // Zusammenfassung
         int open = (ov ? 0 : 1) + (bat ? 0 : 1) + (notif ? 0 : 1) + (paired ? 0 : 1);
@@ -279,6 +280,20 @@ public class MainActivity extends Activity {
 
     private void pair() {
         if (!HelferService.running) HelferService.start(this);
+        pairWhenReady(0);
+    }
+
+    private void pairWhenReady(int attempt) {
+        if (!HelferService.running) {
+            if (HelferService.startupError != null || attempt >= 20) {
+                Toast.makeText(this, HelferService.startupError != null ? HelferService.startupError :
+                    Tr.t("Helper nicht bereit. Bitte erneut starten.", "Helper not ready. Please restart."), Toast.LENGTH_LONG).show();
+                build();
+                return;
+            }
+            root.postDelayed(() -> pairWhenReady(attempt + 1), 100);
+            return;
+        }
         Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:" + HelferService.PORT + "/pair#" + Keys.key(this)));
         i.addCategory(Intent.CATEGORY_BROWSABLE);
         try { startActivity(Intent.createChooser(i, Tr.t("Browser mit Violentmonkey wählen", "Choose the browser with Violentmonkey"))); } catch (Exception e) { startActivity(i); }
