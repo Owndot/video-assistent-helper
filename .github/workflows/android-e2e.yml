@@ -1,0 +1,196 @@
+name: Controlled Android E2E (test identities only)
+on:
+  workflow_dispatch:
+    inputs:
+      apis:
+        description: 'API JSON list, initially [33,35]'
+        default: '[33,35]'
+      firefox_version:
+        description: 'Exact Mozilla stable version, or latest (resolved version recorded)'
+        default: latest
+  push:
+    # Dedicated execution ref. Development pushes do not start this matrix.
+    branches: [codex/android-e2e-run]
+permissions:
+  contents: read
+concurrency:
+  group: android-e2e-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      apis: ${{ steps.matrix.outputs.apis }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: matrix
+        env:
+          REQUESTED_APIS: ${{ inputs.apis || '[33,35]' }}
+        run: |
+          python3 - <<'PY'
+          import json,os
+          values=json.loads(os.environ["REQUESTED_APIS"])
+          assert isinstance(values,list) and 1<=len(values)<=2
+          assert all(type(v) is int and v in (26,28,31,32,33,35) for v in values)
+          assert len(set(values))==len(values)
+          with open(os.environ["GITHUB_OUTPUT"],"a") as out:
+              out.write("apis="+json.dumps(values)+"\n")
+          PY
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+          cache-disabled: true
+      - name: Check fixture contract and test syntax before emulator allocation
+        run: |
+          python3 -m py_compile tests/android_e2e/*.py
+          python3 -m unittest discover -s tests/android_e2e -p test_server.py -v
+          bash -n tests/android_e2e/emulator.sh
+      - name: Build isolated APKs with a short-lived test identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p e2e-bundle "$HOME/.android"
+          # No production keys, historical keystores or repository secrets are read.
+          rm -f "$HOME/.android/debug.keystore"
+          keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 2 -dname CN=ANDROID-E2E-TEST-ONLY
+          trap 'rm -f "$HOME/.android/debug.keystore"' EXIT
+          gradle :app:assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk e2e-bundle/helper-debug.apk
+          # Separate test-only app ID exercises the actual port collision.
+          cat > "$RUNNER_TEMP/e2e-competing.gradle" <<'GRADLE'
+          allprojects {
+            afterEvaluate { p ->
+              if (p.plugins.hasPlugin('com.android.application')) {
+                p.android.buildTypes.debug.applicationIdSuffix = '.e2ecompeting'
+              }
+            }
+          }
+          GRADLE
+          gradle :app:assembleDebug --no-daemon -I "$RUNNER_TEMP/e2e-competing.gradle"
+          cp app/build/outputs/apk/debug/app-debug.apk e2e-bundle/helper-competing.apk
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          aapt=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          for apk in e2e-bundle/helper-*.apk; do
+            "$signer" verify --verbose --print-certs "$apk" | tee -a e2e-bundle/signature-provenance.txt
+            "$aapt" dump badging "$apk" | sed -n '1p' >> e2e-bundle/signature-provenance.txt
+          done
+          ! grep -qi 'ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5' e2e-bundle/signature-provenance.txt
+          sha256sum e2e-bundle/helper-*.apk > e2e-bundle/apk-provenance.txt
+          git rev-parse HEAD > e2e-bundle/helper-commit.txt
+      - uses: actions/checkout@v4
+        with:
+          repository: Owndot/Kadri
+          ref: f76c209db9a3749007f4cd6a180d6d8509eb5971
+          path: e2e-kadri
+          persist-credentials: false
+      - name: Build the real Firefox extension (no test hooks)
+        run: |
+          (cd e2e-kadri && node tools/build.js)
+          cp -R e2e-kadri/dist/firefox e2e-bundle/kadri-firefox
+          git -C e2e-kadri rev-parse HEAD > e2e-bundle/kadri-commit.txt
+      - name: Download official Firefox Android and record exact version
+        env:
+          FIREFOX_VERSION: ${{ inputs.firefox_version || 'latest' }}
+        run: python3 tests/android_e2e/download_firefox.py "$FIREFOX_VERSION" e2e-bundle/firefox.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-e2e-bundle-TEST-ONLY
+          path: e2e-bundle
+          retention-days: 2
+  emulator:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        api: ${{ fromJSON(needs.build.outputs.apis) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-e2e-bundle-TEST-ONLY
+          path: e2e-bundle
+      - name: Install pinned automation tools
+        run: |
+          python3 -m pip install -r tests/android_e2e/requirements.txt
+          npm install -g web-ext@10.8.0
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Operate actual APKs and Firefox on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash tests/android_e2e/emulator.sh
+      - name: Per-device report
+        if: always()
+        run: |
+          if test -f android-e2e-results/REPORT.md; then cat android-e2e-results/REPORT.md >> "$GITHUB_STEP_SUMMARY"; else echo 'NOT TESTED: environment/build did not reach UI runner' >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-e2e-api-${{ matrix.api }}
+          path: android-e2e-results
+          if-no-files-found: warn
+          retention-days: 7
+  report:
+    if: always()
+    needs: [build, emulator]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: android-e2e-api-*
+          path: reports
+      - name: Consolidated overview without releasing anything
+        env:
+          BUILD_STATUS: ${{ needs.build.result }}
+          EMULATOR_STATUS: ${{ needs.emulator.result }}
+        run: |
+          python3 - <<'PY'
+          import os,pathlib
+          lines=["# Controlled Android E2E", "", "Build: "+os.environ["BUILD_STATUS"]+"; emulator jobs: "+os.environ["EMULATOR_STATUS"], ""]
+          reports=sorted(pathlib.Path("reports").glob("*/REPORT.md"))
+          if not reports: lines+=["NOT TESTED: no emulator UI report produced."]
+          for report in reports:
+              lines+=["## "+report.parent.name, "",report.read_text()]
+          text="\n".join(lines)
+          pathlib.Path("ANDROID-E2E-REPORT.md").write_text(text)
+          with open(os.environ["GITHUB_STEP_SUMMARY"],"a") as out: out.write(text)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-e2e-consolidated-report
+          path: ANDROID-E2E-REPORT.md
+          retention-days: 14

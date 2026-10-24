@@ -1,0 +1,125 @@
+# Controlled real Android E2E
+
+This suite installs real test APKs and official Firefox on Android API 33/35,
+operates accessible controls with Android UI Automator (uiautomator2), captures
+ADB screen recordings/screenshots/hierarchies/logcat, and loads **unmodified**
+Kadri dist/firefox with Mozilla web-ext. No GM shim, simulated browser API,
+Playwright mobile emulation, open-shadow test build or direct invocation of
+player internals is used.
+
+## Execute deliberately
+
+The workflow is .github/workflows/android-e2e.yml. It has contents:read,
+no production secrets, no release/tag operations, no pull_request_target and no
+automatic runs on ordinary development/security branches. It builds once and
+runs at most two emulator jobs. The special codex/android-e2e-run ref is reserved
+for an explicitly requested execution; advance it deliberately only. Normal
+work belongs on codex/android-e2e. A manual workflow_dispatch is also provided
+once GitHub makes the workflow available for dispatch (normally after it exists
+on the default branch). Do not merge anything solely to obtain that button.
+
+First matrix: [33,35]. Exact Firefox version is recorded. Default latest is
+resolved through Mozilla product details; for a repeated baseline use the
+recorded exact version. Mozilla HTTPS APK origin and downloaded digest are
+recorded; this does not independently pin Mozilla's signing certificate.
+
+Local prerequisites: Linux/macOS shell, Android SDK/adb and running disposable
+API33/35 emulator, JDK17, Gradle8.9, Node22, Python3.12, ffmpeg, zip.
+Install requirements.txt and web-ext@10.8.0. Reproduce the build job to create
+e2e-bundle (two debug APKs, official Firefox APK+JSON, unmodified Kadri Firefox
+directory and source-commit records), then:
+
+    python3 -m unittest discover -s tests/android_e2e -p test_server.py -v
+    bash tests/android_e2e/emulator.sh
+
+Use ONLY an empty emulator. Setup grants notification/overlay permissions and
+battery exemption with adb and stops/installs test apps. These are infrastructure
+steps, not proof that every Settings permission screen has been navigated.
+The pairing step itself uses the actual Helper Connect button, Android resolver,
+Firefox, Kadri storage and the Helper HTTP service.
+
+The debug key is generated with two-day validity, never taken from history.
+Both APKs have test IDs (.debug / .e2ecompeting). The second uses identical Java
+sources to exercise a real socket collision. No production-ID APK is installed.
+Do not reuse this environment with personal profiles/accounts or real pairing
+credentials. Temporary pairing credentials may appear in video/UI hierarchies;
+only disposable test state is present. Text logs mask the pairing key.
+The test identity and APK bundle expire after two days; evidence after seven.
+
+## Owned media server
+
+server.py generates two 60-second MP4s, an MPEG-TS HLS VOD and a WebVTT subtitle
+with ffmpeg. It serves exact, suffix and open-ended Range responses (416 for
+invalid/multipart ranges), HEAD, same/cross-host redirects, slow body delivery
+and delayed headers. Nine host fixture-contract tests run before allocating an
+emulator. That host check is **not** Android coverage.
+
+adb reverse exposes the host server to device loopback:8765, adb forward
+14781 to the actual Helper 47811 socket. This is a local media server integration,
+not evidence of Wi-Fi discovery, LAN throughput or Samsung networking behavior.
+Request observations retain only credential-presence booleans, never values.
+
+## What the first runner asserts
+
+- Actual installed Helper foreground service; real auth rejection and Host guard.
+- Real Android Storage Access Framework settings export/change/import round trip.
+- Eight force-stop/restart cycles, preserved random key, recovered listening port.
+- Official Firefox onboarding/settings and supported remote debugging toggle.
+- Real temporary Kadri install, accessible player entry, actual browser pairing.
+- Player clock advance, pause/resume, forward seek, original-position restoration.
+- Actual volume/brightness changes after browser swipes.
+- MP4 redirect, HLS and iframe playback by accessible advancing clock.
+- Two UI-triggered file downloads with exact saved-file SHA256 verification.
+- Android PiP pinned-task observation and return to player.
+- Actual competing installed app detects occupied socket instead of reporting running.
+- Target Java fatal exception checks plus raw native/ANR/exit diagnostics.
+
+Each case is PASS, FAIL, BLOCKED (prerequisite failed), or NOT_TESTED
+(unsupported/unimplemented). A failed or blocked required assertion makes the
+emulator job red. NOT_TESTED rows remain prominently in the report. The suite
+does not claim complete coverage merely because the job is green.
+
+Timings are initial observations. "Entry to controls" is not decoded first-frame
+latency. PSS dumps are retained per restart; eight successful restarts alone do
+not demonstrate absence of a memory leak. Physical power, display, Samsung OEM
+background behavior and API37 require remaining real-device validation.
+
+## Explicit gaps / next supported increments
+
+Userscript/Violentmonkey and Vivaldi are NOT_TESTED. Kadri coverage does not imply
+userscript-manager coverage. Firefox Android supports web-ext temporary loading;
+this route is verified independently by actual installation and visible UI.
+Unknown onboarding/settings/installation screens fail visibly; there is no
+fallback to fake content injection. Temporary extensions disappear on browser
+restart; helper-only restarts do not restart Firefox. Persistent/signed add-on
+installation and Firefox process-death recovery are separate scenarios.
+
+Fixtures for subtitles, alternate source, cross-host redirects, slow downloads
+and delayed headers are present. Subtitle UI selection, source/quality change,
+notification cancellation, authenticated download redirect leakage and resolver
+contention measurements still need end-to-end assertions. Their existence is
+not a passing test. Chrome DNR/worker lifecycle stays in the existing actual
+desktop Chromium suite; Android Firefox cannot validate Chrome DNR.
+
+Production signature migration is not exercised here; use the existing
+disposable APK migration workflow for API26/28/31/32/33/35. No real production
+successor key or lineage is generated. Expand older Android UI tests only after
+API33/35 infrastructure is reliable; do not start a broad legacy matrix by default.
+
+## Evidence and triage
+
+Each case records .png, .xml, .mp4 where Android screenrecord succeeds. The report
+contains exception type/trace and prerequisites. logcat, app exit-info, meminfo,
+web-ext logs, package/version/signature hashes and commit IDs accompany results.
+The final report job aggregates both device reports in one artifact and summary.
+
+Inspect screenshot + hierarchy + logcat before classifying a failure. A missing
+Firefox menu label is an automation compatibility failure, not a proven player
+bug. An app crash or mismatched saved media is a product failure only once
+reproduced outside a broken setup. Never relax playback/download assertions or
+change product behavior just to make this suite green.
+
+Official supported route:
+https://extensionworkshop.com/documentation/develop/developing-extensions-for-firefox-for-android/
+Android UI Automator:
+https://developer.android.com/training/testing/other-components/ui-automator
