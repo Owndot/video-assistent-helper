@@ -1,0 +1,15 @@
+case_id,device_model,android_api,browser_version,extension_or_script_commit,apk_sha256,signer_sha256,status,baseline_observation,current_observation,evidence,notes
+F01,,,,,,,NOT TESTED,,,,Installation and service readiness
+F02,,,,,,,NOT TESTED,,,,Pairing and browser restart
+F03,,,,,,,NOT TESTED,,,,Direct video handoff and position
+F04,,,,,,,NOT TESTED,,,,HLS seek and handoff
+F05,,,,,,,NOT TESTED,,,,Embedded player
+F06,,,,,,,NOT TESTED,,,,Subtitles
+F07,,,,,,,NOT TESTED,,,,PiP and background
+F08,,,,,,,NOT TESTED,,,,LAN and parallel downloads
+F09,,,,,,,NOT TESTED,,,,System controls and restoration
+F10,,,,,,,NOT TESTED,,,,Rotation
+F11,,,,,,,NOT TESTED,,,,Settings document provider
+F12,,,,,,,NOT TESTED,,,,Two-package port conflict
+F13,,,,,,,NOT TESTED,,,,Fresh-key reinstall and migration
+PERF,,,,,,,NOT TESTED,,,,Physical first frame CPU PSS battery and cycles
