@@ -33,6 +33,7 @@ jobs:
         env:
           BROWSER: firefox
           TESTS: 'test_dvr.py test_framekey.py test_mirrorprev.py test_prevretry.py test_scrubbar.py test_scrubfuzz.py test_seamless.py test_swipeseek.py'
+        shell: bash
         run: tests/browser/run_all.sh | tee firefox-stable-results.txt
       - uses: actions/upload-artifact@v4
         if: always()

@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [codex/security-phase-1]
-    paths: ['app/**', 'tools/profile-helper.py', '.github/workflows/helper-performance.yml']
+    paths: ['app/**', 'tools/profile-helper.py', '.github/probes/**', '.github/scripts/**', '.github/workflows/helper-performance.yml']
 permissions:
   contents: read
 jobs:
@@ -27,7 +27,7 @@ jobs:
         run: |
           mkdir -p validation-results "$RUNNER_TEMP/helper-stable"
           python3 .github/scripts/fetch-helper-baseline.py "$RUNNER_TEMP/helper-stable"
-          # Archive only sources and root build configuration: never retrieve the historical signing material.
+          # Fetch only sources and root build configuration: never retrieve the historical signing material.
           cp app/build.gradle "$RUNNER_TEMP/helper-stable/app/build.gradle"
           (cd "$RUNNER_TEMP/helper-stable" && gradle :app:assembleDebug --no-daemon)
           cp "$RUNNER_TEMP/helper-stable/app/build/outputs/apk/debug/app-debug.apk" validation-results/stable.apk
@@ -53,14 +53,7 @@ jobs:
           arch: x86_64
           target: default
           disable-animations: true
-          script: |
-            for label in stable current current stable stable current; do python3 tools/profile-helper.py --apk validation-results/$label.apk --label $label --output validation-results/helper-raw.jsonl || exit 1; done
-            adb push validation-results/network-probe.zip /data/local/tmp/network-probe.zip
-            for label in stable current; do
-              adb push validation-results/$label.apk /data/local/tmp/$label.apk
-              adb shell "CLASSPATH=/data/local/tmp/network-probe.zip:/data/local/tmp/$label.apk app_process /system/bin de.evp.helfer.NetworkCookieProbe" > validation-results/$label-native-cookie.json || exit 1
-              cat validation-results/$label-native-cookie.json
-            done
+          script: bash .github/scripts/run-helper-observations.sh
       - name: Check actual Android HTTP cookie policy
         run: |
           python3 - <<'PY'
