@@ -16,22 +16,12 @@ android {
         versionName "1.0." + runNo
     }
 
-    // Fester Schlüssel: so lässt sich jede neue Version einfach über die alte installieren
-    signingConfigs {
-        fest {
-            storeFile rootProject.file('keystore.jks')
-            storePassword 'evphelfer'
-            keyAlias 'evp'
-            keyPassword 'evphelfer'
-        }
-    }
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.fest
         }
         debug {
-            signingConfig signingConfigs.fest
+            applicationIdSuffix '.debug'
         }
     }
     compileOptions {
@@ -41,5 +31,13 @@ android {
     lint {
         checkReleaseBuilds false
         abortOnError false
+    }
+}
+
+tasks.configureEach {
+    if (name.contains('Release') &&
+        (name.startsWith('assemble') || name.startsWith('bundle') ||
+         name.startsWith('package') || name.startsWith('validateSigning'))) {
+        doFirst { throw new GradleException('Release builds paused: exposed signing identity requires an explicit migration decision.') }
     }
 }
