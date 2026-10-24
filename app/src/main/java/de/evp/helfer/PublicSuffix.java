@@ -28,6 +28,7 @@ final class PublicSuffix {
         if(host==null)return "";
         String h=host.toLowerCase(Locale.ROOT);
         while(h.endsWith("."))h=h.substring(0,h.length()-1);
+        if(h.length()>253)return "";
         // Browser URLs are serialized ASCII/punycode. Do not apply Java's older
         // IDNA mapping (e.g. sharp-s -> ss) to credential boundaries.
         for(int i=0;i<h.length();i++)if(h.charAt(i)>127)return "";

@@ -50,6 +50,29 @@ jobs:
           done
           if [ "$reproduced" = false ]; then echo "::warning::Previous timing race did not reproduce in this run"; fi
           java -cp tests/java/classes TestPortConflict
+      - name: Compare cookie boundaries against the previous HTTP client
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/Fetcher.java?ref=80275d518c74ef6404e9afc59579bc7b8cb495f7' --jq .content | base64 --decode > "$work/Fetcher.java"
+          javac -cp tests/java/classes -d "$work/old" "$work/Fetcher.java"
+          if java -cp "$work/old:tests/java/classes" de.evp.helfer.TestCookie > "$work/old-cookie.log" 2>&1; then
+            echo 'Previous cookie boundary unexpectedly passed'; exit 1
+          fi
+          grep -q 'foreign bob.github.io' "$work/old-cookie.log"
+          echo 'Confirmed old tenant-cookie leak; current policy must pass:'
+          java -cp tests/java/classes de.evp.helfer.TestCookie
+          if java -cp "$work/old:tests/java/classes" de.evp.helfer.TestRedirectCookies > "$work/old-redirect.log" 2>&1; then
+            echo 'Old JVM did not expose redirect forwarding; Android still requires device verification'
+          else
+            grep -q 'Cookie crossed redirect site boundary' "$work/old-redirect.log"
+            echo 'Confirmed old native HTTP redirect cookie leak'
+          fi
+          java -cp tests/java/classes de.evp.helfer.TestRedirectCookies
       - name: JVM media tests
         run: |
           sudo apt-get update
@@ -57,6 +80,15 @@ jobs:
           tests/java/run_core_tests.sh
       - name: Isolated debug APK
         run: gradle :app:assembleDebug --no-daemon
+      - name: Verify PSL data packaged into the debug APK
+        run: |
+          python3 - <<'PY'
+          import hashlib,zipfile
+          with zipfile.ZipFile("app/build/outputs/apk/debug/app-debug.apk") as apk:
+              data=apk.read("de/evp/helfer/public_suffix_rules.txt")
+          assert hashlib.sha256(data).hexdigest()=="0c203a51804ede904082d7f106322de9ec635431d3c0d982b3dea3c842106436"
+          print("PASS: pinned PSL present in APK")
+          PY
       - name: Verify pinned existing release APK (read only)
         env:
           GH_TOKEN: ${{ github.token }}
