@@ -3,14 +3,19 @@
 **Ready for the owner's real-device validation; NOT approved for final merge, production signing or publication.**
 Both main security PRs remain drafts. The owner device is Samsung S26 Ultra, reported Android 17.0, with Vivaldi and Firefox. Exact API/One UI/browser versions and all physical results remain unverified.
 
-## Follow-up after repeated browser runs — 21:27 UTC
-Do not interpret the earlier 57/57 Chromium result below as the final repeatability verdict.
-- Subsequent run 40131264209 failed one Chromium source-switch/scrub assertion (56/57 files pass); run 40131243363 also showed an intermittent initial DVR display assertion.
-- Run 40132989762 reproduced the source-switch defect twice on stable and twice on development source. Native media-event traces show the player explicitly setting the new source to the stale opening position, so this was not a mere slow-test timeout.
-- Runtime fix 7af974c0 (matching Kadri 3145e864) adds one pending-seek flag per intentional tryNext load in src/170-player-laden.js. It preserves the first bridge/quality/fallback seek and avoids a stale seek on later unrelated metadata.
-- In run 40133593779, stable samples fail the unchanged source-switch assertion 35/36 and corrected samples pass 36/36 twice. That job still failed because the new standalone test attempted discovery after pausing before the lazy player appeared. Corrected test preconditions wait for playing-media discovery first; no assertion was relaxed.
-- The standalone native event test checks initial position and later source position directly at loadedmetadata. The live/DVR test now waits for native decoded-media readiness and completed seeking, while independently retaining its UI assertions. This is a harness precondition improvement; the intermittent DVR observation is not yet declared conclusively fixed.
-- Fresh 58-file browser suites, focused handoff/quality/source-position tests and a Kadri performance rerun are in progress. All physical results remain NOT TESTED.
+## Final post-fix evidence — 21:58 UTC
+**There is no all-browser merge approval.** Distinguish completed full runs, focused corrections and automatic reruns.
+
+- Kadri's corrected native suite: **19 files / 201 checks pass**, [40134238016](https://github.com/Owndot/Kadri/actions/runs/40134238016).
+- Completed helper browser run [40134239672](https://github.com/Owndot/video-assistent-helper/actions/runs/40134239672), source eab229c1: **Chromium 57/58 files pass**, one DVR fixture assertion fails; **Firefox 50/58 pass**, the same eight baseline failures remain.
+- The Chromium DVR fixture directly injected the visible CSS class, bypassing showControls(), which normally immediately paints the timeline. src/160-player-anzeige.js deliberately avoids updating hidden time labels to save CPU. The fixture now waits for a real native timeupdate after revealing controls; all label/progress assertions remain unchanged. A trusted surface-click attempt changed native fullscreen geometry and was superseded; its failed run is not passing evidence.
+- Focused corrected DVR retest [40136368630](https://github.com/Owndot/video-assistent-helper/actions/runs/40136368630), source 1c0ae377: **Chromium 6/6 pass**. Firefox still fails its pre-existing live-zoom gesture assertion (5/6); do not call that workflow green.
+- Deterministic old/current player regression plus handoff/quality controls: **PASS**, [40134814582](https://github.com/Owndot/video-assistent-helper/actions/runs/40134814582). Current metadata test 3/3, seamless handoff 13/13, player/quality controls 40/40, live/DVR 6/6. The explicit new-source position assertion fails on stable source and passes corrected source.
+- The older composite scrub test can pass even with the defect if the initial bridge already ended. It is retained unchanged; regression discrimination now uses a deliberately fixed opening position and native metadata event, not that timing coincidence.
+- Runtime correction: helper/userscript 7af974c0 and Kadri 3145e864, src/170-player-laden.js. The opening seek is consumed once per intentional tryNext load; quality/fallback loads re-arm it. Native traces proved the old code explicitly set an unrelated source to the stale position (10 seconds).
+- Post-fix performance repeat [40133859838](https://github.com/Owndot/Kadri/actions/runs/40133859838): own-player transition median 1038.1 / 1038.9 ms stable/current; playing CPU 0.475 / 0.470 seconds per approximately 3 seconds. No clear deterioration in this small desktop repeat; the roughly 756 ms wait behind deliberately 750 ms active headers remains.
+- A full automatic browser rerun after the final **test-only** DVR synchronization change is still running (40136368628). It is NOT counted as passed. Runtime source is unchanged from the completed full run; the only subsequent functional check change is the separately retested fixture.
+- Physical Samsung, energy, multi-GB bounded memory and approved production migration remain NOT TESTED.
 
 ## Executed checklist
 PASS is evidence of actual execution, never merely a prepared procedure. Host tests ran in GitHub Actions because the shared execution workspace was unavailable.
@@ -23,8 +28,8 @@ PASS is evidence of actual execution, never merely a prepared procedure. Host te
 | PASS | Compromised signer rejection | same run: verifier rejects the public compromised fingerprint using only a disposable keystore; no exposed key used for signing |
 | PASS | Android-native Cookie and HTTP300 checks | [40131293057](https://github.com/Owndot/video-assistent-helper/actions/runs/40131293057), source acbfc5c8; actual API33 HttpURLConnection through app_process, test APK classes, shell UID |
 | PASS | Disposable real-APK update mechanics | [40130766838](https://github.com/Owndot/video-assistent-helper/actions/runs/40130766838): emulator APIs 26,28,31,32,33,35; all six pass |
-| PASS | Full Chromium userscript suite | [40130166286](https://github.com/Owndot/video-assistent-helper/actions/runs/40130166286), source 516379b2: 57/57 files; current userscript/src blobs match this tested head exactly |
-| FAIL | Firefox userscript suite | same run: 49/57 files pass; eight failures below; real Firefox engine with synthetic manager/mobile/fullscreen harness |
+| FAIL (completed full run) | Chromium browser suite: 57/58 files pass | 40134239672, eab229c1; remaining DVR fixture corrected/retested separately as described above |
+| FAIL | Firefox browser suite: 50/58 files pass | 40134239672; same eight baseline files; actual engine with synthetic manager/mobile/fullscreen harness |
 | FAIL / baseline evidence | Same eight failures on stable player source | [40130166285](https://github.com/Owndot/video-assistent-helper/actions/runs/40130166285); stable b05fd2de vs pre-cookie-fix 6111df1a script hashes are identical; eight selected tests remain red |
 | PASS | Source/performance observations | helper run 40130072486; userscript run 40130307638; raw data committed under validation-results |
 | NOT TESTED | Android17/API37 emulator | SDK/platform or required x86_64 image unavailable; platform-discovery job records explicit warning |
@@ -32,7 +37,7 @@ PASS is evidence of actual execution, never merely a prepared procedure. Host te
 | NOT TESTED | Actual approved production-successor migration | No successor key or production lineage exists; fixture APK results do not authorize rotation |
 | NOT TESTED | Independently retained installed/offline production APK | Current public release asset is verified; owner copy is a separate provenance gate |
 
-The final HTTP300 addition is separately covered by JVM predecessor/current regression and native Android. The completed 57-file browser run uses identical current player source; its helper JVM class predates that isolated HTTP300 addition. Later automatic duplicate browser reruns must be read from their actual run results, not presumed successful.
+The completed 58-file run includes the HTTP300 and player-position runtime corrections. The latest test-only DVR synchronization has separate native-engine results; its broad automatic rerun remains unfinished. Earlier 57/57 Chromium runs were not reliable evidence for the stale-position case; the added deterministic test now discriminates stable and corrected source.
 
 ## Proven defects corrected during validation
 
@@ -61,6 +66,10 @@ MiniServer.java now closes and joins the listener accept thread (bounded 250 ms)
 The first cookie-safe handler omitted status 300 with Location. It now preserves the Android/JDK-supported behavior.
 The expanded JVM test fails that predecessor with “HTTP 300 redirect failed” and passes the correction. Android-native baseline/current both follow 300 successfully. Current tests cover 300/301/302/303/307/308, same-site authentication, Range, loops and non-HTTP target rejection.
 This was a compatibility omission during this validation round, not evidence that the stable app lacked HTTP300 support.
+
+### Medium: Later source metadata reapplied an old opening position
+Both stable and development player source could seek a new source to a stale position when loadedmetadata fired again. Native traces recorded the setter and stack, not just a delayed assertion. src/170-player-laden.js now tracks whether an intentional load still owns an initial seek; the flag is consumed after metadata handling and re-armed by tryNext for legitimate quality/fallback loads.
+The native event test in both repositories checks the first position and then inspects the next source directly at metadata delivery. The old source fails the controlled case, current source passes. Handoff and quality/control regressions also pass. This is a targeted correctness change, not a new player architecture.
 
 ### Build/test safeguards
 app/build.gradle blocks the independently verified exposed certificate for release validation. Local/CI tests use disposable keys; no production successor was generated.
@@ -126,6 +135,10 @@ The fixture migration tests prove mechanics with unrelated test keys only, inclu
 - 9496866 / e978e4f: HTTP300 compatibility and independent old-client regression.
 - acbfc5c: native Android HTTP300 proof.
 - 8561f7e: verified debug APK provenance artifact.
+- 7af974c / matching Kadri 3145e86: per-load metadata seek ownership.
+- 26de811 / 0442866 / eab229c: native event regression, lazy-discovery preconditions and live readiness observations.
+- 7311016: deterministic stable/current seek proof independent of bridge timing.
+- 1c0ae37: DVR fixture synchronization on actual media events; preserves production UI laziness and all assertions.
 - Documents/result data: FINAL-DEVICE-VALIDATION.md, S26-ANDROID17-TEST.md, DEVICE-RESULTS.csv, VALIDATION-SAFETY.md, SIGNING-ROTATION-DECISION.md, SECURITY-CORRECTIONS.md, validation-results/*.
 
 Earlier failed harness/build iterations are superseded and not counted as successful tests.
