@@ -91,7 +91,7 @@ dort YTDLnis). Den Vollbild-Hinweis des Browsers („zum Beenden … von oben zi
 
 1. **Violentmonkey** in Vivaldi installieren (Erweiterungen, ab Vivaldi 8.2 auf Android).
 2. **Userscript:** `userscript/video-assistent.user.js` in Violentmonkey installieren (alte Version vorher löschen).
-3. **Helper-App (optional):** unter **Releases → neueste** `VideoAssistent-Helper.apk` laden und installieren.
+3. **Helper-App (optional):** unter **[Releases → neueste Veröffentlichung](https://github.com/Owndot/video-assistent-helper/releases/latest)** `VideoAssistent-Helper.apk` laden und installieren.
    In der App die Karten der Reihe nach antippen:
    1. Helligkeit erlauben („Über anderen Apps einblenden“)
    2. vom Akku-Sparen ausnehmen
@@ -166,6 +166,6 @@ userscript/            das fertige Userscript (aktuelle Version – zum Installi
 app/                   Helper-App (Java, ohne Bibliotheken)
 tests/browser/         Browser-Tests (Python + Playwright) mit Testseiten in web/
 tests/java/            Tests für den Download-Kern (ohne Android) + Erzeugung der Test-Streams
-.github/workflows/     baut bei jedem Push die APK (Release) und testet das Skript in Chromium + Firefox
+.github/workflows/     baut APK-Artefakte; Veröffentlichung nur ausdrücklich auf main und testet das Skript in Chromium + Firefox
 ENTWICKLUNG.md         Aufbau, Schnittstelle, Tests, Stolperfallen – zum Weiterarbeiten
 ```
