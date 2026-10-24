@@ -5089,7 +5089,6 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         wrap.classList.add('thick');
       }
       if (dy < -Math.max(70, geom().br.height * 1.5)) { const was = scr.mode; scr.mode = 'cancel'; scrubShow(M().currentTime); if (was !== 'cancel') { cancelTick(); buzz(20); } return; }
-      if (scr.mode === 'cancel') buzz(8);   // zurück aus „Abbrechen“
       scr.mode = '';
       if (scr.first && Math.abs(x - scr.x0) < 10 && dy < 30) { scrubShow(scr.t); return; }   // (noch) Hochwischen
       if (scr.first) { scr.first = false; scrubAt(x, 0); }   // erst unter den Finger, dann ggf. Lupe
