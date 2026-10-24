@@ -65,6 +65,8 @@ jobs:
           assert new["sameCookiePreserved"] and new["rangePreserved"] and new["pslReady"]
           print("PASS: Android runtime tenant isolation, redirect credentials, Range and packaged PSL")
           print("Previous Android native redirect forwarded cookie:",old["crossCookiePresent"])
+          assert old["redirect300Followed"] and new["redirect300Followed"]
+          print("PASS: native Android HTTP300 compatibility retained")
           PY
       - uses: actions/upload-artifact@v4
         if: always()
