@@ -1,0 +1,52 @@
+name: Observe source-switch scrub baseline
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/security-phase-1]
+    paths: ['tools/prepare-scrub-observations.py', '.github/workflows/scrub-source-replay.yml']
+permissions:
+  contents: read
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the same Chromium engine
+        run: |
+          pip install playwright==1.56.0 pillow==13.0.0
+          python -m playwright install --with-deps chromium
+      - name: Fetch stable script only and instrument assertions without weakening them
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api 'repos/Owndot/video-assistent-helper/contents/userscript/video-assistent.user.js?ref=b05fd2de60d27d368eda60ff32be8b361a695f45' --jq .content | base64 --decode > "$RUNNER_TEMP/stable.js"
+          cp userscript/video-assistent.user.js "$RUNNER_TEMP/current.js"
+          python3 tools/prepare-scrub-observations.py
+      - name: Stable-current counterbalanced replay
+        shell: bash
+        run: |
+          mkdir -p validation-results
+          bad=0
+          index=0
+          for label in stable current current stable; do
+            index=$((index+1))
+            cp "$RUNNER_TEMP/$label.js" userscript/video-assistent.user.js
+            log="$GITHUB_WORKSPACE/validation-results/scrub-$index-$label.log"
+            rc=0
+            (cd tests/browser && BROWSER=chromium timeout -k 15 300 python3 -u _scrub_observe.py) > "$log" 2>&1 || rc=$?
+            cat "$log"
+            if [ "$rc" -ne 0 ] || grep -q '^FAIL' "$log" || ! grep -q '^ERGEBNIS: 36 von 36' "$log"; then bad=1; fi
+          done
+          exit "$bad"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: source-switch-observations
+          path: validation-results/scrub-*.log
