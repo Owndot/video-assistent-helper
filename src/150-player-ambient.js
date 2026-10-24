@@ -63,14 +63,20 @@
     function ambDraw(first) {
       if (FF_MOBILE) { ambFeed(first); return; }
       if (!actx || !ambOn || vp !== st) return;
-      const vw = vid.videoWidth, vh = vid.videoHeight;
-      if (!vw || !vh || vid.readyState < 2) return;
+      // Bild nehmen, das gerade zu sehen ist: beim nahtlosen Start das laufende Bild der Seite, sonst das Sofortbild –
+      // bis die eigene Kopie da ist (so ist das Licht gleich beim Öffnen da, nicht erst eine Weile später)
+      const br = st.bridge && st.bridge.el;
+      const src = br && br.readyState >= 2 && br.videoWidth ? br : vid.readyState >= 2 && vid.videoWidth ? vid :
+        st.posterCv ? st.posterCv : orig.readyState >= 2 && orig.videoWidth ? orig : null;
+      if (!src) return;
+      const vw = src.videoWidth || src.width, vh = src.videoHeight || src.height;
+      if (!vw || !vh) return;
       const ch = Math.max(8, Math.min(48, Math.round(32 * vh / vw)));
       if (amb.height !== ch) { amb.height = ch; accC.height = ch; first = true; }
       const w = amb.width, h = amb.height;
       try {
         accX.globalAlpha = first ? 1 : 0.5;   // sanft überblenden statt flackern
-        accX.drawImage(vid, 0, 0, w, h);
+        accX.drawImage(src, 0, 0, w, h);
         actx.clearRect(0, 0, w, h);
         actx.filter = 'blur(3px) saturate(1.45) brightness(.7)';   // entspricht blur(48px) auf voller Größe
         actx.drawImage(accC, 0, 0);
@@ -85,6 +91,8 @@
     }
     const ambTimer = setInterval(() => { if (!document.hidden && !M().paused) ambDraw(false); }, 400);
     vid.addEventListener('loadeddata', () => ambDraw(true));
+    // gleich beim Öffnen (Sofortbild/Bild der Seite) – nicht erst nach dem ersten Takt
+    [0, 120, 300].forEach((ms) => setTimeout(() => ambDraw(ms === 0), ms));
     vid.addEventListener('seeked', () => ambDraw(true));
     st.cleanup.push(() => {
       clearInterval(ambTimer);

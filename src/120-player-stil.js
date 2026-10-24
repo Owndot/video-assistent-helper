@@ -43,7 +43,7 @@
 /* Sofortbild beim Öffnen (Bild des Seitenvideos), bis die eigene Kopie läuft */
 .vposter{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
 /* Ambient-Modus: die Farben des Bildes leuchten weich in die schwarzen Ränder (wie bei YouTube) */
-.vamb{position:absolute;left:-12%;top:-12%;width:124%;height:124%;opacity:0;transition:opacity .8s ease;pointer-events:none}
+.vamb{position:absolute;left:-12%;top:-12%;width:124%;height:124%;opacity:0;transition:opacity .25s ease;pointer-events:none}
 /* Firefox-Handy (zweites Video statt Mini-Bild): Weichzeichnen und Rand per CSS. Sonst steckt beides schon im
    Mini-Bild selbst – der Bildschirm vergrößert es nur (kein teurer Weichzeichner über den ganzen Bildschirm) */
 video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
@@ -91,7 +91,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vb:focus-visible,.vchip:focus-visible,.vmi:focus-visible{outline:2px solid var(--ice);outline-offset:2px}
 .vstash{display:none!important}
 .vp.ctlnew .vchrome,.vp.ctlnew .vchrome *{pointer-events:none!important}
-.vp.vgone{opacity:0!important;transition:opacity .1s ease}
+.vp.vgone{opacity:0!important;transition:none!important}
 .vp.vgone,.vp.vgone *{pointer-events:none!important}
 .vtext{width:auto;min-width:40px;padding:0 9px;font:650 13.5px var(--font);font-variant-numeric:tabular-nums}
 .vmid{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:30px;transition:opacity .2s}

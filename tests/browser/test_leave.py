@@ -86,7 +86,7 @@ with sync_playwright() as p:
         if (c) window.__cov = Math.max(window.__cov, getComputedStyle(c).opacity > 0.5 ? 1 : 0); requestAnimationFrame(f); }; f(); }''' % R)
     ours = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
     pg.evaluate('() => document.exitFullscreen().catch(() => {})'); time.sleep(0.15)
-    # (Ausblenden dauert 0,1 s – auf langsamen Testrechnern bis zu ½ s warten)
+    # (Ausblenden sofort – auf langsamen Testrechnern bis zu ½ s warten)
     for _ in range(8):
         vg = pg.evaluate('() => { const w = %s.querySelector(".vp"); return w ? [w.classList.contains("vgone"), getComputedStyle(w).opacity, %s.querySelector(".vv").muted] : null; }' % (R, R))
         if not vg or float(vg[1]) < 0.5: break

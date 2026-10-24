@@ -23,6 +23,8 @@ def run(pg, slow_ms):
     pg.evaluate('() => { %s; %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click(); }' % ('(' + SAMPLE + ')()', R))
     time.sleep(0.15)
     early = pg.evaluate('() => { const br = %s.querySelector(".vbridge"), o = document.getElementById("v"); return [!!br, !o.paused, !o.muted]; }' % R)
+    run.amb = pg.evaluate('''() => { const a = %s.querySelector(".vamb"); if (!a || !a.getContext) return -1;
+        try { const d = a.getContext("2d").getImageData(0, 0, a.width, a.height).data; let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] + d[i+1] + d[i+2] + d[i+3]; return Math.round(s / (d.length / 4)); } catch (e) { return -2; } }''' % R)
     pg.wait_for_function('() => !%s.querySelector(".vbridge")' % R, timeout=15000); time.sleep(0.8)
     seen = pg.evaluate('() => window.__seen')
     after = pg.evaluate('() => { const v = %s.querySelector(".vv"), o = document.getElementById("v"); return [!v.paused, !v.muted, o.paused, o.muted, Math.round(v.currentTime * 10) / 10]; }' % R)
@@ -38,6 +40,7 @@ with sync_playwright() as p:
     for slow, tag in ((0, 'normal'), (1500, 'langsamer Server')):
         early, seen, after = run(pg, slow)
         check('%s: gleich das laufende Bild der Seite, Ton weiter von der Seite' % tag, early == [True, True, True], early)
+        check('%s: Ambient-Licht gleich beim Öffnen da (nach 0,15 s)' % tag, run.amb > 20, run.amb)
         bk, fw = jumps(seen)
         nb = sum(1 for s in seen if s[2])
         check('%s: umgeschaltet ohne Sprung (zurück %.2f s, vor %.2f s)' % (tag, bk, fw), bk < 0.2 and fw < 0.35 and nb > 2, [bk, fw, nb, len(seen)])

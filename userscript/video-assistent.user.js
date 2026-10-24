@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.24
+// @version      19.25
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -2503,7 +2503,7 @@
 /* Sofortbild beim Öffnen (Bild des Seitenvideos), bis die eigene Kopie läuft */
 .vposter{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
 /* Ambient-Modus: die Farben des Bildes leuchten weich in die schwarzen Ränder (wie bei YouTube) */
-.vamb{position:absolute;left:-12%;top:-12%;width:124%;height:124%;opacity:0;transition:opacity .8s ease;pointer-events:none}
+.vamb{position:absolute;left:-12%;top:-12%;width:124%;height:124%;opacity:0;transition:opacity .25s ease;pointer-events:none}
 /* Firefox-Handy (zweites Video statt Mini-Bild): Weichzeichnen und Rand per CSS. Sonst steckt beides schon im
    Mini-Bild selbst – der Bildschirm vergrößert es nur (kein teurer Weichzeichner über den ganzen Bildschirm) */
 video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
@@ -2551,7 +2551,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
 .vb:focus-visible,.vchip:focus-visible,.vmi:focus-visible{outline:2px solid var(--ice);outline-offset:2px}
 .vstash{display:none!important}
 .vp.ctlnew .vchrome,.vp.ctlnew .vchrome *{pointer-events:none!important}
-.vp.vgone{opacity:0!important;transition:opacity .1s ease}
+.vp.vgone{opacity:0!important;transition:none!important}
 .vp.vgone,.vp.vgone *{pointer-events:none!important}
 .vtext{width:auto;min-width:40px;padding:0 9px;font:650 13.5px var(--font);font-variant-numeric:tabular-nums}
 .vmid{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:30px;transition:opacity .2s}
@@ -3285,14 +3285,20 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     function ambDraw(first) {
       if (FF_MOBILE) { ambFeed(first); return; }
       if (!actx || !ambOn || vp !== st) return;
-      const vw = vid.videoWidth, vh = vid.videoHeight;
-      if (!vw || !vh || vid.readyState < 2) return;
+      // Bild nehmen, das gerade zu sehen ist: beim nahtlosen Start das laufende Bild der Seite, sonst das Sofortbild –
+      // bis die eigene Kopie da ist (so ist das Licht gleich beim Öffnen da, nicht erst eine Weile später)
+      const br = st.bridge && st.bridge.el;
+      const src = br && br.readyState >= 2 && br.videoWidth ? br : vid.readyState >= 2 && vid.videoWidth ? vid :
+        st.posterCv ? st.posterCv : orig.readyState >= 2 && orig.videoWidth ? orig : null;
+      if (!src) return;
+      const vw = src.videoWidth || src.width, vh = src.videoHeight || src.height;
+      if (!vw || !vh) return;
       const ch = Math.max(8, Math.min(48, Math.round(32 * vh / vw)));
       if (amb.height !== ch) { amb.height = ch; accC.height = ch; first = true; }
       const w = amb.width, h = amb.height;
       try {
         accX.globalAlpha = first ? 1 : 0.5;   // sanft überblenden statt flackern
-        accX.drawImage(vid, 0, 0, w, h);
+        accX.drawImage(src, 0, 0, w, h);
         actx.clearRect(0, 0, w, h);
         actx.filter = 'blur(3px) saturate(1.45) brightness(.7)';   // entspricht blur(48px) auf voller Größe
         actx.drawImage(accC, 0, 0);
@@ -3307,6 +3313,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     }
     const ambTimer = setInterval(() => { if (!document.hidden && !M().paused) ambDraw(false); }, 400);
     vid.addEventListener('loadeddata', () => ambDraw(true));
+    // gleich beim Öffnen (Sofortbild/Bild der Seite) – nicht erst nach dem ersten Takt
+    [0, 120, 300].forEach((ms) => setTimeout(() => ambDraw(ms === 0), ms));
     vid.addEventListener('seeked', () => ambDraw(true));
     st.cleanup.push(() => {
       clearInterval(ambTimer);
@@ -6722,7 +6730,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return [
-      'Video-Assistent 19.24',
+      'Video-Assistent 19.25',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
