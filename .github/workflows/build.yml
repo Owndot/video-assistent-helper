@@ -23,7 +23,32 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Prepare existing release identity
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.EVP_KEYSTORE_B64 }}
+          EVP_STORE_PASSWORD: ${{ secrets.EVP_STORE_PASSWORD }}
+          EVP_KEY_ALIAS: ${{ secrets.EVP_KEY_ALIAS }}
+          EVP_EXPECTED_CERT_SHA256: ${{ secrets.EVP_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_B64"
+          test -n "$EVP_STORE_PASSWORD"
+          test -n "$EVP_KEY_ALIAS"
+          test -n "$EVP_EXPECTED_CERT_SHA256"
+          umask 077
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/evp-release.jks"
+          keytool -exportcert -keystore "$RUNNER_TEMP/evp-release.jks" -alias "$EVP_KEY_ALIAS" -storepass:env EVP_STORE_PASSWORD > "$RUNNER_TEMP/evp-cert.der"
+          actual_cert=$(sha256sum "$RUNNER_TEMP/evp-cert.der" | cut -d ' ' -f 1)
+          expected_cert=$(printf '%s' "$EVP_EXPECTED_CERT_SHA256" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')
+          test "$actual_cert" = "$expected_cert"
+          echo "EVP_KEYSTORE_PATH=$RUNNER_TEMP/evp-release.jks" >> "$GITHUB_ENV"
+
       - name: APK bauen
+        env:
+          EVP_STORE_PASSWORD: ${{ secrets.EVP_STORE_PASSWORD }}
+          EVP_KEY_ALIAS: ${{ secrets.EVP_KEY_ALIAS }}
+          EVP_KEY_PASSWORD: ${{ secrets.EVP_KEY_PASSWORD }}
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
       - name: APK umbenennen
@@ -44,3 +69,7 @@ jobs:
             --title "Video-Assistent Helper 1.0.${{ github.run_number }}" \
             --notes "Auf dem Handy öffnen, VideoAssistent-Helper.apk antippen und installieren. Neue Versionen lassen sich einfach drüber installieren. / Open on your phone, tap VideoAssistent-Helper.apk and install. New versions install over the old one." \
             --latest
+
+      - name: Remove temporary signing files
+        if: always()
+        run: rm -f "$RUNNER_TEMP/evp-release.jks" "$RUNNER_TEMP/evp-cert.der"

@@ -4,3 +4,7 @@ app/build/
 local.properties
 *.iml
 .idea/
+
+# Signing material must live outside Git
+*.jks
+*.keystore

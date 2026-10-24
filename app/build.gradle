@@ -2,6 +2,8 @@ plugins {
     id 'com.android.application'
 }
 
+def signingEnv = ['EVP_KEYSTORE_PATH', 'EVP_STORE_PASSWORD', 'EVP_KEY_ALIAS', 'EVP_KEY_PASSWORD']
+def hasReleaseSigning = signingEnv.every { System.getenv(it) }
 def runNo = (System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int
 
 android {
@@ -16,22 +18,24 @@ android {
         versionName "1.0." + runNo
     }
 
-    // Fester Schlüssel: so lässt sich jede neue Version einfach über die alte installieren
     signingConfigs {
-        fest {
-            storeFile rootProject.file('keystore.jks')
-            storePassword 'evphelfer'
-            keyAlias 'evp'
-            keyPassword 'evphelfer'
+        externalRelease {
+            if (hasReleaseSigning) {
+                storeFile file(System.getenv('EVP_KEYSTORE_PATH'))
+                storePassword System.getenv('EVP_STORE_PASSWORD')
+                keyAlias System.getenv('EVP_KEY_ALIAS')
+                keyPassword System.getenv('EVP_KEY_PASSWORD')
+            }
         }
     }
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.fest
+            signingConfig signingConfigs.externalRelease
         }
         debug {
-            signingConfig signingConfigs.fest
+            // Separate debug identity; installs alongside the production app.
+            applicationIdSuffix '.debug'
         }
     }
     compileOptions {
@@ -41,5 +45,20 @@ android {
     lint {
         checkReleaseBuilds false
         abortOnError false
+    }
+}
+
+def verifyReleaseSigning = tasks.register('verifyReleaseSigning') {
+    doLast {
+        if (!hasReleaseSigning || !file(System.getenv('EVP_KEYSTORE_PATH')).isFile()) {
+            throw new GradleException('Release signing requires the existing production keystore and EVP_* environment variables. No fallback key is permitted.')
+        }
+    }
+}
+tasks.configureEach {
+    if (name != 'verifyReleaseSigning' && name.contains('Release') &&
+        (name.startsWith('assemble') || name.startsWith('bundle') ||
+         name.startsWith('package') || name.startsWith('validateSigning'))) {
+        dependsOn verifyReleaseSigning
     }
 }
