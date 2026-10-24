@@ -14,7 +14,9 @@
     <!-- nur Android 8/9: Download-Manager darf sonst nicht in "Download" schreiben -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
+    <!-- Downloads explicitly support user-selected HTTP media and local HTTP media servers. -->
     <application
+        android:usesCleartextTraffic="true"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
