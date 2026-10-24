@@ -34,25 +34,13 @@ public interface Fetcher {
             this.cookieBase = baseOf(h);
         }
 
-        /** grob die "Haupt-Domain" (letzte zwei Teile, bei co.uk & Co. drei) */
-        static String baseOf(String host) {
-            if (host == null || host.isEmpty()) return "";
-            host = host.toLowerCase(java.util.Locale.ROOT);
-            if (host.matches("[0-9.]+|\\[.*\\]")) return host;
-            String[] p = host.split("\\.");
-            if (p.length <= 2) return host;
-            int take = (p[p.length - 2].length() <= 3 && p[p.length - 1].length() == 2) ? 3 : 2;   // z. B. bbc.co.uk
-            StringBuilder b = new StringBuilder();
-            for (int i = Math.max(0, p.length - take); i < p.length; i++) { if (b.length() > 0) b.append('.'); b.append(p[i]); }
-            return b.toString();
-        }
+        static String baseOf(String host) { return PublicSuffix.site(host); }
 
         /** Cookies der Seite nur an deren eigene Server – nie an fremde Adressen aus einer Playlist */
         boolean cookieFor(String url) {
             if (cookie == null || cookie.isEmpty() || cookieBase.isEmpty()) return false;
             try {
-                String h = new URL(url).getHost().toLowerCase(java.util.Locale.ROOT);
-                return h.equals(cookieBase) || h.endsWith("." + cookieBase);
+                return cookieBase.equals(baseOf(new URL(url).getHost()));
             } catch (Exception e) { return false; }
         }
 
@@ -60,7 +48,7 @@ public interface Fetcher {
             HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
             c.setConnectTimeout(15000);
             c.setReadTimeout(30000);
-            c.setInstanceFollowRedirects(true);
+            c.setInstanceFollowRedirects(false);
             if (userAgent != null && !userAgent.isEmpty()) c.setRequestProperty("User-Agent", userAgent);
             if (referer != null && !referer.isEmpty()) {
                 c.setRequestProperty("Referer", referer);
@@ -71,14 +59,36 @@ public interface Fetcher {
             return c;
         }
 
+        /** Follow each hop explicitly so platform redirects cannot carry a manual Cookie header. */
+        HttpURLConnection response(String url, long off, long len) throws IOException {
+            URL current=new URL(url); boolean credentials=true;
+            for(int hop=0;hop<=10;hop++){
+                String protocol=current.getProtocol();
+                if(!"http".equals(protocol)&&!"https".equals(protocol))throw new IOException("Only HTTP(S) redirects are allowed");
+                HttpURLConnection c=open(current.toExternalForm());
+                if(!credentials)c.setRequestProperty("Cookie","");
+                if(off>=0&&len>0)c.setRequestProperty("Range","bytes="+off+"-"+(off+len-1));
+                int code;
+                try { code=c.getResponseCode(); }
+                catch(IOException e){c.disconnect();throw e;}
+                if(code!=301&&code!=302&&code!=303&&code!=307&&code!=308)return c;
+                String location=c.getHeaderField("Location");
+                c.disconnect();
+                if(location==null||location.isEmpty())throw new IOException("Redirect without Location");
+                URL next=new URL(current,location);
+                if("https".equals(protocol)&&!"https".equals(next.getProtocol()))credentials=false;
+                current=next;
+            }
+            throw new IOException("Too many redirects");
+        }
+
         @Override
         public byte[] fetch(String url, long off, long len) throws IOException {
             IOException last = null;
             for (int attempt = 0; attempt < 4; attempt++) {
                 HttpURLConnection c = null;
                 try {
-                    c = open(url);
-                    if (off >= 0 && len > 0) c.setRequestProperty("Range", "bytes=" + off + "-" + (off + len - 1));
+                    c = response(url,off,len);
                     int code = c.getResponseCode();
                     if (code >= 400) {
                         HttpError e = new HttpError(code);
@@ -104,9 +114,8 @@ public interface Fetcher {
 
         @Override
         public long size(String url) throws IOException {
-            HttpURLConnection c = open(url);
+            HttpURLConnection c = response(url,0,1);
             try {
-                c.setRequestProperty("Range", "bytes=0-0");
                 int code = c.getResponseCode();
                 if (code >= 400) throw new HttpError(code);
                 String cr = c.getHeaderField("Content-Range");

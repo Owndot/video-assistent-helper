@@ -11,6 +11,7 @@ rm -rf out
 java -cp classes TestPortConflict
 java -cp classes TestSettingsTransfer
 java -cp classes de.evp.helfer.TestCookie
+java -cp classes de.evp.helfer.TestRedirectCookies
 java -cp classes TestMain
 echo "--- Prüfung der Ergebnisse mit ffprobe:"
 for f in out/*/video.* out/*/audio.*; do
