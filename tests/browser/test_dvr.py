@@ -16,20 +16,27 @@ with sync_playwright() as p:
     time.sleep(1.0)
     def info(): return pg.evaluate('''() => { const r = %s, v = r.querySelector(".vv"), s = v.seekable;
         return { ready: v.readyState, seeking: v.seeking, paused: v.paused, t: v.currentTime, a: s.length ? s.start(0) : -1, b: s.length ? s.end(s.length - 1) : -1, times: [...r.querySelectorAll(".vtime")].map(e => e.textContent), bar: +r.querySelector(".vbar").value, lab: r.querySelector(".vprev b").textContent }; }''' % R)
-    ctl(pg); i0 = info()
+    def reveal_controls():
+        # Exercise the real user path: showControls also synchronously paints the timeline.
+        # Directly adding the CSS class bypasses that work and races the next media event.
+        visible=pg.evaluate('() => %s.querySelector(".vp").classList.contains("ctl")' % R)
+        if not visible:
+            pg.mouse.click(200,300)
+            pg.wait_for_function('() => %s.querySelector(".vp").classList.contains("ctl")' % R)
+    reveal_controls(); i0 = info()
     check('Live mit Zurückspulen: rechts „Live“, links „LIVE“ (am Live-Rand), Leiste ganz rechts', i0['times'][1] == 'Live' and i0['times'][0] == 'LIVE' and i0['bar'] > 900 and i0['b'] - i0['a'] > 100, i0)
     br = pg.evaluate('() => { const r = %s.querySelector(".vbar").getBoundingClientRect(); return [r.left, r.top + r.height / 2, r.width - 14]; }' % R)
     x, y, W = br; X = lambda f: x + 7 + f * W
     # zurückspulen auf 40 % des Bereichs → Schild „−1:4x“, danach links „−1:4x“
     pg.mouse.move(X(0.95), y); pg.mouse.down(); pg.mouse.move(X(0.4), y, steps=4); time.sleep(0.3)
-    i1 = info(); pg.mouse.up(); time.sleep(1.5); ctl(pg); i2 = info()
+    i1 = info(); pg.mouse.up(); time.sleep(1.5); reveal_controls(); i2 = info()
     want = i1['b'] - (i1['a'] + 0.4 * (i1['b'] - i1['a']))   # so weit hinter live
     def back(s): return int(s.lstrip('−').split(':')[0]) * 60 + int(s.split(':')[1]) if s.startswith('−') else 0
     check('Spulen im Live-Bereich: Schild zeigt „−m:ss“ hinter live', i1['lab'].startswith('−') and want - 22 <= back(i1['lab']) <= want + 3, [i1['lab'], round(want)])
     check('… losgelassen: Video dort, links „−m:ss“', abs((i2['b'] - i2['t']) - want) <= 5 and i2['times'][0].startswith('−'), [i2, round(want)])
     # ganz nach rechts → wieder live
     pg.mouse.move(X(0.4), y); pg.mouse.down(); pg.mouse.move(X(1.0) + 20, y, steps=4); time.sleep(0.3)
-    i3 = info(); pg.mouse.up(); time.sleep(1.5); ctl(pg); i4 = info()
+    i3 = info(); pg.mouse.up(); time.sleep(1.5); reveal_controls(); i4 = info()
     check('ganz nach rechts: wieder live („LIVE“)', i3['lab'] == 'LIVE' and i4['b'] - i4['t'] < 25 and i4['times'][0] == 'LIVE', [i3['lab'], i4])
     # Lupe auch bei Live (Bereich ≥ 1,5 min): Grenzen als „−m:ss“
     pg.mouse.move(X(0.6), y); pg.mouse.down(); pg.mouse.move(X(0.5), y, steps=3); pg.mouse.move(X(0.5), y + 90, steps=4); time.sleep(0.3)
