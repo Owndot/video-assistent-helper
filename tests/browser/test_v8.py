@@ -40,9 +40,10 @@ PRE = """const __o = Element.prototype.attachShadow;
 Element.prototype.attachShadow = function (i) { const r = __o.call(this, Object.assign({}, i, { mode: 'open' })); window.__evpRoot = r; return r; };
 // Speicher des Managers wie bei Violentmonkey (für alle Fenster derselbe Schlüssel der eingebetteten Fenster)
 if (typeof window.GM_getValue !== 'function') {
-  const __gm = { frameKey: { k: '5e1f0c2a9b7d4e3f8a6c1b2d3e4f5a6b7c', t: Date.now() } };
-  window.GM_getValue = (k, d) => (k in __gm ? __gm[k] : d);
-  window.GM_setValue = (k, v) => { __gm[k] = v; };
+  // (alles andere wie ohne Manager im Speicher der Seite – die Tests lesen dort nach)
+  const __fk = { k: '5e1f0c2a9b7d4e3f8a6c1b2d3e4f5a6b7c', t: Date.now() };
+  window.GM_getValue = (k, d) => { if (k === 'frameKey') return __fk; try { const v = localStorage.getItem('evp-s-' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
+  window.GM_setValue = (k, v) => { if (k === 'frameKey') return; try { localStorage.setItem('evp-s-' + k, JSON.stringify(v)); } catch (e) {} };
 }"""
 results = []
 def check(name, ok, info=''):
