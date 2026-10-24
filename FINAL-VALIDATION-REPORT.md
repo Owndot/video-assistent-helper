@@ -3,6 +3,15 @@
 **Ready for the owner's real-device validation; NOT approved for final merge, production signing or publication.**
 Both main security PRs remain drafts. The owner device is Samsung S26 Ultra, reported Android 17.0, with Vivaldi and Firefox. Exact API/One UI/browser versions and all physical results remain unverified.
 
+## Follow-up after repeated browser runs — 21:27 UTC
+Do not interpret the earlier 57/57 Chromium result below as the final repeatability verdict.
+- Subsequent run 40131264209 failed one Chromium source-switch/scrub assertion (56/57 files pass); run 40131243363 also showed an intermittent initial DVR display assertion.
+- Run 40132989762 reproduced the source-switch defect twice on stable and twice on development source. Native media-event traces show the player explicitly setting the new source to the stale opening position, so this was not a mere slow-test timeout.
+- Runtime fix 7af974c0 (matching Kadri 3145e864) adds one pending-seek flag per intentional tryNext load in src/170-player-laden.js. It preserves the first bridge/quality/fallback seek and avoids a stale seek on later unrelated metadata.
+- In run 40133593779, stable samples fail the unchanged source-switch assertion 35/36 and corrected samples pass 36/36 twice. That job still failed because the new standalone test attempted discovery after pausing before the lazy player appeared. Corrected test preconditions wait for playing-media discovery first; no assertion was relaxed.
+- The standalone native event test checks initial position and later source position directly at loadedmetadata. The live/DVR test now waits for native decoded-media readiness and completed seeking, while independently retaining its UI assertions. This is a harness precondition improvement; the intermittent DVR observation is not yet declared conclusively fixed.
+- Fresh 58-file browser suites, focused handoff/quality/source-position tests and a Kadri performance rerun are in progress. All physical results remain NOT TESTED.
+
 ## Executed checklist
 PASS is evidence of actual execution, never merely a prepared procedure. Host tests ran in GitHub Actions because the shared execution workspace was unavailable.
 
