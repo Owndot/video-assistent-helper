@@ -26,6 +26,7 @@ public class TestRedirectCookies {
       net.fetch("http://127.0.0.1:"+port+"/cross",0,2);
       if(cookie.get()!=null&&!cookie.get().isEmpty())throw new AssertionError("Cookie crossed redirect site boundary");
       if(!"bytes=0-1".equals(range.get()))throw new AssertionError("Range lost across cross-site redirect");
+      if(args.length>0 && "--cookies-only".equals(args[0])) { System.out.println("PASS: cookie redirect checks only"); return; }
       for(int status:new int[]{300,301,302,303,307,308}){
         byte[] body=net.fetch("http://127.0.0.1:"+port+"/status"+status,0,2);
         if(!"ok".equals(new String(body,StandardCharsets.UTF_8)))throw new AssertionError("HTTP "+status+" redirect failed");

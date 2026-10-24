@@ -80,7 +80,7 @@ jobs:
           grep -q 'foreign bob.github.io' "$work/old-cookie.log"
           echo 'Confirmed old tenant-cookie leak; current policy must pass:'
           java -cp tests/java/classes de.evp.helfer.TestCookie
-          if java -cp "$work/old:tests/java/classes" de.evp.helfer.TestRedirectCookies > "$work/old-redirect.log" 2>&1; then
+          if java -cp "$work/old:tests/java/classes" de.evp.helfer.TestRedirectCookies --cookies-only > "$work/old-redirect.log" 2>&1; then
             echo 'Old JVM did not expose redirect forwarding; Android still requires device verification'
           else
             grep -q 'Cookie crossed redirect site boundary' "$work/old-redirect.log"
