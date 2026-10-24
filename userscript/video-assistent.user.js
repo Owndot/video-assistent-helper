@@ -914,6 +914,25 @@
   const API_RE = /graphql|\/api\//i;
   let rawFetch = null;   // ungehaktes fetch – für eigene Abfragen, die NICHT mitgelesen werden sollen
   try {
+    // Antwort mitlesen, aber höchstens max Zeichen: zu Große gar nicht erst ganz einlesen (Länge vorab, sonst Stück für
+    // Stück und abbrechen)
+    const readCapped = (r, max) => {
+      try {
+        if (+(r.headers.get('content-length') || 0) > max) return Promise.resolve('');
+        const c = r.clone();
+        if (!c.body || !c.body.getReader || typeof TextDecoder !== 'function') return c.text().then((t) => (t.length > max ? '' : t));
+        const rd = c.body.getReader(), dec = new TextDecoder();
+        let out = '', n = 0;
+        const pump = () => rd.read().then(({ done, value }) => {
+          if (done) return out + dec.decode();
+          n += value.length;
+          if (n > max) { rd.cancel().catch(() => {}); return ''; }
+          out += dec.decode(value, { stream: true });
+          return pump();
+        });
+        return pump();
+      } catch (e) { return Promise.resolve(''); }
+    };
     const of = window.fetch;
     rawFetch = of ? of.bind(window) : null;
     // Firefox: Abfragen eines Erweiterungs-Skripts laufen sonst als Erweiterung (andere Herkunft) –
@@ -924,9 +943,9 @@
         let u = '';
         try { u = typeof input === 'string' ? input : (input && input.url) || ''; seeUrl(u); } catch (e) {}
         const p = of.apply(this, arguments);
-        if (PLAYLIST_RE.test(u)) p.then((res) => { try { if (res && res.ok) res.clone().text().then((t) => notePlaylist(u, res.url, t), () => {}); } catch (e) {} }, () => {});
+        if (PLAYLIST_RE.test(u)) p.then((res) => { if (res && res.ok) readCapped(res, 4e6).then((t) => { if (t) notePlaylist(u, res.url, t); }, () => {}); }, () => {});
         if (META && API_RE.test(u)) {
-          p.then((res) => { try { res.clone().text().then((t) => { bodiesRead++; scanText(t); }, () => {}); } catch (e) {} }, () => {});
+          p.then((res) => { if (res) readCapped(res, 8e6).then((t) => { if (t) { bodiesRead++; scanText(t); } }, () => {}); }, () => {});
         }
         return p;
       };
@@ -5299,7 +5318,9 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       try { c.getContext('2d').drawImage(v, 0, 0, d[0], d[1]); } catch (e) { return null; }
       const k = Math.round(tt / bucketFor());
       thumbs.delete(k); thumbs.set(k, { c: c, t: tt });
-      if (thumbs.size > 180) thumbs.delete(thumbs.keys().next().value);   // ~12 MB höchstens
+      // höchstens ~12 MB Bilder (je Bild Breite × Höhe × 4 Byte – Hochkant-Videos haben größere Bilder, also weniger davon)
+      const most = Math.max(48, Math.min(180, Math.floor(12e6 / (d[0] * d[1] * 4))));
+      while (thumbs.size > most) thumbs.delete(thumbs.keys().next().value);
       prev.dataset.n = String(thumbs.size);   // (für Diagnose/Tests: so viele Bilder gemerkt)
       return c;
     }
@@ -5459,7 +5480,12 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       if (liveMode()) return;   // Spulen im Bild: kein Vorschau-Video nötig (spart Daten)
       if (st.mode === 'capture') { if (fbPrevSrc()) { pv.preload = 'metadata'; prevLoad(); } return; }   // Länge gleich prüfen
       if (st.mode !== 'own' || !st.cur) return;
-      if (st.hls) { pvs.autoGrid = true; pvs.userDone = true; prevLoad(); if (pv.readyState >= 1) startGrid(); }
+      if (st.hls) {
+        let save = false;
+        try { save = !!(navigator.connection && navigator.connection.saveData); } catch (e) {}
+        if (save) return;   // Datensparmodus: Raster erst, wenn wirklich gespult wird
+        pvs.autoGrid = true; pvs.userDone = true; prevLoad(); if (pv.readyState >= 1) startGrid();
+      }
       else {
         // Dateien: das Inhaltsverzeichnis (wenige KB). Im WLAN, wenn das Video ein paar Sekunden ruhig läuft, dazu
         // 8 Bilder über die Länge verteilt (wenige MB) – so zeigt schon das erste Spulen überall ein Bild. (Das ganze

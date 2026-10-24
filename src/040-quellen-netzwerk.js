@@ -417,6 +417,25 @@
   const API_RE = /graphql|\/api\//i;
   let rawFetch = null;   // ungehaktes fetch – für eigene Abfragen, die NICHT mitgelesen werden sollen
   try {
+    // Antwort mitlesen, aber höchstens max Zeichen: zu Große gar nicht erst ganz einlesen (Länge vorab, sonst Stück für
+    // Stück und abbrechen)
+    const readCapped = (r, max) => {
+      try {
+        if (+(r.headers.get('content-length') || 0) > max) return Promise.resolve('');
+        const c = r.clone();
+        if (!c.body || !c.body.getReader || typeof TextDecoder !== 'function') return c.text().then((t) => (t.length > max ? '' : t));
+        const rd = c.body.getReader(), dec = new TextDecoder();
+        let out = '', n = 0;
+        const pump = () => rd.read().then(({ done, value }) => {
+          if (done) return out + dec.decode();
+          n += value.length;
+          if (n > max) { rd.cancel().catch(() => {}); return ''; }
+          out += dec.decode(value, { stream: true });
+          return pump();
+        });
+        return pump();
+      } catch (e) { return Promise.resolve(''); }
+    };
     const of = window.fetch;
     rawFetch = of ? of.bind(window) : null;
     // Firefox: Abfragen eines Erweiterungs-Skripts laufen sonst als Erweiterung (andere Herkunft) –
@@ -427,9 +446,9 @@
         let u = '';
         try { u = typeof input === 'string' ? input : (input && input.url) || ''; seeUrl(u); } catch (e) {}
         const p = of.apply(this, arguments);
-        if (PLAYLIST_RE.test(u)) p.then((res) => { try { if (res && res.ok) res.clone().text().then((t) => notePlaylist(u, res.url, t), () => {}); } catch (e) {} }, () => {});
+        if (PLAYLIST_RE.test(u)) p.then((res) => { if (res && res.ok) readCapped(res, 4e6).then((t) => { if (t) notePlaylist(u, res.url, t); }, () => {}); }, () => {});
         if (META && API_RE.test(u)) {
-          p.then((res) => { try { res.clone().text().then((t) => { bodiesRead++; scanText(t); }, () => {}); } catch (e) {} }, () => {});
+          p.then((res) => { if (res) readCapped(res, 8e6).then((t) => { if (t) { bodiesRead++; scanText(t); } }, () => {}); }, () => {});
         }
         return p;
       };

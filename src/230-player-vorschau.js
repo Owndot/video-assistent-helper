@@ -106,7 +106,9 @@
       try { c.getContext('2d').drawImage(v, 0, 0, d[0], d[1]); } catch (e) { return null; }
       const k = Math.round(tt / bucketFor());
       thumbs.delete(k); thumbs.set(k, { c: c, t: tt });
-      if (thumbs.size > 180) thumbs.delete(thumbs.keys().next().value);   // ~12 MB höchstens
+      // höchstens ~12 MB Bilder (je Bild Breite × Höhe × 4 Byte – Hochkant-Videos haben größere Bilder, also weniger davon)
+      const most = Math.max(48, Math.min(180, Math.floor(12e6 / (d[0] * d[1] * 4))));
+      while (thumbs.size > most) thumbs.delete(thumbs.keys().next().value);
       prev.dataset.n = String(thumbs.size);   // (für Diagnose/Tests: so viele Bilder gemerkt)
       return c;
     }
@@ -266,7 +268,12 @@
       if (liveMode()) return;   // Spulen im Bild: kein Vorschau-Video nötig (spart Daten)
       if (st.mode === 'capture') { if (fbPrevSrc()) { pv.preload = 'metadata'; prevLoad(); } return; }   // Länge gleich prüfen
       if (st.mode !== 'own' || !st.cur) return;
-      if (st.hls) { pvs.autoGrid = true; pvs.userDone = true; prevLoad(); if (pv.readyState >= 1) startGrid(); }
+      if (st.hls) {
+        let save = false;
+        try { save = !!(navigator.connection && navigator.connection.saveData); } catch (e) {}
+        if (save) return;   // Datensparmodus: Raster erst, wenn wirklich gespult wird
+        pvs.autoGrid = true; pvs.userDone = true; prevLoad(); if (pv.readyState >= 1) startGrid();
+      }
       else {
         // Dateien: das Inhaltsverzeichnis (wenige KB). Im WLAN, wenn das Video ein paar Sekunden ruhig läuft, dazu
         // 8 Bilder über die Länge verteilt (wenige MB) – so zeigt schon das erste Spulen überall ein Bild. (Das ganze
