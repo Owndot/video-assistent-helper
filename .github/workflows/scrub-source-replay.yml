@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [codex/security-phase-1]
-    paths: ['tools/prepare-scrub-observations.py', '.github/workflows/scrub-source-replay.yml']
+    paths: ['tools/prepare-scrub-observations.py', '.github/workflows/scrub-source-replay.yml', 'tests/browser/test_metadata_seek.py']
 permissions:
   contents: read
 jobs:
@@ -29,6 +29,11 @@ jobs:
           gh api 'repos/Owndot/video-assistent-helper/contents/userscript/video-assistent.user.js?ref=b05fd2de60d27d368eda60ff32be8b361a695f45' --jq .content | base64 --decode > "$RUNNER_TEMP/stable.js"
           cp userscript/video-assistent.user.js "$RUNNER_TEMP/current.js"
           python3 tools/prepare-scrub-observations.py
+      - name: Native metadata, seamless handoff and quality controls
+        shell: bash
+        run: |
+          cd tests/browser
+          BROWSER=chromium TESTS="test_metadata_seek.py test_seamless.py test_player.py" ./run_all.sh
       - name: Stable-current counterbalanced replay
         shell: bash
         run: |
@@ -49,10 +54,13 @@ jobs:
             fi
           done
           cp "$RUNNER_TEMP/current.js" userscript/video-assistent.user.js
-          (cd tests/browser && BROWSER=chromium TESTS="test_metadata_seek.py test_seamless.py test_player.py" ./run_all.sh)
           exit "$bad"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: source-switch-observations
-          path: validation-results/scrub-*.log
+          path: |
+            validation-results/scrub-*.log
+            tests/browser/out/test_metadata_seek.log
+            tests/browser/out/test_seamless.log
+            tests/browser/out/test_player.log
