@@ -13,7 +13,7 @@ Record model, Android/API, browser/version, script/extension commit, APK SHA-256
 7. Run the same fixture and network conditions for stable/current. Record unavailable browser/OS capabilities as NOT TESTED.
 
 ## Functional matrix
-Run F01-F13 for every supported device/browser configuration. Record one row per configuration in DEVICE-RESULTS.csv.
+Run F01-F15 for every supported device/browser configuration. Record one row per configuration in DEVICE-RESULTS.csv.
 
 | ID | Exact procedure | Expected behavior / evidence |
 |---|---|---|
@@ -33,6 +33,9 @@ Run F01-F13 for every supported device/browser configuration. Record one row per
 
 For F12, do not install a random production-ID APK as a second helper. Use an already trusted installation on the spare device; otherwise mark that two-package test NOT TESTED.
 Emulator fixture v3.1 tests prove mechanics with test identities only. A future approved production lineage still needs its own device upgrade test before distribution.
+
+| F14 | Use an authorized source that requires mirrored playback; open/close five times, seek if supported, switch apps and return. | Correct mirrored image and one audio source; original player position/state preserved. If no suitable source is available, NOT TESTED. |
+| F15 | If available, send playback to the supported external player/cast receiver; return to browser and reopen at the recorded position. | Correct URL/context and position; no unwanted second stream. Record receiver/app; unavailable hardware is NOT TESTED. |
 
 ## Baseline performance protocol
 1. Fix screen refresh/brightness, volume, battery-saver state, Wi-Fi AP, fixture hashes, network shaping and ambient temperature. Let both versions cool between trials. Keep Android/browser updates unchanged.

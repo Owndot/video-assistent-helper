@@ -17,7 +17,7 @@ C. Firefox + the intended supported Kadri or Violentmonkey route; keep only one 
 Keep a separate result row for each route. An extension unsupported by a particular browser build is NOT TESTED for that route, not a functional pass.
 
 ## Functional checklist
-Run F01-F13 exactly as described in FINAL-DEVICE-VALIDATION.md.
+Run F01-F15 exactly as described in FINAL-DEVICE-VALIDATION.md.
 Pay particular attention to:
 - Notification and overlay permission prompts on Android 17; helper foreground-service start from app and browser handoff.
 - Samsung battery restrictions: background for five minutes, screen lock/unlock, then return. Record whether permissions or background limits caused a stop.
