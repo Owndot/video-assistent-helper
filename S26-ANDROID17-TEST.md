@@ -1,86 +1,94 @@
-# Samsung S26 Ultra — Android 17 — Vivaldi / Firefox
+# Samsung S26 Ultra — Android 17 — Vivaldi und Firefox
 
-Device supplied by owner. Every physical row is currently NOT TESTED. Record Settings > About phone > Software information Android/One UI versions and the browser About version. If using ADB, record `adb shell getprop ro.build.version.sdk`; do not infer platform behavior solely from the marketed version.
+**Noch kein physischer Gerätetest ausgeführt.** Alle 84 Gerätezeilen in DEVICE-RESULTS.csv stehen auf NOT TESTED. Die grüne CI ersetzt diese Tests nicht.
 
-## Preparation
-1. Use a test browser profile/account. Note current helper language/theme/autostart and stop downloads before changing installations.
-2. Download only helper-baseline-APKs-TEST-ONLY / helper-debug-NOT-production workflow artifacts from the reviewed PR. Verify their file hashes and keep stable/current labels.
-3. These APKs use de.evp.helfer.debug and temporary test signing. They cannot update de.evp.helfer. A failed update of the production app is not permission to uninstall it without saving your settings.
-4. Stop the installed production helper while testing debug. Keep it only for the explicit two-package conflict case.
-5. Record battery mode, screen brightness/refresh, Wi-Fi, temperature and whether Samsung's background-app restrictions/optimization are enabled. Do not disable them silently to make a test pass.
-6. Use the same direct video, HLS, iframe fixture, subtitle files and LAN server for both versions. Record their hashes/URLs without credentials.
+## 1. Vorbereitung und sichere Test-APK
+1. Notiere unter „Telefoninfo / Softwareinformationen“ Android- und One-UI-Version sowie die genauen Vivaldi-/Firefox-Versionen. Mit ADB zusätzlich: `adb shell getprop ro.build.version.sdk`.
+2. Notiere Sprache, Thema und Autostart des vorhandenen Helpers. Stoppe laufende Downloads. Lösche keine Produktionsdaten.
+3. Geprüfte Test-APK: [CI-Lauf 40131433569](https://github.com/Owndot/video-assistent-helper/actions/runs/40131433569), Quellstand `8561f7e7d2c5606d9593cae1ea67926d4e4fa2f1`, Artefakt [helper-debug-NOT-production](https://github.com/Owndot/video-assistent-helper/actions/runs/40131433569/artifacts/12575590883).
+4. Im Archiv stehen app-debug.apk, debug-apk.sha256, debug-source-commit.txt und debug-signature.txt. Vergleiche die **APK-Dateiprüfsumme** mit dem Manifest. Die ZIP-Prüfsumme und der Zertifikatsfingerabdruck sind andere Werte.
+5. Diese APK hat die separate App-ID `de.evp.helfer.debug` und einen Testschlüssel. Sie aktualisiert die Produktions-App `de.evp.helfer` nicht. Eine fehlgeschlagene Installation erlaubt nicht, die Produktions-App ohne Sicherung zu löschen.
+6. Stoppe den vorhandenen Produktions-Helper während normaler Debug-Tests. Beide nutzen Port 47811; gleichzeitig laufen sie nur beim ausdrücklichen Konflikttest.
+7. Nutze Testkonten und feste, erlaubte Quellen: direkte MP4/WebM, HLS, eingebetteter Player, SRT/VTT, eigener Medienserver und große Datei mit bekannter SHA-256-Prüfsumme. Keine echten Cookies oder Kopplungsschlüssel weitergeben.
+8. Notiere Bildschirmhelligkeit/Bildrate, Lautstärke, WLAN, Energiesparmodus, Temperatur und Samsung-Hintergrundbeschränkungen. Ändere diese nicht stillschweigend zwischen Vergleichsläufen.
 
-## Run three separate configurations
-A. Vivaldi + Kadri; disable the Violentmonkey player script.
-B. Vivaldi + Violentmonkey player script; disable Kadri.
-C. Firefox + the intended supported Kadri or Violentmonkey route; keep only one player active.
-Keep a separate result row for each route. An extension unsupported by a particular browser build is NOT TESTED for that route, not a functional pass.
+## 2. Browserwege getrennt testen
+- A: Vivaldi + Kadri; das Player-Userscript deaktivieren.
+- B: Vivaldi + Userscript über den tatsächlich unterstützten Manager; Kadri deaktivieren.
+- C: Firefox + den tatsächlich verfügbaren Kadri- oder Userscript-Weg; nur einen Player aktivieren.
 
-## Functional checklist
-Run F01-F15 exactly as described in FINAL-DEVICE-VALIDATION.md.
-Pay particular attention to:
-- Notification and overlay permission prompts on Android 17; helper foreground-service start from app and browser handoff.
-- Samsung battery restrictions: background for five minutes, screen lock/unlock, then return. Record whether permissions or background limits caused a stop.
-- PiP via Home, PiP close and fullscreen return in each browser. Firefox and Vivaldi can use different system behavior.
-- One UI gesture navigation: Back, rotation, app switch and return; keep the video position and audio continuity visible in a timecode recording.
-- Brightness reset after normal close, browser force-stop and screen lock; confirm the display is not left dim.
-- Volume follows the media stream; no stuck overlay or second audio source.
-- System file picker exports/imports only language/theme/autostart. Confirm no paired flag or key in the exported file.
-- Conflict: start production helper then debug. Debug must show a port conflict and must not open a pairing page. Stop production; start debug and pair it explicitly. Reverse order. Existing browser pairing to a different installation is not automatically migrated.
+Prüfe zuerst, ob deine konkrete Android-Browserversion den jeweiligen Erweiterungs-/Managerweg unterstützt. Nicht verfügbare Wege bekommen NOT TESTED mit Begründung. Desktop-Erweiterungen nicht als auf dem Handy installiert voraussetzen.
+Notiere den getesteten **Commit**; dieselbe Entwicklungs-Versionsnummer beweist nicht dieselben Dateiinhalte.
 
-## Counterbalanced performance session
-Do stable/current/current/stable at least three times; separate Vivaldi and Firefox results. Let the phone cool between runs.
-For each version record:
-1. Direct-video first visible frame.
-2. Open and close handoff duration at the same position.
-3. Resolution/opening with two ongoing downloads and a slow-header server.
-4. Browser/helper PSS before, during and after 20/50 player cycles.
-5. CPU over equal playback windows.
-6. Matched unplugged battery sessions (30 minutes or longer), same screen/network conditions.
-Do not compare desktop or emulator absolute times with S26 timings. Screen recording/profiling overhead must be identical in both runs. Keep raw samples before deciding thresholds.
+## 3. Funktionstests
+Trage für jeden verfügbaren Browserweg eine eigene Zeile ein: PASS = tatsächlich bestanden, FAIL = Abweichung, NOT TESTED = nicht ausgeführt/nicht verfügbar. Verlinke Beobachtungen oder eine Aufnahme ohne Geheimnisse.
 
-## What not to do
-Do not generate a production key, rotate the production signer, install a fixture APK over production, or publish a build.
-A successful emulator API37 result would cover installation mechanics only; it would not prove Samsung/One UI background behavior or battery performance.
-Return the filled DEVICE-RESULTS.csv with PASS/FAIL/NOT TESTED and observations; never include pairing keys or real cookies/tokens.
+| ID | Schritte | Erwartung |
+|---|---|---|
+| F01 | Debug-APK installieren, App öffnen, erforderliche Benachrichtigungs-/Overlay-Freigaben erteilen. Helper zweimal stoppen/starten und zu einer anderen App wechseln. | Eindeutige Bereitschaft; kein Absturz. Startdauer und Freigaben notieren. |
+| F02 | In der App „Verbinden“ wählen, gewünschten Browser öffnen, zum Video zurückkehren und Lautstärke wischen. Browser neu starten und wiederholen. | Nur der richtige laufende Helper reagiert; Kopplung bleibt nach Browser-Neustart erhalten. |
+| F03 | Direktes Video bis ungefähr 20 Sekunden abspielen. Eigenen Player öffnen und schließen; fünfmal wiederholen. | Position und Ton bleiben korrekt; kein Neustart bei 0, doppelter Ton oder hängen gebliebenes Overlay. Sichtbare Lücke aufnehmen. |
+| F04 | F03 mit HLS wiederholen, Qualität/Tonspur wechseln und vor-/zurückspulen. | Wiedergabe und Position bleiben korrekt; benötigte Segmente laden. |
+| F05 | Dasselbe in einem eingebetteten Player testen, möglichst einmal gleiche und einmal andere Herkunft. Frame neu laden und Player erneut öffnen. | Richtige Quelle und erwartetes Vollbild. Browsereinschränkungen ausdrücklich notieren. |
+| F06 | SRT und VTT sowie vorhandene Seiten-Untertitel wählen; Größe/Versatz ändern, spulen und erneut öffnen. | Text, Timing und gespeicherte Einstellungen stimmen; keine doppelten Untertitel. |
+| F07 | PiP öffnen, Home drücken, sperren/entsperren, ins Vollbild zurückkehren und PiP schließen. Zurück-Taste separat testen. | Erwartete Wiedergabe, erhaltene Position, eine Tonquelle und keine klemmenden Bedienelemente. |
+| F08 | Vom eigenen Medienserver abspielen; zwei Downloads starten und währenddessen ein weiteres Video auflösen/öffnen. Einen Download abbrechen. | Player bedienbar; anderer Download endet korrekt mit passender Dateiprüfsumme. |
+| F09 | Systemlautstärke/-helligkeit notieren. Beide Wischregler und Auto/manuell prüfen. Player normal schließen; separat Browser zwangsweise stoppen. | Richtige Regler; Helligkeit wird auch im Wiederherstellungspfad zurückgesetzt. Tatsächliche Dauer notieren. |
+| F10 | Hoch-/Querformat, Rotationssperre, App-Wechsel und Rückkehr testen. | Richtiges Bildformat, Position und Ton; kein ungewolltes Schließen. |
+| F11 | Sprache/Thema/Autostart ändern und über den System-Dateidialog exportieren. Werte ändern, importieren und App neu starten. Auch defekte bzw. über 8 KiB große Datei versuchen. | Drei Einstellungen werden korrekt übertragen; ungültige Dateien ändern nichts teilweise. Export enthält keinen Kopplungsschlüssel/paired-Status. |
+| F12 | Mit vorhandener vertrauenswürdiger Produktions-App: zuerst Produktion, dann Debug starten; Reihenfolge umkehren. Besitzer stoppen, andere App starten und ausdrücklich neu koppeln. | Nur Portbesitzer wird bereit. Andere App meldet verständlichen Konflikt und öffnet keine Kopplungsseite. Alter Browserschlüssel steuert die neue Installation nicht. |
+| F13 | Unterstützte Debug-Einstellungen sichern. Nur Debug-App entfernen, testweise neu signierte Debug-Variante installieren, importieren und neu koppeln. | Kein übernommener privater Schlüssel; Einstellungen stimmen; Kopplung und Android-Freigaben werden erneuert. |
+| F14 | Geeignete erlaubte Quelle mit Spiegelung verwenden; fünfmal öffnen/schließen, soweit unterstützt spulen und App wechseln. | Richtiges Bild, nur eine Tonquelle und erhaltene Seitenposition. Ohne geeignete Quelle NOT TESTED. |
+| F15 | Wenn vorhanden, an unterstützten externen Player/Cast-Empfänger übergeben, zurückkehren und an notierter Position erneut öffnen. | Richtige Quelle/Position; kein ungewollter zweiter Stream. Empfänger/App notieren. |
 
-## Optional ADB snapshots
-On a computer with Android platform-tools, authorize only your own device. Find the installed browser package (usual names: com.vivaldi.browser and org.mozilla.firefox; verify yours).
-Before the matched test session:
+F12 erfordert keine Installation einer unbekannten Produktions-APK. Fehlt eine bereits vertrauenswürdige zweite App, diesen Teil nicht ausführen.
+Die alte veröffentlichte App hat noch keinen Exporter: ihre drei Helper-Einstellungen manuell notieren. Browser-/Userscript-Einstellungen bleiben davon getrennt. Kompromittierte Kopplungsdaten werden nicht exportiert.
+
+## 4. Vergleich und Performance
+Für den Quellvergleich nutze die beiden **mit Testschlüsseln neu gebauten Debug-APKs** aus [Vergleichslauf 40131293057](https://github.com/Owndot/video-assistent-helper/actions/runs/40131293057). Nutze hierfür nicht die alte produktiv signierte APK. Artefakte haben begrenzte Aufbewahrung; bei Ablauf kann der schreibgeschützte Vergleichsworkflow erneut laufen.
+Bei sauberen Installationsvergleichen nur `de.evp.helfer.debug` entfernen. Produktionsdaten unangetastet lassen.
+
+Zuerst F01-F05/F08/F09/F12 als kurzen Funktionstest durchführen. Bei Fehlern Beobachtung festhalten, bevor lange Akkuvergleiche beginnen.
+Danach mindestens drei Blöcke stabil/aktuell/aktuell/stabil unter gleichen Bedingungen durchführen. Zwischen Läufen abkühlen lassen; Kaltstart und warme Wiederholungen getrennt halten.
+
+| ID | Messung |
+|---|---|
+| P01 | Vom Start-Tippen bis zum ersten **sichtbaren** Videobild messen, möglichst mit Kamera/Zeitcodeaufnahme. Browser-Frame-Callback ist nur ein ergänzender Messwert. |
+| P02 | Tippen → eigener sichtbarer Player und Schließen → sichtbare Seite aufnehmen. Position und hörbare Lücken notieren. |
+| P03 | URL-Auflösung ohne Last, mit zwei Downloads, verzögerten Antwort-Headern und gedrosseltem Server vergleichen. Warteschlange/Header/Body sowie Fallback getrennt erfassen. Ein schneller Fallback ist keine erfolgreiche Auflösung. |
+| P04 | Browser und Helper getrennt messen: PSS und CPU vor Wiedergabe, nach 5/15/30 Minuten und während Downloads. Gleiche Messfenster und Profilierungsverfahren verwenden. |
+| P05 | Ohne Ladekabel vergleichbare Sitzungen von mindestens 30 Minuten durchführen; Helligkeit/Bildrate, WLAN, Start-Ladestand und Temperatur angleichen. Hintergrundaktivität notieren. Emulatorwerte sind keine Akkuwerte. |
+| P06 | Eigene Multi-GB-Testdatei mit bekannter Prüfsumme laden; langsamen Server, Range/Fortsetzung soweit unterstützt und Abbruch prüfen. Freien Speicher, Ergebnisdatei und PSS-Verlauf erfassen. Vorhandene Blob-Pfade puffern weiterhin vollständige Daten. |
+| P07 | Player 20-/50-mal öffnen/schließen; Position, Ton, Overlays und Speicher nach Beruhigung vergleichen. Steigender kurzzeitiger Speicher allein beweist noch kein dauerhaftes Leck. |
+
+Rohwerte, Median und Streuung zuerst erfassen. Es gibt keine willkürlich gesetzte Latenz-/Akku-Grenze. Desktop-/Emulatorzeiten nicht direkt mit Samsung-Zeiten vergleichen. Bildschirmaufnahme verursacht zusätzliche Last und muss in beiden Versionen gleich eingesetzt werden.
+
+Optional mit eigenem ADB-Rechner:
 `tools/collect-device-snapshot.sh results/vivaldi-before com.vivaldi.browser`
-After the same fixed workload:
-`tools/collect-device-snapshot.sh results/vivaldi-after com.vivaldi.browser`
-Repeat with the verified Firefox package and distinct output folders.
-The collector is read-only: it does not reset battery stats, clear apps, alter brightness, install packages or read pairing preferences. Review files locally before sharing; battery stats may include broader device usage.
-If no ADB computer is available, use the manual functional/video procedure and mark CPU/PSS as NOT TESTED. Do not substitute a Samsung aggregate memory tile for process PSS.
+Danach gleiche Last ausführen und mit anderem Ausgabeordner wiederholen. Für Firefox die tatsächlich installierte Paket-ID prüfen, meist `org.mozilla.firefox`.
+Der Sammler liest nur: keine Installation, kein Datenlöschen, kein Zurücksetzen der Akkustatistik und kein Lesen der Kopplungspräferenzen. Dateien vor Weitergabe lokal prüfen; Akkustatistiken können andere Gerätenutzung enthalten.
+Ohne ADB CPU/PSS als NOT TESTED markieren; die allgemeine Samsung-Speicheranzeige ersetzt keine Prozess-PSS-Messung.
 
-## Read-only provenance check of your existing helper
-Before stopping/changing the existing production installation, optionally verify its public signer on your own ADB computer:
-1. Run `adb shell pm path de.evp.helfer`. Copy the reported base.apk path (without the leading `package:`).
-2. Run `adb pull COPIED_BASE_APK_PATH trusted-installed-helper.apk`.
-3. Run SDK `apksigner verify --verbose --print-certs trusted-installed-helper.apk`.
-4. Compare the **certificate SHA-256** with `ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5`, the exposed historical key and pinned public release identity. Also record the APK file hash separately.
-This is not an installation or signing operation. A match identifies the old signer; it does not make the exposed key safe. If different, stop migration assumptions and retain the evidence. Do not share private app preferences or pairing keys.
+## 5. Sicherheits- und Migrationszeilen
+- S01: Auf kontrollierten Testservern mit künstlichen Cookies/Authorization prüfen, was nach Weiterleitungen tatsächlich ankommt.
+- S02: Gleichzeitige lokale/öffentliche Anfragen und unerlaubte LAN-Weiterleitungen prüfen.
+- S03: Tatsächlichen Erweiterungs-Worker während Setup, Header-Warten, Redirect und Body beenden/neustarten; temporäre Freigaben und weitere Anfragen prüfen.
+- S04: In Warteschlange, Header-Phase und Body abbrechen; Timeout prüfen; weitere Anfragen müssen sicher weiterarbeiten.
+Fehlen dafür Serverprotokolle oder Browser-Werkzeuge, NOT TESTED mit Grund eintragen. CI füllt diese physischen Zeilen nicht automatisch.
 
-A real production-successor update cannot be tested yet: no successor key/approved lineage exists. Test-key emulator migrations do not authorize a production rotation.
+### M01: Vorhandene Produktions-App unabhängig prüfen — nur lesend
+1. `adb shell pm path de.evp.helfer` ausführen.
+2. Den ausgegebenen base.apk-Pfad ohne führendes `package:` kopieren.
+3. `adb pull KOPIERTER_BASE_APK_PFAD trusted-installed-helper.apk` ausführen.
+4. Mit SDK `apksigner verify --verbose --print-certs trusted-installed-helper.apk` prüfen.
+5. **Zertifikat-SHA-256** mit `ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5` vergleichen; APK-Dateiprüfsumme zusätzlich getrennt notieren.
 
-## Detailed result IDs
-Use one row per version/browser route in DEVICE-RESULTS.csv. Preserve raw samples in a separate file linked from its evidence column.
-- P01: first actually visible frame; P02: open/close handoff; P03: resolution with two downloads and slow headers; P04: matched browser/helper PSS and CPU; P05: matched unplugged battery session; P06: multi-GB file, hash, Range/resume, cancel and slow server; P07: 20/50 open-close cycles and retained memory. Follow the numbered baseline protocol in FINAL-DEVICE-VALIDATION.md; no fixed pass threshold is invented.
-- S01: synthetic-cookie/Authorization redirect inspection on controlled servers; S02: simultaneous LAN/public request isolation; S03: actual extension-worker restart during setup/headers/redirect/body; S04: queued/header/body cancellation and timeout cleanup. Desktop CI evidence does not fill these phone rows. If you cannot inspect controlled server logs or worker tools on this browser, mark NOT TESTED with the reason.
-- M01: public certificate comparison of the already installed/offline production APK (read-only instructions above).
-- M02: an approved future production-successor upgrade plus settings/permission/new-pairing checks. This remains blocked/NOT TESTED: no approved successor key or production lineage exists. Do not generate one or use fixture keys for this row.
+Ein Treffer bestätigt die alte Signieridentität und macht den exponierten Schlüssel nicht sicher. Bei abweichendem Zertifikat Migrationsannahmen stoppen und Nachweis behalten. Keine privaten App-Präferenzen auslesen oder teilen.
 
-Android 8-12L legacy reinstall paths require additional representative devices; success on your Android 17 phone does not cover them. Existing emulator results are separately recorded in FINAL-VALIDATION-REPORT.md.
+### M02: Produktiver Nachfolger — weiterhin NICHT TESTEN
+Es gibt keinen freigegebenen Nachfolgeschlüssel und keine produktive Lineage. Keine Schlüssel erzeugen, rotieren oder Fixture-APK über die Produktions-App installieren.
+Erst ein separat genehmigter Nachfolger kann als reales Produktionsupdate mit Einstellungen, Freigaben und neuer Kopplung getestet werden. Die grünen Testschlüssel-Emulatorläufe ersetzen dies nicht.
 
-## Exact current test artifact and efficient run order
-Verified isolated debug build: [run 40131433569](https://github.com/Owndot/video-assistent-helper/actions/runs/40131433569), source `8561f7e7d2c5606d9593cae1ea67926d4e4fa2f1`, artifact [helper-debug-NOT-production](https://github.com/Owndot/video-assistent-helper/actions/runs/40131433569/artifacts/12575590883).
-The archive includes app-debug.apk, debug-apk.sha256, debug-source-commit.txt and debug-signature.txt. Match the APK SHA-256 to the manifest and verify the signer with SDK apksigner if available. The archive/ZIP digest is a different value from the APK digest. Later docs-only commits do not change these APK sources.
-For matched stable/current trials use the two **debug, test-signed source builds** in [comparison run 40131293057](https://github.com/Owndot/video-assistent-helper/actions/runs/40131293057), not the old production APK. These artifacts have limited retention; if expired, rerun the read-only comparison workflow.
+Android 8-12L braucht zusätzliche repräsentative Geräte für den erlaubten Neuinstallationsweg. Ein Erfolg auf Android 17 deckt sie nicht ab. Samsung-Hintergrunddienst, PiP, Lautstärke-/Helligkeitsrücksetzung und Akku bleiben bis zur tatsächlichen Durchführung ungeprüft.
 
-1. Record versions/provenance and save existing settings; leave production data intact.
-2. Check whether each browser actually supports the intended extension/manager. Mark unavailable routes NOT TESTED; do not install an unrelated browser merely to make the row green.
-3. On each available route run F01-F05, F08, F09 and F12 first. If playback, pairing or brightness restoration fails, record it before spending time on battery comparisons.
-4. Complete F06-F15, including mirroring/cast only if the source/hardware supports them.
-5. Perform matched P01-P04 and P06-P07 trials, then matched unplugged P05 battery sessions. Separate stable-source observations from current-source observations and record network/temperature.
-6. Fill the relevant S/M rows only where the required tools and authorization exist. M02 remains NOT TESTED until an approved production migration is separately prepared.
+**Nichts mergen oder veröffentlichen.** Vollständige technische Nachweise stehen in FINAL-VALIDATION-REPORT.md.
