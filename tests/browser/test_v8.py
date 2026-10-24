@@ -37,7 +37,13 @@ class Q(http.server.SimpleHTTPRequestHandler):
 srv = http.server.ThreadingHTTPServer(('127.0.0.1', 8775), functools.partial(Q, directory=WEB))
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 PRE = """const __o = Element.prototype.attachShadow;
-Element.prototype.attachShadow = function (i) { const r = __o.call(this, Object.assign({}, i, { mode: 'open' })); window.__evpRoot = r; return r; };"""
+Element.prototype.attachShadow = function (i) { const r = __o.call(this, Object.assign({}, i, { mode: 'open' })); window.__evpRoot = r; return r; };
+// Speicher des Managers wie bei Violentmonkey (für alle Fenster derselbe Schlüssel der eingebetteten Fenster)
+if (typeof window.GM_getValue !== 'function') {
+  const __gm = { frameKey: { k: '5e1f0c2a9b7d4e3f8a6c1b2d3e4f5a6b7c', t: Date.now() } };
+  window.GM_getValue = (k, d) => (k in __gm ? __gm[k] : d);
+  window.GM_setValue = (k, v) => { __gm[k] = v; };
+}"""
 results = []
 def check(name, ok, info=''):
     results.append((name, bool(ok)))

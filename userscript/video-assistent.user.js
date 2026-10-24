@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.27
+// @version      19.28
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -251,7 +251,7 @@
   // Speicher, für Webseiten unlesbar). So kann eingebettete Werbung nicht so tun, als wäre sie der Player, und sich
   // nicht selbst über den ganzen Bildschirm legen lassen. Nach unten geht er nie mit; täglich ein neuer (den macht nur
   // die Hauptseite – eingebettete Fenster lesen ihn). Ohne Speicher des Managers (GM_…) gibt es keinen sicheren Ort:
-  // dann ohne Schlüssel (null).
+  // dann gar kein Schlüssel – und damit keine Nachrichten von unten (Player bleibt im Kasten).
   const FSEC_BASE = (() => {
     try {
       if (typeof GM_getValue !== 'function' || typeof GM_setValue !== 'function') return null;
@@ -268,14 +268,16 @@
   // Hauptseite kann den Schlüssel ihrer Fenster zwar mitlesen – er gilt aber nur für sie selbst und hilft auf keiner
   // anderen Seite. Die Adresse der Hauptseite kennt ein Fenster nur über den Browser (ancestorOrigins – nicht
   // fälschbar). Verbirgt die Seite sie, gibt es keinen Schlüssel (Player dann im Kasten). Browser ganz ohne diese
-  // Angabe (ältere Firefox): wie bisher der gemeinsame Schlüssel.
+  // Angabe (Firefox vor 2026, Firefox ESR): ebenso kein Schlüssel – der gemeinsame Schlüssel würde über die
+  // Nachrichten an fremde Hauptseiten gelangen und auf jeder anderen Seite gelten. Der Player im eingebetteten Fenster
+  // füllt dann nur dessen Kasten (Vollbild wie dort üblich).
   const HAS_AO = (() => { try { return 'ancestorOrigins' in location; } catch (e) { return false; } })();
   const KEY_ORIGIN = (() => {
     if (!IN_FRAME) return location.origin;
     if (!HAS_AO) return '';
     try { const a = location.ancestorOrigins, o = a && a.length ? a[a.length - 1] : ''; return o && o !== 'null' ? o : '-'; } catch (e) { return '-'; }
   })();
-  const FSEC = !FSEC_BASE ? FSEC_BASE : !HAS_AO ? FSEC_BASE : KEY_ORIGIN === '-' ? '' : sha256hex(FSEC_BASE + '|' + KEY_ORIGIN).slice(0, 40);
+  const FSEC = !FSEC_BASE || !HAS_AO || KEY_ORIGIN === '-' ? '' : sha256hex(FSEC_BASE + '|' + KEY_ORIGIN).slice(0, 40);
   function sha256hex(str) {
     const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
       0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
@@ -440,7 +442,7 @@
       return;
     }
     // Nachricht von UNTEN (aus einem eingebetteten Fenster) – nur mit dem Schlüssel des Skripts
-    if (FSEC !== null && (!FSEC || d.k !== FSEC)) return;
+    if (!FSEC || d.k !== FSEC) return;
     const f = frameOf(e.source);
     if (!f) return;
     if (d.t === 'hello') { fpost(e.source, { t: 'info', title: pageTitle(), host: pageHost(), ins: safeInsets() }); return; }
@@ -6781,9 +6783,14 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   }
   // Datenschutz: Adressen in der Diagnose ohne die Werte nach „?“ und „#“ (dort stehen oft Zugangsschlüssel,
   // Sitzungs- oder Nutzerkennungen). Die Namen der Angaben bleiben sichtbar – für die Fehlersuche reicht das.
+  // Dazu lange, zufällig aussehende Teile im Pfad (Zugangsschlüssel stehen auch dort: /token/9fA3…/video.m3u8):
+  // ab 24 Zeichen mit Ziffern UND Buchstaben → die ersten 4 Zeichen und „…“.
   function maskUrls(text) {
-    return String(text).replace(/([?&#;][A-Za-z0-9_.\-\[\]%]{1,40}=)[^&#\s|…'")]+/g, '$1…').replace(/(#)[A-Za-z0-9_\-]{16,}/g, '$1…');
+    return String(text).replace(/([?&#;][A-Za-z0-9_.\-\[\]%]{1,40}=)[^&#\s|…'")]+/g, '$1…').replace(/(#)[A-Za-z0-9_\-]{16,}/g, '$1…')
+      .replace(/[A-Za-z0-9_\-~.%+=]{24,}/g, (s) => (/[0-9]/.test(s) && /[A-Za-z]/.test(s) && !/^[a-z]+(\.[a-z]+)+$/i.test(s) ? s.slice(0, 4) + '…' : s));
   }
+  // Ende einer Adresse für die Diagnose: ERST bereinigen, dann kürzen (sonst bliebe vom „?token=…“ nur der Wert übrig)
+  const urlTail = (u, n) => '…' + maskUrls(String(u || '').split('#')[0]).slice(-n);
   function showDiagBox(text) {
     ui();
     const box = h('div', { class: 'diag' });
@@ -6825,7 +6832,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return maskUrls([
-      'Video-Assistent 19.27',
+      'Video-Assistent 19.28',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
@@ -6842,7 +6849,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         return 'sichtbar nach ' + ms(o.vis) + ' · Bild der Seite live nach ' + ms(o.live) + ' · eigenes Video nach ' + ms(o.own) +
           ' · ' + (o.how || '-') + (o.swap ? ' nach ' + ms(o.swap) : '') + (typeof o.gap === 'number' ? ' (Abstand ' + Math.abs(o.gap).toFixed(2) + ' s)' : '');
       })(),
-      'Zuletzt geöffnet: ' + (lastIntent.t ? Math.round((Date.now() - lastIntent.t) / 1000) + ' s her | ' + lastIntent.how + ' | ' + hostOf(lastIntent.url) + ' …' + lastIntent.url.slice(-50) : '-'),
+      'Zuletzt geöffnet: ' + (lastIntent.t ? Math.round((Date.now() - lastIntent.t) / 1000) + ' s her | ' + lastIntent.how + ' | ' + hostOf(lastIntent.url) + ' ' + urlTail(lastIntent.url, 50) : '-'),
       'Nächstes-Reel-Countdown abgebrochen: ' + nextCancels + '×',
       'Bild-in-Bild: Browser ' + (document.pictureInPictureEnabled ? 'kann es' : 'kann es für Webseiten nicht (nur Wischen zum Startbildschirm)') +
         ' | im Player: ' + (vp ? (vp.pipOk ? 'erlaubt' : 'aus') + ' (' + (vp.mode === 'capture' ? 'gespiegelt' + (kadriPage() ? ', Schild' : '') : 'eigener Player') + ')' : 'zu') +
@@ -6850,17 +6857,17 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
         (vp && vp.prevFirst ? ' · erstes Bild nach ' + (vp.prevFirst / 1000).toFixed(1) + ' s' : '') + (vp && vp.prevMiss ? ' · ' + vp.prevMiss + '× ohne Bild' : '') +
         ' | Lupe: ' + (vp ? vp.lupeWhy || 'noch nicht gespult' : '-') + (vp && vp.scrubSizes ? ' | Bildgrößen beim Spulen: ' + vp.scrubSizes : '') + (vp && vp.subsWhy ? ' | Untertitel der Seite: ' + vp.subsWhy : ''),
       'Stream-Nachweis: ' + (r.proof || '-') + ' | Listen gelesen: ' + plInfo.size + ' | Stück-Ordner: ' + segHits.size +
-        (function () { const p = playingStream(navAt); return p ? ' | lädt gerade: ' + hostOf(p.u) + ' …' + p.u.slice(-40) : ''; })(),
+        (function () { const p = playingStream(navAt); return p ? ' | lädt gerade: ' + hostOf(p.u) + ' ' + urlTail(p.u, 40) : ''; })(),
       'Kodierung: ' + (r.best ? encTag(r.best) || '-' : '-'),
       'IDs am Video: ' + (r.ids.slice(0, 12).join(', ') || '-'),
       'Meta-Einträge: ' + metaCount + ' (Schlüssel: ' + metaMap.size + ') | API-Antworten: ' + bodiesRead + ' | Netzwerk-Quellen: ' + sources.length,
       'Videos auf der Seite: ' + allVideos().length,
       'Browser: ' + navigator.userAgent.slice(0, 120),
       'Reihenfolge beim Tippen (' + ((r.list || []).length) + '):',
-    ].concat((r.list || []).map((x, i) => ' ' + (i + 1) + '. ' + x.how + ' | ' + typeShort(x.u) + ' | ' + hostOf(x.u) + ' …' + x.u.slice(-40)))
+    ].concat((r.list || []).map((x, i) => ' ' + (i + 1) + '. ' + x.how + ' | ' + typeShort(x.u) + ' | ' + hostOf(x.u) + ' ' + urlTail(x.u, 40)))
     .concat([
       'Netzwerk-Quellen (letzte 5):',
-    ]).concat(recent().slice(-5).map((x) => ' - ' + typeShort(x) + ' | ' + hostOf(x) + ' …' + x.slice(-40)))
+    ]).concat(recent().slice(-5).map((x) => ' - ' + typeShort(x) + ' | ' + hostOf(x) + ' ' + urlTail(x, 40)))
     .concat([
       'Adressen zu diesem Video (' + lastNear.length + '):',
     ]).concat(lastNear.slice(0, 12).map((c, i) =>

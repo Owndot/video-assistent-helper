@@ -10,7 +10,7 @@
   // Speicher, für Webseiten unlesbar). So kann eingebettete Werbung nicht so tun, als wäre sie der Player, und sich
   // nicht selbst über den ganzen Bildschirm legen lassen. Nach unten geht er nie mit; täglich ein neuer (den macht nur
   // die Hauptseite – eingebettete Fenster lesen ihn). Ohne Speicher des Managers (GM_…) gibt es keinen sicheren Ort:
-  // dann ohne Schlüssel (null).
+  // dann gar kein Schlüssel – und damit keine Nachrichten von unten (Player bleibt im Kasten).
   const FSEC_BASE = (() => {
     try {
       if (typeof GM_getValue !== 'function' || typeof GM_setValue !== 'function') return null;
@@ -27,14 +27,16 @@
   // Hauptseite kann den Schlüssel ihrer Fenster zwar mitlesen – er gilt aber nur für sie selbst und hilft auf keiner
   // anderen Seite. Die Adresse der Hauptseite kennt ein Fenster nur über den Browser (ancestorOrigins – nicht
   // fälschbar). Verbirgt die Seite sie, gibt es keinen Schlüssel (Player dann im Kasten). Browser ganz ohne diese
-  // Angabe (ältere Firefox): wie bisher der gemeinsame Schlüssel.
+  // Angabe (Firefox vor 2026, Firefox ESR): ebenso kein Schlüssel – der gemeinsame Schlüssel würde über die
+  // Nachrichten an fremde Hauptseiten gelangen und auf jeder anderen Seite gelten. Der Player im eingebetteten Fenster
+  // füllt dann nur dessen Kasten (Vollbild wie dort üblich).
   const HAS_AO = (() => { try { return 'ancestorOrigins' in location; } catch (e) { return false; } })();
   const KEY_ORIGIN = (() => {
     if (!IN_FRAME) return location.origin;
     if (!HAS_AO) return '';
     try { const a = location.ancestorOrigins, o = a && a.length ? a[a.length - 1] : ''; return o && o !== 'null' ? o : '-'; } catch (e) { return '-'; }
   })();
-  const FSEC = !FSEC_BASE ? FSEC_BASE : !HAS_AO ? FSEC_BASE : KEY_ORIGIN === '-' ? '' : sha256hex(FSEC_BASE + '|' + KEY_ORIGIN).slice(0, 40);
+  const FSEC = !FSEC_BASE || !HAS_AO || KEY_ORIGIN === '-' ? '' : sha256hex(FSEC_BASE + '|' + KEY_ORIGIN).slice(0, 40);
   function sha256hex(str) {
     const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
       0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
@@ -199,7 +201,7 @@
       return;
     }
     // Nachricht von UNTEN (aus einem eingebetteten Fenster) – nur mit dem Schlüssel des Skripts
-    if (FSEC !== null && (!FSEC || d.k !== FSEC)) return;
+    if (!FSEC || d.k !== FSEC) return;
     const f = frameOf(e.source);
     if (!f) return;
     if (d.t === 'hello') { fpost(e.source, { t: 'info', title: pageTitle(), host: pageHost(), ins: safeInsets() }); return; }
