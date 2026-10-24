@@ -202,7 +202,15 @@
     // Schneller zu: Ton aus, Player sofort unsichtbar, Vollbild aus – das Aufräumen (Seite übernimmt, Video und Stream
     // abbauen …) kommt direkt danach, wenn der Bildschirm schon frei ist
     try { st.vid.muted = true; st.vid.pause(); } catch (e) {}
-    st.wrap.style.display = 'none';
+    if (st.framed) {
+      // Eingebettetes Fenster (Player einer fremden Seite): Die Hauptseite gibt das Vollbild erst auf unsere Meldung hin
+      // frei. Bis dahin wäre sonst kurz der Player der Seite im ganzen Bildschirm zu sehen – also SOFORT melden und unser
+      // letztes Bild so lange stehen lassen, bis das Fenster wieder klein ist (spätestens nach 0,4 s)
+      try { fpost(window.parent, { t: 'release' }); } catch (e) {}
+      const hide = () => { removeEventListener('resize', hide); st.wrap.style.display = 'none'; };
+      addEventListener('resize', hide);
+      setTimeout(hide, 400);
+    } else st.wrap.style.display = 'none';
     try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch (e) {}
     try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
     handBack(st);   // Seite übernimmt an deiner Stelle (bei der Zurück-Geste schon geschehen)

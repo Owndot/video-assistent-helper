@@ -57,8 +57,14 @@ with sync_playwright() as p:
     time.sleep(1.2)
     fs2 = page.evaluate('() => document.fullscreenElement ? document.fullscreenElement.id : null')
     fr.locator('.vp').evaluate('e => e.classList.add("ctl")'); time.sleep(0.3)   # Bedienung zeigen (öffnet ruhig, ohne Leisten)
+    # Beobachten: Wird unser Player unsichtbar, solange das Fenster noch bildschirmgroß ist? (dann sähe man kurz den
+    # Player der fremden Seite im ganzen Bildschirm)
+    fi.evaluate('''() => { const w = %s.querySelector(".vp"); window.__hideH = -1;
+        const f = () => { if (!w.isConnected || getComputedStyle(w).display === "none") { window.__hideH = innerHeight; return; } requestAnimationFrame(f); }; f(); }''' % R)
     fr.locator('button[aria-label="Schließen"]').click()
     time.sleep(1.0)
+    hh = fi.evaluate('() => window.__hideH')
+    check('✕ im Fenster: unser Bild bleibt, bis das Fenster wieder klein ist (kein fremder Player im Vollbild)', 0 < hh < 400, hh)
     h2 = page.evaluate('() => [document.fullscreenElement, document.getElementById("f").getBoundingClientRect().height]')
     check('Zweites Öffnen wieder im Vollbild, ✕ stellt alles zurück', fs2 == 'f' and h2[0] is None and abs(h2[1] - 260) < 2, [fs2, h2])
     # Hauptseite ohne Skript: Player öffnet trotzdem (im Kasten)
