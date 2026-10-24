@@ -24,6 +24,13 @@ class UpdateCompatibility(unittest.TestCase):
     def test_reject_multiple_signers(self):
         with self.assertRaises(ValueError):
             update.certificate("Signer #1 certificate SHA-256 digest: aa\nSigner #2 certificate SHA-256 digest: bb")
+    def test_current_sdk_v2_output(self):
+        cert = "ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5"
+        self.assertEqual(update.certificate("V2 Signer: certificate SHA-256 digest: " + cert), cert)
+    def test_same_signer_multiple_schemes(self):
+        cert = "a"*64
+        self.assertEqual(update.certificate("V2 Signer: certificate SHA-256 digest: " + cert +
+            "\nV3 Signer: certificate SHA-256 digest: " + cert), cert)
     def test_parse_sdk_output(self):
         self.assertEqual(update.package("package: name='de.evp.helfer' versionCode='11' versionName='1.0.11'"),
                          ("de.evp.helfer", 11))

@@ -7,7 +7,7 @@ import re
 import subprocess
 
 def certificate(text):
-    values = re.findall(r"Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)", text)
+    values = sorted(set(re.findall(r"^(?:Signer #\d+|V\d(?:\.\d+)? Signer(?: #\d+)?):? certificate SHA-256 digest: ([0-9a-fA-F]+)", text, re.MULTILINE)))
     if len(values) != 1:
         raise ValueError("Expected exactly one APK signer")
     return values[0].lower()

@@ -25,7 +25,7 @@ finally:
 key_fingerprint = hashlib.sha256(cert).hexdigest()
 output = subprocess.check_output(["apksigner", "verify", "--verbose", "--print-certs",
                                   args.trusted_old_apk], text=True)
-fingerprints = re.findall(r"Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)", output)
+fingerprints = sorted(set(re.findall(r"^(?:Signer #\d+|V\d(?:\.\d+)? Signer(?: #\d+)?):? certificate SHA-256 digest: ([0-9a-fA-F]+)", output, re.MULTILINE)))
 if len(fingerprints) != 1:
     raise SystemExit("Expected one unrotated APK signer; inspect signing lineage manually")
 apk_fingerprint = fingerprints[0].lower()
