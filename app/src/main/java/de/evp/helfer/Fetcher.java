@@ -61,13 +61,20 @@ public interface Fetcher {
 
         /** Follow each hop explicitly so platform redirects cannot carry a manual Cookie header. */
         HttpURLConnection response(String url, long off, long len) throws IOException {
+            return response(url, off, len, null, false);
+        }
+
+        private HttpURLConnection response(String url, long off, long len, String ifRange, boolean fileTransfer) throws IOException {
             URL current=new URL(url); boolean credentials=true;
             for(int hop=0;hop<=10;hop++){
                 String protocol=current.getProtocol();
                 if(!"http".equals(protocol)&&!"https".equals(protocol))throw new IOException("Only HTTP(S) redirects are allowed");
                 HttpURLConnection c=open(current.toExternalForm());
+                if(fileTransfer)c.setRequestProperty("Accept-Encoding","identity");
                 if(!credentials)c.setRequestProperty("Cookie","");
                 if(off>=0&&len>0)c.setRequestProperty("Range","bytes="+off+"-"+(off+len-1));
+                else if(off>=0&&ifRange!=null)c.setRequestProperty("Range","bytes="+off+"-");
+                if(ifRange!=null)c.setRequestProperty("If-Range",ifRange);
                 int code;
                 try { code=c.getResponseCode(); }
                 catch(IOException e){c.disconnect();throw e;}
@@ -80,6 +87,98 @@ public interface Fetcher {
                 current=next;
             }
             throw new IOException("Too many redirects");
+        }
+
+
+        /**
+         * Credentialed files cannot use DownloadManager: it forwards a manual
+         * Cookie across redirects. Stream through the existing hop policy with
+         * bounded memory; resumptions require a validator and verified Range.
+         */
+        java.io.File streamToFile(String url, java.io.File out, HlsCore.Listener listener) throws IOException {
+            String validator = null;
+            long total = -1, lastProgress = 0;
+            IOException failure = null;
+            byte[] buffer = new byte[64 << 10];
+            for (int attempt = 0; attempt < 4; attempt++) {
+                if (Thread.currentThread().isInterrupted() || listener != null && listener.cancelled())
+                    throw new IOException("abgebrochen");
+                long offset = validator != null && out.isFile() ? out.length() : 0;
+                if (total >= 0 && offset == total) return out;
+                HttpURLConnection connection = null;
+                try {
+                    connection = response(url, offset > 0 ? offset : -1, -1, offset > 0 ? validator : null, true);
+                    int code = connection.getResponseCode();
+                    if (code >= 400) throw new HttpError(code);
+                    String encoding = connection.getHeaderField("Content-Encoding");
+                    if (encoding != null && !encoding.equalsIgnoreCase("identity"))
+                        throw new IOException("Unexpected file Content-Encoding");
+                    boolean append = code == 206 && offset > 0;
+                    long expectedBody = connection.getContentLengthLong();
+                    if (code == 206) {
+                        String range = connection.getHeaderField("Content-Range");
+                        java.util.regex.Matcher match = java.util.regex.Pattern.compile(
+                            "bytes (\\d+)-(\\d+)/(\\d+)").matcher(range == null ? "" : range);
+                        if (!append || !match.matches()) throw new IOException("Invalid resumed Content-Range");
+                        long start = Long.parseLong(match.group(1)), end = Long.parseLong(match.group(2));
+                        long length = Long.parseLong(match.group(3));
+                        if (start != offset || end < start || end >= length ||
+                            expectedBody >= 0 && expectedBody != end - start + 1 ||
+                            total >= 0 && length != total) throw new IOException("Mismatched resumed file range");
+                        expectedBody = end - start + 1;
+                        total = length;
+                    } else if (code == 200) {
+                        // If-Range changed or Range was ignored: restart, never
+                        // append a complete response to an existing prefix.
+                        offset = 0;
+                        total = expectedBody;
+                    } else {
+                        throw new IOException("Unexpected file HTTP status " + code);
+                    }
+                    String tag = connection.getHeaderField("ETag");
+                    String modified = connection.getHeaderField("Last-Modified");
+                    String nextValidator = tag != null && !tag.startsWith("W/") ? tag : modified;
+                    if (append && !java.util.Objects.equals(validator, nextValidator)) {
+                        validator = null;
+                        throw new IOException("File changed during resume");
+                    }
+                    validator = nextValidator;
+                    long received = 0;
+                    try (InputStream in = new BufferedInputStream(connection.getInputStream());
+                         java.io.OutputStream file = new java.io.FileOutputStream(out, append)) {
+                        while (true) {
+                            if (Thread.currentThread().isInterrupted() || listener != null && listener.cancelled())
+                                throw new IOException("abgebrochen");
+                            int count = in.read(buffer);
+                            if (count < 0) break;
+                            file.write(buffer, 0, count);
+                            received += count;
+                            offset += count;
+                            long now = System.currentTimeMillis();
+                            if (listener != null && now - lastProgress >= 250) {
+                                listener.progress(total > 0 ? (int) Math.min(1000, offset * 1000.0 / total) : 0,
+                                    total > 0 ? 1000 : 0);
+                                lastProgress = now;
+                            }
+                        }
+                    }
+                    if (expectedBody >= 0 && received != expectedBody || total >= 0 && offset != total)
+                        throw new IOException("Incomplete file body");
+                    if (listener != null) listener.progress(1, 1);
+                    return out;
+                } catch (HttpError e) {
+                    if (e.code == 401 || e.code == 403 || e.code == 404 || e.code == 410) throw e;
+                    failure = e;
+                } catch (IOException e) {
+                    if (Thread.currentThread().isInterrupted() || listener != null && listener.cancelled()) throw e;
+                    failure = e;
+                } finally {
+                    if (connection != null) connection.disconnect();
+                }
+                if (attempt < 3) try { Thread.sleep(300L * (attempt + 1)); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("abgebrochen", e); }
+            }
+            throw failure != null ? failure : new IOException("File download failed");
         }
 
         @Override
