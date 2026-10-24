@@ -20,6 +20,12 @@
 Prüfe zuerst, ob deine konkrete Android-Browserversion den jeweiligen Erweiterungs-/Managerweg unterstützt. Nicht verfügbare Wege bekommen NOT TESTED mit Begründung. Desktop-Erweiterungen nicht als auf dem Handy installiert voraussetzen.
 Notiere den getesteten **Commit**; dieselbe Entwicklungs-Versionsnummer beweist nicht dieselben Dateiinhalte.
 
+## Browser-Teststände mit Quellenwechsel-Korrektur
+- Kadri: [geprüftes CI-Artefakt](https://github.com/Owndot/Kadri/actions/runs/40134238016/artifacts/12576836397), Quellstand a47e53ec. Die normalen Chrome-/Firefox-ZIPs enthalten keine offenen Diagnoseschnittstellen. Nutze nur den tatsächlich unterstützten Installationsweg deiner Browserversion; eine ZIP ist keine Android-APK.
+- Userscript: [fest gepinnter Teststand 7af974c0](https://raw.githubusercontent.com/Owndot/video-assistent-helper/7af974c05fa8e03c4b16118b699140bee9f99a7f/userscript/video-assistent.user.js). Im Testmanager diesen Quellstand importieren; nicht nur die noch gleiche Versionsnummer 19.28 vergleichen.
+- Dieser kleine Player-Fix gehört in Browser/Userscript. Der oben verlinkte Helper-APK-Quellstand enthält denselben unveränderten Android-Netzwerk-/Signatur-/Port-Code und bleibt dafür verwendbar.
+- Für den stabil/aktuell-Vergleich die Quellstände getrennt notieren. Das alte Verhalten darf nicht versehentlich als aktueller Fix getestet werden.
+
 ## 3. Funktionstests
 Trage für jeden verfügbaren Browserweg eine eigene Zeile ein: PASS = tatsächlich bestanden, FAIL = Abweichung, NOT TESTED = nicht ausgeführt/nicht verfügbar. Verlinke Beobachtungen oder eine Aufnahme ohne Geheimnisse.
 
