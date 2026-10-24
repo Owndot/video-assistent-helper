@@ -1,0 +1,137 @@
+{
+  "methods": {
+    "kadri_run": 40119310209,
+    "helper_run": 40120827096,
+    "physical_device": false,
+    "battery_measured": false,
+    "thresholds_defined": false
+  },
+  "stable": {
+    "kadri_n": 6,
+    "first_frame_ms": {
+      "median": 96.39999999999418,
+      "min": 92.39999999996508,
+      "max": 117.40000000002328
+    },
+    "handoff_ms": {
+      "median": 1037.8463185000157,
+      "min": 1036.2706789999834,
+      "max": 1038.9455555000068
+    },
+    "resolution_download_ms": {
+      "median": 16.699999999982538,
+      "min": 12.700000000011642,
+      "max": 78.20000000001164
+    },
+    "resolution_slow_headers_ms": {
+      "median": 2.3999999999796273,
+      "min": 2.2000000000116415,
+      "max": 10
+    },
+    "playing_cpu_seconds": {
+      "median": 0.425,
+      "min": 0.4099999999999999,
+      "max": 0.4700000000000001
+    },
+    "heap_growth_bytes": {
+      "median": 156558,
+      "min": 150060,
+      "max": 167304
+    },
+    "rss_sum_peak_mib": {
+      "median": 1350.18359375,
+      "min": 1334.5078125,
+      "max": 1373.61328125
+    },
+    "helper_n": 3,
+    "helper_ready_ms": {
+      "median": 860.0788850000072,
+      "min": 809.5536050000192,
+      "max": 1530.836445999995
+    },
+    "helper_pss_mib": {
+      "median": 32.0712890625,
+      "min": 31.9609375,
+      "max": 32.2939453125
+    },
+    "helper_rpc100_ms": {
+      "median": 334.4319009999879,
+      "min": 327.11630099998956,
+      "max": 390.5435510000075
+    },
+    "helper_idle_cpu_ticks": {
+      "median": 8,
+      "min": 7,
+      "max": 8
+    },
+    "helper_rpc_cpu_ticks": {
+      "median": 20,
+      "min": 20,
+      "max": 21
+    }
+  },
+  "current": {
+    "kadri_n": 6,
+    "first_frame_ms": {
+      "median": 104.10000000000582,
+      "min": 94.59999999997672,
+      "max": 115.10000000000582
+    },
+    "handoff_ms": {
+      "median": 1038.9669017499868,
+      "min": 1037.1629505000328,
+      "max": 1072.6916884999866
+    },
+    "resolution_download_ms": {
+      "median": 31.25,
+      "min": 15.700000000011642,
+      "max": 202.29999999998836
+    },
+    "resolution_slow_headers_ms": {
+      "median": 755.5500000000175,
+      "min": 755.0999999999767,
+      "max": 766.4000000000233
+    },
+    "playing_cpu_seconds": {
+      "median": 0.43000000000000005,
+      "min": 0.4,
+      "max": 0.49
+    },
+    "heap_growth_bytes": {
+      "median": 158340,
+      "min": 151592,
+      "max": 218180
+    },
+    "rss_sum_peak_mib": {
+      "median": 1340.212890625,
+      "min": 1323.07421875,
+      "max": 1361.03125
+    },
+    "helper_n": 3,
+    "helper_ready_ms": {
+      "median": 846.4196600000093,
+      "min": 794.8821680000151,
+      "max": 853.2283039999982
+    },
+    "helper_pss_mib": {
+      "median": 32.0869140625,
+      "min": 32.0029296875,
+      "max": 32.1279296875
+    },
+    "helper_rpc100_ms": {
+      "median": 331.6689390000249,
+      "min": 331.5027589999886,
+      "max": 332.73937300000966
+    },
+    "helper_idle_cpu_ticks": {
+      "median": 6,
+      "min": 5,
+      "max": 6
+    },
+    "helper_rpc_cpu_ticks": {
+      "median": 20,
+      "min": 19,
+      "max": 20
+    }
+  }
+}
