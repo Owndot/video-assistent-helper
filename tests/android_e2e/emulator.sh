@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export E2E_OUT="$PWD/android-e2e-results"
-mkdir -p "$E2E_OUT"
+result_root="$PWD/android-e2e-results"
+mkdir -p "$result_root"
 export ANDROID_SERIAL
 ANDROID_SERIAL=$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')
 test -n "$ANDROID_SERIAL"
@@ -12,16 +12,37 @@ KADRI_COMMIT=$(cat e2e-bundle/kadri-commit.txt)
 adb install -r e2e-bundle/helper-debug.apk
 adb install -r e2e-bundle/helper-competing.apk
 adb install -r e2e-bundle/firefox.apk
-cp e2e-bundle/*provenance* e2e-bundle/firefox.json "$E2E_OUT/"
+cp e2e-bundle/*provenance* e2e-bundle/firefox.json "$result_root/"
 python3 tests/android_e2e/server.py --generate-only
-python3 tests/android_e2e/server.py > "$E2E_OUT/fixture-server.log" 2>&1 &
+python3 tests/android_e2e/server.py > "$result_root/fixture-server.log" 2>&1 &
 fixture_pid=$!
 cleanup() {
   kill "$fixture_pid" 2>/dev/null || true
-  adb shell dumpsys meminfo de.evp.helfer.debug > "$E2E_OUT/final-helper-meminfo.txt" || true
-  adb shell dumpsys meminfo org.mozilla.firefox > "$E2E_OUT/final-firefox-meminfo.txt" || true
-  adb shell dumpsys activity exit-info de.evp.helfer.debug > "$E2E_OUT/helper-exit-info.txt" || true
-  adb shell dumpsys activity exit-info org.mozilla.firefox > "$E2E_OUT/firefox-exit-info.txt" || true
+  adb shell dumpsys meminfo de.evp.helfer.debug > "$result_root/final-helper-meminfo.txt" || true
+  adb shell dumpsys meminfo org.mozilla.firefox > "$result_root/final-firefox-meminfo.txt" || true
+  adb shell dumpsys activity exit-info de.evp.helfer.debug > "$result_root/helper-exit-info.txt" || true
+  adb shell dumpsys activity exit-info org.mozilla.firefox > "$result_root/firefox-exit-info.txt" || true
 }
 trap cleanup EXIT
-python3 tests/android_e2e/run.py
+status=0
+for route in ${E2E_ROUTES:-kadri}; do
+  case "$route" in kadri|userscript) ;; *) echo 'Unsupported test route'; exit 2;; esac
+  export E2E_ROUTE="$route"
+  export E2E_OUT="$result_root/$route"
+  mkdir -p "$E2E_OUT"
+  # Independent empty profiles: never run the script and Kadri in the same page.
+  adb shell am force-stop de.evp.helfer.e2ecompeting
+  adb shell pm clear de.evp.helfer.debug
+  adb shell pm clear org.mozilla.firefox
+  python3 tests/android_e2e/run.py || status=1
+done
+python3 - <<'PY'
+from pathlib import Path
+root=Path("android-e2e-results")
+text="# Real Android E2E — routes\n\n"
+for report in sorted(root.glob("*/REPORT.md")):
+    text+="## "+report.parent.name+"\n\n"+report.read_text()+"\n"
+(root/"REPORT.md").write_text(text)
+print(text)
+PY
+exit "$status"

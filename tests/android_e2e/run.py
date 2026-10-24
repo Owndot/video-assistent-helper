@@ -21,11 +21,13 @@ from PIL import ImageChops, ImageStat
 
 PKG = "de.evp.helfer.debug"
 FIREFOX = "org.mozilla.firefox"
+ROUTE = os.environ.get("E2E_ROUTE", "kadri")
+assert ROUTE in ("kadri", "userscript")
 OUT = Path(os.environ.get("E2E_OUT", "android-e2e-results"))
 OUT.mkdir(parents=True, exist_ok=True)
 RESULTS = []
 KEY = ""
-AUTH_KEY = "evp-1"
+AUTH_KEY = ""
 D = None
 WEB_EXT = None
 LOGCAT = None
@@ -87,8 +89,9 @@ def case(name, fn, requires=None):
     record = None
     video = "/sdcard/e2e-" + name + ".mp4"
     try:
+        record_log = (OUT / (name + "-screenrecord.log")).open("w")
         record = subprocess.Popen(["adb", "shell", "screenrecord", "--time-limit", "120", video],
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                  stdout=record_log, stderr=subprocess.STDOUT)
         detail = fn()
         RESULTS.append({"name": name, "status": "PASS", "seconds": round(time.monotonic() - started, 3), "detail": detail})
     except Blocked as exc:
@@ -114,6 +117,8 @@ def case(name, fn, requires=None):
             except Exception:
                 record.terminate()
             adb("pull", video, str(OUT / (name + ".mp4")), check=False)
+            record_log.close()
+            RESULTS[-1]["recording_available"] = (OUT / (name + ".mp4")).is_file()
         write_results()
         print(name, RESULTS[-1]["status"], redact(str(RESULTS[-1].get("detail", ""))), flush=True)
 
@@ -146,9 +151,13 @@ def open_app():
     time.sleep(0.6)
 
 def setup():
-    global KEY
+    global KEY, AUTH_KEY
     open_app()
-    shell("pm", "grant", PKG, "android.permission.POST_NOTIFICATIONS")
+    api = int(shell("getprop", "ro.build.version.sdk").strip())
+    if api >= 33:
+        shell("pm", "grant", PKG, "android.permission.POST_NOTIFICATIONS")
+    if api <= 28:
+        shell("pm", "grant", PKG, "android.permission.WRITE_EXTERNAL_STORAGE")
     # Permission provisioning is explicit infrastructure. Later gesture tests
     # still exercise the real overlay, audio service and browser/extension.
     shell("appops", "set", PKG, "SYSTEM_ALERT_WINDOW", "allow")
@@ -156,16 +165,29 @@ def setup():
     open_app()
     click("English", scroll=True)
     wait(lambda: prefs().get("lang") == "en")
-    # A first bootstrap ping creates the random key without marking the app paired.
-    status = wait(lambda: request("/ping"))
+    # The actual service intentionally rejects every legacy/bootstrap key.
+    # A nonempty invalid key invokes the lazy key generator but never pairs.
+    wait(unauthenticated_ready)
     KEY = wait(lambda: prefs().get("key"))
-    assert len(KEY) == 32
-    assert status["ok"] and status["overlay"]
+    AUTH_KEY = KEY
+    assert len(KEY) == 32 and prefs().get("paired") != "true"
+    assert "allow" in shell("appops", "get", PKG, "SYSTEM_ALERT_WINDOW")
     D(scrollable=True).scroll.toBeginning()
     assert D(textContains="Running").exists
     return "Installed debug APK, real foreground service, overlay permission. Permission grant was ADB provisioning."
 
+def unauthenticated_ready():
+    try:
+        with urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:14781/ping",
+                headers={"X-EVP-Key": "evp-1"}), timeout=3):
+            raise AssertionError("Compromised legacy bootstrap key accepted")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 403
+        return True
+
+
 def security():
+    assert unauthenticated_ready()
     for value in (False, "wrong"):
         try:
             if value:
@@ -199,11 +221,11 @@ def export_import():
     if not field.exists:
         field = D(className="android.widget.EditText")
     if field.exists:
-        field.set_text("e2e-settings.txt")
+        field.set_text("e2e-settings-" + ROUTE + ".txt")
     click("SAVE") if D(text="SAVE").exists else click("Save")
-    wait(lambda: shell("test", "-f", "/sdcard/Download/e2e-settings.txt", check=False).strip() == ""
-         and "theme" in shell("cat", "/sdcard/Download/e2e-settings.txt", check=False))
-    raw = shell("cat", "/sdcard/Download/e2e-settings.txt")
+    wait(lambda: shell("test", "-f", "/sdcard/Download/e2e-settings-" + ROUTE + ".txt", check=False).strip() == ""
+         and "theme" in shell("cat", "/sdcard/Download/e2e-settings-" + ROUTE + ".txt", check=False))
+    raw = shell("cat", "/sdcard/Download/e2e-settings-" + ROUTE + ".txt")
     assert KEY not in raw and "light" in raw
     open_app()
     click("Dark", scroll=True)
@@ -213,7 +235,7 @@ def export_import():
         D(description="Show roots").click()
         if D(text="Downloads").exists(timeout=2):
             D(text="Downloads").click()
-    click("e2e-settings.txt")
+    click("e2e-settings-" + ROUTE + ".txt")
     wait(lambda: prefs().get("theme") == "light")
     assert prefs().get("key") == KEY
     return "SAF export/import round trip restored theme; pairing key excluded from export and retained in app."
@@ -223,7 +245,7 @@ def restart():
     for i in range(8):
         D.app_stop(PKG)
         open_app()
-        wait(lambda: request("/ping")["ok"])
+        wait(unauthenticated_ready)
         assert prefs().get("key") == KEY
         samples.append({"cycle": i + 1, "meminfo": shell("dumpsys", "meminfo", PKG)})
     (OUT / "helper-restart-memory.json").write_text(json.dumps(samples), encoding="utf8")
@@ -255,11 +277,26 @@ def firefox_prepare():
                 break
         else:
             raise AssertionError("Firefox browser menu not found")
+    # Firefox 158 groups Settings under the actual "More" menu.
+    more = D(description="More Collapsed")
+    if more.exists(timeout=1):
+        more.click()
     click("Settings", scroll=True)
     D(scrollable=True).scroll.to(textContains="Remote debugging")
     row = D(textContains="Remote debugging")
     assert row.exists
-    row.click()
+    tree = ET.fromstring(D.dump_hierarchy())
+    parents = {child: parent for parent in tree.iter() for child in parent}
+    toggles = []
+    for node in tree.iter("node"):
+        if "Remote debugging" in node.attrib.get("text", ""):
+            parent = parents.get(node)
+            for _ in range(2):
+                if parent is not None:
+                    toggles.extend(n for n in parent.iter("node") if n.attrib.get("checkable") == "true")
+                    parent = parents.get(parent)
+    if not any(n.attrib.get("checked") == "true" for n in toggles):
+        row.click()
     D.press("back")
     return "Real Firefox installed; Remote debugging via USB enabled through UI."
 
@@ -271,7 +308,7 @@ def extension():
     global WEB_EXT
     log = (OUT / "web-ext.log").open("w", encoding="utf8")
     cmd = ["web-ext", "run", "--target=firefox-android", "--android-device=" + os.environ["ANDROID_SERIAL"],
-           "--firefox-apk=" + FIREFOX, "--source-dir=" + os.environ["KADRI_DIST"],
+           "--firefox-apk=" + FIREFOX, "--source-dir=" + (os.environ["KADRI_DIST"] if ROUTE == "kadri" else str(Path("e2e-bundle/violentmonkey").resolve())),
            "--no-reload", "--no-input", "--verbose"]
     WEB_EXT = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)
     until = time.monotonic() + 100
@@ -287,11 +324,20 @@ def extension():
         if "kadri@owndot" in data and "Installed" in data:
             break
         time.sleep(1)
+    if ROUTE == "userscript":
+        # The real manager intercepts a .user.js navigation and opens its own
+        # installer; clicking Install exercises its actual storage/GM execution.
+        launch_url("http://127.0.0.1:8765/video-assistent.user.js")
+        install = D(textMatches="(?i)(Install|Confirm installation)")
+        wait(lambda: install.exists and install.info.get("enabled"), timeout=60)
+        install.click()
+        time.sleep(2)
+        shot("actual-userscript-install")
     # UI appearance on a real fixture is the acceptance criterion, not a guessed log line.
     launch_url("http://127.0.0.1:8765/page/direct")
     click("Play fixture")
     wait(lambda: D(descriptionContains="Videoplayer").exists or D(descriptionContains="video player").exists, timeout=25)
-    return "Unmodified dist/firefox loaded temporarily into Firefox Android; real player entry visible."
+    return ("Unmodified dist/firefox" if ROUTE == "kadri" else "Pinned real Violentmonkey + unmodified userscript via manager Install UI") + " loaded into Firefox Android; real player entry visible."
 
 def pair():
     global AUTH_KEY
@@ -570,7 +616,10 @@ def native_cookie_redirect():
             data = json.load(response)
         rows = [e for e in data if e.get("path") == "/sink" and e.get("received", 0) >= start]
         return rows or None
-    rows = wait(seen, timeout=20)
+    try:
+        rows = wait(seen, timeout=20)
+    except AssertionError:
+        raise AssertionError("Installed APK did not reach redirect destination: " + str(request("/dlstate?id=" + str(result["id"]))))
     assert all(not e["cookie"] and not e["authorization"] for e in rows), "Credentials crossed Android HTTP redirect"
     return "Actual installed APK stream fetch redirected to localhost; destination received no Cookie/Authorization. API integration, no browser simulation."
 
@@ -590,7 +639,11 @@ def crash_check():
                b.startswith("FATAL EXCEPTION") and
                re.search(r"Process: (?:de\.evp\.helfer(?:\.debug|\.e2ecompeting)?|org\.mozilla\.firefox)\b", b[:2500])]
     assert not crashes, "App crash recorded; see logcat.txt"
-    return "No target-process Java FATAL EXCEPTION observed. Native/ANR evidence also saved for review."
+    for package in (PKG, FIREFOX):
+        exits = shell("dumpsys", "activity", "exit-info", package)
+        (OUT / (package + "-exit-info.txt")).write_text(exits)
+        assert not re.search(r"reason=(?:4|5|6)\\s*\\((?:CRASH|CRASH_NATIVE|ANR)\\)", exits), "Crash/native crash/ANR exit reason for " + package
+    return "No target Java fatal exception or recorded crash/native-crash/ANR exit reason observed."
 
 def main():
     global D
@@ -599,13 +652,14 @@ def main():
     adb("reverse", "tcp:8765", "tcp:8765")
     adb("logcat", "-c")
     provenance = {
+        "route": ROUTE,
         "helper_commit": os.environ.get("HELPER_COMMIT"), "kadri_commit": os.environ.get("KADRI_COMMIT"),
         "api": shell("getprop", "ro.build.version.sdk").strip(),
         "android": shell("getprop", "ro.build.version.release").strip(),
         "firefox": shell("dumpsys", "package", FIREFOX),
         "fixture_transport": "adb reverse, device loopback; not a Wi-Fi/LAN throughput claim",
         "permissions": "ADB grants overlay/notification/idle exemption, real UI verifies app",
-        "extension": "unmodified dist/firefox; temporarily installed via Mozilla web-ext",
+        "extension": "unmodified dist/firefox" if ROUTE == "kadri" else "real Violentmonkey with unmodified userscript; upstream @require remains network-fetched",
     }
     (OUT / "provenance.json").write_text(json.dumps(provenance, indent=2), encoding="utf8")
     case("helper_setup", setup)
@@ -624,14 +678,14 @@ def main():
     case("site_source_switch", switch_source, ["real_browser_pairing"])
     case("orientation_roundtrip", rotation, ["real_browser_pairing"])
     case("player_open_close_memory", opening_cycles, ["real_browser_pairing"])
-    case("native_cookie_redirect", native_cookie_redirect, ["real_browser_pairing"])
     case("download_cancel", cancel_download, ["real_browser_pairing"])
     case("parallel_downloads", downloads, ["real_browser_pairing"])
     case("background_pip_return", background, ["parallel_downloads"])
+    case("native_cookie_redirect", native_cookie_redirect, ["helper_setup"])
     case("real_port_conflict", port_conflict, ["helper_setup"])
     case("no_java_crash", crash_check)
     for name, reason in {
-        "userscript_manager": "Not installed by this route. Never infer Violentmonkey coverage from Kadri.",
+        "alternate_browser_route": "This report covers " + ROUTE + " only; consult the separate route report.",
         "vivaldi_android": "No verified unpacked-extension installation/automation route in this harness.",
         "quality_source_switch": "Alternate fixture present; own-player quality UI assertion still required.",
         "physical_battery_display": "Emulator cannot establish Samsung energy usage or physical display quality.",

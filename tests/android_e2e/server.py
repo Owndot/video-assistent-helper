@@ -130,6 +130,9 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(302, headers={"Location": origin + target})
         elif u.path == "/sink":
             self.reply(200, b"owned destination", "text/plain")
+        elif u.path == "/video-assistent.user.js":
+            data = (ROOT.parent.parent / "userscript/video-assistent.user.js").read_bytes()
+            self.reply(200, data, "application/javascript; charset=utf-8")
         elif u.path == "/hls.min.js":
             data = (ROOT.parent / "browser/web/hls.min.js").read_bytes()
             self.reply(200, data, "application/javascript")

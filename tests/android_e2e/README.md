@@ -18,7 +18,8 @@ work belongs on codex/android-e2e. A manual workflow_dispatch is also provided
 once GitHub makes the workflow available for dispatch (normally after it exists
 on the default branch). Do not merge anything solely to obtain that button.
 
-First matrix: [33,35]. Exact Firefox version is recorded. Default latest is
+First matrix: [33,35]. During harness calibration execution.json restricts a
+controlled push to [33]; select [33,35] deliberately for the final comparison. Exact Firefox version is recorded. Default latest is
 resolved through Mozilla product details; for a repeated baseline use the
 recorded exact version. Mozilla HTTPS APK origin and downloaded digest are
 recorded; this does not independently pin Mozilla's signing certificate.
@@ -30,7 +31,7 @@ e2e-bundle (two debug APKs, official Firefox APK+JSON, unmodified Kadri Firefox
 directory and source-commit records), then:
 
     python3 -m unittest discover -s tests/android_e2e -p test_server.py -v
-    bash tests/android_e2e/emulator.sh
+    E2E_ROUTES='kadri userscript' bash tests/android_e2e/emulator.sh
 
 Use ONLY an empty emulator. Setup grants notification/overlay permissions and
 battery exemption with adb and stops/installs test apps. These are infrastructure
@@ -86,9 +87,16 @@ background behavior and API37 require remaining real-device validation.
 
 ## Explicit gaps / next supported increments
 
-Userscript/Violentmonkey and Vivaldi are NOT_TESTED. Kadri coverage does not imply
-userscript-manager coverage. Firefox Android supports web-ext temporary loading;
-this route is verified independently by actual installation and visible UI.
+The workflow offers kadri, userscript and both routes; both runs sequentially
+inside each emulator, not as an additional matrix. Violentmonkey 2.49.0 is fetched
+from its upstream release with a pinned SHA256, temporarily loaded through the
+supported web-ext route, and the unchanged userscript installed through its real
+Install UI from the local server. It does not use Kadri's GM implementation.
+Profiles and Helper test data are cleared between routes. Each route gets its own
+report, evidence and export filename. A requested but failing install is FAIL;
+selecting only Kadri leaves the userscript route untested. Vivaldi is NOT_TESTED.
+Kadri coverage does not imply userscript-manager coverage. Firefox Android
+supports web-ext temporary loading; each route requires actual visible UI.
 Unknown onboarding/settings/installation screens fail visibly; there is no
 fallback to fake content injection. Temporary extensions disappear on browser
 restart; helper-only restarts do not restart Firefox. Persistent/signed add-on
@@ -123,3 +131,10 @@ Official supported route:
 https://extensionworkshop.com/documentation/develop/developing-extensions-for-firefox-for-android/
 Android UI Automator:
 https://developer.android.com/training/testing/other-components/ui-automator
+
+Violentmonkey Android support is listed by Mozilla:
+https://addons.mozilla.org/en-US/android/addon/violentmonkey/
+The unchanged userscript still declares a mutable hls.js@1 CDN @require; the
+manager fetches it normally. This route therefore needs CDN access during
+installation and is not a completely offline dependency baseline. Owned video
+fixtures never use external streaming sites. No metadata URL is silently rewritten.

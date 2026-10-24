@@ -5,6 +5,11 @@ on:
       apis:
         description: 'API JSON list, initially [33,35]'
         default: '[33,35]'
+      routes:
+        description: 'Real integration routes: kadri, userscript, or both'
+        type: choice
+        options: [kadri, userscript, both]
+        default: kadri
       firefox_version:
         description: 'Exact Mozilla stable version, or latest (resolved version recorded)'
         default: latest
@@ -25,6 +30,7 @@ jobs:
       actions: read
     outputs:
       apis: ${{ steps.matrix.outputs.apis }}
+      routes: ${{ steps.matrix.outputs.routes }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +38,7 @@ jobs:
       - id: matrix
         env:
           REQUESTED_APIS: ${{ inputs.apis || '' }}
+          REQUESTED_ROUTE: ${{ inputs.routes || '' }}
         run: |
           python3 - <<'PY'
           import json,os
@@ -42,6 +49,9 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"],"a") as out:
               out.write("apis="+json.dumps(values)+"\n")
               out.write("previous_run="+str(json.load(open("tests/android_e2e/execution.json")).get("previous_run",0))+"\n")
+              routes=os.environ["REQUESTED_ROUTE"] or json.load(open("tests/android_e2e/execution.json")).get("route","kadri")
+              assert routes in ("kadri","userscript","both")
+              out.write("routes="+("kadri userscript" if routes=="both" else routes)+"\n")
           PY
       - name: Inspect previous captured failures (optional, read only)
         if: steps.matrix.outputs.previous_run != '0'
@@ -57,10 +67,10 @@ jobs:
         run: |
           python3 - <<'PY'
           import pathlib,re,xml.etree.ElementTree as ET,json
-          for file in sorted(pathlib.Path("previous-ui-evidence").glob("*/results.json")):
+          for file in sorted(pathlib.Path("previous-ui-evidence").glob("**/results.json")):
               print(file.parent.name)
               print(re.sub(r"[0-9a-f]{32}","<disposable-id>",file.read_text()))
-          for file in sorted(pathlib.Path("previous-ui-evidence").glob("*/*setup.xml")):
+          for file in sorted(pathlib.Path("previous-ui-evidence").glob("**/*setup.xml")):
               print(file)
               labels=[n.attrib.get("text") or n.attrib.get("content-desc") for n in ET.parse(file).iter("node")]
               print(re.sub(r"[0-9a-f]{32}","<disposable-id>",repr([x for x in labels if x])[:12000]))
@@ -124,6 +134,11 @@ jobs:
           (cd e2e-kadri && node tools/build.js)
           cp -R e2e-kadri/dist/firefox e2e-bundle/kadri-firefox
           git -C e2e-kadri rev-parse HEAD > e2e-bundle/kadri-commit.txt
+      - name: Prepare real userscript-manager route when requested
+        if: contains(steps.matrix.outputs.routes, 'userscript')
+        run: |
+          python3 tests/android_e2e/download_manager.py
+          node tools/build.js --check
       - name: Download official Firefox Android and record exact version
         env:
           FIREFOX_VERSION: ${{ inputs.firefox_version || 'latest' }}
@@ -168,6 +183,8 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Operate actual APKs and Firefox on Android
+        env:
+          E2E_ROUTES: ${{ needs.build.outputs.routes }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}
