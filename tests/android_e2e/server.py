@@ -5,6 +5,8 @@ from collections import deque
 import json
 import mimetypes
 import re
+import shutil
+import struct
 import subprocess
 import threading
 import time
@@ -28,6 +30,17 @@ def generate():
                 "-t", "60", "-c:v", "libx264", "-preset", "ultrafast",
                 "-pix_fmt", "yuv420p", "-threads", "2", "-c:a", "aac",
                 "-b:a", "64k", "-movflags", "+faststart", str(path)], check=True)
+    # A valid large ISO-BMFF file: unchanged playable MP4 + sparse free box.
+    # Only test disk space, not 128 MiB of Python RAM, is reserved here.
+    large = MEDIA / "large.mp4"
+    if not large.exists():
+        shutil.copyfile(MEDIA / "clip.mp4", large)
+        total = 128 * 1024 * 1024
+        padding = total - large.stat().st_size
+        assert 8 <= padding < 2**32
+        with large.open("ab") as stream:
+            stream.write(struct.pack(">I4s", padding, b"free"))
+            stream.truncate(total)
     hls = MEDIA / "hls"
     hls.mkdir(exist_ok=True)
     if not (hls / "index.m3u8").exists():
@@ -43,7 +56,7 @@ def page(kind, port):
         return f"""<!doctype html><meta name=viewport content="width=device-width">
 <title>E2E embedded</title><iframe title="Owned embedded player" allow="autoplay; fullscreen; picture-in-picture"
 src="/page/direct?embedded=1" style="width:100%;height:420px;border:0"></iframe>"""
-    src = "/media/hls/index.m3u8" if kind == "hls" else "/slowhls/index.m3u8" if kind == "slowhls" else "/slow/clip.mp4" if kind == "download" else "/media/clip.mp4"
+    src = "/media/hls/index.m3u8" if kind == "hls" else "/slowhls/index.m3u8" if kind == "slowhls" else "/slow/clip.mp4" if kind == "download" else "/media/large.mp4" if kind == "large" else "/media/clip.mp4"
     if kind == "redirect":
         src = "/redirect?to=/media/clip.mp4"
     return """<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1">

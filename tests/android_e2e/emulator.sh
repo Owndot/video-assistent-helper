@@ -3,8 +3,12 @@ set -euo pipefail
 result_root="$PWD/android-e2e-results"
 mkdir -p "$result_root"
 export ANDROID_SERIAL
-ANDROID_SERIAL=$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')
+ANDROID_SERIAL=$(adb devices | awk 'NR>1 && $1 ~ /^emulator-/ && $2=="device" {print $1; exit}')
 test -n "$ANDROID_SERIAL"
+if test "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" != 1; then
+  echo "Refusing a physical device: this suite clears disposable Firefox/test-app data." >&2
+  exit 2
+fi
 export KADRI_DIST="$PWD/e2e-bundle/kadri-firefox"
 export HELPER_COMMIT KADRI_COMMIT
 HELPER_COMMIT=$(cat e2e-bundle/helper-commit.txt)

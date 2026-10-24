@@ -157,3 +157,18 @@ plain-HTTP media URLs were blocked by Android's target-SDK cleartext policy
 unauthorized-key/Host rejection and real port conflict passed on both isolated
 route preparations. Browser installation had not yet been reached because of a
 Firefox menu-selector failure. These are not passing browser integrations.
+
+The runner refuses physical devices (ro.kernel.qemu must be 1) before setup.
+The shell entry also selects only emulator-* ADB serials. This prevents the
+profile-reset steps from touching the owner's Samsung/Firefox data. Local tests
+run on one disposable emulator at a time; Actions uses isolated workers per API.
+A 128MiB valid MP4 fixture (sparse ISO-BMFF free box) supports a full saved-file
+SHA256 check with repeated Helper/Firefox/DownloadProvider PSS snapshots. It is
+not a multi-GB memory guarantee; recordings and reports exclude the media copy.
+
+Real API33 run 40141678616 verified the HTTP manifest correction and exposed a
+separate Cookie leak in platform DownloadManager. Credentialed file streaming
+and bounded retry/resume checks are described in FINDINGS.md. Do not reuse an
+older APK bundle across this app-source change; the workflow equality guard
+must reject that. Before browser setup succeeds, native APK API checks remain
+native-only evidence, not evidence of browser pairing or playback.

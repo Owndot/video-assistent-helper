@@ -118,7 +118,6 @@ jobs:
           PY
           sha256sum -c e2e-bundle/apk-provenance.txt
       - uses: actions/setup-java@v4
-        if: steps.matrix.outputs.reuse_bundle_run == '0'
         with:
           distribution: temurin
           java-version: '17'
@@ -135,6 +134,15 @@ jobs:
           python3 -m py_compile tests/android_e2e/*.py
           python3 -m unittest discover -s tests/android_e2e -p test_server.py -v
           bash -n tests/android_e2e/emulator.sh
+      - name: Verify native stream transport before installing APKs
+        run: |
+          tests/java/build.sh
+          javac -cp tests/java/classes -d tests/java/classes tests/android_e2e/TestCredentialedStream.java
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestCredentialedStream
+          java -cp tests/java/classes de.evp.helfer.TestCookie
+          java -cp tests/java/classes de.evp.helfer.TestRedirectCookies
+          java -cp tests/java/classes TestPortConflict
+          java -cp tests/java/classes TestSettingsTransfer
       - name: Build isolated APKs with a short-lived test identity
         if: steps.matrix.outputs.reuse_bundle_run == '0'
         shell: bash

@@ -7,8 +7,10 @@ import os
 from pathlib import Path
 import re
 import signal
+import shlex
 import subprocess
 import sys
+import threading
 import time
 import traceback
 import urllib.error
@@ -43,7 +45,7 @@ def adb(*args, **kwargs):
     return command("adb", *args, **kwargs)
 
 def shell(*args, **kwargs):
-    return adb("shell", *args, **kwargs)
+    return adb("shell", shlex.join([str(arg) for arg in args]), **kwargs)
 
 def wait(fn, timeout=20, interval=0.25):
     until = time.monotonic() + timeout
@@ -53,6 +55,8 @@ def wait(fn, timeout=20, interval=0.25):
             value = fn()
             if value:
                 return value
+        except AssertionError:
+            raise
         except Exception as exc:
             last = exc
         time.sleep(interval)
@@ -140,10 +144,14 @@ def click(label, scroll=False):
             sel.click()
             return
     if scroll:
-        D(scrollable=True).scroll.to(text=label)
-        if D(text=label).exists:
-            D(text=label).click()
-            return
+        try:
+            D(scrollable=True).scroll.to(text=label)
+        except Exception:
+            D(scrollable=True).scroll.to(description=label)
+        for sel in selectors:
+            if sel.exists:
+                sel.click()
+                return
     if label in ("Close", "Schließen", "Play", "Wiedergabe", "Subtitles", "Untertitel") and reveal():
         for sel in selectors:
             if sel.exists:
@@ -216,6 +224,7 @@ def security():
 def export_import():
     open_app()
     click("Light", scroll=True)
+    wait(lambda: prefs().get("theme") == "light")
     click("Export settings", scroll=True)
     wait(lambda: D(resourceId="com.android.documentsui:id/container_save").exists or D(textMatches="(?i)save").exists)
     # Use the real Storage Access Framework, not a direct preferences write.
@@ -235,7 +244,7 @@ def export_import():
     assert KEY not in raw and "light" in raw
     open_app()
     click("Dark", scroll=True)
-    assert prefs().get("theme") == "dark"
+    wait(lambda: prefs().get("theme") == "dark")
     click("Import settings", scroll=True)
     if D(description="Show roots").exists(timeout=2):
         D(description="Show roots").click()
@@ -284,12 +293,25 @@ def firefox_prepare():
         else:
             raise AssertionError("Firefox browser menu not found")
     # Firefox 158 groups Settings under the actual "More" menu.
-    more = D(description="More Collapsed")
-    if more.exists(timeout=1):
+    more = D(descriptionMatches=r"More(?: Collapsed)?")
+    if not more.exists(timeout=1):
+        more = D(textMatches=r"More(?: Collapsed)?")
+    if more.exists:
         more.click()
+    shot("firefox-before-settings")
+    print("Firefox before Settings:", [(n.attrib.get("text"), n.attrib.get("content-desc"), n.attrib.get("bounds")) for n in ET.fromstring(D.dump_hierarchy()).iter("node") if n.attrib.get("text") or n.attrib.get("content-desc")], flush=True)
     click("Settings", scroll=True)
-    D(scrollable=True).scroll.to(textContains="Remote debugging")
     row = D(textContains="Remote debugging")
+    if not row.exists:
+        row = D(descriptionContains="Remote debugging")
+    if not row.exists:
+        try:
+            D(scrollable=True).scroll.to(textContains="Remote debugging")
+        except Exception:
+            D(scrollable=True).scroll.to(descriptionContains="Remote debugging")
+        row = D(textContains="Remote debugging")
+        if not row.exists:
+            row = D(descriptionContains="Remote debugging")
     assert row.exists
     tree = ET.fromstring(D.dump_hierarchy())
     parents = {child: parent for parent in tree.iter() for child in parent}
@@ -566,6 +588,52 @@ def downloads():
             "note": "Actual concurrent complete transfers and two saved-file hashes; UI/redirect timing, not Chrome-DNR resolution timing"}
 
 
+def large_download():
+    button = player_entry("large")
+    button.click()
+    wait(reveal)
+    before = set(shell("ls", "/sdcard/Download/Video-Assistent", check=False).splitlines())
+    expected_path = Path("tests/android_e2e/generated/large.mp4")
+    expected_size = expected_path.stat().st_size
+    samples = []
+    stop = threading.Event()
+    def sample():
+        while not stop.is_set():
+            row = {"at": time.monotonic()}
+            for pkg in (PKG, FIREFOX, "com.android.providers.downloads"):
+                row[pkg] = shell("dumpsys", "meminfo", pkg, check=False)
+            samples.append(row)
+            stop.wait(1)
+    sampler = threading.Thread(target=sample, daemon=True)
+    sampler.start()
+    started = time.monotonic()
+    try:
+        ui_helper_download()
+        def finished():
+            now = set(shell("ls", "/sdcard/Download/Video-Assistent", check=False).splitlines())
+            for filename in now - before:
+                if filename.endswith(".mp4") and shell("stat", "-c", "%s",
+                        "/sdcard/Download/Video-Assistent/" + filename, check=False).strip() == str(expected_size):
+                    return filename
+        filename = wait(finished, timeout=100)
+    finally:
+        stop.set()
+        sampler.join(timeout=10)
+        (OUT / "large-download-memory.json").write_text(json.dumps(samples))
+    elapsed = round(time.monotonic() - started, 3)
+    local = OUT / "large-downloaded.mp4"
+    adb("pull", "/sdcard/Download/Video-Assistent/" + filename, str(local), timeout=90)
+    with local.open("rb") as stream:
+        actual = hashlib.file_digest(stream, "sha256").hexdigest()
+    with expected_path.open("rb") as stream:
+        expected = hashlib.file_digest(stream, "sha256").hexdigest()
+    local.unlink()
+    assert actual == expected, "Large download bytes corrupted"
+    return {"bytes": expected_size, "sha256": actual, "seconds_including_ui": elapsed,
+            "memory_samples": len(samples),
+            "note": "128MiB real file/disk round trip, instrumented PSS observations. Not a multi-GB bound or physical power measurement."}
+
+
 def background():
     reveal()
     # Firefox may implement only automatic Android PiP. Verify Android's actual
@@ -671,9 +739,37 @@ def opening_cycles():
     (OUT / "player-cycle-observations.json").write_text(json.dumps(samples), encoding="utf8")
     return "6 real open/close cycles with timing/PSS/CPU observations. No baseline or leak verdict inferred."
 
+def native_hls_download():
+    before = set(shell("ls", "/sdcard/Download/Video-Assistent", check=False).splitlines())
+    params = urllib.parse.urlencode({"u": "http://127.0.0.1:8765/media/hls/index.m3u8",
+        "ref": "http://127.0.0.1:8765/page/hls", "c": "e2e_sentinel=disposable",
+        "t": "native-e2e-hls-" + ROUTE, "k": "hls"})
+    response = request("/download?" + params)
+    assert response["ok"]
+    def done():
+        state = request("/dlstate?id=" + str(response["id"])).get("state", "")
+        if state.startswith("Fehler"):
+            raise AssertionError(state)
+        return state == "fertig"
+    wait(done, timeout=90)
+    saved = set(shell("ls", "/sdcard/Download/Video-Assistent", check=False).splitlines()) - before
+    assert saved, "Native HLS was not saved"
+    for index, name in enumerate(saved):
+        local = OUT / ("native-hls-" + str(index) + ".mp4")
+        adb("pull", "/sdcard/Download/Video-Assistent/" + name, str(local))
+        probe = json.loads(command("ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", str(local)))
+        local.unlink()
+        (OUT / ("native-hls-" + str(index) + "-probe.json")).write_text(json.dumps(probe, indent=2))
+        assert any(stream.get("codec_type") == "video" for stream in probe["streams"])
+        assert any(stream.get("codec_type") == "audio" for stream in probe["streams"])
+        assert 59 < float(probe["format"]["duration"]) < 62
+    return "Installed APK fetched HLS with native Android code, saved via MediaStore; ffprobe verified video/audio and fixture duration. API integration."
+
+
 def native_cookie_redirect(kind="hls"):
     # This is deliberately labeled real Android HTTP/API integration, not UI interaction.
     start = time.monotonic()
+    before_files = set(shell("ls", "/sdcard/Download/Video-Assistent", check=False).splitlines())
     params = urllib.parse.urlencode({
         "u": "http://127.0.0.1:8765/redirect?cross=1&to=" + ("/sink" if kind == "hls" else "/media/clip.mp4"),
         "ref": "http://127.0.0.1:8765/page/direct", "c": "e2e_sentinel=disposable",
@@ -692,7 +788,25 @@ def native_cookie_redirect(kind="hls"):
         raise AssertionError("Installed APK did not reach redirect destination: " + str(request("/dlstate?id=" + str(result["id"]))))
     assert original and any(e["cookie"] for e in original), "Control missing: first hop did not receive the intended disposable cookie"
     assert all(not e["cookie"] and not e["authorization"] for e in rows), "Credentials crossed Android HTTP redirect"
-    return "Actual installed APK " + kind + " fetch: first hop received disposable Cookie, cross-site destination received none. API integration; Authorization was not supplied."
+    if kind == "file":
+        def done():
+            state = request("/dlstate?id=" + str(result["id"])).get("state", "")
+            assert not state.startswith("Fehler"), state
+            return state == "fertig"
+        wait(done, timeout=60)
+        files = set(shell("ls", "/sdcard/Download/Video-Assistent", check=False).splitlines()) - before_files
+        assert files, "Credentialed download was not saved"
+        expected = hashlib.sha256(Path("tests/android_e2e/generated/clip.mp4").read_bytes()).hexdigest()
+        verified = False
+        for name in files:
+            local = OUT / "credentialed-download.mp4"
+            adb("pull", "/sdcard/Download/Video-Assistent/" + name, str(local))
+            with local.open("rb") as stream:
+                verified = verified or hashlib.file_digest(stream, "sha256").hexdigest() == expected
+            local.unlink()
+        assert verified, "Credentialed native download bytes differ from fixture"
+    return "Actual installed APK " + kind + " fetch: first hop received disposable Cookie, cross-site destination received none. File kind also completed with exact hash. Authorization was not supplied."
+
 
 def paired_restart():
     old = KEY
@@ -761,6 +875,7 @@ def crash_check():
 
 def main():
     global D
+    assert shell("getprop", "ro.kernel.qemu").strip() == "1", "Only disposable Android emulators are allowed"
     D = u2.connect(os.environ["ANDROID_SERIAL"])
     adb("forward", "tcp:14781", "tcp:47811")
     adb("reverse", "tcp:8765", "tcp:8765")
@@ -795,9 +910,11 @@ def main():
     case("player_open_close_memory", opening_cycles, ["real_browser_pairing"])
     case("download_cancel", cancel_download, ["real_browser_pairing"])
     case("parallel_downloads", downloads, ["real_browser_pairing"])
-    case("background_pip_return", background, ["parallel_downloads"])
+    case("large_download_memory", large_download, ["real_browser_pairing"])
+    case("background_pip_return", background, ["large_download_memory"])
     case("paired_helper_restart", paired_restart, ["real_browser_pairing"])
     case("pairing_reset_roundtrip", reset_pairing, ["real_browser_pairing"])
+    case("native_hls_download", native_hls_download, ["helper_setup"])
     case("native_cookie_redirect", native_cookie_redirect, ["helper_setup"])
     case("native_downloadmanager_cookie_redirect", lambda: native_cookie_redirect("file"), ["helper_setup"])
     case("real_port_conflict", port_conflict, ["helper_setup"])
