@@ -207,9 +207,11 @@
       // frei. Bis dahin wäre sonst kurz der Player der Seite im ganzen Bildschirm zu sehen – also SOFORT melden und unser
       // letztes Bild so lange stehen lassen, bis das Fenster wieder klein ist (spätestens nach 0,4 s)
       try { fpost(window.parent, { t: 'release' }); } catch (e) {}
-      const hide = () => { removeEventListener('resize', hide); st.wrap.style.display = 'none'; };
+      let hidden = false;
+      const hide = () => { if (hidden) return; hidden = true; removeEventListener('resize', hide); st.wrap.style.display = 'none'; if (st.afterHide) st.afterHide(); };
       addEventListener('resize', hide);
       setTimeout(hide, 400);
+      st.hideWait = () => !hidden;
     } else st.wrap.style.display = 'none';
     try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch (e) {}
     try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
@@ -226,6 +228,8 @@
       st.wrap.remove();
     };
     // nach dem nächsten Bild (Bildschirm ist dann schon frei); im Hintergrund gibt es keine Bilder → gleich
+    // (eingebettet: erst aufräumen, wenn das Fenster wieder klein und unser Bild weg ist)
+    if (st.hideWait && st.hideWait()) { st.afterHide = () => setTimeout(rest, 0); return; }
     if (document.hidden || typeof requestAnimationFrame !== 'function') rest();
     else { let done = false; const go = () => { if (!done) { done = true; rest(); } }; requestAnimationFrame(() => setTimeout(go, 0)); setTimeout(go, 250); }
   }
