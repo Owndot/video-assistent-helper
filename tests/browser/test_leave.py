@@ -83,28 +83,25 @@ with sync_playwright() as p:
     pg.evaluate('() => { const v = %s.querySelector(".vv"); v.currentTime = 6; return v.play(); }' % R); time.sleep(0.8)
     pg.evaluate('''() => { const o = document.getElementById("v"); window.__ov = []; window.__cov = 0;
       const t0 = performance.now(); const f = () => { if (performance.now() - t0 > 2500) return; const c = %s.querySelector(".evpcover");
-        if (c) window.__cov = Math.max(window.__cov, getComputedStyle(c).opacity > 0.5 ? 1 : 0);
-        const v = %s.querySelector(".vv") || document.querySelector("video.vv"); if (v && !v.closest(".vp") && v.style.display !== "none") window.__live = (window.__live || 0) + 1;
-        const ownOn = v && !v.paused && !v.muted && !v.closest(".vp"), pageOn = !o.paused && !o.muted;
-        if (!ownOn && !pageOn) window.__quiet = (window.__quiet || 0) + 1; if (ownOn && pageOn) window.__dbl = (window.__dbl || 0) + 1;
-        requestAnimationFrame(f); }; f(); }''' % (R, R))
+        if (c) window.__cov = Math.max(window.__cov, getComputedStyle(c).opacity > 0.5 ? 1 : 0); requestAnimationFrame(f); }; f(); }''' % R)
     ours = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
     pg.evaluate('() => document.exitFullscreen().catch(() => {})'); time.sleep(0.15)
     # (Ausblenden dauert 0,1 s – auf langsamen Testrechnern bis zu ½ s warten)
     for _ in range(8):
-        vg = pg.evaluate('() => { const w = %s.querySelector(".vp"); return w ? [w.classList.contains("vgone"), getComputedStyle(w).opacity, (%s.querySelector(".vv") || document.querySelector("video.vv")).muted] : null; }' % (R, R))
+        vg = pg.evaluate('() => { const w = %s.querySelector(".vp"); return w ? [w.classList.contains("vgone"), getComputedStyle(w).opacity, %s.querySelector(".vv").muted] : null; }' % (R, R))
         if not vg or float(vg[1]) < 0.5: break
         time.sleep(0.05)
-    # (nahtlos zurück, 19.22: dein Video läuft mit Ton noch kurz genau über dem der Seite – dann übernimmt die Seite)
-    check('Zurück-Geste: Player sofort unsichtbar (man sieht gleich die Seite bzw. dein Bild an ihrer Stelle)', vg and vg[0] and float(vg[1]) < 0.5, vg)
-    time.sleep(0.9)
+    check('Zurück-Geste: Player sofort unsichtbar und stumm (man sieht gleich die Seite, 17.8)', vg and vg[0] and float(vg[1]) < 0.5 and vg[2], vg)
     ov = pg.evaluate('() => { const o = document.getElementById("v"); return [Math.round(o.currentTime * 10) / 10, o.paused, o.muted]; }')
-    check('… Seite übernimmt an deiner Stelle mit Ton (schon vor dem Schließen)', abs(ov[0] - ours - 1) < 1.5 and not ov[1] and not ov[2], [ours, ov])
-    time.sleep(0.4)
+    check('… Seite schon an deiner Stelle, läuft mit Ton (vor dem Schließen, 17.9)', abs(ov[0] - ours) < 1.2 and not ov[1] and not ov[2], [ours, ov])
+    time.sleep(1.15)
     check('Zurück-Taste (Vollbild aus, Seite sichtbar): Player schließt', not opened())
     time.sleep(1.4)
-    cov = pg.evaluate('() => [window.__live || 0, !!%s.querySelector(".evpcover"), getComputedStyle(document.getElementById("v")).opacity, !!(%s.querySelector(".vv") || document.querySelector("video.vv")), window.__quiet || 0, window.__dbl || 0]' % (R, R))
-    check('… dein Video lief über dem der Seite weiter (ohne Stille, ohne doppelten Ton) und ist danach weg', cov[0] >= 3 and not cov[1] and cov[2] == '1' and not cov[3] and cov[4] <= 3 and cov[5] <= 2, cov)
+    cov = pg.evaluate('() => [window.__cov, !!%s.querySelector(".evpcover"), getComputedStyle(document.getElementById("v")).opacity]' % R)
+    if FF:
+        check('… Firefox: Seitenvideo nach dem Springen wieder sichtbar, keine Abdeckung übrig', cov[2] == '1' and not cov[1], cov)
+    else:
+        check('… letztes Bild lag über dem Seitenvideo und ist danach weg', cov[0] == 1 and not cov[1] and cov[2] == '1', cov)
     ov2 = pg.evaluate('() => { const o = document.getElementById("v"); return [o.currentTime, o.paused]; }')
     check('… Seite spielt danach weiter (kein zweiter Sprung zurück)', ov2[0] > ours + 1 and not ov2[1], [ours, ov2])
     # 4) Einstellung „Anhalten“

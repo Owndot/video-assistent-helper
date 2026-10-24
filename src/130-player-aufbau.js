@@ -1,7 +1,6 @@
   function openBrowserPlayer(orig) {
     if (!orig) return;
     if (vp) closePlayer();
-    if (softSt) softFail(softSt);   // (das nahtlose Zurück vom letzten Mal läuft noch: sofort fertig machen)
     ui();
     hidePill();
     if (!root.querySelector('style.vpcss')) { const s = document.createElement('style'); s.className = 'vpcss'; s.textContent = VP_CSS; root.append(s); }
