@@ -8,3 +8,5 @@ local.properties
 # Signing material must live outside Git
 *.jks
 *.keystore
+# Never track signing material
+*.p12
