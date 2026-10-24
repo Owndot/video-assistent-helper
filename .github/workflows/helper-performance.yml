@@ -33,6 +33,13 @@ jobs:
           cp "$RUNNER_TEMP/helper-stable/app/build/outputs/apk/debug/app-debug.apk" validation-results/stable.apk
           gradle :app:assembleDebug --no-daemon
           cp app/build/outputs/apk/debug/app-debug.apk validation-results/current.apk
+          tests/java/build.sh
+          mkdir -p "$RUNNER_TEMP/network-probe"
+          javac -cp tests/java/classes -d "$RUNNER_TEMP/network-probe" .github/probes/NetworkCookieProbe.java
+          jar cf "$RUNNER_TEMP/network-probe.jar" -C "$RUNNER_TEMP/network-probe" .
+          jar cf "$RUNNER_TEMP/core-classpath.jar" -C tests/java/classes .
+          d8=$(find "$ANDROID_HOME/build-tools" -name d8 -type f | sort -V | tail -1)
+          "$d8" --min-api 26 --lib "$ANDROID_HOME/platforms/android-34/android.jar" --classpath "$RUNNER_TEMP/core-classpath.jar" --output validation-results/network-probe.zip "$RUNNER_TEMP/network-probe.jar"
           git rev-parse HEAD > validation-results/current-commit.txt
           echo b05fd2de60d27d368eda60ff32be8b361a695f45 > validation-results/stable-source.txt
       - name: Enable KVM
@@ -48,12 +55,31 @@ jobs:
           disable-animations: true
           script: |
             for label in stable current current stable stable current; do python3 tools/profile-helper.py --apk validation-results/$label.apk --label $label --output validation-results/helper-raw.jsonl || exit 1; done
+            adb push validation-results/network-probe.zip /data/local/tmp/network-probe.zip
+            for label in stable current; do
+              adb push validation-results/$label.apk /data/local/tmp/$label.apk
+              adb shell "CLASSPATH=/data/local/tmp/network-probe.zip:/data/local/tmp/$label.apk app_process /system/bin de.evp.helfer.NetworkCookieProbe" > validation-results/$label-native-cookie.json || exit 1
+              cat validation-results/$label-native-cookie.json
+            done
+      - name: Check actual Android HTTP cookie policy
+        run: |
+          python3 - <<'PY'
+          import json
+          old=json.load(open("validation-results/stable-native-cookie.json"))
+          new=json.load(open("validation-results/current-native-cookie.json"))
+          assert old["tenantCookieAllowed"], "Baseline did not reproduce tenant leak"
+          assert not new["tenantCookieAllowed"] and not new["crossCookiePresent"]
+          assert new["sameCookiePreserved"] and new["rangePreserved"] and new["pslReady"]
+          print("PASS: Android runtime tenant isolation, redirect credentials, Range and packaged PSL")
+          print("Previous Android native redirect forwarded cookie:",old["crossCookiePresent"])
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: helper-emulator-baseline-observations
           path: |
             validation-results/*.jsonl
+            validation-results/*-native-cookie.json
             validation-results/*.txt
       - uses: actions/upload-artifact@v4
         if: success()
