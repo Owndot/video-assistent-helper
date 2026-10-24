@@ -43,3 +43,13 @@ Do not compare desktop or emulator absolute times with S26 timings. Screen recor
 Do not generate a production key, rotate the production signer, install a fixture APK over production, or publish a build.
 A successful emulator API37 result would cover installation mechanics only; it would not prove Samsung/One UI background behavior or battery performance.
 Return the filled DEVICE-RESULTS.csv with PASS/FAIL/NOT TESTED and observations; never include pairing keys or real cookies/tokens.
+
+## Optional ADB snapshots
+On a computer with Android platform-tools, authorize only your own device. Find the installed browser package (usual names: com.vivaldi.browser and org.mozilla.firefox; verify yours).
+Before the matched test session:
+`tools/collect-device-snapshot.sh results/vivaldi-before com.vivaldi.browser`
+After the same fixed workload:
+`tools/collect-device-snapshot.sh results/vivaldi-after com.vivaldi.browser`
+Repeat with the verified Firefox package and distinct output folders.
+The collector is read-only: it does not reset battery stats, clear apps, alter brightness, install packages or read pairing preferences. Review files locally before sharing; battery stats may include broader device usage.
+If no ADB computer is available, use the manual functional/video procedure and mark CPU/PSS as NOT TESTED. Do not substitute a Samsung aggregate memory tile for process PSS.
