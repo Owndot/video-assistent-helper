@@ -17,12 +17,18 @@ with sync_playwright() as p:
     def info(): return pg.evaluate('''() => { const r = %s, v = r.querySelector(".vv"), s = v.seekable;
         return { ready: v.readyState, seeking: v.seeking, paused: v.paused, t: v.currentTime, a: s.length ? s.start(0) : -1, b: s.length ? s.end(s.length - 1) : -1, times: [...r.querySelectorAll(".vtime")].map(e => e.textContent), bar: +r.querySelector(".vbar").value, lab: r.querySelector(".vprev b").textContent }; }''' % R)
     def reveal_controls():
-        # Exercise the real user path: showControls also synchronously paints the timeline.
-        # Directly adding the CSS class bypasses that work and races the next media event.
-        visible=pg.evaluate('() => %s.querySelector(".vp").classList.contains("ctl")' % R)
-        if not visible:
-            pg.mouse.click(200,300)
-            pg.wait_for_function('() => %s.querySelector(".vp").classList.contains("ctl")' % R)
+        # Keep this timeline test's viewport unchanged. A trusted surface click also enters
+        # native fullscreen and invalidates the fixed gesture geometry used below.
+        # Reveal the fixture controls, then await a REAL media event. The player paints its
+        # visible timeline on that event; no expected label or implementation function is awaited.
+        pg.evaluate('''() => new Promise((resolve,reject)=>{
+          const r=%s,v=r.querySelector(".vv"),w=r.querySelector(".vp");
+          let deadline;
+          const done=()=>{clearTimeout(deadline);v.removeEventListener("timeupdate",done);resolve();};
+          deadline=setTimeout(()=>{v.removeEventListener("timeupdate",done);reject(new Error("No native media update"));},10000);
+          v.addEventListener("timeupdate",done,{once:true});
+          w.classList.add("ctl");
+        })''' % R)
     reveal_controls(); i0 = info()
     check('Live mit Zurückspulen: rechts „Live“, links „LIVE“ (am Live-Rand), Leiste ganz rechts', i0['times'][1] == 'Live' and i0['times'][0] == 'LIVE' and i0['bar'] > 900 and i0['b'] - i0['a'] > 100, i0)
     br = pg.evaluate('() => { const r = %s.querySelector(".vbar").getBoundingClientRect(); return [r.left, r.top + r.height / 2, r.width - 14]; }' % R)
