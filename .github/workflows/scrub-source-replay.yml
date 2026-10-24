@@ -1,4 +1,4 @@
-name: Observe source-switch scrub baseline
+name: Prove opening-seek regression and player handoff
 on:
   workflow_dispatch:
   push:
@@ -42,8 +42,14 @@ jobs:
             rc=0
             (cd tests/browser && BROWSER=chromium timeout -k 15 300 python3 -u _scrub_observe.py) > "$log" 2>&1 || rc=$?
             cat "$log"
-            if [ "$rc" -ne 0 ] || grep -q '^FAIL' "$log" || ! grep -q '^ERGEBNIS: 36 von 36' "$log"; then bad=1; fi
+            if [ "$label" = stable ]; then
+              if [ "$rc" -ne 0 ] || ! grep -q '^FAIL anderes Video beim Spulen' "$log"; then bad=1; fi
+            else
+              if [ "$rc" -ne 0 ] || grep -q '^FAIL' "$log" || ! grep -q '^ERGEBNIS: 36 von 36' "$log"; then bad=1; fi
+            fi
           done
+          cp "$RUNNER_TEMP/current.js" userscript/video-assistent.user.js
+          (cd tests/browser && BROWSER=chromium TESTS="test_metadata_seek.py test_seamless.py test_player.py" ./run_all.sh)
           exit "$bad"
       - uses: actions/upload-artifact@v4
         if: always()
