@@ -112,7 +112,9 @@
     }
     st.cleanup.push(bridgeDrop);
     // ----- Laden: Quellen der Reihe nach, zuletzt Bild vom Original übernehmen -----
+    let metadataSeekPending = false;
     function tryNext() {
+      metadataSeekPending = true;
       clearTimeout(st.loadTimer);
       if (st.hls) { try { st.hls.destroy(); } catch (e) {} st.hls = null; }
       if (st.idx >= st.sources.length) { useCapture(); return; }
@@ -184,7 +186,9 @@
         st.lenOk = true;
       }
       // (nahtloser Start: gleich an die Stelle, an der die Seite JETZT ist – etwas voraus, Springen dauert)
-      const t0 = st.bridge ? orig.currentTime + 0.3 : st.startTime;
+      // A later metadata event from an unrelated source must not reuse the opening position.
+      const t0 = metadataSeekPending ? (st.bridge ? orig.currentTime + 0.3 : st.startTime) : 0;
+      metadataSeekPending = false;
       if (!st.hls && t0 > 1 && isFinite(vid.duration) && vid.duration > t0) { if (st.bridge) st.bridge.to = t0; try { vid.currentTime = t0; } catch (e) {} }
       vid.playbackRate = st.speed;
       autoOrient(vid.videoWidth, vid.videoHeight);
