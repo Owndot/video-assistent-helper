@@ -118,6 +118,17 @@ jobs:
           assert hashlib.sha256(data).hexdigest()=="0c203a51804ede904082d7f106322de9ec635431d3c0d982b3dea3c842106436"
           print("PASS: pinned PSL present in APK")
           PY
+      - name: Record isolated debug APK provenance
+        shell: bash
+        run: |
+          mkdir -p validation-results
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          sha256sum "$apk" > validation-results/debug-apk.sha256
+          git rev-parse HEAD > validation-results/debug-source-commit.txt
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          aapt=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$aapt" dump badging "$apk" | grep "package: name='de.evp.helfer.debug'"
+          "$signer" verify --verbose --print-certs "$apk" | tee validation-results/debug-signature.txt
       - name: Verify pinned existing release APK (read only)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -149,5 +160,9 @@ jobs:
         if: always()
         with:
           name: helper-debug-NOT-production
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            validation-results/debug-apk.sha256
+            validation-results/debug-source-commit.txt
+            validation-results/debug-signature.txt
           if-no-files-found: ignore
