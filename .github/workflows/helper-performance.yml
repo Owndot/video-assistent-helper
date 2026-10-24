@@ -25,9 +25,8 @@ jobs:
       - name: Build source comparison with debug signing only
         run: |
           mkdir -p validation-results "$RUNNER_TEMP/helper-stable"
-          git archive b05fd2de60d27d368eda60ff32be8b361a695f45 | tar -x -C "$RUNNER_TEMP/helper-stable"
-          rm -f "$RUNNER_TEMP/helper-stable/keystore.jks"
-          # Never execute the stable Gradle file with its embedded signing credentials.
+          git archive b05fd2de60d27d368eda60ff32be8b361a695f45 app/src build.gradle settings.gradle gradle.properties | tar -x -C "$RUNNER_TEMP/helper-stable"
+          # Archive only sources and root build configuration: never retrieve the historical signing material.
           cp app/build.gradle "$RUNNER_TEMP/helper-stable/app/build.gradle"
           (cd "$RUNNER_TEMP/helper-stable" && gradle :app:assembleDebug --no-daemon)
           cp "$RUNNER_TEMP/helper-stable/app/build/outputs/apk/debug/app-debug.apk" validation-results/stable.apk

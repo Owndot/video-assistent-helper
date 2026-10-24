@@ -36,6 +36,11 @@ class UpdateCompatibility(unittest.TestCase):
                          ("de.evp.helfer", 11))
 
 class PublicationPolicy(unittest.TestCase):
+    def test_baseline_never_archives_signing_material(self):
+        workflow = (ROOT / ".github/workflows/helper-performance.yml").read_text()
+        self.assertIn("app/src build.gradle settings.gradle gradle.properties | tar", workflow)
+        for forbidden in ("keystore.jks", "EVP_KEYSTORE_", "secrets.", "contents: write", "gh release"):
+            self.assertNotIn(forbidden, workflow)
     def test_validation_has_no_production_access_or_publication(self):
         workflow = (ROOT / ".github/workflows/build.yml").read_text()
         self.assertIn("contents: read", workflow)
