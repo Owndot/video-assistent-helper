@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches: [codex/security-phase-1]
-    paths: ['.github/workflows/build.yml', 'tools/audit-published-signature.py']
+    paths: ['app/**', 'tests/**', 'tools/**', '.github/workflows/**']
 permissions:
   contents: read
 jobs:
