@@ -22,3 +22,10 @@ https://developer.android.com/tools/apksigner
 5. Existing single-fingerprint validators intentionally accept only the unrotated identity. Adapt them for an approved lineage with per-API apksigner verification before any rotated build is accepted.
 
 No production signing, key generation/rotation, lineage creation, history rewrite or release mutation has been performed. All Android device checks remain UNTESTED.
+
+## Fingerprint comparison
+Run on a trusted workstation (Java keytool and Android SDK apksigner in PATH):
+`python3 tools/compare-exposed-signature.py /secure/old-keystore.jks /secure/trusted-old.apk --alias YOUR_ALIAS`
+The password is prompted without echo; it is not embedded in code or arguments. Output contains only public certificate/file hashes.
+The currently published GitHub asset has ID 667389794 and SHA-256 bdbb2dd853ffcba80afb27492a31baf474ae1e3fd36418e3f7a5206abb760086 (metadata observed 2026-10-24). Compare an independent existing-installation/offline APK as well; repository publication alone is not independent trust.
+This comparison has NOT been executed here: the workspace cannot run keytool/apksigner, and the connector cannot download release APK binaries. Do not infer a certificate fingerprint from the APK file digest.
