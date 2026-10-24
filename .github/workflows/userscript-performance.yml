@@ -1,0 +1,39 @@
+name: Userscript PSL baseline observations
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/security-phase-1]
+    paths: ['tools/profile-userscript-start.py', '.github/workflows/userscript-performance.yml']
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned test browser
+        run: |
+          pip install playwright==1.56.0 pillow
+          python -m playwright install --with-deps chromium
+      - name: Fetch only public baseline player
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api 'repos/Owndot/video-assistent-helper/contents/userscript/video-assistent.user.js?ref=b05fd2de60d27d368eda60ff32be8b361a695f45' --jq .content | base64 --decode > "$RUNNER_TEMP/stable-player.js"
+          sha256sum "$RUNNER_TEMP/stable-player.js"
+      - name: Counterbalanced source observations
+        run: |
+          mkdir -p validation-results
+          python3 tools/profile-userscript-start.py "$RUNNER_TEMP/stable-player.js" validation-results/userscript-start.jsonl
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: userscript-source-observations
+          path: validation-results/userscript-start.jsonl
