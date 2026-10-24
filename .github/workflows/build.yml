@@ -55,6 +55,7 @@ jobs:
           EVP_STORE_PASSWORD: ${{ secrets.EVP_STORE_PASSWORD }}
           EVP_KEY_ALIAS: ${{ secrets.EVP_KEY_ALIAS }}
           EVP_KEY_PASSWORD: ${{ secrets.EVP_KEY_PASSWORD }}
+          EVP_CERT_SHA256: ${{ secrets.EVP_CERT_SHA256 }}
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
       - name: APK umbenennen
