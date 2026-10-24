@@ -20,4 +20,6 @@ gradle :app:assembleDebug -PmigrationFixtureVersion=101 -PmigrationFixtureMinSdk
 for apk in migration-fixtures/*.apk; do
   "$signer" verify --verbose --print-certs "$apk"
 done
+aapt=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+"$aapt" dump badging migration-fixtures/modern.apk | grep -q "sdkVersion:'33'"
 sha256sum migration-fixtures/*.apk > migration-fixtures/SHA256SUMS
