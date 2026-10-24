@@ -1,0 +1,71 @@
+name: Read-only exposed identity audit
+on:
+  push:
+    branches: [codex/signing-identity-audit]
+    paths: ['.github/workflows/signing-identity-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # No checkout, PR execution, repository signing secrets, signing or publication.
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compare public historical identity with pinned existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, re, subprocess, tempfile, urllib.request
+          repo = "Owndot/video-assistent-helper"
+          ref = "b05fd2de60d27d368eda60ff32be8b361a695f45"
+          def get(path, binary=False):
+              req = urllib.request.Request("https://api.github.com/repos/"+repo+path,
+                  headers={"Authorization":"Bearer "+os.environ["GH_TOKEN"],
+                           "Accept":"application/octet-stream" if binary else "application/vnd.github+json"})
+              with urllib.request.urlopen(req, timeout=60) as r: data=r.read()
+              return data if binary else json.loads(data)
+          key = get("/contents/keystore.jks?ref="+ref)
+          if key["sha"] != "45ab22e6de0452bd89ab917e38efce6b367e0fcc":
+              raise SystemExit("Historical keystore changed")
+          key_bytes = base64.b64decode(key["content"])
+          if hashlib.sha1(b"blob "+str(len(key_bytes)).encode()+b"\0"+key_bytes).hexdigest() != key["sha"]:
+              raise SystemExit("Keystore blob verification failed")
+          config = base64.b64decode(get("/contents/app/build.gradle?ref="+ref)["content"]).decode()
+          def literal(name):
+              match = re.search(name+r"\s+['\"]([^'\"]+)['\"]", config)
+              if not match: raise SystemExit("Cannot read historical signing configuration")
+              return match.group(1)
+          apk = get("/releases/assets/667389794", binary=True)
+          if hashlib.sha256(apk).hexdigest() != "bdbb2dd853ffcba80afb27492a31baf474ae1e3fd36418e3f7a5206abb760086":
+              raise SystemExit("Published APK digest mismatch")
+          sdk = pathlib.Path(os.environ["ANDROID_HOME"]) / "build-tools"
+          signers = sorted(sdk.glob("*/apksigner"), key=lambda p: tuple(int(n) for n in re.findall(r"\d+", p.parent.name)))
+          if not signers: raise SystemExit("apksigner unavailable")
+          with tempfile.TemporaryDirectory() as temp:
+              p=pathlib.Path(temp)
+              (p/"historical.p12").write_bytes(key_bytes)
+              (p/"historical.p12").chmod(0o600)
+              (p/"published.apk").write_bytes(apk)
+              env=os.environ.copy()
+              env["AUDIT_OLD_STORE_PASSWORD"]=literal("storePassword")
+              cert=subprocess.check_output(["keytool","-exportcert","-keystore",str(p/"historical.p12"),
+                  "-alias",literal("keyAlias"),"-storepass:env","AUDIT_OLD_STORE_PASSWORD"],env=env,stderr=subprocess.PIPE)
+              env.pop("AUDIT_OLD_STORE_PASSWORD",None)
+              output=subprocess.check_output([str(signers[-1]),"verify","--verbose","--print-certs",str(p/"published.apk")],text=True)
+              values=set(re.findall(r"^(?:Signer #\d+|V\d(?:\.\d+)? Signer(?: #\d+)?):? certificate SHA-256 digest: ([0-9a-fA-F]+)",output,re.MULTILINE))
+              if len(values)!=1: raise SystemExit("Expected one unrotated APK signer")
+              key_fp=hashlib.sha256(cert).hexdigest()
+              apk_fp=next(iter(values)).lower()
+              print("Historical keystore certificate SHA-256:",key_fp)
+              print("Pinned published APK certificate SHA-256:",apk_fp)
+              if key_fp!=apk_fp: raise SystemExit("SIGNER MISMATCH")
+              print("MATCH: exposed identity signs the pinned published APK; no signing or rotation performed.")
+          PY
