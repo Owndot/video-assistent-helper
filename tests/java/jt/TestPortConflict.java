@@ -26,6 +26,11 @@ public class TestPortConflict {
         try {
             if (!retry.start()) throw new AssertionError("Endpoint not released after shutdown");
         } finally { retry.stop(); }
+        for (int i=0;i<100;i++) {
+            MiniServer loop = new MiniServer(port,"test-key",HANDLER);
+            try { if(!loop.start()) throw new AssertionError("Rapid restart failed at cycle "+i); }
+            finally { loop.stop(); }
+        }
         System.out.println("PASS: port conflict, exclusive ownership, shutdown and retry");
     }
 }

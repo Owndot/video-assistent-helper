@@ -30,6 +30,7 @@ public class MiniServer {
     private final Handler handler;
     private final ExecutorService pool = Executors.newFixedThreadPool(10);   // auch für Abholen/Liefern beim Laden über den Browser
     private ServerSocket server;
+    private Thread listenerThread;
 
     public MiniServer(int port, String key, Handler handler) {
         this(port, key::equals, handler);
@@ -84,12 +85,20 @@ public class MiniServer {
                 // Closing the listener during normal shutdown interrupts accept().
             }
         }, "evp-helfer");
+        listenerThread = t;
         t.start();
         return true;
     }
 
     public void stop() {
         try { if (server != null) server.close(); } catch (Exception ignored) {}
+        // close() wakes accept(), but the OS can retain its listening socket until
+        // that thread leaves accept(). Await it before a new service binds the port.
+        Thread listener = listenerThread;
+        if (listener != null && listener != Thread.currentThread()) {
+            try { listener.join(250); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
         pool.shutdownNow();
     }
 
