@@ -5,7 +5,7 @@ name: Browser-Tests
 on:
   push:
     branches: [main, codex/security-phase-1]
-    paths: ['src/**', 'tools/**', 'userscript/**', 'tests/**', '.github/workflows/browser-tests.yml']
+    paths: ['src/**', 'tools/build.js', 'userscript/**', 'tests/browser/**', 'tests/java/**', 'app/src/main/java/de/evp/helfer/Fetcher.java', 'app/src/main/java/de/evp/helfer/PublicSuffix.java', 'app/src/main/java/de/evp/helfer/MiniServer.java', 'app/src/main/resources/**']
   workflow_dispatch:
     inputs:
       tests:
