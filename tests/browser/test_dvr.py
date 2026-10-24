@@ -9,9 +9,13 @@ with sync_playwright() as p:
     ctx = b.new_context(viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True, device_scale_factor=2)
     ctx.add_init_script(PRE); ctx.add_init_script(HLS); ctx.add_init_script(SCRIPT)
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
-    open_player(pg, 'live.html'); time.sleep(1.0)
+    open_player(pg, 'live.html')
+    # HLS can expose a finite duration/target time before the seek and first decoded frame complete.
+    # Wait for browser media readiness, not for the expected UI labels (which remain independently asserted).
+    pg.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.readyState >= 2 && !v.seeking; }' % R)
+    time.sleep(1.0)
     def info(): return pg.evaluate('''() => { const r = %s, v = r.querySelector(".vv"), s = v.seekable;
-        return { t: v.currentTime, a: s.length ? s.start(0) : -1, b: s.length ? s.end(s.length - 1) : -1, times: [...r.querySelectorAll(".vtime")].map(e => e.textContent), bar: +r.querySelector(".vbar").value, lab: r.querySelector(".vprev b").textContent }; }''' % R)
+        return { ready: v.readyState, seeking: v.seeking, paused: v.paused, t: v.currentTime, a: s.length ? s.start(0) : -1, b: s.length ? s.end(s.length - 1) : -1, times: [...r.querySelectorAll(".vtime")].map(e => e.textContent), bar: +r.querySelector(".vbar").value, lab: r.querySelector(".vprev b").textContent }; }''' % R)
     ctl(pg); i0 = info()
     check('Live mit Zurückspulen: rechts „Live“, links „LIVE“ (am Live-Rand), Leiste ganz rechts', i0['times'][1] == 'Live' and i0['times'][0] == 'LIVE' and i0['bar'] > 900 and i0['b'] - i0['a'] > 100, i0)
     br = pg.evaluate('() => { const r = %s.querySelector(".vbar").getBoundingClientRect(); return [r.left, r.top + r.height / 2, r.width - 14]; }' % R)

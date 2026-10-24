@@ -33,7 +33,7 @@ jobs:
         shell: bash
         run: |
           cd tests/browser
-          BROWSER=chromium TESTS="test_metadata_seek.py test_seamless.py test_player.py" ./run_all.sh
+          BROWSER=chromium TESTS="test_metadata_seek.py test_seamless.py test_player.py test_dvr.py" ./run_all.sh
       - name: Stable-current counterbalanced replay
         shell: bash
         run: |
@@ -64,3 +64,4 @@ jobs:
             tests/browser/out/test_metadata_seek.log
             tests/browser/out/test_seamless.log
             tests/browser/out/test_player.log
+            tests/browser/out/test_dvr.log
