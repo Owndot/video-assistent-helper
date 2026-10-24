@@ -1,96 +1,55 @@
-name: APK bauen
-
+name: Helper safe validation
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
-    inputs:
-      publish:
-        description: 'Publish a new version from main (never replace an existing release)'
-        type: boolean
-        default: false
-        required: true
-
+  pull_request:
+  push:
+    branches: [codex/security-phase-1]
+    paths: ['.github/workflows/build.yml', 'tools/audit-published-signature.py']
 permissions:
   contents: read
-
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check update compatibility and publication policy
-        run: python3 -m unittest discover -s tests/security -v
-
+        with:
+          persist-credentials: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-
-      - name: Prepare existing release identity
+      - name: Host security tests
+        run: python3 -m unittest discover -s tests/security -v
+      - name: JVM compilation and exclusive-port test
+        run: |
+          tests/java/build.sh
+          java -cp tests/java/classes TestPortConflict
+      - name: JVM media tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          tests/java/run_core_tests.sh
+      - name: Isolated debug APK
+        run: gradle :app:assembleDebug --no-daemon
+      - name: Test release verifier with disposable identity
         shell: bash
-        env:
-          KEYSTORE_B64: ${{ secrets.EVP_KEYSTORE_B64 }}
-          EVP_STORE_PASSWORD: ${{ secrets.EVP_STORE_PASSWORD }}
-          EVP_KEY_ALIAS: ${{ secrets.EVP_KEY_ALIAS }}
-          EVP_EXPECTED_CERT_SHA256: ${{ secrets.EVP_CERT_SHA256 }}
         run: |
           set -euo pipefail
-          test -n "$KEYSTORE_B64"
-          test -n "$EVP_STORE_PASSWORD"
-          test -n "$EVP_KEY_ALIAS"
-          test -n "$EVP_EXPECTED_CERT_SHA256"
-          umask 077
-          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/evp-release.jks"
-          keytool -exportcert -keystore "$RUNNER_TEMP/evp-release.jks" -alias "$EVP_KEY_ALIAS" -storepass:env EVP_STORE_PASSWORD > "$RUNNER_TEMP/evp-cert.der"
-          actual_cert=$(sha256sum "$RUNNER_TEMP/evp-cert.der" | cut -d ' ' -f 1)
-          expected_cert=$(printf '%s' "$EVP_EXPECTED_CERT_SHA256" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')
-          test "$actual_cert" = "$expected_cert"
-          echo "EVP_KEYSTORE_PATH=$RUNNER_TEMP/evp-release.jks" >> "$GITHUB_ENV"
-
-      - name: APK bauen
-        env:
-          EVP_STORE_PASSWORD: ${{ secrets.EVP_STORE_PASSWORD }}
-          EVP_KEY_ALIAS: ${{ secrets.EVP_KEY_ALIAS }}
-          EVP_KEY_PASSWORD: ${{ secrets.EVP_KEY_PASSWORD }}
-          EVP_CERT_SHA256: ${{ secrets.EVP_CERT_SHA256 }}
-        run: gradle :app:assembleRelease --no-daemon --stacktrace
-
-      - name: APK umbenennen
-        run: cp app/build/outputs/apk/release/app-release.apk VideoAssistent-Helper.apk
-
+          export EVP_KEYSTORE_PATH="$RUNNER_TEMP/test-only.jks"
+          export EVP_STORE_PASSWORD=test-only-password EVP_KEY_PASSWORD=test-only-password EVP_KEY_ALIAS=test-only
+          trap 'rm -f "$EVP_KEYSTORE_PATH" "$RUNNER_TEMP/test-cert.der"' EXIT
+          keytool -genkeypair -keystore "$EVP_KEYSTORE_PATH" -storetype JKS -storepass:env EVP_STORE_PASSWORD -keypass:env EVP_KEY_PASSWORD -alias "$EVP_KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 2 -dname CN=CI-TEST-ONLY
+          keytool -exportcert -keystore "$EVP_KEYSTORE_PATH" -storepass:env EVP_STORE_PASSWORD -alias "$EVP_KEY_ALIAS" > "$RUNNER_TEMP/test-cert.der"
+          export EVP_CERT_SHA256="$(sha256sum "$RUNNER_TEMP/test-cert.der" | cut -d ' ' -f 1)"
+          gradle :app:assembleRelease --no-daemon
+          # Never upload or distribute this test-signed production-ID APK.
       - uses: actions/upload-artifact@v4
-        with:
-          name: VideoAssistent-Helfer
-          path: VideoAssistent-Helper.apk
-
-      - name: Remove temporary signing files
         if: always()
-        run: rm -f "$RUNNER_TEMP/evp-release.jks" "$RUNNER_TEMP/evp-cert.der"
-
-  release:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
         with:
-          name: VideoAssistent-Helfer
-      - name: Publish a new immutable version
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_COMMIT: ${{ github.sha }}
-          RELEASE_VERSION: ${{ github.run_number }}
-        run: |
-          set -euo pipefail
-          gh release create "v1.0.$RELEASE_VERSION" VideoAssistent-Helper.apk \
-            --target "$RELEASE_COMMIT" --title "Video-Assistent Helper 1.0.$RELEASE_VERSION" \
-            --notes "Signed update: install over the existing production app." --latest
+          name: helper-debug-NOT-production
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: ignore

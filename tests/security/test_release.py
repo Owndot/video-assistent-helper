@@ -29,20 +29,14 @@ class UpdateCompatibility(unittest.TestCase):
                          ("de.evp.helfer", 11))
 
 class PublicationPolicy(unittest.TestCase):
-    # Static assertions guard the actual workflow. They are not an Actions execution.
-    def test_branch_build_cannot_publish(self):
+    def test_validation_has_no_production_access_or_publication(self):
         workflow = (ROOT / ".github/workflows/build.yml").read_text()
-        build, release = workflow.split("\n  release:", 1)
-        self.assertIn("permissions:\n  contents: read", build)
-        self.assertNotIn("contents: write", build)
-        self.assertNotIn("gh release", build)
-        self.assertIn("default: false", build)
-        self.assertIn("github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish", release)
-        self.assertIn("needs: build", release)
-        self.assertIn("contents: write", release)
-        self.assertNotIn("release delete", workflow)
-        self.assertNotIn("--clobber", workflow)
-        self.assertIn('--target "$RELEASE_COMMIT"', release)
+        self.assertIn("contents: read", workflow)
+        for forbidden in ("contents: write", "secrets.", "pull_request_target", "gh release", "git push", "publish:"):
+            self.assertNotIn(forbidden, workflow)
+        self.assertIn("test-only.jks", workflow)
+        self.assertIn("assembleDebug", workflow)
+        self.assertNotIn("path: app/build/outputs/apk/release", workflow)
 
 if __name__ == "__main__":
     unittest.main()
