@@ -55,9 +55,20 @@
   let lastResolve = '-';
 
   // Gehört die Adresse zur Seite selbst (gleiche Domain)? Dann ist sie oft an die Browser-Sitzung gebunden.
+  // „Gleiche Seite?“ – für Anmeldung (Cookies) und Helfer-Freigaben. Zweistufige Endungen (co.uk …) und Adressen, unter
+  // denen viele FREMDE Betreiber eigene Seiten haben (github.io, netlify.app …), zählen als eigene Endung:
+  // angreifer.github.io und opfer.github.io sind verschiedene Seiten.
+  const SHARED_SUFFIX = ['github.io', 'gitlab.io', 'netlify.app', 'vercel.app', 'pages.dev', 'workers.dev', 'web.app', 'firebaseapp.com',
+    'herokuapp.com', 'appspot.com', 'blogspot.com', 'azurewebsites.net', 'cloudfront.net', 's3.amazonaws.com', 'onrender.com', 'fly.dev',
+    'glitch.me', 'repl.co', 'surge.sh', 'ngrok.io', 'ngrok-free.app', 'duckdns.org', 'myshopify.com', 'wixsite.com', 'wordpress.com',
+    'tumblr.com', 'neocities.org', 'r2.dev', 'b-cdn.net', 'translate.goog', 'carrd.co', 'webflow.io', 'framer.app', 'notion.site'];
   function baseDomain(host) {
-    const p = String(host).toLowerCase().split('.');
-    return p.slice(-2).join('.');
+    const h = String(host || '').toLowerCase().replace(/\.$/, '');
+    if (/^[\d.]+$/.test(h) || h.indexOf(':') >= 0) return h;   // IP-Adresse: nur sie selbst
+    const p = h.split('.');
+    for (const s of SHARED_SUFFIX) if (h === s || h.endsWith('.' + s)) return p.slice(-(s.split('.').length + 1)).join('.');
+    // co.uk, com.au, … (zweite Stufe kurz, Land zweistellig)
+    return p.length > 2 && p[p.length - 1].length === 2 && p[p.length - 2].length <= 3 ? p.slice(-3).join('.') : p.slice(-2).join('.');
   }
   function needsResolve(u) {
     if (!u || PLAYLIST_RE.test(u) || META) return false;
