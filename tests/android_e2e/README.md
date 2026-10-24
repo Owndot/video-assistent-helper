@@ -51,7 +51,7 @@ The test identity and APK bundle expire after two days; evidence after seven.
 server.py generates two 60-second MP4s, an MPEG-TS HLS VOD and a WebVTT subtitle
 with ffmpeg. It serves exact, suffix and open-ended Range responses (416 for
 invalid/multipart ranges), HEAD, same/cross-host redirects, slow body delivery
-and delayed headers. Nine host fixture-contract tests run before allocating an
+and delayed headers. Ten host fixture-contract tests run before allocating an
 emulator. That host check is **not** Android coverage.
 
 adb reverse exposes the host server to device loopback:8765, adb forward

@@ -3,6 +3,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 
 spec = importlib.util.spec_from_file_location("fixtures", Path(__file__).with_name("server.py"))
@@ -63,6 +64,11 @@ class FixtureContract(unittest.TestCase):
         s, h, b = self.get("/redirect?cross=1&to=/sink")
         self.assertEqual(s, 302)
         self.assertTrue(h["Location"].startswith("http://localhost:"))
+
+    def test_delayed_headers(self):
+        start = time.monotonic()
+        self.get("/media/clip.mp4?header_ms=200")
+        self.assertGreaterEqual(time.monotonic() - start, .18)
 
     def test_no_external_redirect_or_traversal(self):
         self.assertEqual(self.get("/redirect?to=https://example.invalid/")[0], 400)

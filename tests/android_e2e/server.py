@@ -42,11 +42,11 @@ def page(kind, port):
         return f"""<!doctype html><meta name=viewport content="width=device-width">
 <title>E2E embedded</title><iframe title="Owned embedded player" allow="autoplay; fullscreen; picture-in-picture"
 src="/page/direct?embedded=1" style="width:100%;height:420px;border:0"></iframe>"""
-    src = "/media/hls/index.m3u8" if kind == "hls" else "/media/clip.mp4"
+    src = "/media/hls/index.m3u8" if kind == "hls" else "/slowhls/index.m3u8" if kind == "slowhls" else "/slow/clip.mp4" if kind == "download" else "/media/clip.mp4"
     if kind == "redirect":
         src = "/redirect?to=/media/clip.mp4"
     return """<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1">
-<title>E2E """ + kind + """</title><style>body{margin:0;background:#eee;font:18px sans-serif}
+<title>E2E """ + kind + """</title><script src="/hls.min.js"></script><style>body{margin:0;background:#eee;font:18px sans-serif}
 video{width:100%;max-height:55vh}button,a{font:18px sans-serif;min-height:48px;margin:8px}
 </style></head><body><h1>Owned Android video fixture</h1>
 <video id=v controls playsinline loop preload=auto src='""" + src + """'>
@@ -56,7 +56,10 @@ video{width:100%;max-height:55vh}button,a{font:18px sans-serif;min-height:48px;m
 <p><a href="/page/direct">Direct</a><a href="/page/hls">HLS</a>
 <a href="/page/embedded">Embedded</a><a href="/page/redirect">Redirect</a></p>
 <script>
-const v=document.getElementById('v'); const report=(t)=>fetch('/observe',{method:'POST',
+const v=document.getElementById('v');
+if(v.getAttribute('src').includes('.m3u8')&&!v.canPlayType('application/vnd.apple.mpegurl')&&window.Hls&&Hls.isSupported()){
+const h=new Hls();h.loadSource(v.src);h.attachMedia(v);}
+const report=(t)=>fetch('/observe',{method:'POST',
 body:JSON.stringify({event:t,time:v.currentTime,paused:v.paused,source:v.currentSrc,at:performance.now()})}).catch(()=>{});
 document.getElementById('play').onclick=()=>v.play();
 document.getElementById('change').onclick=()=>{v.src='/media/alternate.mp4';v.play()};
@@ -127,16 +130,19 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(302, headers={"Location": origin + target})
         elif u.path == "/sink":
             self.reply(200, b"owned destination", "text/plain")
+        elif u.path == "/hls.min.js":
+            data = (ROOT.parent / "browser/web/hls.min.js").read_bytes()
+            self.reply(200, data, "application/javascript")
         elif u.path.startswith("/page/"):
             self.reply(200, page(u.path.rsplit("/", 1)[1], self.server.server_port).encode(), "text/html; charset=utf-8")
-        elif u.path.startswith("/media/") or u.path.startswith("/slow/"):
-            relative = u.path.split("/", 2)[2]
+        elif u.path.startswith(("/media/", "/slow/", "/slowhls/")):
+            relative = ("hls/" if u.path.startswith("/slowhls/") else "") + u.path.split("/", 2)[2]
             f = (MEDIA / relative).resolve()
             if MEDIA.resolve() not in f.parents or not f.is_file():
                 self.reply(404)
                 return
             if "header_ms" in q:
-                time.sleep(min(10, max(0, int(q["header_ms"][0]))) / 1000)
+                time.sleep(min(10000, max(0, int(q["header_ms"][0]))) / 1000)
             total = f.stat().st_size
             start, end, status = 0, total - 1, 200
             value = self.headers.get("Range")
@@ -176,7 +182,7 @@ class Handler(BaseHTTPRequestHandler):
                         self.wfile.write(chunk)
                         self.wfile.flush()
                         left -= len(chunk)
-                        if u.path.startswith("/slow/"):
+                        if u.path.startswith(("/slow/", "/slowhls/")) and f.suffix != ".m3u8":
                             time.sleep(0.1)
         else:
             self.reply(404)

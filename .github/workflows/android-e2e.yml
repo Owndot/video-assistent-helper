@@ -20,6 +20,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
     outputs:
       apis: ${{ steps.matrix.outputs.apis }}
     steps:
@@ -28,16 +31,39 @@ jobs:
           persist-credentials: false
       - id: matrix
         env:
-          REQUESTED_APIS: ${{ inputs.apis || '[33,35]' }}
+          REQUESTED_APIS: ${{ inputs.apis || '' }}
         run: |
           python3 - <<'PY'
           import json,os
-          values=json.loads(os.environ["REQUESTED_APIS"])
+          values=json.loads(os.environ["REQUESTED_APIS"]) if os.environ["REQUESTED_APIS"] else json.load(open("tests/android_e2e/execution.json"))["apis"]
           assert isinstance(values,list) and 1<=len(values)<=2
           assert all(type(v) is int and v in (26,28,31,32,33,35) for v in values)
           assert len(set(values))==len(values)
           with open(os.environ["GITHUB_OUTPUT"],"a") as out:
               out.write("apis="+json.dumps(values)+"\n")
+              out.write("previous_run="+str(json.load(open("tests/android_e2e/execution.json")).get("previous_run",0))+"\n")
+          PY
+      - name: Inspect previous captured failures (optional, read only)
+        if: steps.matrix.outputs.previous_run != '0'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.matrix.outputs.previous_run }}
+          github-token: ${{ github.token }}
+          pattern: android-e2e-api-*
+          path: previous-ui-evidence
+      - name: Print previous trace and accessible UI labels
+        if: steps.matrix.outputs.previous_run != '0'
+        run: |
+          python3 - <<'PY'
+          import pathlib,re,xml.etree.ElementTree as ET,json
+          for file in sorted(pathlib.Path("previous-ui-evidence").glob("*/results.json")):
+              print(file.parent.name)
+              print(re.sub(r"[0-9a-f]{32}","<disposable-id>",file.read_text()))
+          for file in sorted(pathlib.Path("previous-ui-evidence").glob("*/*setup.xml")):
+              print(file)
+              labels=[n.attrib.get("text") or n.attrib.get("content-desc") for n in ET.parse(file).iter("node")]
+              print(re.sub(r"[0-9a-f]{32}","<disposable-id>",repr([x for x in labels if x])[:12000]))
           PY
       - uses: actions/setup-java@v4
         with:
@@ -187,6 +213,7 @@ jobs:
               lines+=["## "+report.parent.name, "",report.read_text()]
           text="\n".join(lines)
           pathlib.Path("ANDROID-E2E-REPORT.md").write_text(text)
+          print(text)
           with open(os.environ["GITHUB_STEP_SUMMARY"],"a") as out: out.write(text)
           PY
       - uses: actions/upload-artifact@v4
