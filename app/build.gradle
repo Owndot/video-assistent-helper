@@ -4,7 +4,7 @@ plugins {
 
 def signingEnv = ['EVP_KEYSTORE_PATH', 'EVP_STORE_PASSWORD', 'EVP_KEY_ALIAS', 'EVP_KEY_PASSWORD', 'EVP_CERT_SHA256']
 def hasReleaseSigning = signingEnv.every { System.getenv(it) }
-def runNo = (System.getenv('GITHUB_RUN_NUMBER') ?: System.getenv('RELEASE_VERSION_CODE') ?: '1') as int
+def runNo = (project.findProperty('migrationFixtureVersion') ?: System.getenv('GITHUB_RUN_NUMBER') ?: System.getenv('RELEASE_VERSION_CODE') ?: '1') as int
 
 android {
     namespace 'de.evp.helfer'
@@ -12,7 +12,7 @@ android {
 
     defaultConfig {
         applicationId 'de.evp.helfer'
-        minSdk 26
+        minSdk ((project.findProperty('migrationFixtureMinSdk') ?: '26') as int)
         targetSdk 34
         versionCode runNo
         versionName "1.0." + runNo
