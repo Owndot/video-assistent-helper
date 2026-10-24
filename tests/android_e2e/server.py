@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Owned, deterministic Android fixtures. No external video sites and no GM shims."""
 import argparse
+from collections import deque
 import json
 import mimetypes
 import re
@@ -11,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-EVENTS = []
+EVENTS = deque(maxlen=10000)
 LOCK = threading.Lock()
 ROOT = Path(__file__).resolve().parent
 MEDIA = ROOT / "generated"
@@ -109,8 +110,9 @@ class Handler(BaseHTTPRequestHandler):
         u = urlsplit(self.path)
         q = parse_qs(u.query)
         if u.path != "/events":
+            self.trace_id = time.monotonic_ns()
             with LOCK:
-                EVENTS.append({"event": "request", "path": u.path,
+                EVENTS.append({"event": "request", "id": self.trace_id, "path": u.path,
                     "cookie": bool(self.headers.get("Cookie")),
                     "authorization": bool(self.headers.get("Authorization")),
                     "range": self.headers.get("Range", ""), "received": time.monotonic()})
@@ -175,18 +177,28 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
             self.end_headers()
             if self.command != "HEAD":
-                with f.open("rb") as stream:
-                    stream.seek(start)
-                    left = end - start + 1
-                    while left:
-                        chunk = stream.read(min(32768, left))
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
-                        self.wfile.flush()
-                        left -= len(chunk)
-                        if u.path.startswith(("/slow/", "/slowhls/")) and f.suffix != ".m3u8":
-                            time.sleep(0.1)
+                left = end - start + 1
+                completed = False
+                try:
+                    with f.open("rb") as stream:
+                        stream.seek(start)
+                        left = end - start + 1
+                        while left:
+                            chunk = stream.read(min(32768, left))
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            self.wfile.flush()
+                            left -= len(chunk)
+                            if u.path.startswith(("/slow/", "/slowhls/")) and f.suffix != ".m3u8":
+                                time.sleep(0.1)
+                    completed = left == 0
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                finally:
+                    with LOCK:
+                        EVENTS.append({"event": "transfer_end", "id": self.trace_id, "path": u.path,
+                            "bytes": end - start + 1 - left, "complete": completed, "received": time.monotonic()})
         else:
             self.reply(404)
 

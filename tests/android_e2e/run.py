@@ -31,6 +31,7 @@ AUTH_KEY = ""
 D = None
 WEB_EXT = None
 LOGCAT = None
+LAST_REVEAL_AT = 0.0
 
 class Blocked(Exception):
     pass
@@ -90,7 +91,7 @@ def case(name, fn, requires=None):
     video = "/sdcard/e2e-" + name + ".mp4"
     try:
         record_log = (OUT / (name + "-screenrecord.log")).open("w")
-        record = subprocess.Popen(["adb", "shell", "screenrecord", "--time-limit", "120", video],
+        record = subprocess.Popen(["adb", "shell", "screenrecord", "--time-limit", "120", "--bit-rate", "1000000", "--size", "720x1280", video],
                                   stdout=record_log, stderr=subprocess.STDOUT)
         detail = fn()
         RESULTS.append({"name": name, "status": "PASS", "seconds": round(time.monotonic() - started, 3), "detail": detail})
@@ -143,11 +144,16 @@ def click(label, scroll=False):
         if D(text=label).exists:
             D(text=label).click()
             return
+    if label in ("Close", "Schließen", "Play", "Wiedergabe", "Subtitles", "Untertitel") and reveal():
+        for sel in selectors:
+            if sel.exists:
+                sel.click()
+                return
     raise AssertionError("Visible control absent: " + label)
 
 def open_app():
     D.app_start(PKG, stop=False)
-    wait(lambda: D(textContains="Video Assistant Helper").exists or D(textContains="Video-Assistent Helper").exists)
+    wait(lambda: D.app_current().get("package") == PKG and D(className="android.widget.ScrollView").exists)
     time.sleep(0.6)
 
 def setup():
@@ -365,10 +371,20 @@ def player_entry(kind="direct"):
                 else D(descriptionContains="video player") if D(descriptionContains="video player").exists else None)
 
 def reveal():
-    if not D(description="Wiedergabe").exists and not D(description="Play").exists:
+    global LAST_REVEAL_AT
+    close = D(description="Close")
+    close_de = D(description="Schließen")
+    if close.exists or close_de.exists:
+        return True
+    # Default is picture-only. Reveal via a genuine single tap before waiting
+    # for controls; do not change the preference or the product's visibility.
+    now = time.monotonic()
+    if now - LAST_REVEAL_AT > 0.9:
         w, h = D.window_size()
         D.click(w * 0.5, h * 0.35)
-        time.sleep(0.4)
+        LAST_REVEAL_AT = now
+        time.sleep(0.25)
+    return close.exists or close_de.exists
 
 def playing_times():
     root = ET.fromstring(D.dump_hierarchy())
@@ -387,7 +403,7 @@ def player():
     time.sleep(2)
     started = time.monotonic()
     button.click()
-    wait(lambda: D(description="Schließen").exists or D(description="Close").exists, timeout=25)
+    wait(reveal, timeout=25)
     controls_ms = round((time.monotonic() - started) * 1000, 1)
     reveal()
     first = playing_times()
@@ -419,9 +435,16 @@ def player():
 def gestures():
     reveal()
     before = request("/ping")
+    if before["vol"] >= .85 or before["bright"] <= .35:
+        request("/vol?v=0.4")
+        request("/bright?v=0.65")
+        # Let the actual player heartbeat observe the real device precondition.
+        time.sleep(3)
+        before = request("/ping")
     w, h = D.window_size()
     D.swipe(w * .85, h * .58, w * .85, h * .46, duration=.5)
     after_vol = wait(lambda: (s if (s := request("/ping"))["vol"] != before["vol"] else None))
+    assert after_vol["vol"] > before["vol"], "Upward volume swipe reduced volume"
     D.swipe(w * .15, h * .40, w * .15, h * .50, duration=.5)
     after_bright = wait(lambda: (s if (s := request("/ping"))["bright"] != before["bright"] else None))
     assert after_bright["bright"] < before["bright"]
@@ -430,6 +453,7 @@ def gestures():
 
 def seek_restore():
     reveal()
+    observed_at = time.monotonic()
     before = playing_times()
     sel = D(descriptionMatches=r".*(s vor|s forward).*")
     assert sel.exists, "Native accessible forward control missing"
@@ -437,12 +461,26 @@ def seek_restore():
     time.sleep(.6)
     after = playing_times()
     assert before != after, "Seek did not change clock"
+    def seconds(label):
+        m, sec = map(int, label.split(":"))
+        return m * 60 + sec
+    own_time = min(map(seconds, after))
+    sampled_at = time.monotonic()
     click("Schließen") if D(description="Schließen").exists else click("Close")
-    with urllib.request.urlopen("http://127.0.0.1:8765/events") as response:
-        events = json.load(response)
-    times = [e["time"] for e in events if e.get("event") == "seeked" and "time" in e]
-    assert times and max(times) > 5, "Original video did not receive restored position"
-    return {"clock_before": before, "clock_after": after, "fixture_seek_events": times[-5:]}
+    def restored():
+        with urllib.request.urlopen("http://127.0.0.1:8765/events") as response:
+            events = json.load(response)
+        times = [e["time"] for e in events if e.get("event") == "seeked"
+                 and e.get("received", 0) >= observed_at and "time" in e]
+        if not times:
+            return None
+        # UI clock rounds to whole seconds; allowance follows measured elapsed
+        # time until close, not an arbitrary player performance threshold.
+        upper = own_time + (time.monotonic() - sampled_at) + 1.5
+        assert any(own_time - 1 <= t <= upper for t in times), "Original did not restore the actual own-player position"
+        return times
+    times = wait(restored, timeout=5)
+    return {"clock_before": before, "clock_after": after, "new_fixture_seek_events": times}
 
 def source(kind):
     launch_url("http://127.0.0.1:8765/page/" + kind)
@@ -460,20 +498,38 @@ def source(kind):
     click("Schließen") if D(description="Schließen").exists else click("Close")
     return kind + ": real Firefox playback/own player clock advanced"
 
-def downloads():
-    # Trigger downloads using actual user clicks; no direct /download API invocation.
-    player_entry("download").click()
-    wait(lambda: D(description="Schließen").exists or D(description="Close").exists)
+def ui_helper_download():
     reveal()
-    before = set(shell("ls", "/sdcard/Download/Video-Assistent", check=False).splitlines())
     selector = D(descriptionContains="Herunterladen")
     if not selector.exists:
         selector = D(descriptionContains="Download")
-    assert selector.exists
-    selector.click()
-    time.sleep(.5)
+    assert selector.exists, "No visible download control"
+    selector.long_click(duration=.7)
+    wait(lambda: D(text="With the helper").exists or D(text="Mit dem Helper").exists, timeout=8)
+    click("With the helper") if D(text="With the helper").exists else click("Mit dem Helper")
+
+
+def downloads():
+    # Trigger downloads using actual user clicks; no direct /download API invocation.
+    player_entry("download").click()
+    wait(reveal)
     reveal()
-    selector.click()
+    before = set(shell("ls", "/sdcard/Download/Video-Assistent", check=False).splitlines())
+    download_start = time.monotonic()
+    ui_helper_download()
+    time.sleep(.5)
+    ui_helper_download()
+    # A separate real browser/player handoff while the two slow downloads run.
+    reveal()
+    click("Schließen") if D(description="Schließen").exists else click("Close")
+    resolving_at = time.monotonic()
+    launch_url("http://127.0.0.1:8765/page/redirect")
+    click("Play fixture")
+    button = wait(lambda: D(descriptionContains="Videoplayer") if D(descriptionContains="Videoplayer").exists
+                  else D(descriptionContains="video player") if D(descriptionContains="video player").exists else None)
+    button.click()
+    wait(reveal)
+    player_during_download_ms = round((time.monotonic() - resolving_at) * 1000, 1)
     expected_size = Path("tests/android_e2e/generated/clip.mp4").stat().st_size
     def finished():
         now = set(shell("ls", "/sdcard/Download/Video-Assistent", check=False).splitlines())
@@ -490,8 +546,25 @@ def downloads():
         local.unlink()  # artifacts retain hashes and screen evidence, not duplicate owned media
     expected = hashlib.sha256(Path("tests/android_e2e/generated/clip.mp4").read_bytes()).hexdigest()
     assert all(value == expected for value in hashes.values()), "Saved video differs from fixture"
-    return {"parallel_ui_downloads": len(files), "sha256": hashes,
-            "note": "Two user-triggered downloads; file content verified, not just HTTP success"}
+    def overlapping():
+        with urllib.request.urlopen("http://127.0.0.1:8765/events") as response:
+            events = json.load(response)
+        begins = {e["id"]: e for e in events if e.get("event") == "request"
+                  and e.get("path") == "/slow/clip.mp4" and e["received"] >= download_start}
+        ends = [e for e in events if e.get("event") == "transfer_end" and e.get("id") in begins
+                and e.get("complete") and e.get("bytes") == expected_size]
+        for i, one in enumerate(ends):
+            for two in ends[i+1:]:
+                left = max(begins[one["id"]]["received"], begins[two["id"]]["received"])
+                right = min(one["received"], two["received"])
+                if right > left:
+                    return {"overlap_ms": round((right-left)*1000, 1),
+                            "first_request": one["id"], "second_request": two["id"]}
+    overlap = wait(overlapping, timeout=5)
+    return {"parallel_ui_downloads": len(files), "sha256": hashes, "server_transfer_evidence": overlap,
+            "browser_handoff_during_downloads_ms": player_during_download_ms,
+            "note": "Actual concurrent complete transfers and two saved-file hashes; UI/redirect timing, not Chrome-DNR resolution timing"}
+
 
 def background():
     reveal()
@@ -511,7 +584,7 @@ def background():
 
 def subtitles():
     player_entry().click()
-    wait(lambda: D(description="Schließen").exists or D(description="Close").exists)
+    wait(reveal)
     reveal()
     click("Untertitel") if D(description="Untertitel").exists else click("Subtitles")
     click("E2E English")
@@ -523,7 +596,7 @@ def subtitles():
 def switch_source():
     button = player_entry()
     button.click()
-    wait(lambda: D(description="Schließen").exists or D(description="Close").exists)
+    wait(reveal)
     reveal()
     click("Schließen") if D(description="Schließen").exists else click("Close")
     click("Switch fixture source")
@@ -545,7 +618,7 @@ def switch_source():
 
 def rotation():
     player_entry().click()
-    wait(lambda: D(description="Schließen").exists or D(description="Close").exists)
+    wait(reveal)
     D.set_orientation("l")
     wait(lambda: D.window_size()[0] > D.window_size()[1])
     reveal()
@@ -562,13 +635,9 @@ def rotation():
 
 def cancel_download():
     player_entry("slowhls").click()
-    wait(lambda: D(description="Schließen").exists or D(description="Close").exists)
+    wait(reveal)
     reveal()
-    sel = D(descriptionContains="Herunterladen")
-    if not sel.exists:
-        sel = D(descriptionContains="Download")
-    assert sel.exists
-    sel.click()
+    ui_helper_download()
     time.sleep(.5)
     D.open_notification()
     # Expand download notification if actions are collapsed.
@@ -592,7 +661,7 @@ def opening_cycles():
         button = player_entry()
         start = time.monotonic()
         button.click()
-        wait(lambda: D(description="Schließen").exists or D(description="Close").exists)
+        wait(reveal)
         reveal()
         samples.append({"cycle": i + 1, "entry_to_controls_ms": round((time.monotonic() - start) * 1000, 1),
             "helper_pss": shell("dumpsys", "meminfo", PKG),
@@ -602,26 +671,71 @@ def opening_cycles():
     (OUT / "player-cycle-observations.json").write_text(json.dumps(samples), encoding="utf8")
     return "6 real open/close cycles with timing/PSS/CPU observations. No baseline or leak verdict inferred."
 
-def native_cookie_redirect():
+def native_cookie_redirect(kind="hls"):
     # This is deliberately labeled real Android HTTP/API integration, not UI interaction.
     start = time.monotonic()
     params = urllib.parse.urlencode({
-        "u": "http://127.0.0.1:8765/redirect?cross=1&to=/sink",
+        "u": "http://127.0.0.1:8765/redirect?cross=1&to=" + ("/sink" if kind == "hls" else "/media/clip.mp4"),
         "ref": "http://127.0.0.1:8765/page/direct", "c": "e2e_sentinel=disposable",
-        "t": "e2e-cookie-boundary", "k": "hls"})
+        "t": "e2e-cookie-boundary-" + kind, "k": kind})
     result = request("/download?" + params)
     assert result["ok"]
     def seen():
         with urllib.request.urlopen("http://127.0.0.1:8765/events") as response:
             data = json.load(response)
-        rows = [e for e in data if e.get("path") == "/sink" and e.get("received", 0) >= start]
-        return rows or None
+        rows = [e for e in data if e.get("event") == "request" and e.get("path") == ("/sink" if kind == "hls" else "/media/clip.mp4") and e.get("received", 0) >= start]
+        original = [e for e in data if e.get("event") == "request" and e.get("path") == "/redirect" and e.get("received", 0) >= start]
+        return (rows, original) if rows else None
     try:
-        rows = wait(seen, timeout=20)
+        rows, original = wait(seen, timeout=20)
     except AssertionError:
         raise AssertionError("Installed APK did not reach redirect destination: " + str(request("/dlstate?id=" + str(result["id"]))))
+    assert original and any(e["cookie"] for e in original), "Control missing: first hop did not receive the intended disposable cookie"
     assert all(not e["cookie"] and not e["authorization"] for e in rows), "Credentials crossed Android HTTP redirect"
-    return "Actual installed APK stream fetch redirected to localhost; destination received no Cookie/Authorization. API integration, no browser simulation."
+    return "Actual installed APK " + kind + " fetch: first hop received disposable Cookie, cross-site destination received none. API integration; Authorization was not supplied."
+
+def paired_restart():
+    old = KEY
+    D.app_stop(PKG)
+    open_app()
+    wait(unauthenticated_ready)
+    assert prefs().get("key") == old and prefs().get("paired") == "true"
+    # Reopen with the original browser storage; no /pair navigation or GM writes.
+    button = player_entry()
+    button.click()
+    wait(reveal)
+    before = request("/ping")
+    w, h = D.window_size()
+    if before["vol"] >= .85:
+        request("/vol?v=0.4")
+        time.sleep(3)
+        before = request("/ping")
+    D.swipe(w*.85, h*.58, w*.85, h*.46, duration=.5)
+    wait(lambda: request("/ping")["vol"] > before["vol"])
+    click("Schließen") if D(description="Schließen").exists else click("Close")
+    return "Real Helper force-stop/restart retained key and pairing; existing browser storage controlled Android volume without re-pairing."
+
+def reset_pairing():
+    global KEY, AUTH_KEY
+    old = KEY
+    open_app()
+    D(scrollable=True).scroll.toBeginning()
+    row = D(text="Connect to the browser")
+    if not row.exists:
+        D(scrollable=True).scroll.to(text="Connect to the browser")
+    row.long_click(duration=1.2)
+    wait(lambda: prefs().get("paired") == "false" and prefs().get("key") != old)
+    KEY = prefs()["key"]
+    try:
+        with urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:14781/ping",
+                headers={"X-EVP-Key": old}), timeout=5):
+            raise AssertionError("Reset failed to revoke old pairing key")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 403
+    pair()
+    assert request("/ping")["ok"]
+    return "Long-pressed native pairing card, old key rejected (403), re-paired using actual browser page and new disposable key."
+
 
 def port_conflict():
     D.app_start("de.evp.helfer.e2ecompeting")
@@ -653,6 +767,7 @@ def main():
     adb("logcat", "-c")
     provenance = {
         "route": ROUTE,
+        "automation_commit": os.environ.get("GITHUB_SHA"),
         "helper_commit": os.environ.get("HELPER_COMMIT"), "kadri_commit": os.environ.get("KADRI_COMMIT"),
         "api": shell("getprop", "ro.build.version.sdk").strip(),
         "android": shell("getprop", "ro.build.version.release").strip(),
@@ -681,7 +796,10 @@ def main():
     case("download_cancel", cancel_download, ["real_browser_pairing"])
     case("parallel_downloads", downloads, ["real_browser_pairing"])
     case("background_pip_return", background, ["parallel_downloads"])
+    case("paired_helper_restart", paired_restart, ["real_browser_pairing"])
+    case("pairing_reset_roundtrip", reset_pairing, ["real_browser_pairing"])
     case("native_cookie_redirect", native_cookie_redirect, ["helper_setup"])
+    case("native_downloadmanager_cookie_redirect", lambda: native_cookie_redirect("file"), ["helper_setup"])
     case("real_port_conflict", port_conflict, ["helper_setup"])
     case("no_java_crash", crash_check)
     for name, reason in {

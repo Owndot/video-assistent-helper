@@ -138,3 +138,22 @@ The unchanged userscript still declares a mutable hls.js@1 CDN @require; the
 manager fetches it normally. This route therefore needs CDN access during
 installation and is not a completely offline dependency baseline. Owned video
 fixtures never use external streaming sites. No metadata URL is silently rewritten.
+
+For test-only changes a previous bundle may be reused (reuse_bundle_run). The
+workflow compares the complete app subtree and root Gradle build inputs by Git
+object IDs before reusing its APKs, then verifies their saved SHA256 checksums.
+The original APK commit stays in provenance; automation_commit records the new
+tests. Changing Android build input refuses reuse. Kadri is rebuilt at the
+selected exact kadri_sha; Firefox version is freshly resolved/downloaded. No
+historical repository keystore or full-history checkout is needed. Set
+execution.json previous_run to 0 after diagnosis; expired optional evidence
+never blocks the functional suite. Ordinary development refs do not trigger CI.
+Screen recordings use 720x1280/1Mbps to limit artifact size; screenshots retain
+full device resolution for visual assertions.
+
+The installed-APK tests found a product issue on API33 at 503cfe0: accepted
+plain-HTTP media URLs were blocked by Android's target-SDK cleartext policy
+(Fehler: Cleartext HTTP traffic to 127.0.0.1 not permitted). Native restart,
+unauthorized-key/Host rejection and real port conflict passed on both isolated
+route preparations. Browser installation had not yet been reached because of a
+Firefox menu-selector failure. These are not passing browser integrations.
