@@ -1,6 +1,10 @@
-# Current incident update
+# Current validation status — 2026-10-24
 
-The historical report below predates the repository becoming public. Containment PR #2 is now merged; current main no longer exposes signing files or credentials, but public historical copies remain compromised. Validation now uses disposable keys only and has no release job; browser CI no longer writes result branches. See VALIDATION-SAFETY.md and SIGNING-ROTATION-DECISION.md for current evidence and pending decisions.
+The report below is historical; its earlier visibility, test and fingerprint statements are superseded by VALIDATION-SAFETY.md, MIGRATION-VALIDATION.md and FINAL-VALIDATION-REPORT.md.
+
+Containment PR #2 is merged. Current main has no embedded key/passwords and cannot publish from its current workflow. The repository is still public and historical copies remain compromised. A read-only audit verified the exposed certificate against the pinned published APK. Normal validation uses disposable signing identities only; the verified compromised fingerprint is blocked by release validation.
+
+Additional validation found and fixed a rapid listener-restart race, Android cookie sharing between unrelated PSL tenants, native Android redirect cookie forwarding, and the corresponding userscript session-permission boundary. These are targeted corrections, not a player redesign. Physical-device validation and production migration remain pending.
 
 # Phase 1 corrections — 2026-10-24
 

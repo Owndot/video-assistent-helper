@@ -53,3 +53,34 @@ After the same fixed workload:
 Repeat with the verified Firefox package and distinct output folders.
 The collector is read-only: it does not reset battery stats, clear apps, alter brightness, install packages or read pairing preferences. Review files locally before sharing; battery stats may include broader device usage.
 If no ADB computer is available, use the manual functional/video procedure and mark CPU/PSS as NOT TESTED. Do not substitute a Samsung aggregate memory tile for process PSS.
+
+## Read-only provenance check of your existing helper
+Before stopping/changing the existing production installation, optionally verify its public signer on your own ADB computer:
+1. Run `adb shell pm path de.evp.helfer`. Copy the reported base.apk path (without the leading `package:`).
+2. Run `adb pull COPIED_BASE_APK_PATH trusted-installed-helper.apk`.
+3. Run SDK `apksigner verify --verbose --print-certs trusted-installed-helper.apk`.
+4. Compare the **certificate SHA-256** with `ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5`, the exposed historical key and pinned public release identity. Also record the APK file hash separately.
+This is not an installation or signing operation. A match identifies the old signer; it does not make the exposed key safe. If different, stop migration assumptions and retain the evidence. Do not share private app preferences or pairing keys.
+
+A real production-successor update cannot be tested yet: no successor key/approved lineage exists. Test-key emulator migrations do not authorize a production rotation.
+
+## Detailed result IDs
+Use one row per version/browser route in DEVICE-RESULTS.csv. Preserve raw samples in a separate file linked from its evidence column.
+- P01: first actually visible frame; P02: open/close handoff; P03: resolution with two downloads and slow headers; P04: matched browser/helper PSS and CPU; P05: matched unplugged battery session; P06: multi-GB file, hash, Range/resume, cancel and slow server; P07: 20/50 open-close cycles and retained memory. Follow the numbered baseline protocol in FINAL-DEVICE-VALIDATION.md; no fixed pass threshold is invented.
+- S01: synthetic-cookie/Authorization redirect inspection on controlled servers; S02: simultaneous LAN/public request isolation; S03: actual extension-worker restart during setup/headers/redirect/body; S04: queued/header/body cancellation and timeout cleanup. Desktop CI evidence does not fill these phone rows. If you cannot inspect controlled server logs or worker tools on this browser, mark NOT TESTED with the reason.
+- M01: public certificate comparison of the already installed/offline production APK (read-only instructions above).
+- M02: an approved future production-successor upgrade plus settings/permission/new-pairing checks. This remains blocked/NOT TESTED: no approved successor key or production lineage exists. Do not generate one or use fixture keys for this row.
+
+Android 8-12L legacy reinstall paths require additional representative devices; success on your Android 17 phone does not cover them. Existing emulator results are separately recorded in FINAL-VALIDATION-REPORT.md.
+
+## Exact current test artifact and efficient run order
+Verified isolated debug build: [run 40131433569](https://github.com/Owndot/video-assistent-helper/actions/runs/40131433569), source `8561f7e7d2c5606d9593cae1ea67926d4e4fa2f1`, artifact [helper-debug-NOT-production](https://github.com/Owndot/video-assistent-helper/actions/runs/40131433569/artifacts/12575590883).
+The archive includes app-debug.apk, debug-apk.sha256, debug-source-commit.txt and debug-signature.txt. Match the APK SHA-256 to the manifest and verify the signer with SDK apksigner if available. The archive/ZIP digest is a different value from the APK digest. Later docs-only commits do not change these APK sources.
+For matched stable/current trials use the two **debug, test-signed source builds** in [comparison run 40131293057](https://github.com/Owndot/video-assistent-helper/actions/runs/40131293057), not the old production APK. These artifacts have limited retention; if expired, rerun the read-only comparison workflow.
+
+1. Record versions/provenance and save existing settings; leave production data intact.
+2. Check whether each browser actually supports the intended extension/manager. Mark unavailable routes NOT TESTED; do not install an unrelated browser merely to make the row green.
+3. On each available route run F01-F05, F08, F09 and F12 first. If playback, pairing or brightness restoration fails, record it before spending time on battery comparisons.
+4. Complete F06-F15, including mirroring/cast only if the source/hardware supports them.
+5. Perform matched P01-P04 and P06-P07 trials, then matched unplugged P05 battery sessions. Separate stable-source observations from current-source observations and record network/temperature.
+6. Fill the relevant S/M rows only where the required tools and authorization exist. M02 remains NOT TESTED until an approved production migration is separately prepared.

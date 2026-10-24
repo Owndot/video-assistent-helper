@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # chromium: Playwright 1.56 · firefox-neu: neueste Playwright (aktuelles Firefox) · firefox: Firefox 142 (nur von Hand; erzeugt dort bei Maus keine Zeiger-Ereignisse)
+        # chromium: Playwright 1.56 · firefox-neu: pinned Playwright 1.64.1 (validated Firefox engine) · firefox: Firefox 142 (nur von Hand; erzeugt dort bei Maus keine Zeiger-Ereignisse)
         browser: ${{ fromJSON(github.event.inputs.browsers || '["chromium","firefox-neu"]') }}
     steps:
       - uses: actions/checkout@v4
@@ -47,7 +47,7 @@ jobs:
       - name: Werkzeuge
         run: |
           # Chromium: gleiche Version wie beim Entwickeln (neuere verweigern Größenänderung im Vollbild)
-          if [ "${{ matrix.browser }}" = firefox-neu ]; then pip install playwright pillow; else pip install playwright==1.56.0 pillow; fi
+          if [ "${{ matrix.browser }}" = firefox-neu ]; then pip install playwright==1.64.1 pillow==13.0.0; else pip install playwright==1.56.0 pillow==13.0.0; fi
           python -m playwright install --with-deps ${{ matrix.browser == 'chromium' && 'chromium' || 'firefox' }}
           sudo apt-get install -y ffmpeg
 

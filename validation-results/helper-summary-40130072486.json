@@ -1,0 +1,61 @@
+{
+  "run": 40130072486,
+  "source": "24169b9415095462cba2a344800574dafd99c192",
+  "scope": "API33 emulator, foreground helper idle and ping only; no playback or battery claim",
+  "stable": {
+    "n": 3,
+    "authenticated_ready_ms": {
+      "median": 664.6734560000027,
+      "min": 621.6138999999998,
+      "max": 902.1995040000093
+    },
+    "pss_after_kib": {
+      "median": 32832,
+      "min": 32787,
+      "max": 32843
+    },
+    "idle_cpu_ticks": {
+      "median": 6,
+      "min": 4,
+      "max": 7
+    },
+    "rpc_100_ms": {
+      "median": 229.22943899999382,
+      "min": 202.0120089999864,
+      "max": 249.0435709999872
+    },
+    "rpc_cpu_ticks": {
+      "median": 12,
+      "min": 12,
+      "max": 14
+    }
+  },
+  "current": {
+    "n": 3,
+    "authenticated_ready_ms": {
+      "median": 622.2731679999924,
+      "min": 583.5452329999953,
+      "max": 668.6510750000139
+    },
+    "pss_after_kib": {
+      "median": 32876,
+      "min": 32857,
+      "max": 32892
+    },
+    "idle_cpu_ticks": {
+      "median": 6,
+      "min": 5,
+      "max": 6
+    },
+    "rpc_100_ms": {
+      "median": 208.75606199999197,
+      "min": 208.4290110000211,
+      "max": 217.47657400001685
+    },
+    "rpc_cpu_ticks": {
+      "median": 12,
+      "min": 11,
+      "max": 13
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "run": 40130307638,
+  "source": "479285056f397116533e271aab0b4160ce3bac23",
+  "methods": {
+    "physical_device": false,
+    "synthetic_manager": true,
+    "thresholds": false,
+    "n_per_version": 6
+  },
+  "stable": {
+    "n": 6,
+    "bootstrap_body_ms": {
+      "median": 1.3000000000029104,
+      "min": 1.1000000000058208,
+      "max": 1.3999999999941792
+    },
+    "first_compositor_frame_ms": {
+      "median": 127,
+      "min": 113.59999999999127,
+      "max": 138.60000000000582
+    },
+    "cold_lookup_ms": {
+      "median": 0.25,
+      "min": 0.10000000000582077,
+      "max": 0.3000000000029104
+    },
+    "lookup_retained_heap_bytes": {
+      "median": 6344,
+      "min": 6344,
+      "max": 6344
+    }
+  },
+  "current": {
+    "n": 6,
+    "bootstrap_body_ms": {
+      "median": 1.3999999999941792,
+      "min": 1.3000000000029104,
+      "max": 1.4000000000087311
+    },
+    "first_compositor_frame_ms": {
+      "median": 126.60000000000582,
+      "min": 121.30000000000291,
+      "max": 133
+    },
+    "cold_lookup_ms": {
+      "median": 2.249999999992724,
+      "min": 2.1999999999970896,
+      "max": 3
+    },
+    "lookup_retained_heap_bytes": {
+      "median": 388340,
+      "min": 388340,
+      "max": 388340
+    }
+  }
+}

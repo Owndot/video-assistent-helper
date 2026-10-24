@@ -1,49 +1,85 @@
 case_id,device_model,android_api,browser_version,extension_or_script_commit,apk_sha256,signer_sha256,status,baseline_observation,current_observation,evidence,notes
-F01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F03,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F04,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F05,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F06,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F07,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F08,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F09,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F10,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F11,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F12,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F13,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-PERF,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F03,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F04,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F05,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F06,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F07,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F08,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F09,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F10,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F11,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F12,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F13,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-PERF,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F03,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F04,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F05,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F06,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F07,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F08,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F09,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F10,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F11,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F12,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F13,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-PERF,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record One UI and exact versions before execution
-F14,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Mirroring/external player or cast; record unsupported capability
-F15,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Mirroring/external player or cast; record unsupported capability
-F14,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Mirroring/external player or cast; record unsupported capability
-F15,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Mirroring/external player or cast; record unsupported capability
-F14,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Mirroring/external player or cast; record unsupported capability
-F15,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Mirroring/external player or cast; record unsupported capability
+F01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F03,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F04,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F05,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F06,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F07,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F08,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F09,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F10,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F11,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F12,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F13,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F14,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F15,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P03,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P04,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P05,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P06,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P07,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+S01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+S02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+S03,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+S04,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+M01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+M02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,A Vivaldi+Kadri version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F03,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F04,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F05,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F06,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F07,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F08,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F09,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F10,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F11,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F12,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F13,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F14,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F15,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P03,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P04,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P05,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P06,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P07,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+S01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+S02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+S03,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+S04,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+M01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+M02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,B Vivaldi+Userscript version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F03,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F04,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F05,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F06,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F07,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F08,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F09,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F10,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F11,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F12,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F13,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F14,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+F15,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P03,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P04,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P05,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P06,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+P07,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+S01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+S02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+S03,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+S04,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+M01,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
+M02,Samsung S26 Ultra,Android 17.0 reported; API not yet read,C Firefox route and version pending,,,,NOT TESTED,,,,Record exact versions; unavailable routes remain NOT TESTED
