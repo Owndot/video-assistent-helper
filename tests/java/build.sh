@@ -4,6 +4,6 @@ set -euo pipefail
 cd "$(dirname "$0")"
 SRC=../../app/src/main/java/de/evp/helfer
 rm -rf classes && mkdir classes
-javac -d classes $SRC/Tr.java $SRC/Fetcher.java $SRC/HlsCore.java $SRC/DashCore.java $SRC/MiniServer.java \
-  jt/TestMain.java jt/TestHelper.java jt/TestPortConflict.java jt/de/evp/helfer/TestCookie.java
+javac -d classes $SRC/Tr.java $SRC/Fetcher.java $SRC/HlsCore.java $SRC/DashCore.java $SRC/MiniServer.java $SRC/SettingsTransfer.java \
+  jt/TestMain.java jt/TestHelper.java jt/TestPortConflict.java jt/TestSettingsTransfer.java jt/de/evp/helfer/TestCookie.java
 echo "Übersetzt nach classes/"
