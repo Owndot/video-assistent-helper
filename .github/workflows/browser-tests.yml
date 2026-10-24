@@ -4,7 +4,7 @@ name: Browser-Tests
 # Läuft bei Änderungen am Skript oder an den Tests (und von Hand über "Run workflow").
 on:
   push:
-    branches: [main]
+    branches: [main, codex/security-phase-1]
     paths: ['src/**', 'tools/**', 'userscript/**', 'tests/**', '.github/workflows/browser-tests.yml']
   workflow_dispatch:
     inputs:
