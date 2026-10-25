@@ -112,11 +112,10 @@ jobs:
                   for at in range(0,len(encoded),12000): print("E2E_PNG_DATA "+encoded[at:at+12000])
                   print("E2E_PNG_END")
           PY
-      - name: Calibrate visual fallback against the captured real Firefox frame
-        if: steps.matrix.outputs.previous_run == '40185452608'
+      - name: Calibrate visual fallback against the versioned real Firefox crop
         run: |
           python3 -m pip install Pillow==11.3.0 opencv-python-headless==4.12.0.88 CairoSVG==2.8.2
-          python3 tests/android_e2e/visual.py "$(find previous-ui-evidence -name real_extension_install.png | head -1)"
+          python3 tests/android_e2e/visual.py tests/android_e2e/reference/entry.png
       - name: Reuse a previously verified test-only bundle when requested
         if: steps.matrix.outputs.reuse_bundle_run != '0'
         uses: actions/download-artifact@v4

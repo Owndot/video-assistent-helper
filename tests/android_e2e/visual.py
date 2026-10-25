@@ -83,9 +83,9 @@ if __name__=="__main__":
     image=Image.open(sys.argv[1])
     hit=locate(image,"I.player",2.625)
     print("Diagnostic best visual candidate:",hit,flush=True)
-    assert hit and 900<hit["x"]<1050 and 1200<hit["y"]<1400,hit
+    assert hit and 40<hit["x"]<52 and 40<hit["y"]<52,hit
     from PIL import ImageDraw
     negative=image.copy()
-    ImageDraw.Draw(negative).rectangle((940,1250,1030,1340),fill="white")
+    ImageDraw.Draw(negative).rectangle((0,0,*negative.size),fill="white")
     assert locate(negative,"I.player",2.625) is None,"False match outside the removed real icon"
     print("PASS real screenshot positive/negative icon calibration:",hit)

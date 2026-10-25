@@ -413,7 +413,8 @@ def firefox_prepare():
     row.click()
     shot("firefox-remote-debug-enabled")
     D.press("back")
-    return "Fresh real Firefox profile; Remote debugging via USB enabled through actual UI swipes/toggle."
+    shell("cmd", "role", "add-role-holder", "--user", "0", "android.app.role.BROWSER", FIREFOX)
+    return "Fresh real Firefox profile; Remote debugging via USB enabled through actual UI swipes/toggle; Firefox provisioned as emulator default browser."
 
 def launch_url(url):
     global NAVIGATION_INITIALIZED
@@ -502,12 +503,23 @@ def pair():
     assert prefs().get("paired") != "true", "Setup must not pre-pair through an authenticated probe"
     open_app()
     click("Connect", scroll=True)
-    # Android resolver may show Firefox once or per visit.
-    if D(text="Firefox").exists(timeout=3):
-        D(text="Firefox").click()
-    once = D(textMatches="(?i)just once")
-    if once.exists(timeout=2):
-        once.click()
+    # Never accept the emulator's WebView Browser Tester as a pairing route.
+    # Select the actual installed Firefox; do not click an unselected "Just once".
+    time.sleep(.8)
+    shot("browser-chooser")
+    selected = False
+    until = time.monotonic() + 15
+    while time.monotonic() < until:
+        if D.app_current().get("package") == FIREFOX:
+            break
+        target = visible_label("Firefox", contains=True)
+        if target and D.app_current().get("package") in ("android", "com.android.intentresolver"):
+            target.click()
+            selected = True
+        once = D(textMatches="(?i)just once")
+        if selected and once.exists: once.click()
+        time.sleep(.3)
+    assert D.app_current().get("package") == FIREFOX, "Pairing intent did not reach installed Firefox"
     wait(lambda: D(textContains="Connected.").exists or D(textContains="Verbunden.").exists, timeout=20)
     assert prefs().get("paired") == "true"
     AUTH_KEY = KEY
@@ -515,7 +527,7 @@ def pair():
     open_app()
     D(scrollable=True).scroll.toBeginning()
     assert D(textContains="Connected").exists
-    return "App Connect → Android chooser → Firefox → actual Kadri storage/ping; helper paired preference confirmed."
+    return "App Connect → installed Firefox → actual extension/manager storage and Helper ping; paired preference confirmed. Firefox default role was ADB provisioning."
 
 def player_entry(kind="direct"):
     launch_url("http://127.0.0.1:8765/page/" + kind)
