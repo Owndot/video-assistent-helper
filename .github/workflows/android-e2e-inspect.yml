@@ -88,7 +88,6 @@ jobs:
           for file in sorted(pathlib.Path("evidence").glob("**/player_play_pause.png")):
               im=Image.open(file)
               print("RENDERED_CLOCK",file,visual.words(im.crop((0,int(im.height*.65),im.width,im.height))))
-          PY
           for file in sorted(pathlib.Path("evidence").glob("**/subtitle_selection.png")):
               im=Image.open(file).convert("RGB")
               vw=min(im.width,im.height*16/9); vh=vw*9/16; top=(im.height-vh)/2
@@ -98,3 +97,4 @@ jobs:
               from PIL import ImageOps
               clean=Image.fromarray(np.where(np.min(np.array(crop),axis=2)>200,0,255).astype("uint8"))
               print("SUBTITLE_WHITE",file,visual.words(clean.resize((clean.width*2,clean.height*2))))
+          PY
