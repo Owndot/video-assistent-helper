@@ -36,9 +36,19 @@ public interface Fetcher {
 
         static String baseOf(String host) { return PublicSuffix.site(host); }
 
+        /** Never copy page credentials/referrer from HTTPS into cleartext HTTP. */
+        static boolean pageHeadersFor(String referer, String url) {
+            try {
+                URL page = new URL(referer), target = new URL(url);
+                String scheme = page.getProtocol();
+                return ("http".equals(scheme) || "https".equals(scheme)) &&
+                    (!"https".equals(scheme) || "https".equals(target.getProtocol()));
+            } catch (Exception ignored) { return false; }
+        }
+
         /** Cookies der Seite nur an deren eigene Server – nie an fremde Adressen aus einer Playlist */
         boolean cookieFor(String url) {
-            if (cookie == null || cookie.isEmpty() || cookieBase.isEmpty()) return false;
+            if (cookie == null || cookie.isEmpty() || cookieBase.isEmpty() || !pageHeadersFor(referer, url)) return false;
             try {
                 return cookieBase.equals(baseOf(new URL(url).getHost()));
             } catch (Exception e) { return false; }
@@ -50,7 +60,7 @@ public interface Fetcher {
             c.setReadTimeout(30000);
             c.setInstanceFollowRedirects(false);
             if (userAgent != null && !userAgent.isEmpty()) c.setRequestProperty("User-Agent", userAgent);
-            if (referer != null && !referer.isEmpty()) {
+            if (referer != null && !referer.isEmpty() && pageHeadersFor(referer, url)) {
                 c.setRequestProperty("Referer", referer);
                 try { URL r = new URL(referer); c.setRequestProperty("Origin", r.getProtocol() + "://" + r.getAuthority()); } catch (Exception ignored) {}
             }

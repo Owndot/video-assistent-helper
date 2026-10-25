@@ -45,6 +45,27 @@ jobs:
         run: |
           tests/java/build.sh
           java -cp tests/java/classes TestPortConflict
+      - name: Prove TLS and socket regressions against the actual predecessor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/Fetcher.java?ref=22d94d2e936052440a54d0368b68d6d7a15dd402' --jq .content | base64 --decode > "$work/Fetcher.java"
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/MiniServer.java?ref=22d94d2e936052440a54d0368b68d6d7a15dd402' --jq .content | base64 --decode > "$work/MiniServer.java"
+          javac -cp tests/java/classes -d "$work/old" "$work/Fetcher.java" "$work/MiniServer.java"
+          if timeout 30 java -cp "$work/old:tests/java/classes" de.evp.helfer.TestTlsCookieBoundary > "$work/old-tls.log" 2>&1; then
+            echo 'Previous HTTPS-to-HTTP cookie leak was not rejected'; exit 1
+          fi
+          grep -q 'Cookie sent from HTTPS page to initial HTTP target' "$work/old-tls.log"
+          echo 'PASS: actual predecessor leaks HTTPS-page Cookie on the initial HTTP request'
+          if timeout 15 java -cp "$work/old:tests/java/classes" TestMiniServerLimits --stop-only > "$work/old-socket.log" 2>&1; then
+            echo 'Previous socket shutdown regression unexpectedly passed'; exit 1
+          fi
+          grep -q 'Accepted connection remained open after stop' "$work/old-socket.log"
+          echo 'PASS: actual predecessor leaves accepted socket open after stop'
       - name: Compare rapid-restart regression with previous listener
         env:
           GH_TOKEN: ${{ github.token }}

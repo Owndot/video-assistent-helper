@@ -12,8 +12,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Winziger HTTP-Server nur auf 127.0.0.1 (ohne Android-Teile, damit er sich auch am Rechner testen lässt).
@@ -28,7 +32,9 @@ public class MiniServer {
     private final int port;
     private final java.util.function.Predicate<String> keyOk;
     private final Handler handler;
-    private final ExecutorService pool = Executors.newFixedThreadPool(10);   // auch für Abholen/Liefern beim Laden über den Browser
+    private final ThreadPoolExecutor pool = new ThreadPoolExecutor(10, 10, 0L, TimeUnit.MILLISECONDS,
+        new ArrayBlockingQueue<>(32));   // bound accepted sockets before authentication
+    private final Set<Socket> connections = ConcurrentHashMap.newKeySet();
     private ServerSocket server;
     private Thread listenerThread;
 
@@ -66,6 +72,7 @@ public class MiniServer {
     /** Bind before reporting readiness. A competing helper must never appear ready. */
     public synchronized boolean start() {
         if (server != null && !server.isClosed()) return true;
+        if (pool.isShutdown()) return false;
         try {
             server = new ServerSocket();
             server.setReuseAddress(true);
@@ -79,7 +86,10 @@ public class MiniServer {
             try {
                 while (!bound.isClosed()) {
                     final Socket s = bound.accept();
-                    pool.execute(() -> handle(s));
+                    connections.add(s);
+                    if (bound.isClosed()) { closeConnection(s); continue; }
+                    try { pool.execute(() -> handle(s)); }
+                    catch (RejectedExecutionException full) { closeConnection(s); }
                 }
             } catch (java.io.IOException ignored) {
                 // Closing the listener during normal shutdown interrupts accept().
@@ -90,7 +100,7 @@ public class MiniServer {
         return true;
     }
 
-    public void stop() {
+    public synchronized void stop() {
         try { if (server != null) server.close(); } catch (Exception ignored) {}
         // close() wakes accept(), but the OS can retain its listening socket until
         // that thread leaves accept(). Await it before a new service binds the port.
@@ -100,6 +110,12 @@ public class MiniServer {
             catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         }
         pool.shutdownNow();
+        for (Socket s : connections) closeConnection(s);
+    }
+
+    private void closeConnection(Socket s) {
+        connections.remove(s);
+        try { s.close(); } catch (Exception ignored) {}
     }
 
     private void handle(Socket s) {
@@ -159,6 +175,8 @@ public class MiniServer {
             reply(s, 200, handler.get(path, p));
         } catch (Exception e) {
             try { s.close(); } catch (Exception ignored) {}
+        } finally {
+            closeConnection(s);
         }
     }
 

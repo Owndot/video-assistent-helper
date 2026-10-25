@@ -10,6 +10,8 @@ sleep 1
 rm -rf out
 java -cp classes TestCoreHarnessFailure
 java -cp classes TestPortConflict
+java -cp classes TestMiniServerLimits
+java -cp classes de.evp.helfer.TestTlsCookieBoundary
 java -cp classes TestSettingsTransfer
 java -cp classes de.evp.helfer.TestCookie
 java -cp classes de.evp.helfer.TestRedirectCookies
