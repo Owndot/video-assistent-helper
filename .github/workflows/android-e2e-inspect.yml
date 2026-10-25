@@ -1,4 +1,4 @@
-name: Inspect final Android input evidence (no emulator)
+name: Inspect saved Android seek recordings (no emulator)
 on:
   push:
     branches: [codex/android-e2e-inspect]
@@ -8,33 +8,54 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 40202803284
+          repository: Owndot/video-assistent-helper
+          github-token: ${{ github.token }}
+          name: android-e2e-api-33
+          path: evidence/run25
       - uses: actions/download-artifact@v4
         with:
           run-id: 40203626744
           repository: Owndot/video-assistent-helper
           github-token: ${{ github.token }}
-          pattern: android-e2e-api-*
-          path: evidence
-      - name: Verify final input classification from actual event timestamps
+          name: android-e2e-api-33
+          path: evidence/run26
+      - name: Prepare read-only recording tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg tesseract-ocr
+          python3 -m pip install Pillow==11.3.0
+      - name: Extract actual existing seek frames and rendered clocks
         run: |
           python3 - <<'PY'
-          import pathlib,json
-          for file in sorted(pathlib.Path("evidence").glob("**/*-http-events.json")):
-              if file.name not in ("device_volume_brightness_swipes-http-events.json","seek_and_restore-http-events.json"):continue
-              rows=[r for r in json.loads(file.read_text()) if r.get("event")=="pointer"]
-              print("FINAL_RAW_POINTERS",file,json.dumps(rows))
-              active={}
-              ups=[]
-              for r in sorted(rows,key=lambda x:x["at"]):
-                  if r["phase"]=="pointerdown":active[r["pointer"]]=r
-                  elif r["phase"]=="pointermove-threshold" and r["pointer"] in active:
-                      p=active[r["pointer"]]
-                      print("FINAL_REAL_SWIPE",{"down":[p["x"],p["y"]],"threshold":[r["x"],r["y"]],
-                        "threshold_event_ms":r["stamp"]-p["stamp"],"threshold_dispatch_ms":r["at"]-p["at"]})
-                  elif r["phase"] in ("pointerup","pointercancel"):
-                      active.pop(r["pointer"],None)
-                      if r["phase"]=="pointerup" and r["x"]>r["width"]*.7 and .45<r["y"]/r["height"]<.55:ups.append(r)
-              print("FINAL_DOUBLE_UP_GAPS",[ups[i+1]["at"]-ups[i]["at"] for i in range(len(ups)-1)])
+          import pathlib,subprocess,json,io,csv,re,base64
+          from PIL import Image
+          def words(im):
+              output=io.BytesIO();im.save(output,format="PNG")
+              p=subprocess.run(["tesseract","stdin","stdout","--psm","11","tsv"],input=output.getvalue(),
+                  stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True,timeout=15)
+              return [r for r in csv.DictReader(io.StringIO(p.stdout.decode()),delimiter="\t") if r["text"].strip() and float(r["conf"])>=35]
+          for video in sorted(pathlib.Path("evidence").glob("**/seek_and_restore.mp4")):
+              duration=float(subprocess.check_output(["ffprobe","-v","error","-show_entries","format=duration","-of","csv=p=0",str(video)]))
+              begin=max(0,duration-14)
+              folder=video.parent/"seek-frame-inspection";folder.mkdir(exist_ok=True)
+              subprocess.run(["ffmpeg","-v","error","-y","-ss",str(begin),"-i",str(video),"-vf","fps=2",str(folder/"%03d.png")],check=True)
+              frames=sorted(folder.glob("*.png"))
+              for i,frame in enumerate(frames):
+                  im=Image.open(frame)
+                  crop=im.crop((0,int(im.height*.65),im.width,im.height))
+                  crop=crop.resize((crop.width*2,crop.height*2),Image.Resampling.LANCZOS)
+                  rows=words(crop)
+                  clock=[r["text"] for r in rows if re.fullmatch(r"\d{1,2}:\d{2}",r["text"]) and int(r["left"])<crop.width*.3]
+                  print("RECORDED_CLOCK",str(video),round(begin+i*.5,2),clock,flush=True)
+              selected=[frames[max(0,len(frames)-21)],frames[-2] if len(frames)>1 else frames[0]]
+              for frame in selected:
+                  print("E2E_PNG_BEGIN "+video.parents[1].name+"-"+frame.name,flush=True)
+                  encoded=base64.b64encode(frame.read_bytes()).decode()
+                  for at in range(0,len(encoded),12000):print("E2E_PNG_DATA "+encoded[at:at+12000],flush=True)
+                  print("E2E_PNG_END",flush=True)
           PY
