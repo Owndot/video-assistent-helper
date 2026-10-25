@@ -115,7 +115,7 @@ jobs:
       - name: Calibrate visual fallback against versioned real Firefox frames
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y tesseract-ocr
+          sudo apt-get install -y tesseract-ocr ffmpeg
           python3 -m pip install Pillow==11.3.0 opencv-python-headless==4.12.0.88 CairoSVG==2.8.2
           python3 tests/android_e2e/visual.py tests/android_e2e/reference/entry.png tests/android_e2e/reference/subtitle.png tests/android_e2e/reference/controls.png
       - name: Reuse a previously verified test-only bundle when requested
@@ -175,16 +175,15 @@ jobs:
           python3 -m py_compile tests/android_e2e/*.py
           python3 -m unittest discover -s tests/android_e2e -p test_server.py -v
           bash -n tests/android_e2e/emulator.sh
+      - name: Existing full native core regression (host JVM, not Android)
+        run: |
+          tests/java/build.sh
+          tests/java/run_core_tests.sh
       - name: Verify native stream transport before installing APKs
         if: steps.matrix.outputs.reuse_bundle_run == '0' || steps.reuse_source.outputs.run_transport == 'true'
         run: |
-          tests/java/build.sh
           javac -cp tests/java/classes -d tests/java/classes tests/android_e2e/TestCredentialedStream.java
           java -Xmx32m -cp tests/java/classes de.evp.helfer.TestCredentialedStream
-          java -cp tests/java/classes de.evp.helfer.TestCookie
-          java -cp tests/java/classes de.evp.helfer.TestRedirectCookies
-          java -cp tests/java/classes TestPortConflict
-          java -cp tests/java/classes TestSettingsTransfer
       - name: Build isolated APKs with a short-lived test identity
         if: steps.matrix.outputs.reuse_bundle_run == '0'
         shell: bash
