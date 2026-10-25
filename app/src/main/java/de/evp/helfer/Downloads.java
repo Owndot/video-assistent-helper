@@ -112,7 +112,8 @@ public class Downloads {
         DownloadManager dm = (DownloadManager) c.getSystemService(Context.DOWNLOAD_SERVICE);
         String name = safeName(title, extOf(url, "mp4"));
         DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
-        if (referer != null && !referer.isEmpty() && Fetcher.Http.pageHeadersFor(referer, url)) r.addRequestHeader("Referer", referer);
+        String pageReferrer = Fetcher.Http.referrerFor(referer, url);
+        if (pageReferrer != null) r.addRequestHeader("Referer", pageReferrer);
         if (ua != null && !ua.isEmpty()) r.addRequestHeader("User-Agent", ua);
         r.setTitle(name);
         r.setDescription("Video-Assistent");

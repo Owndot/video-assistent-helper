@@ -12,6 +12,7 @@ java -cp classes TestCoreHarnessFailure
 java -cp classes TestPortConflict
 java -cp classes TestMiniServerLimits
 java -cp classes de.evp.helfer.TestTlsCookieBoundary
+java -cp classes de.evp.helfer.TestReferrerPrivacy
 java -cp classes TestSettingsTransfer
 java -cp classes de.evp.helfer.TestCookie
 java -cp classes de.evp.helfer.TestRedirectCookies

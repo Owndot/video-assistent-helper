@@ -19,7 +19,16 @@ nicht dokumentiert.
    DownloadManager erhält beim direkten Downgrade ebenfalls keinen Referer.
    HTTP→HTTP-Medienserver, HTTPS→HTTPS und HTTP→HTTPS bleiben erlaubt.
 
-2. **Mittel — unbeschränkte unauthentifizierte Socket-Warteschlange / Stop-Leck.**
+2. **Hoch bei Credential-URLs — URL-Geheimnisse in Referer/Origin.**
+   Die rohe Seitenadresse wurde als Referer gesendet; URL-Benutzerinfo gelangte
+   zusätzlich in Origin. Fragmente können z.B. OAuth-Token enthalten. Native
+   Requests und DownloadManager bekommen nun dieselbe bereinigte Referer-URL:
+   Benutzerinfo und Fragment entfernt, roher Pfad und Query unverändert.
+   Origin entsteht aus dieser bereinigten Adresse. TestReferrerPrivacy erfasst
+   tatsächliche HTTP-Header, prüft IPv6/Prozentkodierung und erhält eigene Cookies.
+   Der reale Vorgänger muss an der Fragment-/Benutzerinfo-Prüfung scheitern.
+
+3. **Mittel — unbeschränkte unauthentifizierte Socket-Warteschlange / Stop-Leck.**
    Executors.newFixedThreadPool nahm beliebig viele Verbindungen an, bevor der
    Schlüssel geprüft wurde. shutdownNow schließt blockierende Socket-Lesezugriffe
    nicht zuverlässig; angenommene Verbindungen konnten nach Service-Stop bleiben.
@@ -54,10 +63,9 @@ Konkreter abschließend geprüfter Run und Ergebnis stehen im PR-Text und im
 begleitenden Abschlussbericht. Diese Nachweise sind JVM-/TLS-/Socket-Tests,
 keine neu ausgeführten Android-Gerätetests.
 
-Die ältere TestMain-Fixture hatte eine erfundene HTTPS-Herkunft und einen
-reinen HTTP-Zielserver, der den Herkunftskopf verlangte. Sie verwendet jetzt
-HTTP als synthetische Herkunft. Cookie-Fremdseiten- und Medienassertionen
-bleiben unverändert; TLS-Downgrades haben einen eigenen echten HTTPS-Test.
+Die ältere TestMain-Fixture verwendet jetzt HTTP als synthetische Herkunft,
+weil ihr Server reines HTTP ist. Alle Cookie-Fremdseiten-/Medienassertionen
+bleiben bestehen; HTTPS-Verhalten prüft der echte TLS-Test separat.
 
 Keine Player-/Userscript-/Kadri-Runtime wurde verändert. Keine vollständige
 Browser- oder Emulator-Matrix und kein neues Testframework sind vorgesehen.

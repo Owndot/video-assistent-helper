@@ -61,6 +61,11 @@ jobs:
           fi
           grep -q 'Cookie sent from HTTPS page to initial HTTP target' "$work/old-tls.log"
           echo 'PASS: actual predecessor leaks HTTPS-page Cookie on the initial HTTP request'
+          if timeout 15 java -cp "$work/old:tests/java/classes" de.evp.helfer.TestReferrerPrivacy > "$work/old-referrer.log" 2>&1; then
+            echo 'Previous referrer privacy regression unexpectedly passed'; exit 1
+          fi
+          grep -q 'Userinfo or fragment escaped in Referer' "$work/old-referrer.log"
+          echo 'PASS: actual predecessor exposes referrer userinfo/fragment'
           if timeout 15 java -cp "$work/old:tests/java/classes" TestMiniServerLimits --stop-only > "$work/old-socket.log" 2>&1; then
             echo 'Previous socket shutdown regression unexpectedly passed'; exit 1
           fi
