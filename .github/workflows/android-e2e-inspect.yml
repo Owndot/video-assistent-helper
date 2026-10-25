@@ -1,4 +1,4 @@
-name: Inspect Android cancellation evidence (no emulator)
+name: Inspect final Android input evidence (no emulator)
 on:
   push:
     branches: [codex/android-e2e-inspect]
@@ -12,21 +12,29 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          run-id: 40197766277
+          run-id: 40203626744
           repository: Owndot/video-assistent-helper
           github-token: ${{ github.token }}
           pattern: android-e2e-api-*
           path: evidence
-      - name: Read completed cancellation transfer timelines
+      - name: Verify final input classification from actual event timestamps
         run: |
           python3 - <<'PY'
           import pathlib,json
-          for file in sorted(pathlib.Path("evidence").glob("**/download_cancel-http-events.json")):
-              rows=json.loads(file.read_text())
-              first=min((r["received"] for r in rows),default=0)
-              starts={r["id"]:r for r in rows if r.get("event")=="request" and r.get("path","").startswith("/slowhls/") and not r.get("fetch_dest")}
-              ends=[r for r in rows if r.get("event")=="transfer_end" and r.get("id") in starts]
-              print("NATIVE_CANCEL_TRANSFERS",file,{"first_case_event":first,
-                "requests":[{"path":r["path"],"relative_s":round(r["received"]-first,3),"id":r["id"]} for r in starts.values()],
-                "ends":[{"path":r["path"],"relative_s":round(r["received"]-first,3),"duration_s":round(r["received"]-starts[r["id"]]["received"],3),"bytes":r.get("bytes"),"complete":r.get("complete")} for r in ends]})
+          for file in sorted(pathlib.Path("evidence").glob("**/*-http-events.json")):
+              if file.name not in ("device_volume_brightness_swipes-http-events.json","seek_and_restore-http-events.json"):continue
+              rows=[r for r in json.loads(file.read_text()) if r.get("event")=="pointer"]
+              print("FINAL_RAW_POINTERS",file,json.dumps(rows))
+              active={}
+              ups=[]
+              for r in sorted(rows,key=lambda x:x["at"]):
+                  if r["phase"]=="pointerdown":active[r["pointer"]]=r
+                  elif r["phase"]=="pointermove-threshold" and r["pointer"] in active:
+                      p=active[r["pointer"]]
+                      print("FINAL_REAL_SWIPE",{"down":[p["x"],p["y"]],"threshold":[r["x"],r["y"]],
+                        "threshold_event_ms":r["stamp"]-p["stamp"],"threshold_dispatch_ms":r["at"]-p["at"]})
+                  elif r["phase"] in ("pointerup","pointercancel"):
+                      active.pop(r["pointer"],None)
+                      if r["phase"]=="pointerup" and r["x"]>r["width"]*.7 and .45<r["y"]/r["height"]<.55:ups.append(r)
+              print("FINAL_DOUBLE_UP_GAPS",[ups[i+1]["at"]-ups[i]["at"] for i in range(len(ups)-1)])
           PY
