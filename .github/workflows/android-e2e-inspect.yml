@@ -47,7 +47,7 @@ jobs:
                   lines=file.read_text(errors="replace").splitlines()
                   print("BROWSER_ERRORS",file,safe("\n".join(line for line in lines if re.search(r"JavaScript|Content Script|kadri|TypeError|ReferenceError|SyntaxError|mozHasAudio|WebExtension",line,re.I))[-40000:]))
               elif file.name in ("real_extension_install.xml","player_play_pause.xml","browser-chooser.xml","real_browser_pairing.xml","pairing_reset_roundtrip.xml"):
-                  print("UI_NODES",file,safe(str([n.attrib for n in ET.parse(file).iter("node")])[:40000]))
+                  print("UI_NODES",file,safe(str([n.attrib for n in ET.fromstring(file.read_text().replace("<disposable-pair-key>","[disposable-pair-key]")).iter("node")])[:40000]))
               elif file.name in ("real_extension_install.png","player_play_pause.png"):
                   print("E2E_PNG_BEGIN "+file.name)
                   encoded=base64.b64encode(file.read_bytes()).decode()
@@ -70,4 +70,17 @@ jobs:
           for file in sorted(pathlib.Path("evidence").glob("**/player-cycle-observations.json")):
               rows=json.loads(file.read_text())
               print("PLAYER_OBSERVATIONS",file,[{k:v for k,v in r.items() if k in ("cycle","entry_to_controls_ms")} for r in rows])
+          PY
+      - name: Check rendered player-control targets in the captured frame
+        run: |
+          python3 -m pip install Pillow==11.3.0 opencv-python-headless==4.12.0.88 CairoSVG==2.8.2
+          python3 - <<'PY'
+          import sys,pathlib
+          sys.path.insert(0,"tests/android_e2e")
+          import visual
+          from PIL import Image
+          for file in sorted(pathlib.Path("evidence").glob("**/player_play_pause.png")):
+              im=Image.open(file)
+              for key in ("P.close","P.pause","P.play"):
+                  print("CONTROL_TARGET",str(file),key,visual.locate(im,key,2.625,-1),flush=True)
           PY
