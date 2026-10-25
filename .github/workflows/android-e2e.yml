@@ -117,7 +117,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y tesseract-ocr
           python3 -m pip install Pillow==11.3.0 opencv-python-headless==4.12.0.88 CairoSVG==2.8.2
-          python3 tests/android_e2e/visual.py tests/android_e2e/reference/entry.png tests/android_e2e/reference/subtitle.png
+          python3 tests/android_e2e/visual.py tests/android_e2e/reference/entry.png tests/android_e2e/reference/subtitle.png tests/android_e2e/reference/controls.png
       - name: Reuse a previously verified test-only bundle when requested
         if: steps.matrix.outputs.reuse_bundle_run != '0'
         uses: actions/download-artifact@v4
@@ -280,6 +280,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Operate actual APKs and Firefox on Android
+        timeout-minutes: 35
         env:
           E2E_ROUTES: ${{ needs.build.outputs.routes }}
           E2E_SCOPE: ${{ needs.build.outputs.scope }}

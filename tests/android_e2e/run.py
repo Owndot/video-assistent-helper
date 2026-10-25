@@ -615,7 +615,8 @@ def extension():
                     return False
                 raise
         wait(press_install, timeout=60)
-        time.sleep(2)
+        wait(lambda: visible_label("Script installed", contains=True)
+             or visual.phrase(D.screenshot(), "Script installed"), timeout=90)
         shot("actual-userscript-install")
     # UI appearance on a real fixture is the acceptance criterion, not a guessed log line.
     launch_url("http://127.0.0.1:8765/page/direct")

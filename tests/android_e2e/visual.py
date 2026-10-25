@@ -43,9 +43,17 @@ def locate(image, key, density, threshold=None):
         if min(region.shape) < size: continue
         scores=cv2.matchTemplate(region,template(key,size),cv2.TM_CCOEFF_NORMED)
         _,score,_,xy=cv2.minMaxLoc(scores)
+        raster=region[xy[1]:xy[1]+size,xy[0]:xy[0]+size]
+        mask=template(key,size)
+        foreground=float(raster[mask>220].mean())
+        background=float(raster[mask<20].mean())
+        # Normalized correlation is almost invariant to opacity. A fading/hidden
+        # glyph must not be accepted merely because its shape still correlates.
+        if foreground<170 or foreground-background<45: continue
         if best is None or score>best["score"]:
             best={"key":key,"score":round(score,4),"x":x0+xy[0]+size//2,
-                  "y":y0+xy[1]+size//2,"size":size}
+                  "y":y0+xy[1]+size//2,"size":size,
+                  "foreground":round(foreground,1),"contrast":round(foreground-background,1)}
     return best if best and best["score"]>=threshold else None
 
 def words(image):
@@ -109,3 +117,11 @@ if __name__=="__main__":
         negative=Image.new("RGB",cue.size,"black")
         assert not subtitle_visible(negative,"ANDROID E2E SUBTITLE"),"Cue false positive on empty image"
         print("PASS real captured subtitle positive/negative calibration")
+
+    if len(sys.argv)>3:
+        controls=Image.open(sys.argv[3]).convert("RGB")
+        for key in ("P.close","P.pause"):
+            assert locate(controls,key,2.625),"Visible real control not recognized: "+key
+            dim=controls.point(lambda value: round(value*.1))
+            assert locate(dim,key,2.625) is None,"Almost transparent control accepted: "+key
+        print("PASS real controls and fading-opacity negative regression")
