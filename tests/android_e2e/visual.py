@@ -17,7 +17,7 @@ from PIL import Image
 ICONS = json.loads(Path(__file__).with_name("icons.json").read_text())
 SIZES = {"I.player": 23, "P.close": 22, "P.pause": 32, "P.play": 32, "I.download": 22, "P.cc": 22}
 REGIONS = {"I.player": (0, .15, 1, .93), "P.close": (0, 0, .25, .30),
-           "P.pause": (.30, .30, .70, .70), "P.play": (.30, .30, .70, .70),
+           "P.pause": (.43, .43, .57, .57), "P.play": (.43, .43, .57, .57),
            "I.download": (.65, 0, 1, .30), "P.cc": (0, .65, 1, 1)}
 
 @lru_cache(maxsize=64)
@@ -32,7 +32,7 @@ def template(key, size):
 
 def locate(image, key, density, threshold=None):
     if threshold is None: threshold = .74 if key == 'I.player' else .82
-    gray = np.array(image.convert("L"))
+    gray = np.min(np.array(image.convert("RGB")), axis=2).astype("uint8")
     h,w = gray.shape
     left,top,right,bottom = REGIONS[key]
     x0,y0,x1,y1 = int(w*left),int(h*top),int(w*right),int(h*bottom)

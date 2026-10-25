@@ -548,9 +548,21 @@ def extension():
         # The real manager intercepts a .user.js navigation and opens its own
         # installer; clicking Install exercises its actual storage/GM execution.
         launch_url("http://127.0.0.1:8765/video-assistent.user.js")
-        install = D(textMatches="(?i)(Install|Confirm installation)")
-        wait(lambda: install.exists and install.info.get("enabled"), timeout=60)
-        install.click()
+        def press_install():
+            dismiss_addon_notice()
+            dismiss_translation_sheet()
+            install = D(textMatches="(?i)(Install|Confirm installation)")
+            if not install.exists or not install.info.get("enabled"): return False
+            try:
+                # The translation sheet can arrive between lookup and touch.
+                # Retry only a lookup that sent no input, not the installation.
+                install.click(timeout=.5)
+                return True
+            except Exception as exc:
+                if type(exc).__name__ == "UiObjectNotFoundError" or "StaleObjectException" in str(exc):
+                    return False
+                raise
+        wait(press_install, timeout=60)
         time.sleep(2)
         shot("actual-userscript-install")
     # UI appearance on a real fixture is the acceptance criterion, not a guessed log line.
@@ -628,6 +640,10 @@ def playing_times():
             if re.fullmatch(r"\d{1,2}:\d{2}", row["text"]): vals.append(row["text"])
     return sorted(set(vals))
 
+def media_clock_seconds(labels):
+    assert labels, "Visible player clock missing"
+    return min(int(t.split(":")[0])*60 + int(t.split(":")[1]) for t in labels)
+
 def player():
     button = player_entry()
     time.sleep(2)
@@ -651,7 +667,7 @@ def player():
     motion = ImageChops.difference(crop1, crop2).convert("L")
     changed = sum(value for level, value in enumerate(motion.histogram()) if level > 10)
     assert changed > crop1.width * crop1.height * .005, "No visible changing video pixels (clock alone is insufficient)"
-    assert first and second and first != second, "Player clock did not advance: " + repr([first, second])
+    assert media_clock_seconds(second) > media_clock_seconds(first), "Player clock did not advance: " + repr([first, second])
     click("Wiedergabe") if D(description="Wiedergabe").exists else click("Play")
     time.sleep(0.5)
     paused = playing_times()
