@@ -15,7 +15,11 @@ assert '// @version      19.29' in script
 old=pathlib.Path('/tmp/previous-userscript.js').read_text()
 baseline_bytes=len(old.encode())+len(vendor)
 new_bytes=len(script.encode())
-assert new_bytes <= baseline_bytes * 1.01,(new_bytes,baseline_bytes)
+# Required readable license comments have a separate byte budget; executable budget stays unchanged.
+license_start=script.index('\n/* BEGIN HLS.JS LICENSES AND ATTRIBUTIONS\n')
+license_end=script.index('END HLS.JS LICENSES AND ATTRIBUTIONS */\n',license_start)+len('END HLS.JS LICENSES AND ATTRIBUTIONS */\n')
+license_bytes=len(script[license_start:license_end].encode())
+assert new_bytes-license_bytes <= baseline_bytes * 1.01,(new_bytes,license_bytes,baseline_bytes)
 # A changed vendor must stop the build before dependency code is loaded.
 with tempfile.TemporaryDirectory(prefix='hls-integrity-') as temp:
     temp=pathlib.Path(temp)
@@ -42,7 +46,7 @@ previous=statistics.median(measurements['previous']);bundled=statistics.median(m
 # A broad absolute allowance avoids flakes on shared runners; raw samples remain reviewable.
 assert bundled <= previous*1.5+5,(previous,bundled)
 report={'hlsVersion':lock['version'],'sha256':lock['sha256'],'previousUserscriptBytes':len(old.encode()),
- 'previousTotalJavaScriptBytes':baseline_bytes,'bundledUserscriptBytes':new_bytes,
+ 'previousTotalJavaScriptBytes':baseline_bytes,'bundledUserscriptBytes':new_bytes,'licenseNoticeBytes':license_bytes,
  'medianStartupMs':{'previous':previous,'bundled':bundled},'samplesMs':measurements}
 out=ROOT/'validation-results';out.mkdir(exist_ok=True)
 (out/'hls-bundle.json').write_text(json.dumps(report,indent=2))

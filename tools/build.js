@@ -24,6 +24,15 @@ let text = parts.map((f) => fs.readFileSync(path.join(SRC, f), 'utf8')).join('')
 const vendor = path.join(ROOT, 'vendor');
 const lock = JSON.parse(fs.readFileSync(path.join(vendor, 'hls.lock.json'), 'utf8'));
 const hls = fs.readFileSync(path.join(vendor, 'hls.min.js'), 'utf8');
+// Keep standalone installs compliant without changing the bundled executable bytes.
+const notices = fs.readFileSync(path.join(vendor, 'hls.LICENSE'), 'utf8').trimEnd();
+if (notices.includes('*/')) throw new Error('Unsafe license comment terminator');
+const licenseBlock = '\n/* BEGIN HLS.JS LICENSES AND ATTRIBUTIONS\n' + notices +
+  '\nEND HLS.JS LICENSES AND ATTRIBUTIONS */\n';
+const metadataEnd = '// ==/UserScript==\n';
+if (text.split(metadataEnd).length !== 2) throw new Error('Userscript metadata boundary changed');
+text = text.replace(metadataEnd, () => metadataEnd + licenseBlock);
+
 if (require('crypto').createHash('sha256').update(hls).digest('hex') !== lock.sha256 ||
     require(path.join(vendor, 'hls.min.js')).version !== lock.version) {
   throw new Error('hls.js bytes/version differ from the reviewed lock');

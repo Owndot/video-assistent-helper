@@ -56,6 +56,7 @@ jobs:
         run: |
           set -euo pipefail
           node tools/build.js --check
+          node tests/security/hls_license.js
           node tests/security/referrer.js
           node tests/security/gm_headers.js
           java -cp tests/java/classes de.evp.helfer.TestReferrerPrivacy
@@ -151,6 +152,7 @@ jobs:
         shell: bash
         run: |
           node tools/build.js --check
+          node tests/security/hls_license.js
           node tests/cookie_sites.js
           old="$RUNNER_TEMP/old-cookie-sites.js"
           gh api 'repos/Owndot/video-assistent-helper/contents/src/070-extern-ytdlnis.js?ref=6111df1a96854f659d7ab94bbaed399230cf1435' --jq .content | base64 --decode > "$old"
