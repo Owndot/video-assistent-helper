@@ -27,7 +27,7 @@ FIREFOX = "org.mozilla.firefox"
 ROUTE = os.environ.get("E2E_ROUTE", "kadri")
 assert ROUTE in ("kadri", "userscript")
 SCOPE = os.environ.get("E2E_SCOPE", "full")
-assert SCOPE in ("full", "smoke", "controls")
+assert SCOPE in ("full", "smoke", "controls", "core")
 OUT = Path(os.environ.get("E2E_OUT", "android-e2e-results"))
 OUT.mkdir(parents=True, exist_ok=True)
 RESULTS = []
@@ -1272,11 +1272,24 @@ def main():
     case("firefox_setup", firefox_prepare)
     case("real_extension_install", extension, ["firefox_setup"])
     case("real_browser_pairing", pair, ["helper_setup", "real_extension_install"])
+    # Stabilization: confirm the corrected seek first; later core cases remain
+    # independent if automation for one case fails.
+    if SCOPE == "core":
+        case("seek_and_restore", seek_restore, ["real_browser_pairing"])
     case("player_handoff", player, ["real_browser_pairing"])
     case("player_play_pause", play_pause, ["player_handoff"])
-    if SCOPE in ("full", "controls"):
+    if SCOPE in ("full", "controls", "core"):
         case("device_volume_brightness_swipes", gestures, ["player_handoff"])
-        case("seek_and_restore", seek_restore, ["player_handoff"])
+        if SCOPE != "core":
+            case("seek_and_restore", seek_restore, ["player_handoff"])
+    if SCOPE == "core":
+        case("site_source_switch", switch_source, ["real_browser_pairing"])
+        case("parallel_downloads", downloads, ["real_browser_pairing"])
+        def fresh_background():
+            player_entry().click()
+            wait(reveal)
+            return background()
+        case("background_pip_return", fresh_background, ["real_browser_pairing"])
     if SCOPE == "full":
         for kind in ("redirect", "hls", "embedded"):
             case("play_" + kind, lambda k=kind: source(k), ["player_handoff"])

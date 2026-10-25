@@ -2,8 +2,8 @@
   "apis": [
     33
   ],
-  "route": "kadri",
-  "scope": "controls",
+  "route": "both",
+  "scope": "core",
   "previous_run": 0,
-  "reuse_bundle_run": 0
+  "reuse_bundle_run": 40202803284
 }
