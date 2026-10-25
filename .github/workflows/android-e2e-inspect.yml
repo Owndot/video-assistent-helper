@@ -83,4 +83,11 @@ jobs:
               im=Image.open(file)
               for key in ("P.close","P.pause","P.play"):
                   print("CONTROL_TARGET",str(file),key,visual.locate(im,key,2.625,-1),flush=True)
+                  import numpy as np
+                  white=Image.fromarray(np.min(np.array(im.convert("RGB")),axis=2))
+                  print("WHITE_TARGET",key,visual.locate(white,key,2.625,-1),flush=True)
+              import shutil
+              if shutil.which("tesseract"):
+                  print("CLOCK_OCR",visual.words(im.crop((0,int(im.height*.65),im.width,im.height))),flush=True)
+              else: print("CLOCK_OCR NOT_TESTED: host inspector has no Tesseract")
           PY
