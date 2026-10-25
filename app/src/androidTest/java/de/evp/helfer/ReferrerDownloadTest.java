@@ -50,8 +50,11 @@ public class ReferrerDownloadTest {
             java.lang.reflect.Method method = Downloads.class.getDeclaredMethod("fileDownload", Context.class,
                 String.class, String.class, String.class, String.class);
             method.setAccessible(true);
-            long id = (Long) method.invoke(null, context, redirect.url(PATH),
-                "https://user:USERINFO_SECRET@example.test/PRIVATE_PATH_SECRET?token=QUERY_SECRET#FRAGMENT_SECRET",
+            // A same-origin HTTP page would previously supply a full manual header.
+            // Its redirect to another port must never replay that page path/query.
+            String page = redirect.url("/PRIVATE_PATH_SECRET?token=QUERY_SECRET#FRAGMENT_SECRET")
+                .replace("http://", "http://user:USERINFO_SECRET@");
+            long id = (Long) method.invoke(null, context, redirect.url(PATH), page,
                 "TEST-ONLY", "referrer-test-" + System.nanoTime());
             try {
                 assertTrue("Android DownloadManager did not reach redirect", redirect.hit.await(40, TimeUnit.SECONDS));
@@ -70,8 +73,8 @@ public class ReferrerDownloadTest {
                 assertTrue("Android DownloadManager did not finish", complete);
                 assertEquals(Collections.singletonList("GET " + PATH + " HTTP/1.1"), redirect.requests);
                 assertEquals(Collections.singletonList("GET " + PATH + " HTTP/1.1"), target.requests);
+                for (String ref : target.refs) assertEquals("DownloadManager replayed a page referrer at a foreign origin", "", ref);
                 for (String ref : redirect.refs) assertEquals("", ref);
-                for (String ref : target.refs) assertEquals("", ref);
                 try (InputStream in = new FileInputStream(dm.openDownloadedFile(id).getFileDescriptor())) {
                     assertEquals('o', in.read());assertEquals('k', in.read());assertEquals(-1, in.read());
                 }
