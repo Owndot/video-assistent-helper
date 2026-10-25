@@ -77,6 +77,19 @@ def phrase(image, label):
                     "text":text}
     return None
 
+def subtitle_visible(image, label):
+    """Read white outlined cues on the owned 16:9 fixture, never click by OCR."""
+    frame=image.convert("RGB")
+    vw=min(frame.width,frame.height*16/9)
+    vh=vw*9/16
+    top=(frame.height-vh)/2
+    crop=frame.crop((int((frame.width-vw)/2),int(top+vh*.70),
+                    int((frame.width+vw)/2),int(top+vh)))
+    # min(R,G,B) removes the saturated moving test pattern without erasing
+    # the white cue; a larger raster avoids subtitle strokes merging.
+    clean=Image.fromarray(np.where(np.min(np.array(crop),axis=2)>200,0,255).astype("uint8"))
+    return phrase(clean.resize((clean.width*2,clean.height*2)),label) is not None
+
 if __name__=="__main__":
     import sys
     # Calibration is a read-only check against a captured real emulator frame.
@@ -89,3 +102,10 @@ if __name__=="__main__":
     ImageDraw.Draw(negative).rectangle((0,0,*negative.size),fill="white")
     assert locate(negative,"I.player",2.625) is None,"False match outside the removed real icon"
     print("PASS real screenshot positive/negative icon calibration:",hit)
+
+    if len(sys.argv)>2:
+        cue=Image.open(sys.argv[2])
+        assert subtitle_visible(cue,"ANDROID E2E SUBTITLE"),"Real captured cue not recognized"
+        negative=Image.new("RGB",cue.size,"black")
+        assert not subtitle_visible(negative,"ANDROID E2E SUBTITLE"),"Cue false positive on empty image"
+        print("PASS real captured subtitle positive/negative calibration")

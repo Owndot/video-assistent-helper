@@ -954,7 +954,7 @@ def subtitles():
     reveal()
     click("Untertitel") if D(description="Untertitel").exists else click("Subtitles")
     click("E2E English")
-    wait(lambda: visual.phrase(D.screenshot(), "ANDROID E2E SUBTITLE"))
+    wait(lambda: visual.subtitle_visible(D.screenshot(), "ANDROID E2E SUBTITLE"))
     shot("rendered-owned-subtitle")
     click("Schließen") if D(description="Schließen").exists else click("Close")
     return "VTT selected through actual player menu; rendered owned subtitle confirmed by screenshot OCR."
