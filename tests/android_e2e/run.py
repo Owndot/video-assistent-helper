@@ -114,15 +114,15 @@ def tap_fresh(selector):
             if "StaleObjectException" not in str(exc) or attempt == 2: raise
             time.sleep(.2)
 
-def wait(fn, timeout=20, interval=0.25):
+def wait(fn, timeout=20, interval=0.25, dialogs=True):
     until = time.monotonic() + timeout
     last = None
     while time.monotonic() < until:
         try:
-            if D is not None:
+            if D is not None and dialogs:
                 dismiss_fullscreen_tutorial()
                 dismiss_translation_sheet()
-            if D is not None and allow_firefox_notifications():
+            if D is not None and dialogs and allow_firefox_notifications():
                 # Resume the owned source if the platform prompt interrupted its first Play.
                 source_play = D(text="Play fixture")
                 if source_play.exists(timeout=1): source_play.click()
@@ -305,7 +305,7 @@ def tap_player_icon(label):
         reveal()
         return False
     fresh_input_controls()
-    wait(attempt, timeout=10)
+    wait(attempt, timeout=10, dialogs=False)
     if label in ("Close","Schließen"):
         # Confirm the real native browser toolbar, not a hidden/stale source AX
         # node. A missed Close must fail here instead of contaminating later cases.
@@ -667,7 +667,7 @@ def reveal():
     if now - LAST_REVEAL_AT > .9:
         w, h = D.window_size()
         D.click(w*.5, h*.35)
-        LAST_REVEAL_AT = now
+        LAST_REVEAL_AT = time.monotonic()  # after actual injected UP, not before RPC latency
         time.sleep(.25)
     return bool(icon_control("P.close"))
 
@@ -681,7 +681,7 @@ def playing_times():
         reveal()
         return None
     for attempt in range(3):
-        frame=wait(captured_controls, timeout=8)
+        frame=wait(captured_controls, timeout=8, dialogs=False)
         w,h=frame.size
         rows=visual.words(frame.crop((0,int(h*.65),w,h)))
         labels=sorted({r["text"] for r in rows if r["left"]<w*.30
