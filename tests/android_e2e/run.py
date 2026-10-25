@@ -1014,7 +1014,7 @@ def crash_check():
     for package in (PKG, FIREFOX):
         exits = shell("dumpsys", "activity", "exit-info", package)
         (OUT / (package + "-exit-info.txt")).write_text(exits)
-        assert not re.search(r"reason=(?:4|5|6)\\s*\\((?:CRASH|CRASH_NATIVE|ANR)\\)", exits), "Crash/native crash/ANR exit reason for " + package
+        assert not re.search(r"reason=(?:4|5|6)\s*\((?:CRASH|CRASH_NATIVE|ANR)\)", exits), "Crash/native crash/ANR exit reason for " + package
     return "No target Java fatal exception or recorded crash/native-crash/ANR exit reason observed."
 
 def main():
