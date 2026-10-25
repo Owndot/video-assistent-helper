@@ -24,7 +24,7 @@ public class TestMain {
       boolean correct = name.equals("dash_drm") && message.contains("DRM")
           || name.equals("dash_live") && message.toLowerCase(java.util.Locale.ROOT).contains("live")
           || (name.startsWith("ck_ohne_cookie ") || name.startsWith("ck_fremde_seite "))
-             && e instanceof Fetcher.HttpError && ((Fetcher.HttpError)e).code == 403;
+             && e instanceof Fetcher.HttpError && "HTTP 403".equals(message);
       if (!correct) throw new AssertionError("Unexpected core failure: " + name, e);
       System.out.println("EXPECTED_REJECTION " + name + ": " + message);
     }
