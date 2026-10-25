@@ -43,12 +43,16 @@ jobs:
           for file in sorted(pathlib.Path("evidence").glob("**/*")):
               if file.name in ("results.json","web-ext.log"):
                   print("EVIDENCE_FILE",file,safe(file.read_text(errors="replace")[-60000:]))
+              elif file.name.endswith("-http-events.json") and file.name.startswith(("player_play_pause","device_volume","player_handoff")):
+                  import json
+                  rows=json.loads(file.read_text())
+                  print("OWNED_HTTP_TRACE",file,[{k:r[k] for k in ("path","event","host","received","cookie","authorization","fetch_dest") if k in r} for r in rows if r.get("event")=="request"])
               elif file.name=="logcat.txt":
                   lines=file.read_text(errors="replace").splitlines()
                   print("BROWSER_ERRORS",file,safe("\n".join(line for line in lines if re.search(r"JavaScript|Content Script|kadri|TypeError|ReferenceError|SyntaxError|mozHasAudio|WebExtension",line,re.I))[-40000:]))
               elif file.name in ("real_extension_install.xml","player_play_pause.xml","browser-chooser.xml","real_browser_pairing.xml","pairing_reset_roundtrip.xml"):
                   print("UI_NODES",file,safe(str([n.attrib for n in ET.fromstring(file.read_text().replace("<disposable-pair-key>","[disposable-pair-key]")).iter("node")])[:40000]))
-              elif file.name in ("real_extension_install.png","player_play_pause.png","real_browser_pairing.png","actual-userscript-install.png"):
+              elif file.name in ("device_volume_brightness_swipes.png",):
                   print("E2E_PNG_BEGIN "+file.parent.name+"-"+file.name)
                   encoded=base64.b64encode(file.read_bytes()).decode()
                   for at in range(0,len(encoded),12000): print("E2E_PNG_DATA "+encoded[at:at+12000])
