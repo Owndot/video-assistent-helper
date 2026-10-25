@@ -93,7 +93,7 @@ def main():
         profile=pathlib.Path(tmp)/'profile';(profile/'Default').mkdir(parents=True)
         (profile/'Default/Preferences').write_text(json.dumps({'extensions':{'ui':{'developer_mode':True}}}))
         with sync_playwright() as p:
-            context=p.chromium.launch_persistent_context(str(profile),headless=False,ignore_https_errors=True,accept_downloads=True,
+            context=p.chromium.launch_persistent_context(str(profile),headless=False,ignore_https_errors=True,accept_downloads=True,executable_path=os.environ.get('BROWSER_EXECUTABLE'),
                 args=['--disable-extensions-except='+ext,'--load-extension='+ext,'--ignore-certificate-errors','--autoplay-policy=no-user-gesture-required','--host-resolver-rules=MAP *.test 127.0.0.1','--no-proxy-server'])
             context.set_default_timeout(25000)
             worker=context.service_workers[0] if context.service_workers else context.wait_for_event('serviceworker')
@@ -117,7 +117,7 @@ def main():
                 assert scripts[0]['meta']['version']=='19.29',scripts[0]['meta']
                 assert any(h['url']=='/script.user.js' for h in HITS),'Manager did not request the update fixture'
                 print('PASS: real Violentmonkey installs and updates the bundled userscript',flush=True)
-            page=context.new_page();page.goto(https+'/PRIVATE_PATH_SECRET?token=QUERY_SECRET#FRAGMENT_SECRET');page.wait_for_timeout(700)
+            page=context.new_page();page.on('pageerror', lambda e: print('PAGE ERROR:',e,flush=True));page.goto(https+'/PRIVATE_PATH_SECRET?token=QUERY_SECRET#FRAGMENT_SECRET');page.wait_for_timeout(700)
             source=page.url.split('#')[0]
             ref=(source+'#FRAGMENT_SECRET').replace('https://','https://user:USERINFO_SECRET@',1)
             signed='/echo?sig=SIGNED%2Ffixture%2Bvalue&order=2&order=1'
@@ -145,7 +145,15 @@ def main():
                 r=command(page,{'kind':'gm','url':foreign+signed});assert r['st']==200,r
                 hit=next(h for h in reversed(HITS) if h['url']==signed)
                 assert hit['referer']==http+'/',hit
-                page.wait_for_function("document.getElementById('v').readyState>=2")
+                capabilities=page.evaluate("()=>({avc:document.createElement('video').canPlayType('video/mp4; codecs=\"avc1.42E01E\"'),browser:navigator.userAgent})")
+                print('Media capabilities:',capabilities,flush=True)
+                assert capabilities['avc'],'The test browser lacks H.264 support; use the pinned Chrome for Testing binary'
+                try:
+                    page.wait_for_function("document.getElementById('v').readyState>=2")
+                except Exception:
+                    print('Fixture video state:',page.evaluate("()=>{const v=document.getElementById('v');return {src:v.currentSrc,ready:v.readyState,network:v.networkState,error:v.error&&{code:v.error.code,message:v.error.message}}}"),flush=True)
+                    print('Fixture requests:',HITS[-15:],flush=True)
+                    raise
                 page.evaluate("document.getElementById('v').muted=false")
                 for media in ('/clip.mp4?sig=SIGNED%2Fmp4','/index.m3u8?sig=SIGNED%2Fhls','/clip.mp4?source=changed'):
                     r=command(page,{'kind':'open','url':http+media});assert not r.get('error'),r
