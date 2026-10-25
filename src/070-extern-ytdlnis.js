@@ -66,6 +66,19 @@
     const h = hostOf(u);
     return !!h && baseDomain(h) === baseDomain(location.hostname);
   }
+  // Strict origin comparison includes scheme and effective port. Never alter the media URL.
+  function mediaReferrer(url, page = location.href, automaticRedirects = !IS_KADRI) {
+    try {
+      const source = new URL(page), target = new URL(url);
+      if (!/^https?:$/.test(source.protocol) || !/^https?:$/.test(target.protocol) ||
+          source.protocol === 'https:' && target.protocol === 'http:') return '';
+      source.username = ''; source.password = ''; source.hash = '';
+      // GM transports cannot portably recompute custom headers at every redirect.
+      // HTTPS sources therefore send none; HTTP sources send at most their origin.
+      if (automaticRedirects) return source.protocol === 'https:' ? '' : source.origin + '/';
+      return source.origin === target.origin ? source.href : source.origin + '/';
+    } catch (e) { return ''; }
+  }
   // Violentmonkey/Tampermonkey: darf Weiterleitungen zu anderen Servern verfolgen und die Endadresse lesen
   function gmXhr() {
     try { if (typeof GM_xmlhttpRequest === 'function') return GM_xmlhttpRequest; } catch (e) {}

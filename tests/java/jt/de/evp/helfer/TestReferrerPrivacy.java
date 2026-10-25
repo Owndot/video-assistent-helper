@@ -36,7 +36,23 @@ public class TestReferrerPrivacy {
             check("http://[::1]:8080/a%20b?q=x%2Fy".equals(Fetcher.Http.referrerFor(
                 "http://u:p@[::1]:8080/a%20b?q=x%2Fy#fragment", "http://[::1]:8080/video")),
                 "IPv6 or raw path/query changed");
-            System.out.println("PASS: real HTTP strips referrer userinfo/fragment, serializes Origin correctly and preserves Cookie/raw path/query");
+            String foreign = base.replace("127.0.0.1", "localhost");
+            client.fetch(foreign + "/echo?signature=SIGNED%2Ffixture%2Bvalue", -1, -1);
+            check((base + "/").equals(ref.get()), "Cross-origin path/query escaped in Referer");
+            check("http://example.test/".equals(Fetcher.Http.referrerFor(
+                "http://u:p@example.test/private?SECRET=query#fragment", "http://example.test:8080/video")),
+                "Different port received full page URL");
+            check("http://example.test/private?SECRET=query".equals(Fetcher.Http.referrerFor(
+                "http://u:p@example.test:80/private?SECRET=query#fragment", "http://example.test/video")) ||
+                "http://example.test:80/private?SECRET=query".equals(Fetcher.Http.referrerFor(
+                "http://u:p@example.test:80/private?SECRET=query#fragment", "http://example.test/video")),
+                "Default port same-origin comparison failed");
+            check("http://example.test/".equals(Fetcher.Http.referrerFor(
+                "http://example.test/private?SECRET=query", "https://example.test/video")),
+                "Different scheme received full page URL");
+            check(Fetcher.Http.referrerFor("file:///SECRET", base) == null, "Non-HTTP page accepted");
+            check(Fetcher.Http.referrerFor(page, "file:///video") == null, "Non-HTTP target accepted");
+            System.out.println("PASS: real HTTP strips referrer userinfo/fragment, serializes Origin correctly and preserves Cookie/raw path/query; cross-origin path/query are private");
         } finally { server.stop(0); }
     }
 }

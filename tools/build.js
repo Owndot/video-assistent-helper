@@ -2,7 +2,7 @@
 // Baut das Userscript aus den Teilen in src/ (der Reihe nach, wie sie heißen: 010-…, 020-…).
 //
 // Die Teile sind Abschnitte EINER Funktion (das Skript läuft als Ganzes in einer Hülle) – einzeln sind sie kein
-// gültiges JavaScript, zusammen ergeben sie genau userscript/video-assistent.user.js. So bleibt das Verhalten exakt
+// gültiges JavaScript. Der Bau ergänzt die geprüfte hls.js-Kopie im erzeugten Userscript. So bleibt das Verhalten exakt
 // gleich, während man an kleinen, übersichtlichen Dateien arbeitet.
 //
 //   node tools/build.js           → userscript/video-assistent.user.js neu schreiben
@@ -10,7 +10,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const vm = require('vm');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
@@ -18,14 +18,34 @@ const OUT = path.join(ROOT, 'userscript', 'video-assistent.user.js');
 
 const parts = fs.readdirSync(SRC).filter((f) => /^\d{3}-[\w-]+\.js$/.test(f)).sort();
 if (!parts.length) { console.error('Keine Teile in src/'); process.exit(1); }
-const text = parts.map((f) => fs.readFileSync(path.join(SRC, f), 'utf8')).join('');
+let text = parts.map((f) => fs.readFileSync(path.join(SRC, f), 'utf8')).join('');
+
+// Execute exactly the reviewed vendored bytes; no manager-specific @require/SRI behavior.
+const vendor = path.join(ROOT, 'vendor');
+const lock = JSON.parse(fs.readFileSync(path.join(vendor, 'hls.lock.json'), 'utf8'));
+const hls = fs.readFileSync(path.join(vendor, 'hls.min.js'), 'utf8');
+// Keep standalone installs compliant without changing the bundled executable bytes.
+const notices = fs.readFileSync(path.join(vendor, 'hls.LICENSE'), 'utf8').trimEnd();
+if (notices.includes('*/')) throw new Error('Unsafe license comment terminator');
+const licenseBlock = '\n/* BEGIN HLS.JS LICENSES AND ATTRIBUTIONS\n' + notices +
+  '\nEND HLS.JS LICENSES AND ATTRIBUTIONS */\n';
+const metadataEnd = '// ==/UserScript==\n';
+if (text.split(metadataEnd).length !== 2) throw new Error('Userscript metadata boundary changed');
+text = text.replace(metadataEnd, () => metadataEnd + licenseBlock);
+
+if (require('crypto').createHash('sha256').update(hls).digest('hex') !== lock.sha256 ||
+    require(path.join(vendor, 'hls.min.js')).version !== lock.version) {
+  throw new Error('hls.js bytes/version differ from the reviewed lock');
+}
+const anchor = '  const HIDE_NO_HELPER = IS_KADRI;';
+if (text.split(anchor).length !== 2) throw new Error('hls.js bundle anchor changed');
+text = text.replace(anchor, () => anchor + '\n  // Bundled hls.js ' + lock.version + ' (Apache-2.0; vendor/hls.LICENSE).\n' +
+  '  let Hls;\n  function loadBundledHls() { if (Hls) return; Hls = (() => { const module = { exports: {} }; const exports = module.exports; const define = undefined;\n' +
+  hls.replace(/\n?\/\/# sourceMappingURL=.*$/, '') + '\n    return module.exports;\n  })(); }\n');
 
 // Syntax prüfen (ganze Datei)
-const tmp = path.join(require('os').tmpdir(), 'evp-build-' + process.pid + '.js');
-fs.writeFileSync(tmp, text);
-try { execFileSync(process.execPath, ['--check', tmp], { stdio: 'pipe' }); }
-catch (e) { console.error('Syntaxfehler im zusammengesetzten Skript:\n' + String(e.stderr || e.message)); process.exit(1); }
-finally { try { fs.unlinkSync(tmp); } catch (e) {} }
+try { new vm.Script(text, { filename: OUT }); }
+catch (e) { console.error('Syntaxfehler im zusammengesetzten Skript: ' + e.message); process.exit(1); }
 
 const version = (text.match(/^\/\/ @version\s+(\S+)/m) || [])[1] || '?';
 if (process.argv.includes('--check')) {

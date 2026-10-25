@@ -73,7 +73,7 @@
       };
       try {
         // (Anmeldung/Cookies nur an die eigene Seite – fremde Server ohne)
-        req = x({ method: 'GET', url: u, headers: { Range: 'bytes=0-0', Referer: location.href }, anonymous: baseDomain(hostOf(u)) !== baseDomain(location.hostname),
+        req = x({ method: 'GET', url: u, headers: { Range: 'bytes=0-0', Referer: mediaReferrer(u) }, anonymous: baseDomain(hostOf(u)) !== baseDomain(location.hostname),
           onreadystatechange: (r) => { if (r && r.readyState >= 2) look(r); },
           onload: (r) => { look(r); fin(false); }, onerror: () => fin(false), ontimeout: () => fin(false) });
       } catch (e) { fin(false); }
@@ -106,7 +106,7 @@
     const big = (b) => b && b.size > 20000;   // winzige Antworten sind Fehlerseiten, kein Video
     // 2. Versuch: normal über die Seite (klappt bei Dateien derselben Seite oder mit Freigabe)
     const viaPage = () => {
-      fetch(u, { credentials: 'include' }).then((r) => (r.ok ? r.blob() : Promise.reject(r.status)))
+      fetch(u, { credentials: 'include', referrerPolicy: 'strict-origin-when-cross-origin' }).then((r) => (r.ok ? r.blob() : Promise.reject(r.status)))
         .then((b) => (big(b) ? ok(b) : fail()), fail);
     };
     toast('Download startet …');
@@ -114,7 +114,7 @@
     const x = gmXhr();
     if (!x) { viaPage(); return; }
     try {
-      x({ method: 'GET', url: u, responseType: 'blob', headers: { Referer: location.href }, timeout: 0, anonymous: baseDomain(hostOf(u)) !== baseDomain(location.hostname),
+      x({ method: 'GET', url: u, responseType: 'blob', headers: { Referer: mediaReferrer(u) }, timeout: 0, anonymous: baseDomain(hostOf(u)) !== baseDomain(location.hostname),
         onprogress: prog,
         onload: (r) => { const b = r && r.response; if (r && r.status >= 200 && r.status < 300 && big(b)) ok(b); else viaPage(); },
         onerror: viaPage, onabort: fail });

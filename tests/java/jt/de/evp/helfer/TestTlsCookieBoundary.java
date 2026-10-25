@@ -17,10 +17,12 @@ public class TestTlsCookieBoundary {
     static final AtomicReference<String> cookie = new AtomicReference<>();
     static final AtomicReference<String> referer = new AtomicReference<>();
     static final AtomicReference<String> origin = new AtomicReference<>();
+    static final AtomicReference<String> requestUri = new AtomicReference<>();
     static final AtomicReference<String> range = new AtomicReference<>();
     static void check(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
     static boolean empty(String value) { return value == null || value.isEmpty(); }
     static void echo(com.sun.net.httpserver.HttpExchange e) throws java.io.IOException {
+        requestUri.set(e.getRequestURI().toString());
         cookie.set(e.getRequestHeaders().getFirst("Cookie"));
         referer.set(e.getRequestHeaders().getFirst("Referer"));
         origin.set(e.getRequestHeaders().getFirst("Origin"));
@@ -77,7 +79,8 @@ public class TestTlsCookieBoundary {
             secure.createContext("/down", e -> redirect(e, http + "/echo"));
             secure.createContext("/cross", e -> redirect(e, foreign + "/echo"));
             plain.start(); secure.start();
-            Client client = new Client(https + "/page?token=fixture", context);
+            secure.createContext("/back", e -> redirect(e, http + "/up"));
+            Client client = new Client(https + "/PRIVATE_PATH_SECRET?token=QUERY_SECRET#FRAGMENT_SECRET", context);
             client.fetch(https + "/echo", 0, 2);
             check(COOKIE.equals(cookie.get()), "HTTPS positive control lost Cookie");
             check(!empty(referer.get()) && !empty(origin.get()), "HTTPS page headers lost");
@@ -90,6 +93,22 @@ public class TestTlsCookieBoundary {
             check("bytes=0-1".equals(range.get()), "Range lost across downgrade");
             client.fetch(https + "/cross", 0, 2);
             check(empty(cookie.get()), "Cookie crossed HTTPS site boundary");
+            check((https + "/").equals(referer.get()), "TLS redirect leaked private path/query");
+            String signed = "/echo?sig=SIGNED%2Fsecret%2Bfixture&order=2&order=1";
+            client.fetch(foreign + signed, -1, -1);
+            check(signed.equals(requestUri.get()), "Signed media query changed");
+            check((https + "/").equals(referer.get()), "Foreign TLS target received full Referer");
+            client.fetch(https + "/back", -1, -1);
+            check(empty(referer.get()) && empty(origin.get()), "Downgrade then upgrade restored page headers");
+            Path file = folder.resolve("download.mp4");
+            client.streamToFile(foreign + signed, file.toFile(), null);
+            check("ok".equals(Files.readString(file)), "Native file transfer changed response bytes");
+            check((https + "/").equals(referer.get()) && signed.equals(requestUri.get()),
+                "Native file transfer leaked page or changed signed query");
+            Files.delete(file);
+            client.streamToFile(https + "/down", file.toFile(), null);
+            check(empty(referer.get()) && empty(origin.get()), "File redirect leaked downgrade headers");
+            Files.delete(file);
             Client local = new Client(http + "/page", context);
             local.fetch(http + "/echo", 0, 2);
             check(COOKIE.equals(cookie.get()), "HTTP media-server authentication regressed");
