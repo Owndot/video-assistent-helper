@@ -51,11 +51,31 @@ def adb(*args, **kwargs):
 def shell(*args, **kwargs):
     return adb("shell", shlex.join([str(arg) for arg in args]), **kwargs)
 
+def allow_firefox_notifications():
+    prompt = D(resourceIdMatches=r"(com\.android\.permissioncontroller|com\.google\.android\.permissioncontroller):id/permission_message")
+    if not prompt.exists:
+        return False
+    text = str(prompt.info.get("text", ""))
+    if "Firefox" not in text or "notification" not in text.lower():
+        return False
+    allow = D(resourceIdMatches=r"(com\.android\.permissioncontroller|com\.google\.android\.permissioncontroller):id/permission_allow_button")
+    if not allow.exists:
+        allow = D(textMatches="(?i)allow")
+    if not allow.exists or not allow.info.get("enabled"):
+        return False
+    allow.click()
+    print("UI: allowed Android notification permission for the disposable Firefox profile", flush=True)
+    return True
+
 def wait(fn, timeout=20, interval=0.25):
     until = time.monotonic() + timeout
     last = None
     while time.monotonic() < until:
         try:
+            if D is not None and allow_firefox_notifications():
+                # Resume the owned source if the platform prompt interrupted its first Play.
+                source_play = D(text="Play fixture")
+                if source_play.exists(timeout=1): source_play.click()
             value = fn()
             if value:
                 return value
@@ -144,8 +164,12 @@ def dismiss_addon_notice():
     notice = visible_label("was added", contains=True)
     if not notice:
         return False
-    ok = visible_label("OK")
-    wait(lambda: ok and ok.exists and ok.info.get("enabled"), timeout=8)
+    ok = D(resourceId=FIREFOX + ":id/confirm_button")
+    if not ok.exists:
+        ok = D(text="OK")
+    if not ok.exists:
+        ok = D(description="OK")
+    wait(lambda: ok.exists and ok.info.get("enabled"), timeout=8)
     ok.click()
     wait(lambda: not visible_label("was added", contains=True), timeout=8)
     return True
@@ -391,6 +415,10 @@ def launch_url(url):
         time.sleep(.4)
     raise AssertionError("Firefox address bar unavailable; no unbounded new-tab fallback")
 
+def play_fixture():
+    wait(lambda: D(text="Play fixture").exists or D(description="Play fixture").exists, timeout=15)
+    click("Play fixture")
+
 def extension():
     global WEB_EXT, NAVIGATION_INITIALIZED
     log = (OUT / "web-ext.log").open("w", encoding="utf8")
@@ -426,7 +454,7 @@ def extension():
         shot("actual-userscript-install")
     # UI appearance on a real fixture is the acceptance criterion, not a guessed log line.
     launch_url("http://127.0.0.1:8765/page/direct")
-    click("Play fixture")
+    play_fixture()
     wait(lambda: D(descriptionContains="Videoplayer").exists or D(descriptionContains="video player").exists, timeout=25)
     return ("Unmodified dist/firefox" if ROUTE == "kadri" else "Pinned real Violentmonkey + unmodified userscript via manager Install UI") + " loaded into Firefox Android; real player entry visible."
 
@@ -452,7 +480,7 @@ def pair():
 
 def player_entry(kind="direct"):
     launch_url("http://127.0.0.1:8765/page/" + kind)
-    click("Play fixture")
+    play_fixture()
     return wait(lambda: D(descriptionContains="Videoplayer") if D(descriptionContains="Videoplayer").exists
                 else D(descriptionContains="video player") if D(descriptionContains="video player").exists else None)
 
@@ -570,7 +598,7 @@ def seek_restore():
 
 def source(kind):
     launch_url("http://127.0.0.1:8765/page/" + kind)
-    click("Play fixture")
+    play_fixture()
     button = wait(lambda: D(descriptionContains="Videoplayer") if D(descriptionContains="Videoplayer").exists
                   else D(descriptionContains="video player") if D(descriptionContains="video player").exists else None, timeout=25)
     button.click()
@@ -610,7 +638,7 @@ def downloads():
     click("Schließen") if D(description="Schließen").exists else click("Close")
     resolving_at = time.monotonic()
     launch_url("http://127.0.0.1:8765/page/redirect")
-    click("Play fixture")
+    play_fixture()
     button = wait(lambda: D(descriptionContains="Videoplayer") if D(descriptionContains="Videoplayer").exists
                   else D(descriptionContains="video player") if D(descriptionContains="video player").exists else None)
     button.click()
