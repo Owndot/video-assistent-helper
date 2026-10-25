@@ -311,6 +311,10 @@ def tap_player_icon(label):
         return False
     fresh_input_controls()
     wait(attempt, timeout=10)
+    if label in ("Close","Schließen"):
+        # Confirm the real native browser toolbar, not a hidden/stale source AX
+        # node. A missed Close must fail here instead of contaminating later cases.
+        wait(lambda: visible_label("Search or enter address", contains=True), timeout=8)
 
 def click(label, scroll=False):
     # Accessible user-facing labels, no product debug hooks.
@@ -738,6 +742,9 @@ def play_pause():
 
 
 def gestures():
+    # Each assertion gets a fresh clip, rather than inheriting a 60s movie at EOF.
+    player_entry().click()
+    wait(reveal)
     # Establish a real Android positive control independently of browser input.
     # Only the following swipes are claimed as extension-to-Helper integration.
     original = request("/ping")
@@ -762,7 +769,8 @@ def gestures():
             "note": "Actual Android positive control, then real UI swipes through extension and Helper"}
 
 def seek_restore():
-    reveal()
+    player_entry().click()
+    wait(reveal)
     observed_at = time.monotonic()
     before = playing_times()
     sel = D(descriptionMatches=r".*(s vor|s forward).*")
@@ -1120,6 +1128,8 @@ def native_cookie_redirect(kind="hls"):
 
 
 def paired_restart():
+    if icon_control("P.close") or reveal():
+        click("Close")
     old = KEY
     D.app_stop(PKG)
     open_app()

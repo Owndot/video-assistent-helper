@@ -112,8 +112,10 @@ jobs:
                   for at in range(0,len(encoded),12000): print("E2E_PNG_DATA "+encoded[at:at+12000])
                   print("E2E_PNG_END")
           PY
-      - name: Calibrate visual fallback against the versioned real Firefox crop
+      - name: Calibrate visual fallback against versioned real Firefox frames
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y tesseract-ocr
           python3 -m pip install Pillow==11.3.0 opencv-python-headless==4.12.0.88 CairoSVG==2.8.2
           python3 tests/android_e2e/visual.py tests/android_e2e/reference/entry.png tests/android_e2e/reference/subtitle.png
       - name: Reuse a previously verified test-only bundle when requested
