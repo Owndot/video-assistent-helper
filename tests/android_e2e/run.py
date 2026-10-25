@@ -27,7 +27,7 @@ FIREFOX = "org.mozilla.firefox"
 ROUTE = os.environ.get("E2E_ROUTE", "kadri")
 assert ROUTE in ("kadri", "userscript")
 SCOPE = os.environ.get("E2E_SCOPE", "full")
-assert SCOPE in ("full", "smoke")
+assert SCOPE in ("full", "smoke", "controls")
 OUT = Path(os.environ.get("E2E_OUT", "android-e2e-results"))
 OUT.mkdir(parents=True, exist_ok=True)
 RESULTS = []
@@ -672,13 +672,18 @@ def reveal():
     return bool(icon_control("P.close"))
 
 def playing_times():
-    wait(reveal, timeout=8)
-    frame = D.screenshot()
-    w,h = frame.size
-    # The left footer is the own-player clock. Reading rendered pixels avoids
-    # retained source-video AX nodes and stale/transparent control labels.
-    rows = visual.words(frame.crop((0,int(h*.75),int(w*.30),int(h*.95))))
-    return sorted({r["text"] for r in rows if re.fullmatch(r"\d{1,2}:\d{2}",r["text"])})
+    # Full-width footer preserves the clock's OCR context. Select the left
+    # rendered label afterward so the duration/right-side widgets cannot pass.
+    for attempt in range(3):
+        fresh_input_controls()
+        frame = D.screenshot()
+        w,h = frame.size
+        rows = visual.words(frame.crop((0,int(h*.65),w,h)))
+        labels = sorted({r["text"] for r in rows if r["left"] < w*.30
+                         and re.fullmatch(r"\d{1,2}:\d{2}", r["text"])})
+        if labels: return labels
+        frame.save(OUT / ("clock-not-readable-" + str(attempt) + ".png"))
+    raise AssertionError("Own-player clock not readable after three real visible-control snapshots")
 
 def media_clock_seconds(labels):
     assert labels, "Visible player clock missing"
@@ -733,14 +738,19 @@ def play_pause():
 
 
 def gestures():
-    reveal()
+    # Establish a real Android positive control independently of browser input.
+    # Only the following swipes are claimed as extension-to-Helper integration.
+    original = request("/ping")
+    request("/vol?v=0.4")
+    request("/bright?v=0.65")
+    positive = request("/ping")
+    assert .2 <= positive["vol"] <= .6, "Native volume positive control failed"
+    time.sleep(3)  # one real player heartbeat observes device baseline
     before = request("/ping")
-    if before["vol"] >= .85 or before["bright"] <= .35:
-        request("/vol?v=0.4")
-        request("/bright?v=0.65")
-        # Let the actual player heartbeat observe the real device precondition.
-        time.sleep(3)
-        before = request("/ping")
+    (OUT / "gesture-positive-control.json").write_text(json.dumps({
+        "initial_volume":original["vol"],"native_volume":positive["vol"],
+        "before_swipe_volume":before["vol"],"before_swipe_brightness":before["bright"]}))
+    fresh_input_controls()
     w, h = D.window_size()
     D.swipe(w * .85, h * .58, w * .85, h * .46, duration=.5)
     after_vol = wait(lambda: (s if (s := request("/ping"))["vol"] != before["vol"] else None))
@@ -749,7 +759,7 @@ def gestures():
     after_bright = wait(lambda: (s if (s := request("/ping"))["bright"] != before["bright"] else None))
     assert after_bright["bright"] < before["bright"]
     return {"before": before, "volume_after": after_vol["vol"], "brightness_after": after_bright["bright"],
-            "note": "Real UI swipes through Kadri and helper to Android services"}
+            "note": "Actual Android positive control, then real UI swipes through extension and Helper"}
 
 def seek_restore():
     reveal()
@@ -761,7 +771,7 @@ def seek_restore():
     else:
         # The existing public double-tap gesture also works when Gecko omits AX.
         w, h = D.window_size()
-        D.double_click(w*.80, h*.50, interval=.10)
+        D.double_click(w*.80, h*.50, duration=.10)
     time.sleep(.6)
     after = playing_times()
     def seconds(label):
@@ -1205,9 +1215,10 @@ def main():
     case("real_browser_pairing", pair, ["helper_setup", "real_extension_install"])
     case("player_handoff", player, ["real_browser_pairing"])
     case("player_play_pause", play_pause, ["player_handoff"])
-    if SCOPE == "full":
+    if SCOPE in ("full", "controls"):
         case("device_volume_brightness_swipes", gestures, ["player_handoff"])
         case("seek_and_restore", seek_restore, ["player_handoff"])
+    if SCOPE == "full":
         for kind in ("redirect", "hls", "embedded"):
             case("play_" + kind, lambda k=kind: source(k), ["player_handoff"])
         case("subtitle_selection", subtitles, ["player_handoff"])
@@ -1234,8 +1245,8 @@ def main():
         "chrome_dnr_worker_recovery": "Covered by existing real desktop Chromium tests; Firefox Android cannot establish Chrome DNR coverage.",
     }.items():
         RESULTS.append({"name": name, "status": "NOT_TESTED", "detail": reason})
-    if SCOPE == "smoke":
-        RESULTS.append({"name":"full_functional_suite","status":"NOT_TESTED","detail":"Explicit smoke scope: full feature matrix deliberately omitted; no full-validation claim."})
+    if SCOPE != "full":
+        RESULTS.append({"name":"full_functional_suite","status":"NOT_TESTED","detail":"Explicit "+SCOPE+" scope: remaining feature matrix deliberately omitted; no full-validation claim."})
     write_results()
     if WEB_EXT and WEB_EXT.poll() is None:
         WEB_EXT.send_signal(signal.SIGINT)

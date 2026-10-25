@@ -12,9 +12,9 @@ on:
         description: 'Optional successful bundle run ID; source equality is enforced'
         default: '0'
       scope:
-        description: 'smoke for driver calibration, full for feature coverage'
+        description: 'smoke, focused controls, or full feature coverage'
         type: choice
-        options: [full, smoke]
+        options: [full, smoke, controls]
         default: full
       routes:
         description: 'Real integration routes: kadri, userscript, or both'
@@ -69,7 +69,7 @@ jobs:
               assert routes in ("kadri","userscript","both")
               out.write("routes="+("kadri userscript" if routes=="both" else routes)+"\n")
               scope=os.environ["REQUESTED_SCOPE"] or json.load(open("tests/android_e2e/execution.json")).get("scope","full")
-              assert scope in ("smoke","full")
+              assert scope in ("smoke","full","controls")
               out.write("scope="+scope+"\n")
               reuse=os.environ["REUSE_BUNDLE"] or str(json.load(open("tests/android_e2e/execution.json")).get("reuse_bundle_run",0))
               assert reuse.isdigit()
@@ -293,7 +293,18 @@ jobs:
       - name: Per-device report
         if: always()
         run: |
-          if test -f android-e2e-results/REPORT.md; then cat android-e2e-results/REPORT.md >> "$GITHUB_STEP_SUMMARY"; else echo 'NOT TESTED: environment/build did not reach UI runner' >> "$GITHUB_STEP_SUMMARY"; fi
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("android-e2e-results")
+          root.mkdir(exist_ok=True)
+          children=sorted(root.glob("*/REPORT.md"))
+          text="# Real Android E2E — captured route reports\n\n"
+          text+="Reports may be partial if the runner stopped. Missing cases are not passed.\n\n"
+          for child in children: text+="## "+child.parent.name+"\n\n"+child.read_text()+"\n"
+          if not children: text+="NOT TESTED: no UI route report produced.\n"
+          (root/"REPORT.md").write_text(text)
+          PY
+          cat android-e2e-results/REPORT.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

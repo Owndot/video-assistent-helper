@@ -3,7 +3,7 @@
     35
   ],
   "route": "both",
-  "scope": "smoke",
-  "previous_run": 40192612290,
-  "reuse_bundle_run": 40192612290
+  "scope": "controls",
+  "previous_run": 40194913791,
+  "reuse_bundle_run": 40194913791
 }
