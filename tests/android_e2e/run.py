@@ -26,6 +26,8 @@ PKG = "de.evp.helfer.debug"
 FIREFOX = "org.mozilla.firefox"
 ROUTE = os.environ.get("E2E_ROUTE", "kadri")
 assert ROUTE in ("kadri", "userscript")
+SCOPE = os.environ.get("E2E_SCOPE", "full")
+assert SCOPE in ("full", "smoke")
 OUT = Path(os.environ.get("E2E_OUT", "android-e2e-results"))
 OUT.mkdir(parents=True, exist_ok=True)
 RESULTS = []
@@ -131,7 +133,7 @@ def case(name, fn, requires=None):
 
 def write_results():
     (OUT / "results.json").write_text(json.dumps(RESULTS, indent=2), encoding="utf8")
-    rows = ["# Android E2E — real emulator / installed APK", "",
+    rows = [f"# Android E2E — {ROUTE} / {SCOPE} — real emulator / installed APK", "",
             "| Case | Status | Detail |", "|---|---|---|"]
     for r in RESULTS:
         rows.append("| " + r["name"] + " | " + r["status"] + " | " +
@@ -334,10 +336,18 @@ def firefox_prepare():
 
 def launch_url(url):
     global NAVIGATION_INITIALIZED
-    D.app_start(FIREFOX, stop=False)
-    for _ in range(4):
-        bar = D(descriptionContains="Search or enter address")
-        if bar.exists(timeout=.5):
+    if D.app_current().get("package") != FIREFOX:
+        D.app_start(FIREFOX, stop=False)
+        wait(lambda: D.app_current().get("package") == FIREFOX, timeout=10)
+    for _ in range(3):
+        until = time.monotonic() + 4
+        bar = None
+        while time.monotonic() < until:
+            bar = visible_label("Search or enter address", contains=True)
+            if bar:
+                break
+            time.sleep(.2)
+        if bar:
             bar.click()
             edit = D(className="android.widget.EditText")
             wait(lambda: edit.exists, timeout=5)
@@ -347,17 +357,21 @@ def launch_url(url):
             time.sleep(.8)
             return
         if not NAVIGATION_INITIALIZED:
-            shell("am", "start", "-W", "-a", "android.intent.action.VIEW", "-d", url, "-p", FIREFOX)
+            # The supported development installer restarts Firefox. A single
+            # initial VIEW intent can restore its tab; later navigations reuse UI.
+            shell("am", "start", "-W", "-a", "android.intent.action.VIEW", "-d", url,
+                  "--es", "com.android.browser.application_id", "android-e2e-coordinator", "-p", FIREFOX)
             NAVIGATION_INITIALIZED = True
             time.sleep(1)
             return
-        # A previous player/menu must be closed via the actual Back action.
+        if D.app_current().get("package") != FIREFOX:
+            raise AssertionError("Firefox lost foreground before navigation")
         D.press("back")
-        time.sleep(.3)
-    raise AssertionError("Firefox address bar unavailable; refusing to accumulate extra tabs")
+        time.sleep(.4)
+    raise AssertionError("Firefox address bar unavailable; no unbounded new-tab fallback")
 
 def extension():
-    global WEB_EXT
+    global WEB_EXT, NAVIGATION_INITIALIZED
     log = (OUT / "web-ext.log").open("w", encoding="utf8")
     cmd = ["web-ext", "run", "--target=firefox-android", "--android-device=" + os.environ["ANDROID_SERIAL"],
            "--firefox-apk=" + FIREFOX, "--source-dir=" + (os.environ["KADRI_DIST"] if ROUTE == "kadri" else str(Path("e2e-bundle/violentmonkey").resolve())),
@@ -381,6 +395,7 @@ def extension():
     if added.exists(timeout=5):
         click("OK")
         wait(lambda: not added.exists, timeout=5)
+    NAVIGATION_INITIALIZED = False  # web-ext explicitly restarted Firefox
     if ROUTE == "userscript":
         # The real manager intercepts a .user.js navigation and opens its own
         # installer; clicking Install exercises its actual storage/GM execution.
@@ -924,7 +939,7 @@ def main():
     adb("reverse", "tcp:8765", "tcp:8765")
     adb("logcat", "-c")
     provenance = {
-        "route": ROUTE,
+        "route": ROUTE, "scope": SCOPE,
         "automation_commit": os.environ.get("GITHUB_SHA"),
         "helper_commit": os.environ.get("HELPER_COMMIT"), "kadri_commit": os.environ.get("KADRI_COMMIT"),
         "api": shell("getprop", "ro.build.version.sdk").strip(),
@@ -936,31 +951,33 @@ def main():
     }
     (OUT / "provenance.json").write_text(json.dumps(provenance, indent=2), encoding="utf8")
     case("helper_setup", setup)
-    case("helper_authentication", security, ["helper_setup"])
-    case("settings_export_import", export_import, ["helper_setup"])
-    case("helper_restart_memory", restart, ["helper_setup"])
+    if SCOPE == "full":
+        case("helper_authentication", security, ["helper_setup"])
+        case("settings_export_import", export_import, ["helper_setup"])
+        case("helper_restart_memory", restart, ["helper_setup"])
     case("firefox_setup", firefox_prepare)
     case("real_extension_install", extension, ["firefox_setup"])
     case("real_browser_pairing", pair, ["helper_setup", "real_extension_install"])
     case("player_play_pause", player, ["real_browser_pairing"])
-    case("device_volume_brightness_swipes", gestures, ["player_play_pause"])
-    case("seek_and_restore", seek_restore, ["player_play_pause"])
-    for kind in ("redirect", "hls", "embedded"):
-        case("play_" + kind, lambda k=kind: source(k), ["real_browser_pairing"])
-    case("subtitle_selection", subtitles, ["real_browser_pairing"])
-    case("site_source_switch", switch_source, ["real_browser_pairing"])
-    case("orientation_roundtrip", rotation, ["real_browser_pairing"])
-    case("player_open_close_memory", opening_cycles, ["real_browser_pairing"])
-    case("download_cancel", cancel_download, ["real_browser_pairing"])
-    case("parallel_downloads", downloads, ["real_browser_pairing"])
-    case("large_download_memory", large_download, ["real_browser_pairing"])
-    case("background_pip_return", background, ["large_download_memory"])
-    case("paired_helper_restart", paired_restart, ["real_browser_pairing"])
-    case("pairing_reset_roundtrip", reset_pairing, ["real_browser_pairing"])
-    case("native_hls_download", native_hls_download, ["helper_setup"])
-    case("native_cookie_redirect", native_cookie_redirect, ["helper_setup"])
-    case("native_downloadmanager_cookie_redirect", lambda: native_cookie_redirect("file"), ["helper_setup"])
-    case("real_port_conflict", port_conflict, ["helper_setup"])
+    if SCOPE == "full":
+        case("device_volume_brightness_swipes", gestures, ["player_play_pause"])
+        case("seek_and_restore", seek_restore, ["player_play_pause"])
+        for kind in ("redirect", "hls", "embedded"):
+            case("play_" + kind, lambda k=kind: source(k), ["real_browser_pairing"])
+        case("subtitle_selection", subtitles, ["real_browser_pairing"])
+        case("site_source_switch", switch_source, ["real_browser_pairing"])
+        case("orientation_roundtrip", rotation, ["real_browser_pairing"])
+        case("player_open_close_memory", opening_cycles, ["real_browser_pairing"])
+        case("download_cancel", cancel_download, ["real_browser_pairing"])
+        case("parallel_downloads", downloads, ["real_browser_pairing"])
+        case("large_download_memory", large_download, ["real_browser_pairing"])
+        case("background_pip_return", background, ["large_download_memory"])
+        case("paired_helper_restart", paired_restart, ["real_browser_pairing"])
+        case("pairing_reset_roundtrip", reset_pairing, ["real_browser_pairing"])
+        case("native_hls_download", native_hls_download, ["helper_setup"])
+        case("native_cookie_redirect", native_cookie_redirect, ["helper_setup"])
+        case("native_downloadmanager_cookie_redirect", lambda: native_cookie_redirect("file"), ["helper_setup"])
+        case("real_port_conflict", port_conflict, ["helper_setup"])
     case("no_java_crash", crash_check)
     for name, reason in {
         "alternate_browser_route": "This report covers " + ROUTE + " only; consult the separate route report.",
@@ -971,6 +988,8 @@ def main():
         "chrome_dnr_worker_recovery": "Covered by existing real desktop Chromium tests; Firefox Android cannot establish Chrome DNR coverage.",
     }.items():
         RESULTS.append({"name": name, "status": "NOT_TESTED", "detail": reason})
+    if SCOPE == "smoke":
+        RESULTS.append({"name":"full_functional_suite","status":"NOT_TESTED","detail":"Explicit smoke scope: full feature matrix deliberately omitted; no full-validation claim."})
     write_results()
     if WEB_EXT and WEB_EXT.poll() is None:
         WEB_EXT.send_signal(signal.SIGINT)

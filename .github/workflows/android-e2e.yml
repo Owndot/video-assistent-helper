@@ -11,6 +11,11 @@ on:
       reuse_bundle_run:
         description: 'Optional successful bundle run ID; source equality is enforced'
         default: '0'
+      scope:
+        description: 'smoke for driver calibration, full for feature coverage'
+        type: choice
+        options: [full, smoke]
+        default: full
       routes:
         description: 'Real integration routes: kadri, userscript, or both'
         type: choice
@@ -37,6 +42,7 @@ jobs:
     outputs:
       apis: ${{ steps.matrix.outputs.apis }}
       routes: ${{ steps.matrix.outputs.routes }}
+      scope: ${{ steps.matrix.outputs.scope }}
       kadri_sha: ${{ steps.matrix.outputs.kadri_sha }}
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +52,7 @@ jobs:
         env:
           REQUESTED_APIS: ${{ inputs.apis || '' }}
           REQUESTED_ROUTE: ${{ inputs.routes || '' }}
+          REQUESTED_SCOPE: ${{ inputs.scope || '' }}
           REUSE_BUNDLE: ${{ inputs.reuse_bundle_run || '' }}
           KADRI_SHA: ${{ inputs.kadri_sha || '' }}
         run: |
@@ -61,6 +68,9 @@ jobs:
               routes=os.environ["REQUESTED_ROUTE"] or json.load(open("tests/android_e2e/execution.json")).get("route","kadri")
               assert routes in ("kadri","userscript","both")
               out.write("routes="+("kadri userscript" if routes=="both" else routes)+"\n")
+              scope=os.environ["REQUESTED_SCOPE"] or json.load(open("tests/android_e2e/execution.json")).get("scope","full")
+              assert scope in ("smoke","full")
+              out.write("scope="+scope+"\n")
               reuse=os.environ["REUSE_BUNDLE"] or str(json.load(open("tests/android_e2e/execution.json")).get("reuse_bundle_run",0))
               assert reuse.isdigit()
               out.write("reuse_bundle_run="+reuse+"\n")
@@ -225,6 +235,7 @@ jobs:
           path: e2e-bundle
           retention-days: 2
   emulator:
+    name: Android API ${{ matrix.api }} / ${{ needs.build.outputs.scope }}
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -261,6 +272,7 @@ jobs:
       - name: Operate actual APKs and Firefox on Android
         env:
           E2E_ROUTES: ${{ needs.build.outputs.routes }}
+          E2E_SCOPE: ${{ needs.build.outputs.scope }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}
@@ -296,10 +308,12 @@ jobs:
         env:
           BUILD_STATUS: ${{ needs.build.result }}
           EMULATOR_STATUS: ${{ needs.emulator.result }}
+          E2E_SCOPE: ${{ needs.build.outputs.scope }}
         run: |
           python3 - <<'PY'
           import os,pathlib
-          lines=["# Controlled Android E2E", "", "Build: "+os.environ["BUILD_STATUS"]+"; emulator jobs: "+os.environ["EMULATOR_STATUS"], ""]
+          lines=["# Controlled Android E2E — "+os.environ.get("E2E_SCOPE","unknown"), "", "Build: "+os.environ["BUILD_STATUS"]+"; emulator jobs: "+os.environ["EMULATOR_STATUS"], ""]
+          if os.environ.get("E2E_SCOPE")=="smoke": lines+=["Smoke scope only. This is not full feature validation.", ""]
           reports=sorted(pathlib.Path("reports").glob("*/REPORT.md"))
           if not reports: lines+=["NOT TESTED: no emulator UI report produced."]
           for report in reports:
