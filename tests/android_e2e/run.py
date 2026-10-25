@@ -446,12 +446,17 @@ def swipe_find(label, contains=False, limit=8):
     raise AssertionError("Visible label not reached by real swipes: " + label)
 
 def firefox_prepare():
+    shell("cmd", "role", "add-role-holder", "--user", "0", "android.app.role.BROWSER", FIREFOX)
     D.app_start(FIREFOX)
     for _ in range(8):
         found = False
         for text in ("Not now", "Skip", "Start browsing", "Continue", "Get started"):
             if D(text=text).exists(timeout=.4):
-                D(text=text).click()
+                try:
+                    D(text=text).click(timeout=.5)
+                except Exception as exc:
+                    if type(exc).__name__ != "UiObjectNotFoundError" and "StaleObjectException" not in str(exc): raise
+                    continue
                 found = True
                 time.sleep(.5)
                 break
@@ -474,7 +479,6 @@ def firefox_prepare():
     row.click()
     shot("firefox-remote-debug-enabled")
     D.press("back")
-    shell("cmd", "role", "add-role-holder", "--user", "0", "android.app.role.BROWSER", FIREFOX)
     return "Fresh real Firefox profile; Remote debugging via USB enabled through actual UI swipes/toggle; Firefox provisioned as emulator default browser."
 
 def launch_url(url):
