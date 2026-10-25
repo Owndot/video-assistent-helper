@@ -44,6 +44,7 @@ public class HelferService extends Service {
     static final String KEY = "evp-1";
     static final String CHANNEL = "helfer";
     static volatile boolean running = false;
+    static volatile String startupError = null;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private MiniServer server;
@@ -65,13 +66,22 @@ public class HelferService extends Service {
         wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         startInForeground();
-        startServer();
+        startupError = null;
+        if (!startServer()) {
+            startupError = Tr.t(
+                "Port 47811 ist belegt oder nicht verfügbar. Stoppe den anderen Helper (Debug/Release) und starte diese App erneut.",
+                "Port 47811 is busy or unavailable. Stop the other helper (debug/release) and retry this app.");
+            android.widget.Toast.makeText(this, startupError, android.widget.Toast.LENGTH_LONG).show();
+            stopSelf();
+            return;
+        }
         running = true;
         main.postDelayed(watchdog, 10000);
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (!running) return START_NOT_STICKY;
         if (intent != null && "cancel".equals(intent.getAction())) {
             // "Abbrechen" in der Download-Benachrichtigung
             Downloads.cancel.put(intent.getIntExtra("id", -1), true);
@@ -120,7 +130,7 @@ public class HelferService extends Service {
     }
 
     // ---------- lokaler Mini-Server ----------
-    private void startServer() {
+    private boolean startServer() {
         // Schlüssel: nur der eigene Zufallsschlüssel dieser App (128 Bit). Den alten festen "evp-1" konnte jeder kennen –
         // er gilt nicht mehr, auch nicht vor dem Koppeln.
         server = new MiniServer(PORT, (k) -> {
@@ -130,7 +140,7 @@ public class HelferService extends Service {
             @Override public String get(String path, Map<String, String> p) { return route(path, p); }
             @Override public String push(Map<String, String> p, byte[] body) { return MiniServer.push(Downloads.proxies, p, body); }
         });
-        server.start();
+        return server.start();
     }
 
     private String route(String path, Map<String, String> p) {
@@ -286,6 +296,7 @@ public class HelferService extends Service {
     };
 
     static void start(Context c) {
+        if (!running) startupError = null;
         Intent i = new Intent(c, HelferService.class);
         c.startForegroundService(i);
     }

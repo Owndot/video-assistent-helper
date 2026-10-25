@@ -1,0 +1,82 @@
+name: Disposable APK migration tests
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/security-phase-1]
+    paths: ['tools/*migration*.sh', '.github/workflows/migration-tests.yml', 'app/build.gradle']
+permissions:
+  contents: read
+jobs:
+  platforms:
+    runs-on: ubuntu-latest
+    outputs:
+      apis: ${{ steps.sdk.outputs.apis }}
+    steps:
+      - id: sdk
+        name: Identify available Android platforms without claiming skipped coverage
+        shell: bash
+        run: |
+          manager=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | sort -V | tail -1)
+          test -n "$manager"
+          "$manager" --list > "$RUNNER_TEMP/sdk-packages.txt"
+          if grep -q 'platforms;android-37' "$RUNNER_TEMP/sdk-packages.txt" && grep -q 'system-images;android-37;default;x86_64' "$RUNNER_TEMP/sdk-packages.txt"; then
+            echo 'apis=[26,28,31,32,33,35,37]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'apis=[26,28,31,32,33,35]' >> "$GITHUB_OUTPUT"
+            echo '::warning::NOT TESTED: Android 17/API37 SDK or default x86_64 image unavailable'
+            echo 'Android 17/API37: NOT TESTED — required SDK/image unavailable; physical S26 validation remains mandatory.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+  fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - run: tools/build-migration-fixtures.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: migration-fixtures-TEST-ONLY
+          path: migration-fixtures
+          retention-days: 2
+  emulator:
+    needs: [fixtures, platforms]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        api: ${{ fromJSON(needs.platforms.outputs.apis) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: migration-fixtures-TEST-ONLY
+          path: migration-fixtures
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: default
+          arch: x86_64
+          disable-animations: true
+          script: tools/test-migration-device.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: migration-results-api-${{ matrix.api }}
+          path: '*-install.log'
+          if-no-files-found: ignore

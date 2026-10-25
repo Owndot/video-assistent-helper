@@ -133,6 +133,7 @@ public class MainActivity extends Activity {
             root.postDelayed(this::build, 400);
         }));
         root.addView(head);
+        if (HelferService.startupError != null) root.addView(text(HelferService.startupError, 15, false, WARN));
 
         // Zusammenfassung
         int open = (ov ? 0 : 1) + (bat ? 0 : 1) + (notif ? 0 : 1) + (paired ? 0 : 1);
@@ -207,6 +208,17 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams tl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         tl.topMargin = dp(8);
         set.addView(test, tl);
+        set.addView(pill(Tr.t("Einstellungen exportieren", "Export settings"), false, v -> {
+            Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("text/plain")
+                .addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE,"video-assistent-settings.txt");
+            startActivityForResult(i,1001);
+        }));
+        set.addView(pill(Tr.t("Einstellungen importieren", "Import settings"), false, v -> {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("text/*").addCategory(Intent.CATEGORY_OPENABLE);
+            startActivityForResult(i,1002);
+        }));
+        set.addView(text(Tr.t("Die Datei enthält Sprache, Design und Autostart. Nach einer Neuinstallation den Browser erneut verbinden.",
+            "The file contains language, theme and autostart. Pair the browser again after reinstalling."),13,false,SUB));
         addCard(set);
 
         // Hinweis unten
@@ -279,9 +291,62 @@ public class MainActivity extends Activity {
 
     private void pair() {
         if (!HelferService.running) HelferService.start(this);
+        pairWhenReady(0);
+    }
+
+    private void pairWhenReady(int attempt) {
+        if (!HelferService.running) {
+            if (HelferService.startupError != null || attempt >= 20) {
+                Toast.makeText(this, HelferService.startupError != null ? HelferService.startupError :
+                    Tr.t("Helper nicht bereit. Bitte erneut starten.", "Helper not ready. Please restart."), Toast.LENGTH_LONG).show();
+                build();
+                return;
+            }
+            root.postDelayed(() -> pairWhenReady(attempt + 1), 100);
+            return;
+        }
         Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:" + HelferService.PORT + "/pair#" + Keys.key(this)));
         i.addCategory(Intent.CATEGORY_BROWSABLE);
         try { startActivity(Intent.createChooser(i, Tr.t("Browser mit Violentmonkey wählen", "Choose the browser with Violentmonkey"))); } catch (Exception e) { startActivity(i); }
+    }
+
+    @Override
+    protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request,result,data);
+        if ((request!=1001 && request!=1002) || result!=RESULT_OK || data==null || data.getData()==null) return;
+        final Uri uri=data.getData();
+        final String lang=Keys.lang(this), design=theme(this);
+        final boolean boot=prefs(this).getBoolean("boot",true);
+        new Thread(() -> {
+            try {
+                if (request==1001) {
+                    byte[] bytes=SettingsTransfer.encode(lang,design,boot).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    try (java.io.OutputStream out=getContentResolver().openOutputStream(uri,"wt")) {
+                        if(out==null) throw new java.io.IOException();
+                        out.write(bytes);
+                    }
+                } else {
+                    java.util.Map<String,String> values;
+                    try (java.io.InputStream in=getContentResolver().openInputStream(uri)) {
+                        if(in==null) throw new java.io.IOException();
+                        values=SettingsTransfer.decode(SettingsTransfer.read(in));
+                    }
+                    SharedPreferences.Editor edit=prefs(this).edit();
+                    for(java.util.Map.Entry<String,String> e:values.entrySet()) {
+                        if("boot".equals(e.getKey())) edit.putBoolean("boot",Boolean.parseBoolean(e.getValue()));
+                        else edit.putString(e.getKey(),e.getValue());
+                    }
+                    edit.apply();
+                }
+                runOnUiThread(() -> { if(isFinishing() || isDestroyed()) return;
+                    Keys.applyLang(this); build();
+                    Toast.makeText(this,Tr.t("Einstellungen übertragen","Settings transferred"),Toast.LENGTH_LONG).show();
+                });
+            } catch(Exception e) {
+                runOnUiThread(() -> { if(!isFinishing() && !isDestroyed())
+                    Toast.makeText(this,Tr.t("Datei konnte nicht übertragen werden","Could not transfer settings file"),Toast.LENGTH_LONG).show(); });
+            }
+        },"settings-transfer").start();
     }
 
     // ---------- Bausteine ----------

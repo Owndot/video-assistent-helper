@@ -89,9 +89,12 @@ dort YTDLnis). Den Vollbild-Hinweis des Browsers („zum Beenden … von oben zi
 
 ## Installieren
 
+**Signaturmigration:** Der bisherige APK-Signierschlüssel ist kompromittiert. Es gibt noch keinen freigegebenen produktiven Nachfolgeschlüssel. Test-APKs sind separate Debug-Installationen; keine Testdatei über eine Produktionsinstallation erzwingen. Geplante Wege und Teststatus: [MIGRATION-VALIDATION.md](MIGRATION-VALIDATION.md), [S26-Gerätetests](S26-ANDROID17-TEST.md).
+
+
 1. **Violentmonkey** in Vivaldi installieren (Erweiterungen, ab Vivaldi 8.2 auf Android).
 2. **Userscript:** `userscript/video-assistent.user.js` in Violentmonkey installieren (alte Version vorher löschen).
-3. **Helper-App (optional):** unter **Releases → neueste** `VideoAssistent-Helper.apk` laden und installieren.
+3. **Helper-App (optional):** unter **[Releases → neueste Veröffentlichung](https://github.com/Owndot/video-assistent-helper/releases/latest)** `VideoAssistent-Helper.apk` laden und installieren.
    In der App die Karten der Reihe nach antippen:
    1. Helligkeit erlauben („Über anderen Apps einblenden“)
    2. vom Akku-Sparen ausnehmen
@@ -99,7 +102,7 @@ dort YTDLnis). Den Vollbild-Hinweis des Browsers („zum Beenden … von oben zi
    4. **Mit dem Browser verbinden** → Vivaldi wählen → „✓ Verbunden“
    „Ausprobieren: 3 Sekunden dunkel“ prüft die Helligkeit.
 
-Neue App-Versionen einfach über die alte installieren (gleicher Signaturschlüssel).
+Gewöhnliche Updates benötigen dieselbe freigegebene Signieridentität oder eine geprüfte Signierhistorie. Für die aktuelle Sicherheitsmigration ist auf älteren Android-Versionen eine Neuinstallation vorgesehen; erst die freigegebene Migrationsanleitung befolgen.
 
 ### Firefox (Android)
 
@@ -166,6 +169,6 @@ userscript/            das fertige Userscript (aktuelle Version – zum Installi
 app/                   Helper-App (Java, ohne Bibliotheken)
 tests/browser/         Browser-Tests (Python + Playwright) mit Testseiten in web/
 tests/java/            Tests für den Download-Kern (ohne Android) + Erzeugung der Test-Streams
-.github/workflows/     baut bei jedem Push die APK (Release) und testet das Skript in Chromium + Firefox
+.github/workflows/     baut APK-Artefakte; Veröffentlichung nur ausdrücklich auf main und testet das Skript in Chromium + Firefox
 ENTWICKLUNG.md         Aufbau, Schnittstelle, Tests, Stolperfallen – zum Weiterarbeiten
 ```

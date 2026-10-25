@@ -1,0 +1,22 @@
+{
+  "run": 40131293057,
+  "source": "acbfc5c8c619771e39f5d17205b50d168ff56438",
+  "android_api": 33,
+  "scope": "actual Android HttpURLConnection via app_process using disposable debug APK classes; shell UID, not physical/OEM application lifecycle",
+  "stable": {
+    "tenantCookieAllowed": true,
+    "crossCookiePresent": true,
+    "sameCookiePreserved": true,
+    "rangePreserved": true,
+    "pslReady": false,
+    "redirect300Followed": true
+  },
+  "current": {
+    "tenantCookieAllowed": false,
+    "crossCookiePresent": false,
+    "sameCookiePreserved": true,
+    "rangePreserved": true,
+    "pslReady": true,
+    "redirect300Followed": true
+  }
+}

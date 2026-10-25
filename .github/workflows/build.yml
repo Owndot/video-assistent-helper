@@ -1,13 +1,14 @@
-name: APK validation (release paused)
+name: Helper safe validation
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main]
+    paths: ['app/**', 'tests/**', 'tools/**', '.github/workflows/**']
 permissions:
   contents: read
 jobs:
-  debug:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,9 +20,190 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Build isolated debug app with SDK debug key
-        run: gradle :app:assembleDebug --no-daemon
+      - name: Host security tests
+        run: |
+          python3 -m unittest discover -s tests/security -v
+          python3 -m py_compile tests/android_e2e/*.py
+          python3 -m unittest discover -s tests/android_e2e -p test_seek_clock.py -v
+          python3 -m py_compile tools/profile-helper.py tools/check-update.py tools/compare-exposed-signature.py
+          for script in tools/collect-device-snapshot.sh tools/build-migration-fixtures.sh tools/test-migration-device.sh; do bash -n "$script"; done
+      - name: Userscript credential boundary regression
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          node tools/build.js --check
+          node tests/cookie_sites.js
+          old="$RUNNER_TEMP/old-cookie-sites.js"
+          gh api 'repos/Owndot/video-assistent-helper/contents/src/070-extern-ytdlnis.js?ref=6111df1a96854f659d7ab94bbaed399230cf1435' --jq .content | base64 --decode > "$old"
+          if node tests/cookie_sites.js "$old" > "$RUNNER_TEMP/old-cookie-sites.log" 2>&1; then
+            echo 'Old userscript boundary unexpectedly passed'; exit 1
+          fi
+          grep -q 'foreign eu.org tenant was trusted' "$RUNNER_TEMP/old-cookie-sites.log"
+          echo 'PASS: old userscript tenant scope fails the new regression'
+      - name: JVM compilation and exclusive-port test
+        run: |
+          tests/java/build.sh
+          java -cp tests/java/classes TestPortConflict
+      - name: Prove TLS and socket regressions against the actual predecessor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/Fetcher.java?ref=22d94d2e936052440a54d0368b68d6d7a15dd402' --jq .content | base64 --decode > "$work/Fetcher.java"
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/MiniServer.java?ref=22d94d2e936052440a54d0368b68d6d7a15dd402' --jq .content | base64 --decode > "$work/MiniServer.java"
+          javac -cp tests/java/classes -d "$work/old" "$work/Fetcher.java" "$work/MiniServer.java"
+          if timeout 30 java -cp "$work/old:tests/java/classes" de.evp.helfer.TestTlsCookieBoundary > "$work/old-tls.log" 2>&1; then
+            echo 'Previous HTTPS-to-HTTP cookie leak was not rejected'; exit 1
+          fi
+          grep -q 'Cookie sent from HTTPS page to initial HTTP target' "$work/old-tls.log"
+          echo 'PASS: actual predecessor leaks HTTPS-page Cookie on the initial HTTP request'
+          if timeout 15 java -cp "$work/old:tests/java/classes" de.evp.helfer.TestReferrerPrivacy > "$work/old-referrer.log" 2>&1; then
+            echo 'Previous referrer privacy regression unexpectedly passed'; exit 1
+          fi
+          grep -q 'Userinfo or fragment escaped in Referer' "$work/old-referrer.log"
+          echo 'PASS: actual predecessor exposes referrer userinfo/fragment'
+          if timeout 15 java -cp "$work/old:tests/java/classes" TestMiniServerLimits --stop-only > "$work/old-socket.log" 2>&1; then
+            echo 'Previous socket shutdown regression unexpectedly passed'; exit 1
+          fi
+          grep -q 'Accepted connection remained open after stop' "$work/old-socket.log"
+          echo 'PASS: actual predecessor leaves accepted socket open after stop'
+      - name: Compare rapid-restart regression with previous listener
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/MiniServer.java?ref=e7672d277f1c0488bb4c187c0ead6a2d3f07fa57' --jq .content | base64 --decode > "$work/MiniServer.java"
+          javac -cp tests/java/classes -d "$work/old" "$work/MiniServer.java"
+          reproduced=false
+          for trial in 1 2 3 4 5; do
+            if java -cp "$work/old:tests/java/classes" TestPortConflict > "$work/previous.log" 2>&1; then continue; fi
+            grep -Eq 'Endpoint not released after shutdown|Rapid restart failed' "$work/previous.log"
+            reproduced=true
+            echo "Previous listener race reproduced:"
+            cat "$work/previous.log"
+            break
+          done
+          if [ "$reproduced" = false ]; then echo "::warning::Previous timing race did not reproduce in this run"; fi
+          java -cp tests/java/classes TestPortConflict
+      - name: Compare cookie boundaries against the previous HTTP client
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/Fetcher.java?ref=80275d518c74ef6404e9afc59579bc7b8cb495f7' --jq .content | base64 --decode > "$work/Fetcher.java"
+          javac -cp tests/java/classes -d "$work/old" "$work/Fetcher.java"
+          if java -cp "$work/old:tests/java/classes" de.evp.helfer.TestCookie > "$work/old-cookie.log" 2>&1; then
+            echo 'Previous cookie boundary unexpectedly passed'; exit 1
+          fi
+          grep -q 'foreign bob.github.io' "$work/old-cookie.log"
+          echo 'Confirmed old tenant-cookie leak; current policy must pass:'
+          java -cp tests/java/classes de.evp.helfer.TestCookie
+          if java -cp "$work/old:tests/java/classes" de.evp.helfer.TestRedirectCookies --cookies-only > "$work/old-redirect.log" 2>&1; then
+            echo 'Old JVM did not expose redirect forwarding; Android still requires device verification'
+          else
+            grep -q 'Cookie crossed redirect site boundary' "$work/old-redirect.log"
+            echo 'Confirmed old native HTTP redirect cookie leak'
+          fi
+          java -cp tests/java/classes de.evp.helfer.TestRedirectCookies
+      - name: Preserve HTTP 300 redirect compatibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/Fetcher.java?ref=b647432e549993a6674cf4ddbc9f1803f02be0a1' --jq .content | base64 --decode > "$work/Fetcher.java"
+          javac -cp tests/java/classes -d "$work/old" "$work/Fetcher.java"
+          if java -cp "$work/old:tests/java/classes" de.evp.helfer.TestRedirectCookies > "$work/old-300.log" 2>&1; then
+            echo 'Previous missing HTTP300 branch unexpectedly passed'; exit 1
+          fi
+          grep -q 'HTTP 300 redirect failed' "$work/old-300.log"
+          java -cp tests/java/classes de.evp.helfer.TestRedirectCookies
+          echo 'PASS: HTTP300 compatibility regression fails predecessor and passes corrected client'
+      - name: Isolated debug APK with disposable test key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android"
+          rm -f "$HOME/.android/debug.keystore"
+          keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 2 -dname CN=HELPER-CI-TEST-ONLY
+          trap 'rm -f "$HOME/.android/debug.keystore"' EXIT
+          gradle :app:assembleDebug --no-daemon
+      - name: Verify PSL data packaged into the debug APK
+        run: |
+          python3 - <<'PY'
+          import hashlib,zipfile
+          with zipfile.ZipFile("app/build/outputs/apk/debug/app-debug.apk") as apk:
+              data=apk.read("de/evp/helfer/public_suffix_rules.txt")
+          assert hashlib.sha256(data).hexdigest()=="0c203a51804ede904082d7f106322de9ec635431d3c0d982b3dea3c842106436"
+          print("PASS: pinned PSL present in APK")
+          PY
+      - name: Record isolated debug APK provenance
+        shell: bash
+        run: |
+          mkdir -p validation-results
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          sha256sum "$apk" > validation-results/debug-apk.sha256
+          git rev-parse HEAD > validation-results/debug-source-commit.txt
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          aapt=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$aapt" dump badging "$apk" | grep "package: name='de.evp.helfer.debug'"
+          "$signer" verify --verbose --print-certs "$apk" | tee validation-results/debug-signature.txt
+      - name: Verify pinned existing release APK (read only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api repos/Owndot/video-assistent-helper/releases/assets/667389794 -H 'Accept: application/octet-stream' > "$RUNNER_TEMP/published.apk"
+          echo "bdbb2dd853ffcba80afb27492a31baf474ae1e3fd36418e3f7a5206abb760086  $RUNNER_TEMP/published.apk" | sha256sum -c -
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          "$signer" verify --verbose --print-certs "$RUNNER_TEMP/published.apk" | tee published-certificate.txt
+      - name: Test release verifier with disposable identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          export EVP_KEYSTORE_PATH="$RUNNER_TEMP/test-only.jks"
+          export EVP_STORE_PASSWORD=test-only-password EVP_KEY_PASSWORD=test-only-password EVP_KEY_ALIAS=test-only
+          trap 'rm -f "$EVP_KEYSTORE_PATH" "$RUNNER_TEMP/test-cert.der"' EXIT
+          keytool -genkeypair -keystore "$EVP_KEYSTORE_PATH" -storetype JKS -storepass:env EVP_STORE_PASSWORD -keypass:env EVP_KEY_PASSWORD -alias "$EVP_KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 2 -dname CN=CI-TEST-ONLY
+          keytool -exportcert -keystore "$EVP_KEYSTORE_PATH" -storepass:env EVP_STORE_PASSWORD -alias "$EVP_KEY_ALIAS" > "$RUNNER_TEMP/test-cert.der"
+          export EVP_CERT_SHA256="$(sha256sum "$RUNNER_TEMP/test-cert.der" | cut -d ' ' -f 1)"
+          if EVP_CERT_SHA256=ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5 gradle :app:verifyReleaseSigning --no-daemon > "$RUNNER_TEMP/blocked-signer.log" 2>&1; then
+            echo 'Exposed signer was not blocked'; exit 1
+          fi
+          grep -q 'Exposed production signing identity is blocked' "$RUNNER_TEMP/blocked-signer.log"
+          echo 'PASS: compromised identity blocked using a disposable keystore only'
+          gradle :app:assembleRelease --no-daemon
+          # Never upload or distribute this test-signed production-ID APK.
+      - name: JVM media tests
+        run: |
+          # Use Ubuntu's signed official mirror; the Azure mirror stalled in run40219442784.
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
+          fi
+          timeout 90 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
+          timeout 180 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install --no-install-recommends -y ffmpeg
+          tests/java/run_core_tests.sh
+          javac -cp tests/java/classes -d tests/java/classes tests/android_e2e/TestCredentialedStream.java
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestCredentialedStream
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: helper-debug-NOT-production
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            validation-results/debug-apk.sha256
+            validation-results/debug-source-commit.txt
+            validation-results/debug-signature.txt
+          if-no-files-found: ignore

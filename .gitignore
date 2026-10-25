@@ -5,7 +5,8 @@ local.properties
 *.iml
 .idea/
 
-# Never track signing material
+# Signing material must live outside Git
 *.jks
 *.keystore
+# Never track signing material
 *.p12

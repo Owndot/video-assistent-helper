@@ -43,6 +43,12 @@ public class Downloads {
     static final String CHANNEL = "downloads";
     static final String FOLDER = "Video-Assistent";
     private static final ExecutorService jobs = Executors.newFixedThreadPool(2);
+    // File transfers must not wait behind DownloadManager watchers (up to 25s each).
+    // Two bounded streams; idle worker stacks are released after 30 seconds.
+    private static final java.util.concurrent.ThreadPoolExecutor credentialedFiles =
+        new java.util.concurrent.ThreadPoolExecutor(2, 2, 30, java.util.concurrent.TimeUnit.SECONDS,
+            new java.util.concurrent.LinkedBlockingQueue<>());
+    static { credentialedFiles.allowCoreThreadTimeOut(true); }
     private static final AtomicInteger ids = new AtomicInteger(100);
     static final Map<Integer, Boolean> cancel = new ConcurrentHashMap<>();
     static final Map<Integer, String> state = new ConcurrentHashMap<>();
@@ -85,26 +91,30 @@ public class Downloads {
             proxies.put(id, px);
             net = px;
         } else net = new Fetcher.Http(referer, ua, cookie);
-        if ("file".equals(kind) && !proxy) {
+        // DownloadManager replays manual headers across origin redirects.
+        // Credentialed files use the existing native hop policy and a bounded stream.
+        boolean carriesCookie = !proxy && ((Fetcher.Http) net).cookieFor(url);
+        if ("file".equals(kind) && !proxy && !carriesCookie) {
             state.put(id, "Download-Manager");
-            long dmId = fileDownload(c, url, referer, ua, cookie, title);
+            long dmId = fileDownload(c, url, referer, ua, title);
             watch(c, id, dmId);
             return id;
         }
         state.put(id, "startet");
         final String k = kind;
-        jobs.execute(() -> streamJob(c, id, url, title, k, net));
+        ExecutorService queue = "file".equals(k) && !proxy ? credentialedFiles : jobs;
+        queue.execute(() -> streamJob(c, id, url, title, k, net));
         return id;
     }
 
     // ---------- Videodatei: Androids Download-Manager ----------
-    private static long fileDownload(Context c, String url, String referer, String ua, String cookie, String title) {
+    private static long fileDownload(Context c, String url, String referer, String ua, String title) {
         DownloadManager dm = (DownloadManager) c.getSystemService(Context.DOWNLOAD_SERVICE);
         String name = safeName(title, extOf(url, "mp4"));
         DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
-        if (referer != null && !referer.isEmpty()) r.addRequestHeader("Referer", referer);
+        String pageReferrer = Fetcher.Http.referrerFor(referer, url);
+        if (pageReferrer != null) r.addRequestHeader("Referer", pageReferrer);
         if (ua != null && !ua.isEmpty()) r.addRequestHeader("User-Agent", ua);
-        if (new Fetcher.Http(referer, ua, cookie).cookieFor(url)) r.addRequestHeader("Cookie", cookie);   // nur an die eigene Seite
         r.setTitle(name);
         r.setDescription("Video-Assistent");
         r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
@@ -160,7 +170,9 @@ public class Downloads {
                 @Override public boolean cancelled() { return Boolean.TRUE.equals(cancel.get(id)); }
             };
             if ("file".equals(kind)) {
-                File f = Fetcher.toFile(net, url, new File(work, "datei." + extOf(url, "mp4")), l);
+                File target = new File(work, "datei." + extOf(url, "mp4"));
+                File f = net instanceof Fetcher.Http ? ((Fetcher.Http) net).streamToFile(url, target, l)
+                    : Fetcher.toFile(net, url, target, l);
                 String ext = extOf(url, "mp4");
                 Uri saved = save(c, f, safeName(title, ext), "video/" + ("mov".equals(ext) ? "quicktime" : "mkv".equals(ext) ? "x-matroska" : ext));
                 state.put(id, "fertig");

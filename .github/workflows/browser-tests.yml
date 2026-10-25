@@ -1,11 +1,12 @@
 name: Browser-Tests
 
 # Alle Tests aus tests/browser – einmal in Chromium, einmal in Firefox.
+# Native Java changes are covered by Helper safe validation and the deliberate Android E2E run.
 # Läuft bei Änderungen am Skript oder an den Tests (und von Hand über "Run workflow").
 on:
   push:
-    branches: [main]
-    paths: ['src/**', 'tools/**', 'userscript/**', 'tests/**', '.github/workflows/browser-tests.yml']
+    branches: [main, codex/security-phase-1]
+    paths: ['src/**', 'tools/build.js', 'userscript/**', 'tests/browser/**']
   workflow_dispatch:
     inputs:
       tests:
@@ -16,7 +17,7 @@ on:
         default: '["chromium","firefox-neu"]'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -25,10 +26,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # chromium: Playwright 1.56 · firefox-neu: neueste Playwright (aktuelles Firefox) · firefox: Firefox 142 (nur von Hand; erzeugt dort bei Maus keine Zeiger-Ereignisse)
+        # chromium: Playwright 1.56 · firefox-neu: pinned Playwright 1.64.1 (validated Firefox engine) · firefox: Firefox 142 (nur von Hand; erzeugt dort bei Maus keine Zeiger-Ereignisse)
         browser: ${{ fromJSON(github.event.inputs.browsers || '["chromium","firefox-neu"]') }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -45,7 +48,7 @@ jobs:
       - name: Werkzeuge
         run: |
           # Chromium: gleiche Version wie beim Entwickeln (neuere verweigern Größenänderung im Vollbild)
-          if [ "${{ matrix.browser }}" = firefox-neu ]; then pip install playwright pillow; else pip install playwright==1.56.0 pillow; fi
+          if [ "${{ matrix.browser }}" = firefox-neu ]; then pip install playwright==1.64.1 pillow==13.0.0; else pip install playwright==1.56.0 pillow==13.0.0; fi
           python -m playwright install --with-deps ${{ matrix.browser == 'chromium' && 'chromium' || 'firefox' }}
           sudo apt-get install -y ffmpeg
 
@@ -64,15 +67,6 @@ jobs:
           cat ergebnis-${{ matrix.browser }}.txt >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           exit $status
-
-      - name: Ergebnisse in Zweig ergebnisse-${{ matrix.browser }}
-        if: always()
-        run: |
-          d=$(mktemp -d); cp tests/browser/ergebnis-*.txt "$d"/ 2>/dev/null; cp -r tests/browser/out "$d"/ 2>/dev/null
-          cp tests/browser/*.png "$d"/ 2>/dev/null || true
-          cd "$d" && git init -q && git checkout -q -b e
-          git add -A && git -c user.name=ci -c user.email=ci@local commit -qm "Ergebnis ${{ matrix.browser }} ${{ github.sha }}"
-          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" e:ergebnisse-${{ matrix.browser }}
 
       - uses: actions/upload-artifact@v4
         if: always()

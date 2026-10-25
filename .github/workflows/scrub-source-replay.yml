@@ -1,0 +1,78 @@
+name: Prove opening-seek regression and player handoff
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/security-phase-1]
+    paths: ['tools/prepare-scrub-observations.py', '.github/workflows/scrub-source-replay.yml', 'tests/browser/test_metadata_seek.py']
+permissions:
+  contents: read
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the same Chromium engine
+        run: |
+          pip install playwright==1.56.0 pillow==13.0.0
+          python -m playwright install --with-deps chromium
+      - name: Fetch stable script only and instrument assertions without weakening them
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api 'repos/Owndot/video-assistent-helper/contents/userscript/video-assistent.user.js?ref=b05fd2de60d27d368eda60ff32be8b361a695f45' --jq .content | base64 --decode > "$RUNNER_TEMP/stable.js"
+          cp userscript/video-assistent.user.js "$RUNNER_TEMP/current.js"
+          python3 tools/prepare-scrub-observations.py
+      - name: Native metadata, seamless handoff and quality controls
+        shell: bash
+        run: |
+          cd tests/browser
+          BROWSER=chromium TESTS="test_metadata_seek.py test_seamless.py test_player.py test_dvr.py" ./run_all.sh
+          mkdir -p ../../validation-results
+          cp out/test_metadata_seek.log ../../validation-results/current-metadata.log
+      - name: Stable-current counterbalanced replay
+        shell: bash
+        run: |
+          mkdir -p validation-results
+          cp "$RUNNER_TEMP/stable.js" userscript/video-assistent.user.js
+          if (cd tests/browser && BROWSER=chromium TESTS=test_metadata_seek.py ./run_all.sh) > validation-results/stable-metadata-summary.log 2>&1; then
+            echo 'Stable source unexpectedly passed explicit metadata-position regression'; exit 1
+          fi
+          cp tests/browser/out/test_metadata_seek.log validation-results/stable-metadata.log
+          grep -q '^FAIL new source does not inherit opening position' validation-results/stable-metadata.log
+          echo 'PASS: deterministic native source-position test fails stable and passes corrected source'
+          bad=0
+          index=0
+          for label in stable current current stable; do
+            index=$((index+1))
+            cp "$RUNNER_TEMP/$label.js" userscript/video-assistent.user.js
+            log="$GITHUB_WORKSPACE/validation-results/scrub-$index-$label.log"
+            rc=0
+            (cd tests/browser && BROWSER=chromium timeout -k 15 300 python3 -u _scrub_observe.py) > "$log" 2>&1 || rc=$?
+            cat "$log"
+            if [ "$label" = stable ]; then
+              # The older composite gesture scenario depends on whether the opening bridge already ended.
+              # Its known source-position failure may or may not trigger; the explicit native case above is decisive.
+              if [ "$rc" -ne 0 ] || grep '^FAIL' "$log" | grep -v '^FAIL anderes Video beim Spulen'; then bad=1; fi
+            else
+              if [ "$rc" -ne 0 ] || grep -q '^FAIL' "$log" || ! grep -q '^ERGEBNIS: 36 von 36' "$log"; then bad=1; fi
+            fi
+          done
+          cp "$RUNNER_TEMP/current.js" userscript/video-assistent.user.js
+          exit "$bad"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: source-switch-observations
+          path: |
+            validation-results/*.log
+            tests/browser/out/test_metadata_seek.log
+            tests/browser/out/test_seamless.log
+            tests/browser/out/test_player.log
+            tests/browser/out/test_dvr.log

@@ -1,0 +1,38 @@
+name: Native DVR timeline synchronization
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/security-phase-1]
+    paths: ['tests/browser/test_dvr.py', '.github/workflows/dvr-controls-validation.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned engine
+        shell: bash
+        run: |
+          if [ "${{ matrix.browser }}" = firefox ]; then pip install playwright==1.64.1 pillow==13.0.0; else pip install playwright==1.56.0 pillow==13.0.0; fi
+          python -m playwright install --with-deps ${{ matrix.browser }}
+      - name: Await native media update with unchanged label/progress assertions
+        env:
+          BROWSER: ${{ matrix.browser }}
+          TESTS: test_dvr.py
+        run: tests/browser/run_all.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dvr-control-observations-${{ matrix.browser }}
+          path: tests/browser/out/test_dvr.log
