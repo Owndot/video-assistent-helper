@@ -80,6 +80,7 @@ if __name__=="__main__":
     import sys
     # Calibration is a read-only check against a captured real emulator frame.
     image=Image.open(sys.argv[1])
-    hit=locate(image,"I.player",2.625)
+    hit=locate(image,"I.player",2.625,threshold=-1)
+    print("Diagnostic best visual candidate:",hit,flush=True)
     assert hit and 900<hit["x"]<1050 and 1200<hit["y"]<1400,hit
     print("PASS real screenshot icon calibration:",hit)

@@ -54,3 +54,23 @@ jobs:
                   for at in range(0,len(encoded),12000): print("E2E_PNG_DATA "+encoded[at:at+12000])
                   print("E2E_PNG_END")
           PY
+      - name: Calibrate screenshot recognition without an emulator
+        run: |
+          python3 -m pip install Pillow==11.3.0 opencv-python-headless==4.12.0.88 CairoSVG==2.8.2
+          python3 - <<'PY'
+          import sys,pathlib
+          sys.path.insert(0,"tests/android_e2e")
+          from PIL import Image
+          import visual
+          file=next(pathlib.Path("evidence").glob("**/real_extension_install.png"))
+          im=Image.open(file)
+          for density in (2,2.5,2.625,2.75,3):
+              print("CALIBRATE",density,visual.locate(im,"I.player",density,-1),flush=True)
+          import base64,io
+          for name,im in (("entry-crop.png",im.crop((940,1250,1030,1340))),("entry-template.png",Image.fromarray(visual.template("I.player",60)))):
+              buffer=io.BytesIO()
+              im.save(buffer,format="PNG")
+              print("E2E_PNG_BEGIN "+name)
+              print("E2E_PNG_DATA "+base64.b64encode(buffer.getvalue()).decode())
+              print("E2E_PNG_END")
+          PY
