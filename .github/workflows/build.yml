@@ -24,10 +24,18 @@ jobs:
         with:
           python-version: '3.12'
       - name: Test tools only
+        timeout-minutes: 8
+        env:
+          PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: '30000'
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg xvfb
-          pip install playwright==1.56.0
+          set -euo pipefail
+          # The existing native job uses the same official mirror to avoid Azure stalls.
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
+          fi
+          timeout 90 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          timeout 180 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends ffmpeg xvfb
+          pip install --timeout 30 --retries 1 playwright==1.56.0
           python -m playwright install --with-deps chromium
       - name: Prove the current main leaks synthetic secrets
         env:
