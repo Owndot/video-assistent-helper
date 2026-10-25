@@ -48,8 +48,8 @@ jobs:
                   print("BROWSER_ERRORS",file,safe("\n".join(line for line in lines if re.search(r"JavaScript|Content Script|kadri|TypeError|ReferenceError|SyntaxError|mozHasAudio|WebExtension",line,re.I))[-40000:]))
               elif file.name in ("real_extension_install.xml","player_play_pause.xml","browser-chooser.xml","real_browser_pairing.xml","pairing_reset_roundtrip.xml"):
                   print("UI_NODES",file,safe(str([n.attrib for n in ET.fromstring(file.read_text().replace("<disposable-pair-key>","[disposable-pair-key]")).iter("node")])[:40000]))
-              elif file.name in ("real_extension_install.png","player_play_pause.png"):
-                  print("E2E_PNG_BEGIN "+file.name)
+              elif file.name in ("real_extension_install.png","player_play_pause.png","real_browser_pairing.png","actual-userscript-install.png"):
+                  print("E2E_PNG_BEGIN "+file.parent.name+"-"+file.name)
                   encoded=base64.b64encode(file.read_bytes()).decode()
                   for at in range(0,len(encoded),12000): print("E2E_PNG_DATA "+encoded[at:at+12000])
                   print("E2E_PNG_END")
@@ -70,24 +70,4 @@ jobs:
           for file in sorted(pathlib.Path("evidence").glob("**/player-cycle-observations.json")):
               rows=json.loads(file.read_text())
               print("PLAYER_OBSERVATIONS",file,[{k:v for k,v in r.items() if k in ("cycle","entry_to_controls_ms")} for r in rows])
-          PY
-      - name: Check rendered player-control targets in the captured frame
-        run: |
-          python3 -m pip install Pillow==11.3.0 opencv-python-headless==4.12.0.88 CairoSVG==2.8.2
-          python3 - <<'PY'
-          import sys,pathlib
-          sys.path.insert(0,"tests/android_e2e")
-          import visual
-          from PIL import Image
-          for file in sorted(pathlib.Path("evidence").glob("**/player_play_pause.png")):
-              im=Image.open(file)
-              for key in ("P.close","P.pause","P.play"):
-                  print("CONTROL_TARGET",str(file),key,visual.locate(im,key,2.625,-1),flush=True)
-                  import numpy as np
-                  white=Image.fromarray(np.min(np.array(im.convert("RGB")),axis=2))
-                  print("WHITE_TARGET",key,visual.locate(white,key,2.625,-1),flush=True)
-              import shutil
-              if shutil.which("tesseract"):
-                  print("CLOCK_OCR",visual.words(im.crop((0,int(im.height*.65),im.width,im.height))),flush=True)
-              else: print("CLOCK_OCR NOT_TESTED: host inspector has no Tesseract")
           PY
