@@ -1,4 +1,4 @@
-name: Inspect trusted Android input evidence (no emulator)
+name: Inspect Android cancellation evidence (no emulator)
 on:
   push:
     branches: [codex/android-e2e-inspect]
@@ -12,26 +12,21 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          run-id: 40200445981
+          run-id: 40197766277
           repository: Owndot/video-assistent-helper
           github-token: ${{ github.token }}
           pattern: android-e2e-api-*
           path: evidence
-      - name: Read actual page pointer events
+      - name: Read completed cancellation transfer timelines
         run: |
           python3 - <<'PY'
-          import json,pathlib
-          for file in sorted(pathlib.Path("evidence").glob("**/*-http-events.json")):
-              if file.name not in ("player_handoff-http-events.json","player_play_pause-http-events.json","device_volume_brightness_swipes-http-events.json","seek_and_restore-http-events.json"):continue
+          import pathlib,json
+          for file in sorted(pathlib.Path("evidence").glob("**/download_cancel-http-events.json")):
               rows=json.loads(file.read_text())
-              pointers=[r for r in rows if r.get("event")=="pointer"]
-              print("TRUSTED_POINTERS",file,json.dumps(pointers))
-              pending={}
-              for r in pointers:
-                  if r["phase"]=="pointerdown":pending[r["pointer"]]=r
-                  elif r["pointer"] in pending:
-                      old=pending.pop(r["pointer"])
-                      print("INPUT_TIMING",file.name,{"phase":r["phase"],"down":[old["x"],old["y"]],"up":[r["x"],r["y"]],
-                        "event_ms":round(r["stamp"]-old["stamp"],1),"dispatch_ms":round(r["at"]-old["at"],1),
-                        "viewport":[r["width"],r["height"]],"trusted":old["trusted"] and r["trusted"]})
+              first=min((r["received"] for r in rows),default=0)
+              starts={r["id"]:r for r in rows if r.get("event")=="request" and r.get("path","").startswith("/slowhls/") and not r.get("fetch_dest")}
+              ends=[r for r in rows if r.get("event")=="transfer_end" and r.get("id") in starts]
+              print("NATIVE_CANCEL_TRANSFERS",file,{"first_case_event":first,
+                "requests":[{"path":r["path"],"relative_s":round(r["received"]-first,3),"id":r["id"]} for r in starts.values()],
+                "ends":[{"path":r["path"],"relative_s":round(r["received"]-first,3),"duration_s":round(r["received"]-starts[r["id"]]["received"],3),"bytes":r.get("bytes"),"complete":r.get("complete")} for r in ends]})
           PY
