@@ -78,6 +78,14 @@ if(v.getAttribute('src').includes('.m3u8')&&!v.canPlayType('application/vnd.appl
 const h=new Hls();h.loadSource(v.src);h.attachMedia(v);}
 const report=(t)=>fetch('/observe',{method:'POST',
 body:JSON.stringify({event:t,time:v.currentTime,paused:v.paused,source:v.currentSrc,at:performance.now()})}).catch(()=>{});
+// Observe actual trusted user input through the public document event path.
+// No player internals are read/called; capture does not cancel/alter the event.
+for(const type of ['pointerdown','pointerup','pointercancel']){
+  window.addEventListener(type,(e)=>fetch('/observe',{method:'POST',body:JSON.stringify({
+    event:'pointer',phase:e.type,pointer:e.pointerId,stamp:e.timeStamp,at:performance.now(),
+    x:e.clientX,y:e.clientY,width:innerWidth,height:innerHeight,trusted:e.isTrusted
+  })}).catch(()=>{}),{capture:true,passive:true});
+}
 document.getElementById('play').onclick=()=>v.play();
 document.getElementById('change').onclick=()=>{v.src='/media/alternate.mp4';v.play()};
 for(const t of ['playing','pause','seeked','loadedmetadata','ended','error'])v.addEventListener(t,()=>report(t));
@@ -112,7 +120,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             event = json.loads(self.rfile.read(size))
             # Only owned fixture observation, never a browser/helper key.
-            event = {k: event[k] for k in ("event", "time", "paused", "source", "at") if k in event}
+            event = {k: event[k] for k in ("event", "time", "paused", "source", "at", "phase", "pointer", "stamp", "x", "y", "width", "height", "trusted") if k in event}
             with LOCK:
                 EVENTS.append(dict(event, received=time.monotonic()))
             self.reply(200, b'{"ok":true}')

@@ -354,7 +354,7 @@ def click(label, scroll=False):
 def open_app():
     # Explicit task restoration dismisses a stale system picker from a failed prior case.
     shell("am", "start", "-W", "-n", PKG + "/de.evp.helfer.MainActivity", "-f", "0x14000000")
-    wait(lambda: D.app_current().get("package") == PKG and D(className="android.widget.ScrollView").exists)
+    wait(lambda: D(packageName=PKG, className="android.widget.ScrollView").exists)
     time.sleep(0.6)
 
 def setup():
@@ -951,7 +951,7 @@ def background():
     pip = bool(re.search(r"mode=pinned|windowingMode=2|mWindowingMode=2", dump))
     (OUT / "pip-activity.txt").write_text(dump)
     D.app_start(FIREFOX)
-    reveal()
+    wait(reveal, timeout=15)
     assert player_controls_visible()
     if not pip:
         raise Blocked("Browser returned to player; Android did not expose a pinned PiP task in this route. See recording/dumpsys.")
