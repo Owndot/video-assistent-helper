@@ -1,4 +1,4 @@
-name: Read final core Android artifacts (no tests or emulator)
+name: Read final transfer completion (no tests or emulator)
 on:
   push:
     branches: [codex/android-e2e-inspect]
@@ -8,7 +8,7 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 3
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -17,40 +17,26 @@ jobs:
           github-token: ${{ github.token }}
           name: android-e2e-api-33
           path: evidence
-      - name: Read preserved results, actual transfer intervals and seek evidence
+      - name: Join already recorded request and later completion snapshots
         run: |
           python3 - <<'PY'
-          import pathlib,json,base64
-          root=pathlib.Path("evidence")
-          for p in sorted(root.glob("**/results.json")):
-              rows=json.loads(p.read_text())
-              print("CORE_RESULTS",p,json.dumps(rows))
-          for p in sorted(root.glob("**/seek-clock-observations.json")):
-              print("SEEK_CLOCK",p,p.read_text())
-          for p in sorted(root.glob("**/parallel_downloads-http-events.json")):
-              rows=json.loads(p.read_text())
-              req={r["id"]:r for r in rows if r.get("event")=="request" and r.get("path","").startswith("/slow/parallel-")}
-              end={r["id"]:r for r in rows if r.get("event")=="transfer_end" and r.get("id") in req}
-              for ident,r in req.items():
-                  e=end.get(ident,{})
-                  print("TRANSFER",json.dumps({k:r.get(k) for k in ("id","path","received","range","fetch_dest","host","user_agent")}),
-                        json.dumps({k:e.get(k) for k in ("received","bytes","complete")}))
-              native=[r for r in req.values() if not r.get("fetch_dest") and not r.get("range")]
-              for i,a in enumerate(native):
-                  for b in native[i+1:]:
-                      if a["path"]==b["path"]:continue
-                      x,y=end.get(a["id"],{}),end.get(b["id"],{})
-                      if x.get("complete") and y.get("complete"):
-                          overlap=min(x["received"],y["received"])-max(a["received"],b["received"])
-                          print("ACTUAL_NATIVE_TRANSFER_OVERLAP",json.dumps({"ids":[a["id"],b["id"]],"seconds":overlap}))
-              for r in rows:
-                  if r.get("event")=="request" and r.get("path")=="/page/redirect":
-                      print("REDIRECT_PAGE_START",r.get("received"))
-          for name in ("parallel_downloads.png","background_pip_return.png"):
-              for p in sorted(root.glob("**/"+name)):
-                  print("E2E_PNG_BEGIN "+name)
-                  encoded=base64.b64encode(p.read_bytes()).decode()
-                  for at in range(0,len(encoded),12000):print("E2E_PNG_DATA "+encoded[at:at+12000])
-                  print("E2E_PNG_END")
-          print("PRESERVED_FILES",[str(p.relative_to(root)) for p in root.glob("**/*") if p.is_file()])
+          import json,pathlib
+          rows={}
+          for p in pathlib.Path("evidence/kadri").glob("*-http-events.json"):
+              for r in json.loads(p.read_text()):
+                  rows[(r.get("event"),r.get("id"),r.get("received"))]=r
+          rows=list(rows.values())
+          native=[r for r in rows if r.get("event")=="request" and r.get("path","").startswith("/slow/parallel-") and not r.get("range") and not r.get("fetch_dest")]
+          ends={r["id"]:r for r in rows if r.get("event")=="transfer_end"}
+          redirect=[r for r in rows if r.get("event")=="request" and r.get("path")=="/page/redirect"]
+          for r in native:
+              print("NATIVE_BEGIN",json.dumps(r));print("NATIVE_END",json.dumps(ends.get(r["id"])))
+          for i,a in enumerate(native):
+              for b in native[i+1:]:
+                  if a["path"]==b["path"]:continue
+                  x,y=ends.get(a["id"],{}),ends.get(b["id"],{})
+                  if x.get("complete") and y.get("complete"):
+                      left=max(a["received"],b["received"]);right=min(x["received"],y["received"])
+                      print("ACTUAL_COMPLETE_OVERLAP_SECONDS",right-left)
+                      print("REDIRECT_PAGE_DURING_BOTH_TRANSFERS",[r["received"] for r in redirect if left<=r["received"]<=right])
           PY
