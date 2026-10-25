@@ -105,3 +105,24 @@ Browser- oder Emulator-Matrix und kein neues Testframework sind vorgesehen.
 Diese Runde endet nach den konkreten Regressionen und Build-Prüfungen.
 Keine PRs mergen, keine produktiven Schlüssel erzeugen oder verwenden,
 keine Releases/Tags verändern.
+
+## Tatsächliche Nachweise dieser Runde
+
+- f02454c: Cookie-/Socket-Korrektur und neue Tests. Deren Alt/Neu-Nachweise
+  bestanden; der Gesamtjob40218799431 scheiterte an der alten gemischten
+  HTTPS-/HTTP-Testfixture, nicht am neuen TLS- oder Socket-Test.
+- 4187b79: Fixture korrigiert. Reguläre CI40219171842 vollständig PASS,
+  einschließlich Medien, Streaming, Android-Build und Testsignaturen.
+- 29158de: Referer-/Origin-Bereinigung. Diagnose40220447681 prüfte genau diesen
+  Source-Commit: alle drei neuen realen TLS-/HTTP-/Socket-Prüfungen PASS.
+- Reguläre CI40219442784 wurde kontrolliert abgebrochen. Ihre alten
+  Negativnachweise waren bestanden; anschließend blockierte die langsame
+  Installation von FFmpeg-Paketen. Es war kein neuer Test-/Produkt-Hänger.
+  Die Diagnose hatte Actions-Schreibrecht ausschließlich in einem getrennten
+  Job zum Abbrechen dieses einen festen Testlaufs; ihr Testjob war read-only.
+  Dieser temporäre Diagnoseworkflow liegt nicht auf dem Merge-Branch.
+- Der letzte Workflowwechsel betrifft nur diese CI-Installation: offizieller
+  signierter Ubuntu-Mirror, keine empfohlenen Zusatzpakete, feste Paket-
+  Zeitlimits. Debug-/Release-Testbuilds und APK-Provenienz laufen davor.
+  Es gibt keine weitere Produktänderung und keine neue Emulator-Matrix.
+  Den abschließend geprüften regulären Run dokumentiert der PR-Text.

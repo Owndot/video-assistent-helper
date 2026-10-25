@@ -130,13 +130,6 @@ jobs:
           grep -q 'HTTP 300 redirect failed' "$work/old-300.log"
           java -cp tests/java/classes de.evp.helfer.TestRedirectCookies
           echo 'PASS: HTTP300 compatibility regression fails predecessor and passes corrected client'
-      - name: JVM media tests
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          tests/java/run_core_tests.sh
-          javac -cp tests/java/classes -d tests/java/classes tests/android_e2e/TestCredentialedStream.java
-          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestCredentialedStream
       - name: Isolated debug APK with disposable test key
         shell: bash
         run: |
@@ -193,6 +186,17 @@ jobs:
           echo 'PASS: compromised identity blocked using a disposable keystore only'
           gradle :app:assembleRelease --no-daemon
           # Never upload or distribute this test-signed production-ID APK.
+      - name: JVM media tests
+        run: |
+          # Use Ubuntu's signed official mirror; the Azure mirror stalled in run40219442784.
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
+          fi
+          timeout 90 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
+          timeout 180 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install --no-install-recommends -y ffmpeg
+          tests/java/run_core_tests.sh
+          javac -cp tests/java/classes -d tests/java/classes tests/android_e2e/TestCredentialedStream.java
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestCredentialedStream
       - uses: actions/upload-artifact@v4
         if: always()
         with:
