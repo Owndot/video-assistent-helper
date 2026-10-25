@@ -1,0 +1,56 @@
+name: Inspect existing Android E2E evidence (no emulator)
+on:
+  push:
+    branches: [codex/android-e2e-inspect]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Completed Android E2E run to inspect'
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: source
+        env:
+          RUN_ID: ${{ inputs.run_id || '' }}
+        run: |
+          python3 - <<'PY'
+          import json,os
+          value=os.environ["RUN_ID"] or str(json.load(open("tests/android_e2e/execution.json"))["previous_run"])
+          assert value.isdigit()
+          with open(os.environ["GITHUB_OUTPUT"],"a") as out: out.write("run_id="+value+"\n")
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.source.outputs.run_id }}
+          github-token: ${{ github.token }}
+          pattern: android-e2e-api-*
+          path: evidence
+      - name: Read existing UI and browser evidence
+        run: |
+          python3 - <<'PY'
+          import pathlib,re,base64,xml.etree.ElementTree as ET
+          def safe(text):
+              return re.sub(r"[0-9a-f]{32}", "<disposable-id>", text)
+          for file in sorted(pathlib.Path("evidence").glob("**/*")):
+              if file.name in ("results.json","web-ext.log"):
+                  print("EVIDENCE_FILE",file,safe(file.read_text(errors="replace")[-60000:]))
+              elif file.name=="logcat.txt":
+                  lines=file.read_text(errors="replace").splitlines()
+                  print("BROWSER_ERRORS",file,safe("\n".join(line for line in lines if re.search(r"JavaScript|Content Script|kadri|TypeError|ReferenceError|SyntaxError|mozHasAudio|WebExtension",line,re.I))[-40000:]))
+              elif file.name=="real_extension_install.xml":
+                  print("UI_NODES",file,safe(str([n.attrib for n in ET.parse(file).iter("node")])[:40000]))
+              elif file.name=="real_extension_install.png":
+                  print("E2E_PNG_BEGIN "+file.name)
+                  encoded=base64.b64encode(file.read_bytes()).decode()
+                  for at in range(0,len(encoded),12000): print("E2E_PNG_DATA "+encoded[at:at+12000])
+                  print("E2E_PNG_END")
+          PY
