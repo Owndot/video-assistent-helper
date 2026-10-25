@@ -41,7 +41,7 @@ jobs:
           def safe(text):
               return re.sub(r"[0-9a-f]{32}", "<disposable-id>", text)
           for file in sorted(pathlib.Path("evidence").glob("**/*")):
-              if file.name in ("results.json","web-ext.log"):
+              if file.name in ("results.json","gesture-positive-control.json"):
                   print("EVIDENCE_FILE",file,safe(file.read_text(errors="replace")[-60000:]))
               elif file.name.endswith("-http-events.json") and file.name.startswith(("player_play_pause","device_volume","player_handoff")):
                   import json
@@ -52,7 +52,7 @@ jobs:
                   print("BROWSER_ERRORS",file,safe("\n".join(line for line in lines if re.search(r"JavaScript|Content Script|kadri|TypeError|ReferenceError|SyntaxError|mozHasAudio|WebExtension",line,re.I))[-40000:]))
               elif file.name in ("real_extension_install.xml","player_play_pause.xml","browser-chooser.xml","real_browser_pairing.xml","pairing_reset_roundtrip.xml"):
                   print("UI_NODES",file,safe(str([n.attrib for n in ET.fromstring(file.read_text().replace("<disposable-pair-key>","[disposable-pair-key]")).iter("node")])[:40000]))
-              elif False:
+              elif file.name in ("play_embedded.png","seek_and_restore.png") and file.parent.name=="kadri" and "api-33" in str(file):
                   print("E2E_PNG_BEGIN "+file.parent.name+"-"+file.name)
                   encoded=base64.b64encode(file.read_bytes()).decode()
                   for at in range(0,len(encoded),12000): print("E2E_PNG_DATA "+encoded[at:at+12000])
@@ -98,11 +98,31 @@ jobs:
               clean=Image.fromarray(np.where(np.min(np.array(crop),axis=2)>200,0,255).astype("uint8"))
               print("SUBTITLE_WHITE",file,visual.words(clean.resize((clean.width*2,clean.height*2))))
           PY
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Existing full native core regression (host JVM, not Android)
+      - name: Regress normalized-contrast bug using old and current real-frame matchers
         run: |
-          tests/java/build.sh
-          tests/java/run_core_tests.sh
+          git fetch --no-tags --depth=1 origin 2dd504302223a420bb61ac9c9e8f69bd02a0d7f2
+          for file in visual.py reference/controls.png reference/subtitle.png; do
+            git show "FETCH_HEAD:tests/android_e2e/$file" > "tests/android_e2e/$file"
+          done
+          python3 tests/android_e2e/visual.py tests/android_e2e/reference/entry.png tests/android_e2e/reference/subtitle.png tests/android_e2e/reference/controls.png
+          git fetch --no-tags --depth=1 origin c6d0cde3cb74e785888e3a1c55e9091deb708bb4
+          git show FETCH_HEAD:tests/android_e2e/visual.py > "$RUNNER_TEMP/old-visual.py"
+          python3 - <<'PY'
+          import sys,pathlib,os
+          sys.path.insert(0,"tests/android_e2e")
+          import visual
+          from PIL import Image
+          namespace={"__file__":str(pathlib.Path("tests/android_e2e/visual.py").resolve()),"__name__":"baseline_visual"}
+          exec(compile(pathlib.Path(os.environ["RUNNER_TEMP"],"old-visual.py").read_text(),"baseline_visual","exec"),namespace)
+          image=Image.open("tests/android_e2e/reference/controls.png").convert("RGB")
+          dim=image.point(lambda v:round(v*.1))
+          for key in ("P.close","P.pause"):
+              previous=namespace["locate"](dim,key,2.625)
+              assert previous is not None,"Old matcher did not exhibit expected fading bug"
+              assert visual.locate(dim,key,2.625) is None,"New matcher retained fading bug"
+              print("PASS OLD_ACCEPTED_FADED_NEW_REJECTED",key,previous)
+          for file in sorted(pathlib.Path("evidence").glob("**/*.png")):
+              if file.name not in ("seek_and_restore.png","play_embedded.png","play_redirect.png","device_volume_brightness_swipes.png"):continue
+              image=Image.open(file)
+              print("ACTUAL_CONTROL_CONTRAST",file,{"old":namespace["locate"](image,"P.close",2.625),"new":visual.locate(image,"P.close",2.625)})
+          PY
