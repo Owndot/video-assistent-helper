@@ -43,6 +43,9 @@ DENSITY = 1.0
 class Blocked(Exception):
     pass
 
+class InvalidInput(AssertionError):
+    pass
+
 def command(*args, check=True, timeout=45):
     return subprocess.run(list(args), text=True, capture_output=True, check=check, timeout=timeout).stdout
 
@@ -172,6 +175,8 @@ def case(name, fn, requires=None):
         RESULTS.append({"name": name, "status": "PASS", "seconds": round(time.monotonic() - started, 3), "detail": detail})
     except Blocked as exc:
         RESULTS.append({"name": name, "status": "NOT_TESTED", "detail": str(exc)})
+    except InvalidInput as exc:
+        RESULTS.append({"name":name,"status":"FAIL","category":"test_input","detail":str(exc),"trace":traceback.format_exc()})
     except Exception as exc:
         RESULTS.append({"name": name, "status": "FAIL", "detail": redact(str(exc)), "trace": redact(traceback.format_exc())})
     finally:
@@ -742,6 +747,25 @@ def play_pause():
             "note":"Rendered play/pause glyph, actual touches and rendered clock; handoff is checked independently."}
 
 
+def pointer_rows(since):
+    with urllib.request.urlopen("http://127.0.0.1:8765/events", timeout=3) as response:
+        return sorted((r for r in json.load(response) if r.get("event")=="pointer" and r.get("received",0)>=since), key=lambda r:r["at"])
+
+def completed_pointer_rows(since, ups=1):
+    rows=pointer_rows(since)
+    return rows if sum(r["phase"]=="pointerup" for r in rows)>=ups else None
+
+def assert_swipe_input(since):
+    rows=wait(lambda: completed_pointer_rows(since),timeout=5)
+    down=next((r for r in rows if r["phase"]=="pointerdown"),None)
+    moved=next((r for r in rows if r["phase"]=="pointermove-threshold"),None)
+    if not down or not moved or not down.get("trusted") or not moved.get("trusted"):
+        raise InvalidInput("Harness swipe did not deliver a trusted movement beyond the player's 14px threshold")
+    elapsed=moved["at"]-down["at"]
+    if elapsed>=450:
+        raise InvalidInput("Harness swipe crossed 14px only after "+str(elapsed)+"ms; player long-press activates at 450ms")
+    return {"threshold_ms":elapsed,"total_ms":rows[-1]["at"]-down["at"]}
+
 def gestures():
     # Each assertion gets a fresh clip, rather than inheriting a 60s movie at EOF.
     player_entry().click()
@@ -760,13 +784,18 @@ def gestures():
         "before_swipe_volume":before["vol"],"before_swipe_brightness":before["bright"]}))
     fresh_input_controls()
     w, h = D.window_size()
-    D.swipe(w * .85, h * .58, w * .85, h * .46, duration=.5)
+    volume_input_at=time.monotonic()
+    D.swipe(w * .85, h * .58, w * .85, h * .46, duration=.18)
+    volume_input=assert_swipe_input(volume_input_at)
     after_vol = wait(lambda: (s if (s := request("/ping"))["vol"] != before["vol"] else None))
     assert after_vol["vol"] > before["vol"], "Upward volume swipe reduced volume"
-    D.swipe(w * .15, h * .40, w * .15, h * .50, duration=.5)
+    brightness_input_at=time.monotonic()
+    D.swipe(w * .15, h * .40, w * .15, h * .50, duration=.18)
+    brightness_input=assert_swipe_input(brightness_input_at)
     after_bright = wait(lambda: (s if (s := request("/ping"))["bright"] != before["bright"] else None))
     assert after_bright["bright"] < before["bright"]
     return {"before": before, "volume_after": after_vol["vol"], "brightness_after": after_bright["bright"],
+            "volume_input":volume_input,"brightness_input":brightness_input,
             "note": "Actual Android positive control, then real UI swipes through extension and Helper"}
 
 def seek_restore():
@@ -780,7 +809,13 @@ def seek_restore():
     else:
         # The existing public double-tap gesture also works when Gecko omits AX.
         w, h = D.window_size()
-        D.double_click(w*.80, h*.50, duration=.10)
+        double_at=time.monotonic()
+        D.double_click(w*.80, h*.50, duration=.01)
+        rows=wait(lambda: completed_pointer_rows(double_at,2),timeout=5)
+        ups=[r for r in rows if r["phase"]=="pointerup"]
+        gap=ups[1]["at"]-ups[0]["at"]
+        if not all(r.get("trusted") for r in ups[:2]) or not 0<gap<300:
+            raise InvalidInput("Harness double tap up/up interval "+str(gap)+"ms misses the player's 300ms window")
     time.sleep(.6)
     after = playing_times()
     def seconds(label):

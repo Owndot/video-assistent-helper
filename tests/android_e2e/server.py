@@ -80,11 +80,24 @@ const report=(t)=>fetch('/observe',{method:'POST',
 body:JSON.stringify({event:t,time:v.currentTime,paused:v.paused,source:v.currentSrc,at:performance.now()})}).catch(()=>{});
 // Observe actual trusted user input through the public document event path.
 // No player internals are read/called; capture does not cancel/alter the event.
-for(const type of ['pointerdown','pointerup','pointercancel']){
-  window.addEventListener(type,(e)=>fetch('/observe',{method:'POST',body:JSON.stringify({
-    event:'pointer',phase:e.type,pointer:e.pointerId,stamp:e.timeStamp,at:performance.now(),
+const inputStarts=new Map();
+function observePointer(e,phase){
+  fetch('/observe',{method:'POST',body:JSON.stringify({
+    event:'pointer',phase,pointer:e.pointerId,stamp:e.timeStamp,at:performance.now(),
     x:e.clientX,y:e.clientY,width:innerWidth,height:innerHeight,trusted:e.isTrusted
-  })}).catch(()=>{}),{capture:true,passive:true});
+  })}).catch(()=>{});
+}
+for(const type of ['pointerdown','pointermove','pointerup','pointercancel']){
+  window.addEventListener(type,(e)=>{
+    if(type==='pointerdown'){inputStarts.set(e.pointerId,{x:e.clientX,y:e.clientY,first:false,threshold:false});observePointer(e,type);}
+    else if(type==='pointermove'){
+      const p=inputStarts.get(e.pointerId);if(!p)return;
+      if(!p.first){p.first=true;observePointer(e,'pointermove-first');}
+      if(!p.threshold&&Math.max(Math.abs(e.clientX-p.x),Math.abs(e.clientY-p.y))>=14){
+        p.threshold=true;observePointer(e,'pointermove-threshold');
+      }
+    }else{observePointer(e,type);inputStarts.delete(e.pointerId);}
+  },{capture:true,passive:true});
 }
 document.getElementById('play').onclick=()=>v.play();
 document.getElementById('change').onclick=()=>{v.src='/media/alternate.mp4';v.play()};
