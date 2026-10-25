@@ -1,57 +1,37 @@
-name: Native regression and Android evidence (no emulator)
+name: Inspect trusted Android input evidence (no emulator)
 on:
   push:
     branches: [codex/android-e2e-inspect]
-  workflow_dispatch:
 permissions:
   contents: read
   actions: read
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 4
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: 4b472f8351f86c7a1a78ea72e1658467bb7d9c8e
-          persist-credentials: false
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Prepare host media tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg
-      - name: Verify full core suite with strict failure and decoding assertions
-        run: |
-          tests/java/build.sh
-          tests/java/run_core_tests.sh
-          git fetch --no-tags --depth=1 origin c6d0cde3cb74e785888e3a1c55e9091deb708bb4
-          mkdir -p "$RUNNER_TEMP/legacy-core"
-          git show FETCH_HEAD:tests/java/jt/TestMain.java > "$RUNNER_TEMP/legacy-core/TestMain.java"
-          javac -cp tests/java/classes -d "$RUNNER_TEMP/legacy-core" "$RUNNER_TEMP/legacy-core/TestMain.java"
-          if java -cp "$RUNNER_TEMP/legacy-core:tests/java/classes" TestCoreHarnessFailure > "$RUNNER_TEMP/legacy-core.log" 2>&1; then
-            echo 'FAIL: regression unexpectedly passed broken original TestMain'
-            exit 1
-          fi
-          echo 'PASS: regression fails on original TestMain and passes corrected full suite'
-          tail -4 "$RUNNER_TEMP/legacy-core.log"
       - uses: actions/download-artifact@v4
         with:
-          run-id: 40197766277
+          run-id: 40200445981
+          repository: Owndot/video-assistent-helper
           github-token: ${{ github.token }}
           pattern: android-e2e-api-*
           path: evidence
-      - name: Read actual large-file Helper memory observations
+      - name: Read actual page pointer events
         run: |
           python3 - <<'PY'
-          import pathlib,json,re
-          for file in pathlib.Path("evidence").glob("**/large-download-memory.json"):
+          import json,pathlib
+          for file in sorted(pathlib.Path("evidence").glob("**/*-http-events.json")):
+              if file.name not in ("player_handoff-http-events.json","player_play_pause-http-events.json","device_volume_brightness_swipes-http-events.json","seek_and_restore-http-events.json"):continue
               rows=json.loads(file.read_text())
-              values=[]
-              for row in rows:
-                  m=re.search(r"TOTAL PSS:\s*(\d+)",row.get("de.evp.helfer.debug",""))
-                  if m:values.append(int(m[1]))
-              print("LARGE_FILE_HELPER_PSS",file,values,"KiB; sampled observations, not measured peak/leak verdict")
+              pointers=[r for r in rows if r.get("event")=="pointer"]
+              print("TRUSTED_POINTERS",file,json.dumps(pointers))
+              pending={}
+              for r in pointers:
+                  if r["phase"]=="pointerdown":pending[r["pointer"]]=r
+                  elif r["pointer"] in pending:
+                      old=pending.pop(r["pointer"])
+                      print("INPUT_TIMING",file.name,{"phase":r["phase"],"down":[old["x"],old["y"]],"up":[r["x"],r["y"]],
+                        "event_ms":round(r["stamp"]-old["stamp"],1),"dispatch_ms":round(r["at"]-old["at"],1),
+                        "viewport":[r["width"],r["height"]],"trusted":old["trusted"] and r["trusted"]})
           PY
