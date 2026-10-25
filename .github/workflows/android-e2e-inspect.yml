@@ -1,51 +1,56 @@
-name: Android seek observation regression only (no emulator)
+name: Read final core Android artifacts (no tests or emulator)
 on:
   push:
     branches: [codex/android-e2e-inspect]
 permissions:
   contents: read
+  actions: read
 jobs:
-  observation:
+  inspect:
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          ref: 91284c651e4c1e68e650ecd090d2387e2fe38e18
-          persist-credentials: false
-      - name: New host-only observation regression
-        run: |
-          python3 -m py_compile tests/android_e2e/run.py tests/android_e2e/test_seek_clock.py
-          python3 -m unittest discover -s tests/android_e2e -p test_seek_clock.py -v
-      - name: Confirm predecessor rejects its first stale clock observation
+          run-id: 40208810093
+          repository: Owndot/video-assistent-helper
+          github-token: ${{ github.token }}
+          name: android-e2e-api-33
+          path: evidence
+      - name: Read preserved results, actual transfer intervals and seek evidence
         run: |
           python3 - <<'PY'
-          import ast,urllib.request
-          url="https://raw.githubusercontent.com/Owndot/video-assistent-helper/e3e50882a791e613e4b2a58771a1c85ddef9beb6/tests/android_e2e/run.py"
-          with urllib.request.urlopen(url,timeout=30) as response:
-              source=response.read().decode()
-          fn=next(n for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name=="seek_restore")
-          index=next(i for i,n in enumerate(fn.body) if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="sampled_at" for t in n.targets))
-          fn.body=fn.body[:index]
-          class Element:
-              exists=True
-              def click(self):pass
-          class Device:
-              def __call__(self,**kwargs):return Element()
-          class Clock:
-              def monotonic(self):return 0
-              def sleep(self,seconds):pass
-          clocks=iter([["0:01"],["0:01"]])
-          context={"D":Device(),"time":Clock(),"player_entry":lambda:Element(),
-                   "wait":lambda *args,**kwargs:True,"reveal":lambda:True,
-                   "playing_times":lambda:next(clocks)}
-          exec(compile(ast.Module(body=[fn],type_ignores=[]),"actual-e3e5088-seek_restore","exec"),context)
-          try:
-              context["seek_restore"]()
-          except AssertionError as error:
-              assert str(error)=="Forward seek did not advance by the default ten seconds",str(error)
-              print("PASS: actual e3e5088 single-snapshot seek check rejects a stale first frame.")
-          else:
-              raise AssertionError("Predecessor unexpectedly accepted a stale first frame")
-          print("This is a host observation regression with stubbed input; no Android/browser integration was executed.")
+          import pathlib,json,base64
+          root=pathlib.Path("evidence")
+          for p in sorted(root.glob("**/results.json")):
+              rows=json.loads(p.read_text())
+              print("CORE_RESULTS",p,json.dumps(rows))
+          for p in sorted(root.glob("**/seek-clock-observations.json")):
+              print("SEEK_CLOCK",p,p.read_text())
+          for p in sorted(root.glob("**/parallel_downloads-http-events.json")):
+              rows=json.loads(p.read_text())
+              req={r["id"]:r for r in rows if r.get("event")=="request" and r.get("path","").startswith("/slow/parallel-")}
+              end={r["id"]:r for r in rows if r.get("event")=="transfer_end" and r.get("id") in req}
+              for ident,r in req.items():
+                  e=end.get(ident,{})
+                  print("TRANSFER",json.dumps({k:r.get(k) for k in ("id","path","received","range","fetch_dest","host","user_agent")}),
+                        json.dumps({k:e.get(k) for k in ("received","bytes","complete")}))
+              native=[r for r in req.values() if not r.get("fetch_dest") and not r.get("range")]
+              for i,a in enumerate(native):
+                  for b in native[i+1:]:
+                      if a["path"]==b["path"]:continue
+                      x,y=end.get(a["id"],{}),end.get(b["id"],{})
+                      if x.get("complete") and y.get("complete"):
+                          overlap=min(x["received"],y["received"])-max(a["received"],b["received"])
+                          print("ACTUAL_NATIVE_TRANSFER_OVERLAP",json.dumps({"ids":[a["id"],b["id"]],"seconds":overlap}))
+              for r in rows:
+                  if r.get("event")=="request" and r.get("path")=="/page/redirect":
+                      print("REDIRECT_PAGE_START",r.get("received"))
+          for name in ("parallel_downloads.png","background_pip_return.png"):
+              for p in sorted(root.glob("**/"+name)):
+                  print("E2E_PNG_BEGIN "+name)
+                  encoded=base64.b64encode(p.read_bytes()).decode()
+                  for at in range(0,len(encoded),12000):print("E2E_PNG_DATA "+encoded[at:at+12000])
+                  print("E2E_PNG_END")
+          print("PRESERVED_FILES",[str(p.relative_to(root)) for p in root.glob("**/*") if p.is_file()])
           PY
