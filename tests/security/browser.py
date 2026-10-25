@@ -9,6 +9,7 @@ from playwright.sync_api import sync_playwright
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 MEDIA = pathlib.Path(os.environ.get('FIXTURE_MEDIA', '/tmp/privacy-media'))
 HITS = []
+UPDATE_CODE = ''
 class Handler(http_server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs): super().__init__(*args, directory=str(MEDIA), **kwargs)
     def log_message(self, *args): pass
@@ -21,7 +22,9 @@ class Handler(http_server.SimpleHTTPRequestHandler):
         p = urlsplit(self.path)
         if p.path == '/redirect':
             self.send_response(302); self.send_header('Location', parse_qs(p.query)['to'][0]); self.end_headers(); return
-        if p.path == '/echo':
+        if p.path == '/script.user.js':
+            data = UPDATE_CODE.encode()
+        elif p.path == '/echo':
             data = b'ok'
         elif p.path == '/sub.vtt':
             data = b'WEBVTT\n\n00:00.000 --> 00:06.000\nSYNTHETIC SUBTITLE\n'
@@ -74,6 +77,7 @@ def kadri_request(page, url, ref):
     })''', {'url':url,'ref':ref})
 
 def main():
+    global UPDATE_CODE
     parser=argparse.ArgumentParser();parser.add_argument('--userscript', action='store_true');parser.add_argument('--kadri', action='store_true');args=parser.parse_args()
     assert args.userscript != args.kadri
     with tempfile.TemporaryDirectory(prefix='privacy-') as tmp:
@@ -97,16 +101,21 @@ def main():
             if args.userscript:
                 options=context.new_page();options.goto(extension_origin+'/'+manifest.get('options_ui',{}).get('page','options/index.html'))
                 code=hook((ROOT/'userscript/video-assistent.user.js').read_text())
+                UPDATE_CODE=code
                 # Manager's own installation/update command, from its extension origin only.
                 def install(body):
-                    result=options.evaluate("async code=>await chrome.runtime.sendMessage({cmd:'ParseScript',data:{code}})",body)
+                    result=options.evaluate("async data=>await chrome.runtime.sendMessage({cmd:'ParseScript',data})",{'code':body,'url':http+'/script.user.js'})
                     print('VM ParseScript:',json.dumps(result)[:900],flush=True)
                     assert result is not None and not result.get('error'),result
                     return result
                 first=install(code.replace('// @version      19.29','// @version      19.28'))
-                updated=install(code)
-                assert first['where']['id']==updated['where']['id'] and first.get('isNew') and not updated.get('isNew'), (first.get('where'),updated.get('where'))
-                assert updated['update']['meta']['version']=='19.29',updated.get('update')
+                assert first.get('isNew') and first.get('where'),first
+                script_id=first['where']['id']
+                options.evaluate("async id=>await chrome.runtime.sendMessage({cmd:'CheckUpdate',data:{ids:[id]}})",script_id)
+                state=options.evaluate("async id=>await chrome.runtime.sendMessage({cmd:'GetData',data:{ids:[id]}})",script_id)
+                scripts=state['scripts'];assert len(scripts)==1 and scripts[0]['props']['id']==script_id,state
+                assert scripts[0]['meta']['version']=='19.29',scripts[0]['meta']
+                assert any(h['url']=='/script.user.js' for h in HITS),'Manager did not request the update fixture'
                 print('PASS: real Violentmonkey installs and updates the bundled userscript',flush=True)
             page=context.new_page();page.goto(https+'/PRIVATE_PATH_SECRET?token=QUERY_SECRET#FRAGMENT_SECRET');page.wait_for_timeout(700)
             source=page.url.split('#')[0]
@@ -131,10 +140,11 @@ def main():
             if args.userscript:
                 # Test both auto-redirecting adapters and the HTTP-page origin ceiling.
                 r=command(page,{'kind':'resolve','url':https+'/redirect?to='+quote(foreign+signed,safe='')})
-                assert r['url']==foreign+signed,r
+                assert r['url'].split('#')[0]==foreign+signed,r  # VM appends an internal fragment; raw HTTP query is checked above
                 page.goto(http+'/PRIVATE_PATH_SECRET?token=QUERY_SECRET#FRAGMENT_SECRET');page.wait_for_timeout(500)
                 r=command(page,{'kind':'gm','url':foreign+signed});assert r['st']==200,r
-                assert HITS[-1]['referer']==http+'/',HITS[-1]
+                hit=next(h for h in reversed(HITS) if h['url']==signed)
+                assert hit['referer']==http+'/',hit
                 page.wait_for_function("document.getElementById('v').readyState>=2")
                 page.evaluate("document.getElementById('v').muted=false")
                 for media in ('/clip.mp4?sig=SIGNED%2Fmp4','/index.m3u8?sig=SIGNED%2Fhls','/clip.mp4?source=changed'):
