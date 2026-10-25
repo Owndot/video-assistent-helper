@@ -35,6 +35,7 @@ D = None
 WEB_EXT = None
 LOGCAT = None
 LAST_REVEAL_AT = 0.0
+NAVIGATION_INITIALIZED = False
 
 class Blocked(Exception):
     pass
@@ -332,8 +333,28 @@ def firefox_prepare():
     return "Fresh real Firefox profile; Remote debugging via USB enabled through actual UI swipes/toggle."
 
 def launch_url(url):
-    shell("am", "start", "-W", "-a", "android.intent.action.VIEW", "-d", url, "-p", FIREFOX)
-    time.sleep(1)
+    global NAVIGATION_INITIALIZED
+    D.app_start(FIREFOX, stop=False)
+    for _ in range(4):
+        bar = D(descriptionContains="Search or enter address")
+        if bar.exists(timeout=.5):
+            bar.click()
+            edit = D(className="android.widget.EditText")
+            wait(lambda: edit.exists, timeout=5)
+            edit.set_text(url)
+            D.press("enter")
+            NAVIGATION_INITIALIZED = True
+            time.sleep(.8)
+            return
+        if not NAVIGATION_INITIALIZED:
+            shell("am", "start", "-W", "-a", "android.intent.action.VIEW", "-d", url, "-p", FIREFOX)
+            NAVIGATION_INITIALIZED = True
+            time.sleep(1)
+            return
+        # A previous player/menu must be closed via the actual Back action.
+        D.press("back")
+        time.sleep(.3)
+    raise AssertionError("Firefox address bar unavailable; refusing to accumulate extra tabs")
 
 def extension():
     global WEB_EXT
@@ -355,6 +376,11 @@ def extension():
         if "kadri@owndot" in data and "Installed" in data:
             break
         time.sleep(1)
+    # The RDP acknowledgement can precede Firefox's native post-install dialog.
+    added = D(textContains="was added")
+    if added.exists(timeout=5):
+        click("OK")
+        wait(lambda: not added.exists, timeout=5)
     if ROUTE == "userscript":
         # The real manager intercepts a .user.js navigation and opens its own
         # installer; clicking Install exercises its actual storage/GM execution.
@@ -378,8 +404,9 @@ def pair():
     # Android resolver may show Firefox once or per visit.
     if D(text="Firefox").exists(timeout=3):
         D(text="Firefox").click()
-    if D(text="Just once").exists(timeout=2):
-        D(text="Just once").click()
+    once = D(textMatches="(?i)just once")
+    if once.exists(timeout=2):
+        once.click()
     wait(lambda: D(textContains="Connected.").exists or D(textContains="Verbunden.").exists, timeout=20)
     assert prefs().get("paired") == "true"
     AUTH_KEY = KEY
@@ -728,19 +755,21 @@ def cancel_download():
 
 def opening_cycles():
     samples = []
+    button = player_entry()
     for i in range(6):
-        button = player_entry()
+        if i:
+            button = wait(lambda: D(descriptionContains="Videoplayer") if D(descriptionContains="Videoplayer").exists
+                          else D(descriptionContains="video player") if D(descriptionContains="video player").exists else None)
         start = time.monotonic()
         button.click()
         wait(reveal)
-        reveal()
         samples.append({"cycle": i + 1, "entry_to_controls_ms": round((time.monotonic() - start) * 1000, 1),
             "helper_pss": shell("dumpsys", "meminfo", PKG),
             "firefox_pss": shell("dumpsys", "meminfo", FIREFOX),
             "cpu": shell("dumpsys", "cpuinfo")})
         click("Schließen") if D(description="Schließen").exists else click("Close")
     (OUT / "player-cycle-observations.json").write_text(json.dumps(samples), encoding="utf8")
-    return "6 real open/close cycles with timing/PSS/CPU observations. No baseline or leak verdict inferred."
+    return "6 real open/close cycles in the same page/tab; PSS/CPU observations. No navigation/GC reset or leak verdict inferred."
 
 def native_context():
     """Restore the actual test app after another case's system-UI failure."""
@@ -819,7 +848,7 @@ def native_cookie_redirect(kind="hls"):
                 verified = verified or hashlib.file_digest(stream, "sha256").hexdigest() == expected
             local.unlink()
         assert verified, "Credentialed native download bytes differ from fixture"
-    return "Actual installed APK " + kind + " fetch: first hop received disposable Cookie, cross-site destination received none. File kind also completed with exact hash. Authorization was not supplied."
+    return "Actual installed APK " + kind + " fetch: first hop received disposable Cookie, cross-site destination received none." + (" Saved file verified by exact hash." if kind == "file" else " The redirect destination is intentionally not a valid playlist; native HLS playback/download is checked separately.") + " Authorization was not supplied."
 
 
 def paired_restart():
@@ -935,7 +964,7 @@ def main():
     case("no_java_crash", crash_check)
     for name, reason in {
         "alternate_browser_route": "This report covers " + ROUTE + " only; consult the separate route report.",
-        "vivaldi_android": "No verified unpacked-extension installation/automation route in this harness.",
+        "vivaldi_android": "Vivaldi 8.2 documents Load unpacked on Android; this browser route has not yet been automated/executed here.",
         "quality_source_switch": "Alternate fixture present; own-player quality UI assertion still required.",
         "physical_battery_display": "Emulator cannot establish Samsung energy usage or physical display quality.",
         "production_signer_migration": "Separate disposable migration workflow; no production identity available or generated.",
