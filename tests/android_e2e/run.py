@@ -593,8 +593,10 @@ def pair():
         if selected and once.exists: once.click()
         time.sleep(.3)
     assert D.app_current().get("package") == FIREFOX, "Pairing intent did not reach installed Firefox"
-    wait(lambda: D(textContains="Connected.").exists or D(textContains="Verbunden.").exists, timeout=20)
-    assert prefs().get("paired") == "true"
+    wait(lambda: label_control("Connected.") or label_control("Verbunden."), timeout=20)
+    paired_state = prefs()
+    assert paired_state.get("paired") == "true" and paired_state.get("key") == KEY
+    (OUT / "pairing-proof.json").write_text(json.dumps({"visible_confirmation": True, "native_paired": True, "native_key_unchanged": True}))
     AUTH_KEY = KEY
     # Fragment is removed by the real content script before success is displayed.
     open_app()
