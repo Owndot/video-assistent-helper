@@ -1,11 +1,12 @@
 name: Browser-Tests
 
 # Alle Tests aus tests/browser – einmal in Chromium, einmal in Firefox.
+# Native Java changes are covered by Helper safe validation and the deliberate Android E2E run.
 # Läuft bei Änderungen am Skript oder an den Tests (und von Hand über "Run workflow").
 on:
   push:
     branches: [main, codex/security-phase-1]
-    paths: ['src/**', 'tools/build.js', 'userscript/**', 'tests/browser/**', 'tests/java/**', 'app/src/main/java/de/evp/helfer/Fetcher.java', 'app/src/main/java/de/evp/helfer/PublicSuffix.java', 'app/src/main/java/de/evp/helfer/MiniServer.java', 'app/src/main/resources/**']
+    paths: ['src/**', 'tools/build.js', 'userscript/**', 'tests/browser/**']
   workflow_dispatch:
     inputs:
       tests:

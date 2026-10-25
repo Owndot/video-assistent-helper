@@ -107,8 +107,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           tests/java/run_core_tests.sh
-      - name: Isolated debug APK
-        run: gradle :app:assembleDebug --no-daemon
+      - name: Isolated debug APK with disposable test key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android"
+          rm -f "$HOME/.android/debug.keystore"
+          keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 2 -dname CN=HELPER-CI-TEST-ONLY
+          trap 'rm -f "$HOME/.android/debug.keystore"' EXIT
+          gradle :app:assembleDebug --no-daemon
       - name: Verify PSL data packaged into the debug APK
         run: |
           python3 - <<'PY'

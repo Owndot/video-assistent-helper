@@ -1,0 +1,352 @@
+name: Controlled Android E2E (test identities only)
+on:
+  workflow_dispatch:
+    inputs:
+      apis:
+        description: 'API JSON list, initially [33,35]'
+        default: '[33,35]'
+      kadri_sha:
+        description: 'Exact Kadri source commit to validate'
+        default: f76c209db9a3749007f4cd6a180d6d8509eb5971
+      reuse_bundle_run:
+        description: 'Optional successful bundle run ID; source equality is enforced'
+        default: '0'
+      scope:
+        description: 'core stabilization, focused controls, smoke, or full coverage'
+        type: choice
+        options: [core, full, smoke, controls]
+        default: full
+      routes:
+        description: 'Real integration routes: kadri, userscript, or both'
+        type: choice
+        options: [kadri, userscript, both]
+        default: kadri
+      firefox_version:
+        description: 'Exact Mozilla stable version, or latest (resolved version recorded)'
+        default: latest
+  push:
+    # Dedicated execution ref. Development pushes do not start this matrix.
+    branches: [codex/android-e2e-run]
+permissions:
+  contents: read
+concurrency:
+  group: android-e2e-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      apis: ${{ steps.matrix.outputs.apis }}
+      routes: ${{ steps.matrix.outputs.routes }}
+      scope: ${{ steps.matrix.outputs.scope }}
+      kadri_sha: ${{ steps.matrix.outputs.kadri_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: matrix
+        env:
+          REQUESTED_APIS: ${{ inputs.apis || '' }}
+          REQUESTED_ROUTE: ${{ inputs.routes || '' }}
+          REQUESTED_SCOPE: ${{ inputs.scope || '' }}
+          REUSE_BUNDLE: ${{ inputs.reuse_bundle_run || '' }}
+          KADRI_SHA: ${{ inputs.kadri_sha || '' }}
+        run: |
+          python3 - <<'PY'
+          import json,os,re
+          values=json.loads(os.environ["REQUESTED_APIS"]) if os.environ["REQUESTED_APIS"] else json.load(open("tests/android_e2e/execution.json"))["apis"]
+          assert isinstance(values,list) and 1<=len(values)<=2
+          assert all(type(v) is int and v in (26,28,31,32,33,35) for v in values)
+          assert len(set(values))==len(values)
+          with open(os.environ["GITHUB_OUTPUT"],"a") as out:
+              out.write("apis="+json.dumps(values)+"\n")
+              out.write("previous_run="+str(json.load(open("tests/android_e2e/execution.json")).get("previous_run",0))+"\n")
+              routes=os.environ["REQUESTED_ROUTE"] or json.load(open("tests/android_e2e/execution.json")).get("route","kadri")
+              assert routes in ("kadri","userscript","both")
+              out.write("routes="+("kadri userscript" if routes=="both" else routes)+"\n")
+              scope=os.environ["REQUESTED_SCOPE"] or json.load(open("tests/android_e2e/execution.json")).get("scope","full")
+              assert scope in ("smoke","full","controls","core")
+              out.write("scope="+scope+"\n")
+              reuse=os.environ["REUSE_BUNDLE"] or str(json.load(open("tests/android_e2e/execution.json")).get("reuse_bundle_run",0))
+              assert reuse.isdigit()
+              out.write("reuse_bundle_run="+reuse+"\n")
+              kadri=os.environ["KADRI_SHA"] or json.load(open("tests/android_e2e/execution.json")).get("kadri_sha","f76c209db9a3749007f4cd6a180d6d8509eb5971")
+              assert re.fullmatch("[0-9a-f]{40}",kadri)
+              out.write("kadri_sha="+kadri+"\n")
+          PY
+      - name: Inspect previous captured failures (optional, read only)
+        if: steps.matrix.outputs.previous_run != '0'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.matrix.outputs.previous_run }}
+          github-token: ${{ github.token }}
+          pattern: android-e2e-api-*
+          path: previous-ui-evidence
+      - name: Print previous trace and accessible UI labels
+        if: steps.matrix.outputs.previous_run != '0'
+        run: |
+          python3 - <<'PY'
+          import pathlib,re,xml.etree.ElementTree as ET,json
+          for file in sorted(pathlib.Path("previous-ui-evidence").glob("**/results.json")):
+              print(file.parent.name)
+              print(re.sub(r"[0-9a-f]{32}","<disposable-id>",file.read_text()))
+          for file in sorted(pathlib.Path("previous-ui-evidence").glob("**/*setup.xml")):
+              print(file)
+              labels=[n.attrib.get("text") or n.attrib.get("content-desc") for n in ET.parse(file).iter("node")]
+              print(re.sub(r"[0-9a-f]{32}","<disposable-id>",repr([x for x in labels if x])[:12000]))
+          for file in sorted(pathlib.Path("previous-ui-evidence").glob("**/real_extension_install.xml")):
+              for node in ET.parse(file).iter("node"):
+                  attrs=node.attrib
+                  if "was added" in str(attrs) or attrs.get("text")=="OK" or attrs.get("content-desc")=="OK": print("ADDON_DIALOG_NODE",attrs)
+          import base64
+          for name in ("firefox-before-settings.png","real_extension_install.png"):
+              files=sorted(pathlib.Path("previous-ui-evidence").glob("**/"+name))
+              if files:
+                  encoded=base64.b64encode(files[0].read_bytes()).decode()
+                  print("E2E_PNG_BEGIN "+name)
+                  for at in range(0,len(encoded),12000): print("E2E_PNG_DATA "+encoded[at:at+12000])
+                  print("E2E_PNG_END")
+          PY
+      - name: Calibrate visual fallback against versioned real Firefox frames
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y tesseract-ocr ffmpeg
+          python3 -m pip install Pillow==11.3.0 opencv-python-headless==4.12.0.88 CairoSVG==2.8.2
+          python3 tests/android_e2e/visual.py tests/android_e2e/reference/entry.png tests/android_e2e/reference/subtitle.png tests/android_e2e/reference/controls.png
+      - name: Reuse a previously verified test-only bundle when requested
+        if: steps.matrix.outputs.reuse_bundle_run != '0'
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.matrix.outputs.reuse_bundle_run }}
+          github-token: ${{ github.token }}
+          name: android-e2e-bundle-TEST-ONLY
+          path: e2e-bundle
+      - name: Require identical Android build inputs before reusing APKs
+        id: reuse_source
+        if: steps.matrix.outputs.reuse_bundle_run != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib,urllib.request,re
+          old=pathlib.Path("e2e-bundle/helper-commit.txt").read_text().strip()
+          assert re.fullmatch("[0-9a-f]{40}",old)
+          def tree(ref):
+              url="https://api.github.com/repos/"+os.environ["GITHUB_REPOSITORY"]+"/git/trees/"+ref
+              req=urllib.request.Request(url,headers={"Authorization":"Bearer "+os.environ["GH_TOKEN"],"Accept":"application/vnd.github+json"})
+              with urllib.request.urlopen(req,timeout=30) as r: return {e["path"]:e["sha"] for e in json.load(r)["tree"]}
+          a,b=tree(old),tree(os.environ["GITHUB_SHA"])
+          for name in ("app","build.gradle","settings.gradle","gradle.properties","gradle","gradlew","gradlew.bat"):
+              assert a.get(name)==b.get(name),"Android build input changed: "+name
+          def transport_test(ref):
+              import urllib.error
+              url="https://api.github.com/repos/"+os.environ["GITHUB_REPOSITORY"]+"/contents/tests/android_e2e/TestCredentialedStream.java?ref="+ref
+              req=urllib.request.Request(url,headers={"Authorization":"Bearer "+os.environ["GH_TOKEN"],"Accept":"application/vnd.github+json"})
+              try:
+                  with urllib.request.urlopen(req,timeout=30) as r: return json.load(r)["sha"]
+              except urllib.error.HTTPError as error:
+                  if error.code==404: return None
+                  raise
+          changed=transport_test(old)!=transport_test(os.environ["GITHUB_SHA"])
+          with open(os.environ["GITHUB_OUTPUT"],"a") as out: out.write("run_transport="+str(changed).lower()+"\n")
+          print("PASS: reused test APKs have identical app/build source inputs; original artifact source retained.")
+          print("Transport test changed:",changed)
+          PY
+          sha256sum -c e2e-bundle/apk-provenance.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.matrix.outputs.reuse_bundle_run == '0'
+        with:
+          gradle-version: '8.9'
+          cache-disabled: true
+      - name: Check fixture contract and test syntax before emulator allocation
+        run: |
+          python3 -m py_compile tests/android_e2e/*.py
+          python3 -m unittest discover -s tests/android_e2e -p test_server.py -v
+          python3 -m unittest discover -s tests/android_e2e -p test_seek_clock.py -v
+          bash -n tests/android_e2e/emulator.sh
+      - name: Existing full native core regression (host JVM, not Android)
+        run: |
+          tests/java/build.sh
+          tests/java/run_core_tests.sh
+      - name: Verify native stream transport before installing APKs
+        if: steps.matrix.outputs.reuse_bundle_run == '0' || steps.reuse_source.outputs.run_transport == 'true'
+        run: |
+          javac -cp tests/java/classes -d tests/java/classes tests/android_e2e/TestCredentialedStream.java
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestCredentialedStream
+      - name: Build isolated APKs with a short-lived test identity
+        if: steps.matrix.outputs.reuse_bundle_run == '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p e2e-bundle "$HOME/.android"
+          # No production keys, historical keystores or repository secrets are read.
+          rm -f "$HOME/.android/debug.keystore"
+          keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 2 -dname CN=ANDROID-E2E-TEST-ONLY
+          trap 'rm -f "$HOME/.android/debug.keystore"' EXIT
+          gradle :app:assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk e2e-bundle/helper-debug.apk
+          # Separate test-only app ID exercises the actual port collision.
+          cat > "$RUNNER_TEMP/e2e-competing.gradle" <<'GRADLE'
+          allprojects {
+            afterEvaluate { p ->
+              if (p.plugins.hasPlugin('com.android.application')) {
+                p.android.buildTypes.debug.applicationIdSuffix = '.e2ecompeting'
+              }
+            }
+          }
+          GRADLE
+          gradle :app:assembleDebug --no-daemon -I "$RUNNER_TEMP/e2e-competing.gradle"
+          cp app/build/outputs/apk/debug/app-debug.apk e2e-bundle/helper-competing.apk
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          aapt=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          for apk in e2e-bundle/helper-*.apk; do
+            "$signer" verify --verbose --print-certs "$apk" | tee -a e2e-bundle/signature-provenance.txt
+            "$aapt" dump badging "$apk" | sed -n '1p' >> e2e-bundle/signature-provenance.txt
+          done
+          ! grep -qi 'ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5' e2e-bundle/signature-provenance.txt
+          sha256sum e2e-bundle/helper-*.apk > e2e-bundle/apk-provenance.txt
+          git rev-parse HEAD > e2e-bundle/helper-commit.txt
+      - uses: actions/checkout@v4
+        with:
+          repository: Owndot/Kadri
+          ref: ${{ steps.matrix.outputs.kadri_sha }}
+          path: e2e-kadri
+          persist-credentials: false
+      - name: Build the real Firefox extension (no test hooks)
+        run: |
+          (cd e2e-kadri && node tools/build.js)
+          rm -rf e2e-bundle/kadri-firefox
+          cp -R e2e-kadri/dist/firefox e2e-bundle/kadri-firefox
+          git -C e2e-kadri rev-parse HEAD > e2e-bundle/kadri-commit.txt
+      - name: Prepare real userscript-manager route when requested
+        if: contains(steps.matrix.outputs.routes, 'userscript')
+        run: |
+          python3 tests/android_e2e/download_manager.py
+          node tools/build.js --check
+      - name: Download official Firefox Android and record exact version
+        env:
+          FIREFOX_VERSION: ${{ inputs.firefox_version || 'latest' }}
+        run: python3 tests/android_e2e/download_firefox.py "$FIREFOX_VERSION" e2e-bundle/firefox.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-e2e-bundle-TEST-ONLY
+          path: e2e-bundle
+          retention-days: 2
+  emulator:
+    name: Android API ${{ matrix.api }} / ${{ needs.build.outputs.scope }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        api: ${{ fromJSON(needs.build.outputs.apis) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-e2e-bundle-TEST-ONLY
+          path: e2e-bundle
+      - name: Install pinned automation tools
+        run: |
+          python3 -m pip install -r tests/android_e2e/requirements.txt
+          npm install -g web-ext@10.8.0
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg tesseract-ocr
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Operate actual APKs and Firefox on Android
+        timeout-minutes: 35
+        env:
+          E2E_ROUTES: ${{ needs.build.outputs.routes }}
+          E2E_SCOPE: ${{ needs.build.outputs.scope }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash tests/android_e2e/emulator.sh
+      - name: Per-device report
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("android-e2e-results")
+          root.mkdir(exist_ok=True)
+          children=sorted(root.glob("*/REPORT.md"))
+          text="# Real Android E2E — captured route reports\n\n"
+          text+="Reports may be partial if the runner stopped. Missing cases are not passed.\n\n"
+          for child in children: text+="## "+child.parent.name+"\n\n"+child.read_text()+"\n"
+          if not children: text+="NOT TESTED: no UI route report produced.\n"
+          (root/"REPORT.md").write_text(text)
+          PY
+          cat android-e2e-results/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-e2e-api-${{ matrix.api }}
+          path: android-e2e-results
+          if-no-files-found: warn
+          retention-days: 7
+  report:
+    if: always()
+    needs: [build, emulator]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: android-e2e-api-*
+          path: reports
+      - name: Consolidated overview without releasing anything
+        env:
+          BUILD_STATUS: ${{ needs.build.result }}
+          EMULATOR_STATUS: ${{ needs.emulator.result }}
+          E2E_SCOPE: ${{ needs.build.outputs.scope }}
+        run: |
+          python3 - <<'PY'
+          import os,pathlib
+          lines=["# Controlled Android E2E — "+os.environ.get("E2E_SCOPE","unknown"), "", "Build: "+os.environ["BUILD_STATUS"]+"; emulator jobs: "+os.environ["EMULATOR_STATUS"], ""]
+          if os.environ.get("E2E_SCOPE")=="smoke": lines+=["Smoke scope only. This is not full feature validation.", ""]
+          reports=sorted(pathlib.Path("reports").glob("*/REPORT.md"))
+          if not reports: lines+=["NOT TESTED: no emulator UI report produced."]
+          for report in reports:
+              lines+=["## "+report.parent.name, "",report.read_text()]
+          text="\n".join(lines)
+          pathlib.Path("ANDROID-E2E-REPORT.md").write_text(text)
+          print(text)
+          with open(os.environ["GITHUB_STEP_SUMMARY"],"a") as out: out.write(text)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-e2e-consolidated-report
+          path: ANDROID-E2E-REPORT.md
+          retention-days: 14

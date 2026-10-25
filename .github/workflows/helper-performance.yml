@@ -1,9 +1,7 @@
 name: Helper stable baseline observations
 on:
   workflow_dispatch:
-  push:
-    branches: [codex/security-phase-1]
-    paths: ['app/**', 'tools/profile-helper.py', '.github/probes/**', '.github/scripts/**', '.github/workflows/helper-performance.yml']
+  # Optional emulator measurements run deliberately; ordinary PR updates do not start another emulator.
 permissions:
   contents: read
 jobs:
