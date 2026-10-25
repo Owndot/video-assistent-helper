@@ -32,15 +32,17 @@ def generate():
                 "-b:a", "64k", "-movflags", "+faststart", str(path)], check=True)
     # A valid large ISO-BMFF file: unchanged playable MP4 + sparse free box.
     # Only test disk space, not 128 MiB of Python RAM, is reserved here.
-    large = MEDIA / "large.mp4"
-    if not large.exists():
-        shutil.copyfile(MEDIA / "clip.mp4", large)
-        total = 128 * 1024 * 1024
-        padding = total - large.stat().st_size
-        assert 8 <= padding < 2**32
-        with large.open("ab") as stream:
-            stream.write(struct.pack(">I4s", padding, b"free"))
-            stream.truncate(total)
+    for name, source, total in (("large.mp4", "clip.mp4", 128 << 20),
+                                ("parallel-one.mp4", "clip.mp4", 16 << 20),
+                                ("parallel-two.mp4", "alternate.mp4", 16 << 20)):
+        large = MEDIA / name
+        if not large.exists():
+            shutil.copyfile(MEDIA / source, large)
+            padding = total - large.stat().st_size
+            assert 8 <= padding < 2**32
+            with large.open("ab") as stream:
+                stream.write(struct.pack(">I4s", padding, b"free"))
+                stream.truncate(total)
     hls = MEDIA / "hls"
     hls.mkdir(exist_ok=True)
     if not (hls / "index.m3u8").exists():
@@ -51,16 +53,17 @@ def generate():
     (MEDIA / "captions.vtt").write_text(
         "WEBVTT\n\n00:00.000 --> 00:59.900\nANDROID E2E SUBTITLE\n", encoding="utf8")
 
-def page(kind, port):
+def page(kind, port, label=''):
+    title = kind + (' ' + label if re.fullmatch(r'[a-z0-9-]{1,40}', label) else '')
     if kind == "embedded":
         return f"""<!doctype html><meta name=viewport content="width=device-width">
 <title>E2E embedded</title><iframe title="Owned embedded player" allow="autoplay; fullscreen; picture-in-picture"
 src="/page/direct?embedded=1" style="width:100%;height:420px;border:0"></iframe>"""
-    src = "/media/hls/index.m3u8" if kind == "hls" else "/slowhls/index.m3u8" if kind == "slowhls" else "/slow/clip.mp4" if kind == "download" else "/media/large.mp4" if kind == "large" else "/media/clip.mp4"
+    src = "/slow/parallel-two.mp4" if kind == "download-other" else "/media/hls/index.m3u8" if kind == "hls" else "/slowhls/index.m3u8" if kind == "slowhls" else "/slow/parallel-one.mp4" if kind == "download" else "/media/large.mp4" if kind == "large" else "/media/clip.mp4"
     if kind == "redirect":
         src = "/redirect?to=/media/clip.mp4"
     return """<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1">
-<title>E2E """ + kind + """</title><script src="/hls.min.js"></script><style>body{margin:0;background:#eee;font:18px sans-serif}
+<title>E2E """ + title + """</title><script src="/hls.min.js"></script><style>body{margin:0;background:#eee;font:18px sans-serif}
 video{width:100%;max-height:55vh}button,a{font:18px sans-serif;min-height:48px;margin:8px}
 </style></head><body><h1>Owned Android video fixture</h1>
 <video id=v controls playsinline loop preload=auto src='""" + src + """'>
@@ -126,6 +129,8 @@ class Handler(BaseHTTPRequestHandler):
             self.trace_id = time.monotonic_ns()
             with LOCK:
                 EVENTS.append({"event": "request", "id": self.trace_id, "path": u.path,
+                    "host": self.headers.get("Host", "").lower(),
+                    "fetch_dest": self.headers.get("Sec-Fetch-Dest", ""),
                     "cookie": bool(self.headers.get("Cookie")),
                     "authorization": bool(self.headers.get("Authorization")),
                     "range": self.headers.get("Range", ""), "received": time.monotonic()})
@@ -152,7 +157,7 @@ class Handler(BaseHTTPRequestHandler):
             data = (ROOT.parent / "browser/web/hls.min.js").read_bytes()
             self.reply(200, data, "application/javascript")
         elif u.path.startswith("/page/"):
-            self.reply(200, page(u.path.rsplit("/", 1)[1], self.server.server_port).encode(), "text/html; charset=utf-8")
+            self.reply(200, page(u.path.rsplit("/", 1)[1], self.server.server_port, q.get("label", [""])[0]).encode(), "text/html; charset=utf-8")
         elif u.path.startswith(("/media/", "/slow/", "/slowhls/")):
             relative = ("hls/" if u.path.startswith("/slowhls/") else "") + u.path.split("/", 2)[2]
             f = (MEDIA / relative).resolve()

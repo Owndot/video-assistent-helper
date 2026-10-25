@@ -164,6 +164,12 @@ def case(name, fn, requires=None):
     except Exception as exc:
         RESULTS.append({"name": name, "status": "FAIL", "detail": redact(str(exc)), "trace": redact(traceback.format_exc())})
     finally:
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:8765/events", timeout=3) as response:
+                events = [e for e in json.load(response) if e.get("received", 0) >= started]
+            (OUT / (name + "-http-events.json")).write_text(json.dumps(events, indent=2))
+        except Exception as exc:
+            print("Owned fixture evidence unavailable:",type(exc).__name__,flush=True)
         shot(name)
         if RESULTS[-1]["status"] == "FAIL":
             print(redact(RESULTS[-1].get("trace", "")), flush=True)
@@ -731,13 +737,15 @@ def ui_helper_download():
 
 def downloads():
     # Trigger downloads using actual user clicks; no direct /download API invocation.
-    player_entry("download").click()
+    player_entry("download?label=" + ROUTE).click()
     wait(reveal)
     reveal()
     before = set(shell("ls", "/sdcard/Download/Video-Assistent", check=False).splitlines())
     download_start = time.monotonic()
     ui_helper_download()
-    time.sleep(.5)
+    click("Close")
+    player_entry("download-other?label=" + ROUTE).click()
+    wait(reveal)
     ui_helper_download()
     # A separate real browser/player handoff while the two slow downloads run.
     reveal()
@@ -748,12 +756,15 @@ def downloads():
     button = wait(entry_control)
     button.click()
     wait(reveal)
-    player_during_download_ms = round((time.monotonic() - resolving_at) * 1000, 1)
-    expected_size = Path("tests/android_e2e/generated/clip.mp4").stat().st_size
+    resolved_at = time.monotonic()
+    player_during_download_ms = round((resolved_at - resolving_at) * 1000, 1)
+    media = {"/slow/" + name: Path("tests/android_e2e/generated/" + name) for name in ("parallel-one.mp4", "parallel-two.mp4")}
+    expected_sizes = {str(path.stat().st_size) for path in media.values()}
+    expected_hashes = {hashlib.sha256(path.read_bytes()).hexdigest() for path in media.values()}
     def finished():
         now = set(shell("ls", "/sdcard/Download/Video-Assistent", check=False).splitlines())
         files = [x for x in now - before if x.endswith(".mp4") and
-                 shell("stat", "-c", "%s", "/sdcard/Download/Video-Assistent/" + x, check=False).strip() == str(expected_size)]
+                 shell("stat", "-c", "%s", "/sdcard/Download/Video-Assistent/" + x, check=False).strip() in expected_sizes]
         return files if len(files) >= 2 else None
     files = wait(finished, timeout=60)
     hashes = {}
@@ -763,21 +774,21 @@ def downloads():
         hashes[filename] = hashlib.sha256(local.read_bytes()).hexdigest()
         assert local.stat().st_size > 10000
         local.unlink()  # artifacts retain hashes and screen evidence, not duplicate owned media
-    expected = hashlib.sha256(Path("tests/android_e2e/generated/clip.mp4").read_bytes()).hexdigest()
-    assert all(value == expected for value in hashes.values()), "Saved video differs from fixture"
+    assert set(hashes.values()) == expected_hashes, "Saved videos do not match both distinct fixtures"
     def overlapping():
         with urllib.request.urlopen("http://127.0.0.1:8765/events") as response:
             events = json.load(response)
         begins = {e["id"]: e for e in events if e.get("event") == "request"
-                  and e.get("path") == "/slow/clip.mp4" and e["received"] >= download_start}
+                  and e.get("path") in media and not e.get("range") and not e.get("fetch_dest") and e["received"] >= download_start}
         ends = [e for e in events if e.get("event") == "transfer_end" and e.get("id") in begins
-                and e.get("complete") and e.get("bytes") == expected_size]
+                and e.get("complete") and e.get("bytes") == media[e["path"]].stat().st_size]
         for i, one in enumerate(ends):
             for two in ends[i+1:]:
+                if one["path"] == two["path"]: continue
                 left = max(begins[one["id"]]["received"], begins[two["id"]]["received"])
                 right = min(one["received"], two["received"])
-                if right > left:
-                    return {"overlap_ms": round((right-left)*1000, 1),
+                if left <= resolving_at and right >= resolved_at:
+                    return {"both_active_through_handoff": True, "overlap_ms": round((right-left)*1000, 1),
                             "first_request": one["id"], "second_request": two["id"]}
     overlap = wait(overlapping, timeout=5)
     return {"parallel_ui_downloads": len(files), "sha256": hashes, "server_transfer_evidence": overlap,
@@ -786,7 +797,7 @@ def downloads():
 
 
 def large_download():
-    button = player_entry("large")
+    button = player_entry("large?label=" + ROUTE)
     button.click()
     wait(reveal)
     before = set(shell("ls", "/sdcard/Download/Video-Assistent", check=False).splitlines())
@@ -989,8 +1000,8 @@ def native_cookie_redirect(kind="hls"):
     def seen():
         with urllib.request.urlopen("http://127.0.0.1:8765/events") as response:
             data = json.load(response)
-        rows = [e for e in data if e.get("event") == "request" and e.get("path") == ("/sink" if kind == "hls" else "/media/clip.mp4") and e.get("received", 0) >= start]
-        original = [e for e in data if e.get("event") == "request" and e.get("path") == "/redirect" and e.get("received", 0) >= start]
+        rows = [e for e in data if e.get("event") == "request" and e.get("path") == ("/sink" if kind == "hls" else "/media/clip.mp4") and e.get("received", 0) >= start and e.get("host") == "localhost:8765"]
+        original = [e for e in data if e.get("event") == "request" and e.get("path") == "/redirect" and e.get("received", 0) >= start and e.get("host") == "127.0.0.1:8765"]
         return (rows, original) if rows else None
     try:
         rows, original = wait(seen, timeout=20)
