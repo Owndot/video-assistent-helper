@@ -1,73 +1,51 @@
-name: Inspect saved Android seek recordings (no emulator)
+name: Android seek observation regression only (no emulator)
 on:
   push:
     branches: [codex/android-e2e-inspect]
 permissions:
   contents: read
-  actions: read
 jobs:
-  inspect:
+  observation:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 4
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          run-id: 40202803284
-          repository: Owndot/video-assistent-helper
-          github-token: ${{ github.token }}
-          name: android-e2e-api-33
-          path: evidence/run25
-      - uses: actions/download-artifact@v4
-        with:
-          run-id: 40203626744
-          repository: Owndot/video-assistent-helper
-          github-token: ${{ github.token }}
-          name: android-e2e-api-33
-          path: evidence/run26
-      - name: Prepare read-only recording tools
+          ref: 91284c651e4c1e68e650ecd090d2387e2fe38e18
+          persist-credentials: false
+      - name: New host-only observation regression
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg tesseract-ocr
-          python3 -m pip install Pillow==11.3.0
-      - name: Extract actual existing seek frames and rendered clocks
+          python3 -m py_compile tests/android_e2e/run.py tests/android_e2e/test_seek_clock.py
+          python3 -m unittest discover -s tests/android_e2e -p test_seek_clock.py -v
+      - name: Confirm predecessor rejects its first stale clock observation
         run: |
           python3 - <<'PY'
-          import pathlib,subprocess,json,io,csv,re,base64
-          from PIL import Image
-          def words(im):
-              output=io.BytesIO();im.save(output,format="PNG")
-              p=subprocess.run(["tesseract","stdin","stdout","--psm","11","tsv"],input=output.getvalue(),
-                  stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True,timeout=15)
-              return [r for r in csv.DictReader(io.StringIO(p.stdout.decode()),delimiter="\t") if r["text"].strip() and float(r["conf"])>=35]
-          for video in sorted(pathlib.Path("evidence").glob("**/seek_and_restore.mp4")):
-              duration=float(subprocess.check_output(["ffprobe","-v","error","-show_entries","format=duration","-of","csv=p=0",str(video)]))
-              begin=max(0,duration-14)
-              folder=video.parent/"seek-frame-inspection";folder.mkdir(exist_ok=True)
-              subprocess.run(["ffmpeg","-v","error","-y","-ss",str(begin),"-i",str(video),"-vf","fps=2",str(folder/"%03d.png")],check=True)
-              frames=sorted(folder.glob("*.png"))
-              for i,frame in enumerate(frames):
-                  im=Image.open(frame)
-                  crop=im.crop((0,int(im.height*.65),im.width,im.height))
-                  crop=crop.resize((crop.width*2,crop.height*2),Image.Resampling.LANCZOS)
-                  rows=words(crop)
-                  clock=[r["text"] for r in rows if re.fullmatch(r"\d{1,2}:\d{2}",r["text"]) and int(r["left"])<crop.width*.3]
-                  print("RECORDED_CLOCK",str(video),round(begin+i*.5,2),clock,flush=True)
-              from PIL import ImageDraw,ImageFont
-              for part in range(0,len(frames),14):
-                  group=frames[part:part+14]
-                  sheet=Image.new("RGB",(640,90*len(group)),"white")
-                  draw=ImageDraw.Draw(sheet);font=ImageFont.load_default(size=15)
-                  for n,frame in enumerate(group):
-                      im=Image.open(frame)
-                      t=begin+(part+n)*.5
-                      draw.text((2,n*90+4),str(round(t,2)),fill="black",font=font)
-                      pts=im.crop((0,int(im.height*.34),int(im.width*.33),int(im.height*.40)))
-                      footer=im.crop((0,int(im.height*.86),int(im.width*.30),int(im.height*.92)))
-                      sheet.paste(pts.resize((280,75)),(70,n*90))
-                      sheet.paste(footer.resize((280,75)),(355,n*90))
-                  output=io.BytesIO();sheet.save(output,format="PNG")
-                  print("E2E_PNG_BEGIN "+video.parents[1].name+"-time-grid-"+str(part))
-                  encoded=base64.b64encode(output.getvalue()).decode()
-                  for at in range(0,len(encoded),12000):print("E2E_PNG_DATA "+encoded[at:at+12000])
-                  print("E2E_PNG_END",flush=True)
+          import ast,urllib.request
+          url="https://raw.githubusercontent.com/Owndot/video-assistent-helper/e3e50882a791e613e4b2a58771a1c85ddef9beb6/tests/android_e2e/run.py"
+          with urllib.request.urlopen(url,timeout=30) as response:
+              source=response.read().decode()
+          fn=next(n for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name=="seek_restore")
+          index=next(i for i,n in enumerate(fn.body) if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="sampled_at" for t in n.targets))
+          fn.body=fn.body[:index]
+          class Element:
+              exists=True
+              def click(self):pass
+          class Device:
+              def __call__(self,**kwargs):return Element()
+          class Clock:
+              def monotonic(self):return 0
+              def sleep(self,seconds):pass
+          clocks=iter([["0:01"],["0:01"]])
+          context={"D":Device(),"time":Clock(),"player_entry":lambda:Element(),
+                   "wait":lambda *args,**kwargs:True,"reveal":lambda:True,
+                   "playing_times":lambda:next(clocks)}
+          exec(compile(ast.Module(body=[fn],type_ignores=[]),"actual-e3e5088-seek_restore","exec"),context)
+          try:
+              context["seek_restore"]()
+          except AssertionError as error:
+              assert str(error)=="Forward seek did not advance by the default ten seconds",str(error)
+              print("PASS: actual e3e5088 single-snapshot seek check rejects a stale first frame.")
+          else:
+              raise AssertionError("Predecessor unexpectedly accepted a stale first frame")
+          print("This is a host observation regression with stubbed input; no Android/browser integration was executed.")
           PY
