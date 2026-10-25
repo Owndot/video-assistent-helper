@@ -112,6 +112,11 @@ jobs:
                   for at in range(0,len(encoded),12000): print("E2E_PNG_DATA "+encoded[at:at+12000])
                   print("E2E_PNG_END")
           PY
+      - name: Calibrate visual fallback against the captured real Firefox frame
+        if: steps.matrix.outputs.previous_run == '40185452608'
+        run: |
+          python3 -m pip install Pillow==11.3.0 opencv-python-headless==4.12.0.88 CairoSVG==2.8.2
+          python3 tests/android_e2e/visual.py "$(find previous-ui-evidence -name real_extension_install.png | head -1)"
       - name: Reuse a previously verified test-only bundle when requested
         if: steps.matrix.outputs.reuse_bundle_run != '0'
         uses: actions/download-artifact@v4
@@ -267,7 +272,7 @@ jobs:
           python3 -m pip install -r tests/android_e2e/requirements.txt
           npm install -g web-ext@10.8.0
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg tesseract-ocr
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

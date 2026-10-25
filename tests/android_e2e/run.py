@@ -8,7 +8,6 @@ from pathlib import Path
 import re
 import signal
 import shlex
-import shlex
 import subprocess
 import sys
 import threading
@@ -21,6 +20,7 @@ import xml.etree.ElementTree as ET
 
 import uiautomator2 as u2
 from PIL import ImageChops, ImageStat
+import visual
 
 PKG = "de.evp.helfer.debug"
 FIREFOX = "org.mozilla.firefox"
@@ -38,6 +38,7 @@ WEB_EXT = None
 LOGCAT = None
 LAST_REVEAL_AT = 0.0
 NAVIGATION_INITIALIZED = False
+DENSITY = 1.0
 
 class Blocked(Exception):
     pass
@@ -160,6 +161,43 @@ def write_results():
                     str(r.get("detail", "")).replace("|", "/").replace("\n", " ")[:700] + " |")
     (OUT / "REPORT.md").write_text("\n".join(rows) + "\n", encoding="utf8")
 
+
+class VisualControl:
+    def __init__(self, hit): self.hit = hit
+    def click(self):
+        print("Visual UI tap:", self.hit, flush=True)
+        D.click(self.hit["x"], self.hit["y"])
+
+def icon_control(key):
+    hit = visual.locate(D.screenshot(), key, DENSITY)
+    return VisualControl(hit) if hit else None
+
+def entry_control():
+    for label in ("Videoplayer", "video player"):
+        for selector in (D(descriptionContains=label), D(textContains=label)):
+            if selector.exists: return selector
+    return icon_control("I.player")
+
+def player_controls_visible():
+    return D(description="Close").exists or D(description="Schließen").exists or bool(icon_control("P.close"))
+
+def visual_click(label):
+    keys = {"Close":"P.close","Schließen":"P.close","Play":"P.pause","Wiedergabe":"P.pause",
+            "Subtitles":"P.cc","Untertitel":"P.cc"}
+    if label in keys:
+        control = icon_control(keys[label])
+        if control is None and label in ("Play","Wiedergabe"): control = icon_control("P.play")
+        if control:
+            control.click()
+            return True
+    hit = visual.phrase(D.screenshot(), label)
+    if hit:
+        print("OCR UI tap:",hit,flush=True)
+        D.click(hit["x"],hit["y"])
+        return True
+    return False
+
+
 def dismiss_addon_notice():
     notice = visible_label("was added", contains=True)
     if not notice:
@@ -203,6 +241,7 @@ def click(label, scroll=False):
             if sel.exists:
                 sel.click()
                 return
+    if visual_click(label): return
     raise AssertionError("Visible control absent: " + label)
 
 def open_app():
@@ -455,7 +494,7 @@ def extension():
     # UI appearance on a real fixture is the acceptance criterion, not a guessed log line.
     launch_url("http://127.0.0.1:8765/page/direct")
     play_fixture()
-    wait(lambda: D(descriptionContains="Videoplayer").exists or D(descriptionContains="video player").exists, timeout=25)
+    wait(entry_control, timeout=25)
     return ("Unmodified dist/firefox" if ROUTE == "kadri" else "Pinned real Violentmonkey + unmodified userscript via manager Install UI") + " loaded into Firefox Android; real player entry visible."
 
 def pair():
@@ -481,14 +520,13 @@ def pair():
 def player_entry(kind="direct"):
     launch_url("http://127.0.0.1:8765/page/" + kind)
     play_fixture()
-    return wait(lambda: D(descriptionContains="Videoplayer") if D(descriptionContains="Videoplayer").exists
-                else D(descriptionContains="video player") if D(descriptionContains="video player").exists else None)
+    return wait(entry_control)
 
 def reveal():
     global LAST_REVEAL_AT
     close = D(description="Close")
     close_de = D(description="Schließen")
-    if close.exists or close_de.exists:
+    if close.exists or close_de.exists or icon_control("P.close"):
         return True
     # Default is picture-only. Reveal via a genuine single tap before waiting
     # for controls; do not change the preference or the product's visibility.
@@ -498,7 +536,7 @@ def reveal():
         D.click(w * 0.5, h * 0.35)
         LAST_REVEAL_AT = now
         time.sleep(0.25)
-    return close.exists or close_de.exists
+    return close.exists or close_de.exists or bool(icon_control("P.close"))
 
 def playing_times():
     root = ET.fromstring(D.dump_hierarchy())
@@ -510,6 +548,11 @@ def playing_times():
                 bounds = list(map(int, re.findall(r"\d+", node.attrib.get("bounds", ""))))
                 if len(bounds) == 4 and bounds[1] > D.window_size()[1] * .15:
                     vals.append(t)
+    if not vals:
+        image = D.screenshot()
+        w, h = image.size
+        for row in visual.words(image.crop((0, int(h*.65), w, h))):
+            if re.fullmatch(r"\d{1,2}:\d{2}", row["text"]): vals.append(row["text"])
     return sorted(set(vals))
 
 def player():
@@ -599,8 +642,7 @@ def seek_restore():
 def source(kind):
     launch_url("http://127.0.0.1:8765/page/" + kind)
     play_fixture()
-    button = wait(lambda: D(descriptionContains="Videoplayer") if D(descriptionContains="Videoplayer").exists
-                  else D(descriptionContains="video player") if D(descriptionContains="video player").exists else None, timeout=25)
+    button = wait(entry_control, timeout=25)
     button.click()
     reveal()
     a = playing_times()
@@ -639,8 +681,7 @@ def downloads():
     resolving_at = time.monotonic()
     launch_url("http://127.0.0.1:8765/page/redirect")
     play_fixture()
-    button = wait(lambda: D(descriptionContains="Videoplayer") if D(descriptionContains="Videoplayer").exists
-                  else D(descriptionContains="video player") if D(descriptionContains="video player").exists else None)
+    button = wait(entry_control)
     button.click()
     wait(reveal)
     player_during_download_ms = round((time.monotonic() - resolving_at) * 1000, 1)
@@ -760,8 +801,7 @@ def switch_source():
     reveal()
     click("Schließen") if D(description="Schließen").exists else click("Close")
     click("Switch fixture source")
-    button = wait(lambda: D(descriptionContains="Videoplayer") if D(descriptionContains="Videoplayer").exists
-                  else D(descriptionContains="video player") if D(descriptionContains="video player").exists else None)
+    button = wait(entry_control)
     button.click()
     time.sleep(1)
     reveal()
@@ -820,8 +860,7 @@ def opening_cycles():
     button = player_entry()
     for i in range(6):
         if i:
-            button = wait(lambda: D(descriptionContains="Videoplayer") if D(descriptionContains="Videoplayer").exists
-                          else D(descriptionContains="video player") if D(descriptionContains="video player").exists else None)
+            button = wait(entry_control)
         start = time.monotonic()
         button.click()
         wait(reveal)
@@ -979,9 +1018,11 @@ def crash_check():
     return "No target Java fatal exception or recorded crash/native-crash/ANR exit reason observed."
 
 def main():
-    global D
+    global D, DENSITY
     assert shell("getprop", "ro.kernel.qemu").strip() == "1", "Only disposable Android emulators are allowed"
     D = u2.connect(os.environ["ANDROID_SERIAL"])
+    density_text = shell("wm", "density")
+    DENSITY = int(re.findall(r"\d+", density_text)[-1]) / 160
     adb("forward", "tcp:14781", "tcp:47811")
     adb("reverse", "tcp:8765", "tcp:8765")
     adb("logcat", "-c")
