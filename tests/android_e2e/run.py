@@ -203,6 +203,8 @@ def case(name, fn, requires=None):
             RESULTS[-1]["recording_available"] = (OUT / (name + ".mp4")).is_file()
         write_results()
         print(name, RESULTS[-1]["status"], redact(str(RESULTS[-1].get("detail", ""))), flush=True)
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print("::notice title=Android E2E "+ROUTE+"/"+name+"::"+RESULTS[-1]["status"], flush=True)
 
 def write_results():
     (OUT / "results.json").write_text(json.dumps(RESULTS, indent=2), encoding="utf8")
@@ -273,6 +275,25 @@ def dismiss_addon_notice():
     wait(lambda: not visible_label("was added", contains=True), timeout=8)
     return True
 
+def fresh_input_controls():
+    global LAST_REVEAL_AT
+    visible = bool(icon_control("P.close"))
+    age = time.monotonic() - LAST_REVEAL_AT
+    if visible and age < 1:
+        time.sleep(max(0, .40-age))
+        return
+    w,h = D.window_size()
+    if visible:
+        D.click(w*.5,h*.35)
+        wait(lambda: not icon_control("P.close"), timeout=3)
+        time.sleep(.35)  # outside the product's 300ms double-tap window
+    else:
+        time.sleep(max(0, .35-age))
+    D.click(w*.5,h*.35)
+    LAST_REVEAL_AT = time.monotonic()
+    time.sleep(.40)  # ctlnew intentionally blocks input for 320ms
+    wait(lambda: icon_control("P.close"), timeout=8)
+
 def tap_player_icon(label):
     keys = {"Close":("P.close",),"Schließen":("P.close",),
             "Play":("P.pause","P.play"),"Wiedergabe":("P.pause","P.play"),
@@ -288,6 +309,7 @@ def tap_player_icon(label):
                 return True
         reveal()
         return False
+    fresh_input_controls()
     wait(attempt, timeout=10)
 
 def click(label, scroll=False):
@@ -466,6 +488,8 @@ def swipe_find(label, contains=False, limit=8):
     raise AssertionError("Visible label not reached by real swipes: " + label)
 
 def firefox_prepare():
+    if int(shell("getprop", "ro.build.version.sdk").strip()) >= 33:
+        shell("pm", "grant", FIREFOX, "android.permission.POST_NOTIFICATIONS")
     shell("cmd", "role", "add-role-holder", "--user", "0", "android.app.role.BROWSER", FIREFOX)
     D.app_start(FIREFOX)
     for _ in range(8):
@@ -649,22 +673,12 @@ def reveal():
 
 def playing_times():
     wait(reveal, timeout=8)
-    root = ET.fromstring(D.dump_hierarchy())
-    height = D.window_size()[1]
-    vals = []
-    for node in root.iter("node"):
-        for attr in ("text", "content-desc"):
-            t = node.attrib.get(attr, "").strip()
-            if re.fullmatch(r"\d{1,2}:\d{2}", t):
-                bounds = list(map(int, re.findall(r"\d+", node.attrib.get("bounds", ""))))
-                if len(bounds) == 4 and bounds[1] > height * .15:
-                    vals.append(t)
-    if not vals:
-        image = D.screenshot()
-        w, h = image.size
-        for row in visual.words(image.crop((0, int(h*.65), w, h))):
-            if re.fullmatch(r"\d{1,2}:\d{2}", row["text"]): vals.append(row["text"])
-    return sorted(set(vals))
+    frame = D.screenshot()
+    w,h = frame.size
+    # The left footer is the own-player clock. Reading rendered pixels avoids
+    # retained source-video AX nodes and stale/transparent control labels.
+    rows = visual.words(frame.crop((0,int(h*.75),int(w*.30),int(h*.95))))
+    return sorted({r["text"] for r in rows if re.fullmatch(r"\d{1,2}:\d{2}",r["text"])})
 
 def media_clock_seconds(labels):
     assert labels, "Visible player clock missing"
@@ -694,15 +708,29 @@ def player():
     changed = sum(value for level, value in enumerate(motion.histogram()) if level > 10)
     assert changed > crop1.width * crop1.height * .005, "No visible changing video pixels (clock alone is insufficient)"
     assert media_clock_seconds(second) > media_clock_seconds(first), "Player clock did not advance: " + repr([first, second])
-    click("Wiedergabe") if D(description="Wiedergabe").exists else click("Play")
-    time.sleep(0.5)
-    paused = playing_times()
-    time.sleep(1.2)
-    assert playing_times() == paused, "Paused clock advanced"
-    click("Wiedergabe") if D(description="Wiedergabe").exists else click("Play")
     return {"clock_before": first, "clock_after": second, "changed_video_pixels": changed,
             "entry_to_controls_ms": controls_ms,
             "note": "UI latency/clock evidence. Not a first-decoded-frame measurement."}
+
+
+def play_pause():
+    click("Wiedergabe") if D(description="Wiedergabe").exists else click("Play")
+    wait(lambda: icon_control("P.play"), timeout=5)
+    time.sleep(.5)
+    paused = playing_times()
+    shot("player-paused-visible")
+    time.sleep(1.2)
+    after_pause = playing_times()
+    assert paused and after_pause == paused, "Paused clock advanced: " + repr([paused, after_pause])
+    click("Wiedergabe") if D(description="Wiedergabe").exists else click("Play")
+    wait(lambda: icon_control("P.pause"), timeout=5)
+    resumed = playing_times()
+    time.sleep(1.2)
+    after_resume = playing_times()
+    assert media_clock_seconds(after_resume) > media_clock_seconds(resumed), "Resumed clock did not advance"
+    return {"paused_clock": paused, "resumed_clock": after_resume,
+            "note":"Rendered play/pause glyph, actual touches and rendered clock; handoff is checked independently."}
+
 
 def gestures():
     reveal()
@@ -775,7 +803,7 @@ def source(kind):
     return kind + ": real Firefox playback/own player clock advanced"
 
 def ui_helper_download():
-    reveal()
+    fresh_input_controls()
     selector = D(descriptionContains="Herunterladen")
     if not selector.exists:
         selector = D(descriptionContains="Download")
@@ -1175,22 +1203,23 @@ def main():
     case("firefox_setup", firefox_prepare)
     case("real_extension_install", extension, ["firefox_setup"])
     case("real_browser_pairing", pair, ["helper_setup", "real_extension_install"])
-    case("player_play_pause", player, ["real_browser_pairing"])
+    case("player_handoff", player, ["real_browser_pairing"])
+    case("player_play_pause", play_pause, ["player_handoff"])
     if SCOPE == "full":
-        case("device_volume_brightness_swipes", gestures, ["player_play_pause"])
-        case("seek_and_restore", seek_restore, ["player_play_pause"])
+        case("device_volume_brightness_swipes", gestures, ["player_handoff"])
+        case("seek_and_restore", seek_restore, ["player_handoff"])
         for kind in ("redirect", "hls", "embedded"):
-            case("play_" + kind, lambda k=kind: source(k), ["player_play_pause"])
-        case("subtitle_selection", subtitles, ["player_play_pause"])
-        case("site_source_switch", switch_source, ["player_play_pause"])
-        case("orientation_roundtrip", rotation, ["player_play_pause"])
-        case("player_open_close_memory", opening_cycles, ["player_play_pause"])
-        case("download_cancel", cancel_download, ["player_play_pause"])
-        case("parallel_downloads", downloads, ["player_play_pause"])
-        case("large_download_memory", large_download, ["player_play_pause"])
+            case("play_" + kind, lambda k=kind: source(k), ["player_handoff"])
+        case("subtitle_selection", subtitles, ["player_handoff"])
+        case("site_source_switch", switch_source, ["player_handoff"])
+        case("orientation_roundtrip", rotation, ["player_handoff"])
+        case("player_open_close_memory", opening_cycles, ["player_handoff"])
+        case("download_cancel", cancel_download, ["player_handoff"])
+        case("parallel_downloads", downloads, ["player_handoff"])
+        case("large_download_memory", large_download, ["player_handoff"])
         case("background_pip_return", background, ["large_download_memory"])
-        case("paired_helper_restart", paired_restart, ["player_play_pause"])
-        case("pairing_reset_roundtrip", reset_pairing, ["player_play_pause"])
+        case("paired_helper_restart", paired_restart, ["player_handoff"])
+        case("pairing_reset_roundtrip", reset_pairing, ["player_handoff"])
         case("native_hls_download", native_hls_download, ["helper_setup"])
         case("native_cookie_redirect", native_cookie_redirect, ["helper_setup"])
         case("native_downloadmanager_cookie_redirect", lambda: native_cookie_redirect("file"), ["helper_setup"])
