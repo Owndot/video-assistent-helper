@@ -255,6 +255,16 @@ Rundung ab. Dies sind Host-Tests der Beobachtungslogik, keine Browser-Simulation
 und kein neuer Android-Nachweis. Der korrigierte pausierte Spulfall wurde noch
 nicht auf einem Emulator ausgeführt.
 
+[40207762825](https://github.com/Owndot/video-assistent-helper/actions/runs/40207762825)
+prüfte ausschließlich die neue Beobachtungslogik aus Commit91284c6:
+Python-Syntaxprüfung und sechs neue Host-Tests BESTANDEN. Zusätzlich wurde die
+ursprüngliche Spulprüfung direkt aus e3e5088 geladen und mit einer zunächst
+veralteten Uhr ausgeführt: Sie lehnt diese sofort ab. Die neue Beobachtung
+akzeptiert eine verspätete Bestätigung, lehnt aber Timeout, unbeabsichtigtes
+Weiterlaufen und falsche Sprungweite ab. Eingaben sind in diesem isolierten
+Host-Nachweis ausdrücklich gestubbt. Kein Emulator, APK-Build, bereits
+erfolgreicher JVM-/Gerätetest oder Release wurde dafür gestartet.
+
 Die Ausführungskonfiguration verweist nicht mehr auf einen ablaufenden
 APK-Artefaktlauf (reuse_bundle_run=0). Der schmale Scope API33/Kadri/controls
 bleibt erhalten. Ein neuer Emulatorlauf wird dadurch nicht ausgelöst:
