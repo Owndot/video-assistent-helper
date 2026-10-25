@@ -129,8 +129,7 @@ diesen Stand vermessen. Es gibt keine verlässliche Akku-, Peak-RAM-, CPU- oder
 Lückenlosigkeits-Freigabe aus diesen ersten Daten.
 
 Noch tatsächlich erforderlich: vollständige parallele UI-Downloads samt
-überlappenden Server-Transferintervallen; 128MiB cookie-geschützte Datei samt
-Hash und PSS-Verlauf; sechs Öffnen/Schließen-Zyklen; zuverlässiger Quellenwechsel,
+überlappenden Server-Transferintervallen; sechs Öffnen/Schließen-Zyklen; zuverlässiger Quellenwechsel,
 PiP/Hintergrund; Browsersteuerung nach Helper-Neustart und erneute Kopplung.
 Die folgenden Ergebnisse des vollständigen Vergleichs entscheiden darüber.
 
@@ -215,6 +214,59 @@ tatsächlich angekommenen Ereignisse: erste Bewegung über 14px vor 450ms,
 Doppeltipp-UP-Abstand unter 300ms. Ungültige Eingaben bleiben FAIL mit
 category=test_input; sie werden nicht als bestandene oder ununterstützte
 Produktfunktion ausgegeben. Der neue fokussierte Lauf wird separat ergänzt.
+
+## Fortsetzung nach der Remote-Unterbrechung
+
+Die Remote-Branches wurden erneut mit GitHub abgeglichen. Es lag kein neuer,
+fremder Arbeitsstand vor: Helper-Sicherheitsbranch 7122114, Kadri-Sicherheitsbranch
+f76c209, Helper-E2E e3e5088 und Kadri-E2E 6a8acee. Die alten Emulatorläufe waren
+abgeschlossen; kein unterbrochener Lauf wurde erneut gestartet. Seit dieser
+Bestandsaufnahme wurden ausschließlich vorhandene Artefakte ausgewertet und
+neue Testtreiber-Prüfungen ausgeführt. Erfolgreiche Emulator-/JVM-Suiten wurden
+nicht nochmals gestartet. Die lokale Remote-Umgebung bleibt offline.
+
+| Lauf | Scope | Ergebnis und Einordnung |
+|---|---|---|
+| [40201730932](https://github.com/Owndot/video-assistent-helper/actions/runs/40201730932) | API33, beide Routen, controls | Installation und Kopplung bestanden; Übergabe scheiterte vor den neuen Eingabeprüfungen. Diese Prüfungen wurden hier nicht ausgeführt. |
+| [40202803284](https://github.com/Owndot/video-assistent-helper/actions/runs/40202803284) | API33, Kadri, controls | 8 PASS, 1 FAIL, 7 NOT_TESTED. Übergabe, Pause/Fortsetzen und reale Gesten bestanden. Spulen erreichte die Zielposition; Schließen/Positionsrückgabe blieb fehlgeschlagen. |
+| [40203626744](https://github.com/Owndot/video-assistent-helper/actions/runs/40203626744) | API33, Kadri, controls | 7 PASS, 2 FAIL, 7 NOT_TESTED. Helligkeitsgeste war ungültige Testeingabe; Spulassertion las eine veraltete Uhr. Kein neuer Produktfehler nachgewiesen. |
+
+Lauf25: tatsächliche Lautstärke 0.4→0.6, Helligkeit 0.65→0.153;
+14px-Schwelle nach 242/263ms. Lauf26: linke Schwelle erst nach 868ms
+(450ms-Langdruckgrenze); dies bleibt FAIL/category=test_input.
+Der Doppeltipp in Lauf26 hatte einen gültigen UP/UP-Abstand von 220ms.
+
+[40206876622](https://github.com/Owndot/video-assistent-helper/actions/runs/40206876622)
+liest ausschließlich die bereits vorhandenen Aufnahmen, ohne Emulator oder
+APK-Build. Im selben Video aus Lauf26 zeigt der eingebrannte Medienzeitstempel
+bei Aufnahmesekunde20.53 etwa4s und bei21.03 etwa14s. Die Footer-Uhr zeigt
+noch3s. Der tatsächliche Sprung ist sichtbar; die bisherige einzelne
+Uhr-Abfrage nach0.6s kann diesen erfolgreichen Vorgang falsch ablehnen.
+Daraus folgt keine Freigabe für Positionsrückgabe oder alle Spulfälle.
+
+Der Testtreiber pausiert nun vor dem isolierten Spulvorgang, prüft die stabile
+Ausgangsuhr und wartet begrenzt auf9–11s Positionsänderung. Er verlangt weiterhin
+das sichtbare Play-Glyph des pausierten Players und speichert jede Uhr-Beobachtung.
+Normales Weiterlaufen darf den Fall nicht bestehen lassen; ein nicht bestätigter
+Sprung bleibt fehlgeschlagen. Das Produkt und seine Zeitsteuerung wurden dafür
+nicht verändert. Neue Host-Regressionen decken verspätete/bis zum Timeout
+fehlende Bestätigung, unbeabsichtigtes Fortsetzen, falsche Sprungweite und
+Rundung ab. Dies sind Host-Tests der Beobachtungslogik, keine Browser-Simulation
+und kein neuer Android-Nachweis. Der korrigierte pausierte Spulfall wurde noch
+nicht auf einem Emulator ausgeführt.
+
+Die Ausführungskonfiguration verweist nicht mehr auf einen ablaufenden
+APK-Artefaktlauf (reuse_bundle_run=0). Der schmale Scope API33/Kadri/controls
+bleibt erhalten. Ein neuer Emulatorlauf wird dadurch nicht ausgelöst:
+Nur der ausdrücklich verwendete Ausführungsbranch startet die Matrix.
+
+Offene Fortsetzung: zuverlässige echte Eingabe für Helligkeit, Schließen und
+Positionsrückgabe, parallele vollständige UI-Downloads, PiP/Hintergrund,
+mehrfache Öffnen/Schließen-Zyklen, erneute Kopplung und Browsersteuerung nach
+Helper-Neustart. Anschließend gezielter API35-/Userscript-Nachweis der geänderten
+Testbedienung. Der bereits erfolgreiche 128MiB-Fall muss nicht zur reinen
+Bestandsaufnahme wiederholt werden. Erst nach stabiler Bedienung ist ein
+belastbarer Vergleich mit einer alten stabilen Version sinnvoll.
 
 ## Bewertung
 

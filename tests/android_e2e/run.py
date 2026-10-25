@@ -671,7 +671,7 @@ def reveal():
         time.sleep(.25)
     return bool(icon_control("P.close"))
 
-def playing_times():
+def playing_times(evidence=None):
     # Recognition and clock reading use the same real frame, never a later
     # screenshot taken after the verified controls may already have disappeared.
     def captured_controls():
@@ -686,7 +686,9 @@ def playing_times():
         rows=visual.words(frame.crop((0,int(h*.65),w,h)))
         labels=sorted({r["text"] for r in rows if r["left"]<w*.30
                        and re.fullmatch(r"\d{1,2}:\d{2}",r["text"])})
-        if labels:return labels
+        if labels:
+            if evidence: frame.save(OUT / (evidence + ".png"))
+            return labels
         frame.save(OUT/("clock-not-readable-"+str(attempt)+".png"))
     raise AssertionError("Own-player clock not readable after three real visible-control snapshots")
 
@@ -793,11 +795,33 @@ def gestures():
             "volume_input":volume_input,"brightness_input":brightness_input,
             "note": "Actual Android positive control, then real UI swipes through extension and Helper"}
 
+def paused_seek_clock(before):
+    """Observe a paused seek; normal playback must never satisfy this assertion."""
+    baseline = media_clock_seconds(before)
+    observations = []
+    def observed():
+        labels = playing_times("seek-clock-" + str(len(observations)))
+        delta = media_clock_seconds(labels) - baseline
+        observations.append({"clock": labels, "delta": delta})
+        assert icon_control("P.play"), "Seek unexpectedly resumed the paused player"
+        assert -1 <= delta <= 11, "Unexpected paused seek displacement: " + repr(observations)
+        return labels if 9 <= delta <= 11 else None
+    try:
+        return wait(observed, timeout=8, dialogs=False)
+    finally:
+        (OUT / "seek-clock-observations.json").write_text(json.dumps(observations, indent=2))
+
 def seek_restore():
     player_entry().click()
     wait(reveal)
+    # A screenshot immediately after a seek may still contain the old HUD.
+    # Pause first so a delayed acknowledgement cannot pass by ordinary playback.
+    click("Wiedergabe") if D(description="Wiedergabe").exists else click("Play")
+    wait(lambda: icon_control("P.play"), timeout=5, dialogs=False)
     observed_at = time.monotonic()
-    before = playing_times()
+    before = playing_times("seek-before")
+    time.sleep(.6)
+    assert playing_times() == before, "Seek baseline is not paused"
     sel = D(descriptionMatches=r".*(s vor|s forward).*")
     if sel.exists:
         sel.click()
@@ -811,14 +835,8 @@ def seek_restore():
         gap=ups[1]["at"]-ups[0]["at"]
         if not all(r.get("trusted") for r in ups[:2]) or not 0<gap<300:
             raise InvalidInput("Harness double tap up/up interval "+str(gap)+"ms misses the player's 300ms window")
-    time.sleep(.6)
-    after = playing_times()
-    def seconds(label):
-        m, sec = map(int, label.split(":"))
-        return m * 60 + sec
-    assert before and after, "Cannot read player clock around seek"
-    own_time = min(map(seconds, after))
-    assert own_time - min(map(seconds, before)) >= 9, "Forward seek did not advance by the default ten seconds"
+    after = paused_seek_clock(before)
+    own_time = media_clock_seconds(after)
     sampled_at = time.monotonic()
     click("Schließen") if D(description="Schließen").exists else click("Close")
     def restored():
