@@ -281,23 +281,11 @@ def dismiss_addon_notice():
     return True
 
 def fresh_input_controls():
-    global LAST_REVEAL_AT
-    visible = bool(icon_control("P.close"))
-    age = time.monotonic() - LAST_REVEAL_AT
-    if visible and age < 1:
-        time.sleep(max(0, .40-age))
-        return
-    w,h = D.window_size()
-    if visible:
-        D.click(w*.5,h*.35)
-        wait(lambda: not icon_control("P.close"), timeout=3)
-        time.sleep(.35)  # outside the product's 300ms double-tap window
-    else:
-        time.sleep(max(0, .35-age))
-    D.click(w*.5,h*.35)
-    LAST_REVEAL_AT = time.monotonic()
-    time.sleep(.40)  # ctlnew intentionally blocks input for 320ms
-    wait(lambda: icon_control("P.close"), timeout=8)
+    # Observe or reveal once. Toggling visible controls off/on before every
+    # snapshot races their normal hide timer and adds unrelated user input.
+    wait(reveal, timeout=8)
+    age=time.monotonic()-LAST_REVEAL_AT
+    time.sleep(max(0,.40-age))  # respect the product's 320ms input guard
 
 def tap_player_icon(label):
     keys = {"Close":("P.close",),"Schließen":("P.close",),
@@ -310,6 +298,8 @@ def tap_player_icon(label):
         for key in keys[label]:
             hit = visual.locate(frame, key, DENSITY)
             if hit:
+                if time.monotonic()-LAST_REVEAL_AT<.40:
+                    return False
                 VisualControl(hit).click()
                 return True
         reveal()
@@ -682,17 +672,22 @@ def reveal():
     return bool(icon_control("P.close"))
 
 def playing_times():
-    # Full-width footer preserves the clock's OCR context. Select the left
-    # rendered label afterward so the duration/right-side widgets cannot pass.
+    # Recognition and clock reading use the same real frame, never a later
+    # screenshot taken after the verified controls may already have disappeared.
+    def captured_controls():
+        frame=D.screenshot()
+        if visual.locate(frame,"P.close",DENSITY):
+            return frame
+        reveal()
+        return None
     for attempt in range(3):
-        fresh_input_controls()
-        frame = D.screenshot()
-        w,h = frame.size
-        rows = visual.words(frame.crop((0,int(h*.65),w,h)))
-        labels = sorted({r["text"] for r in rows if r["left"] < w*.30
-                         and re.fullmatch(r"\d{1,2}:\d{2}", r["text"])})
-        if labels: return labels
-        frame.save(OUT / ("clock-not-readable-" + str(attempt) + ".png"))
+        frame=wait(captured_controls, timeout=8)
+        w,h=frame.size
+        rows=visual.words(frame.crop((0,int(h*.65),w,h)))
+        labels=sorted({r["text"] for r in rows if r["left"]<w*.30
+                       and re.fullmatch(r"\d{1,2}:\d{2}",r["text"])})
+        if labels:return labels
+        frame.save(OUT/("clock-not-readable-"+str(attempt)+".png"))
     raise AssertionError("Own-player clock not readable after three real visible-control snapshots")
 
 def media_clock_seconds(labels):
