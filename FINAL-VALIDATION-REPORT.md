@@ -49,16 +49,18 @@ die abschließende Crashkontrolle dieses Laufs. Frühere API33/35-Ergebnisse ble
 Einzelbelege, ersetzen diese fehlenden Abschlussprüfungen jedoch nicht.
 
 
-[Helper-PR-Build40209479380](https://github.com/Owndot/video-assistent-helper/actions/runs/40209479380):
-PASS für10 Sicherheitsfälle, JS-Cookie-Grenzen, JVM-Port-/Cookie-/Redirect-/
-Settings-/Medientests, Gradle-Debug- und Wegwerfschlüssel-Release-Verifikation,
+[Helper-PR-Build40212461868](https://github.com/Owndot/video-assistent-helper/actions/runs/40212461868):
+PASS für10 Sicherheitsfälle,6 Uhr-Regressionen, Python-Syntax, JS-Cookie-Grenzen,
+JVM-Port-/Cookie-/Redirect-/Settings-/Medientests und64MiB-Dateien unter32MiB-Heap
+(known/unknown length, Resume, ignoriertes/falsches Range, Abbruch),
+Gradle-Debug- und Wegwerfschlüssel-Release-Verifikation,
 apksigner und Ablehnung der kompromittierten Produktionsidentität.
 Das Release-Testprodukt wird nicht als installierbare APK hochgeladen.
 Der veröffentlichte alte APK-Zertifikatsnachweis wird nur lesend geprüft.
-Neue installierbare Test-APK: separate ID de.evp.helfer.debug, Version1.0.187,
-[Artefakt12605157276](https://github.com/Owndot/video-assistent-helper/actions/runs/40209479380/artifacts/12605157276).
+Neue installierbare Test-APK: separate ID de.evp.helfer.debug, Version1.0.188,
+[Artefakt12605463369](https://github.com/Owndot/video-assistent-helper/actions/runs/40212461868/artifacts/12605463369).
 Testzertifikat-SHA256:
-3ff851e422f6a95098211a12522835cd108e313f49b8ce35e488a873cb567beb.
+e87a04e2efdeebb97527b4f0872dc97e1ee879a77bfcdee55c77eabdc3764871.
 
 ## Geprüfter Code und Branch-Zuordnung
 
@@ -133,6 +135,10 @@ Ein Testlauf kann keine Release-APKs oder Tags veröffentlichen.
 Installierbare APK und kurze6-Punkte-Anleitung:
 [S26-ANDROID17-TEST.md](S26-ANDROID17-TEST.md).
 Kein bestehender Produktionsdatenbestand wird dadurch überschrieben.
+APK-Build-Vorschaustand6d57e4b932a0edb0dd5fcfbbfcda02a093eef203 integriert
+73d7005 mit main a7d031e. Nur neue Tests/CI/Dokumentation wurden nach be95a76
+verändert; der getestete Android-App-Baum9f3cbd4 und die Player-Runtime bleiben
+identisch. Der spätere reine Berichtscommit erfordert keinen erneuten Build.
 Echte Samsung-Ergebnisse sind vor einer persönlichen Merge-Freigabe noch offen.
 
 ## Abschlussentscheidung und Commits
@@ -154,7 +160,7 @@ absichtlich noch. Kein Merge oder Release wurde ausgeführt.
 - be95a76: getestete E2E-/Android-Korrekturen in bestehendem Helper-PR gesammelt,
   native App-Baum-ID9f3cbd4 unverändert; optionale Emulatorläufe manuell,
   native Änderungen starten keine vollständige Desktop-Browserwiederholung.
-- Abschließende Test-/Dokumentationskorrektur: Transferabschluss vor Dateiprüfung,
+- 73d7005: abschließende Test-/Dokumentationskorrektur; Transferabschluss vor Dateiprüfung,
   vorhandene Streaming-/Uhr-Regressionen in regulärer PR-CI, aktuelle Test-APK
   und kurze Samsung-Anleitung. Keine zusätzliche Runtime-Änderung.
 Die beiden temporären Artefaktleser-Commits42b21a2/2836223 liegen ausschließlich

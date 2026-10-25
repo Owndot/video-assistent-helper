@@ -5,8 +5,8 @@ Browser-Version sowie PASS/FAIL pro Schritt.
 
 ## Vorbereitung
 
-- [Helper-Testpaket herunterladen](https://github.com/Owndot/video-assistent-helper/actions/runs/40209479380/artifacts/12605157276), ZIP entpacken und **app-debug.apk** installieren.
-  Separate App-ID de.evp.helfer.debug, Version1.0.187, zweitägiger Wegwerfschlüssel.
+- [Helper-Testpaket herunterladen](https://github.com/Owndot/video-assistent-helper/actions/runs/40212461868/artifacts/12605463369), ZIP entpacken und **app-debug.apk** installieren.
+  Separate App-ID de.evp.helfer.debug, Version1.0.188, zweitägiger Wegwerfschlüssel.
   Prüfsumme/Build-Commit/Testzertifikat stehen in den beigefügten debug-*.txt/sha256-Dateien.
 - Bestehende Produktionsdaten behalten und laufende Downloads beenden.
   Den bisherigen Helper **vorher über „Stopp erzwingen“ beenden**: Beide Apps
