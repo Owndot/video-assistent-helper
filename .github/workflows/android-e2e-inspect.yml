@@ -127,3 +127,36 @@ jobs:
               image=Image.open(file)
               print("ACTUAL_CONTROL_CONTRAST",file,{"old":namespace["locate"](image,"P.close",2.625),"new":visual.locate(image,"P.close",2.625)})
           PY
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify strengthened core suite and regress the original swallowed failure
+        run: |
+          git fetch --no-tags --depth=1 origin 34e85ba32582d06dd80be2f2c557f007b2b8e13a
+          for file in jt/TestMain.java jt/TestCoreHarnessFailure.java build.sh run_core_tests.sh; do
+            git show "FETCH_HEAD:tests/java/$file" > "tests/java/$file"
+          done
+          tests/java/build.sh
+          tests/java/run_core_tests.sh
+          mkdir -p "$RUNNER_TEMP/legacy-core"
+          git show c6d0cde3cb74e785888e3a1c55e9091deb708bb4:tests/java/jt/TestMain.java > "$RUNNER_TEMP/legacy-core/TestMain.java"
+          javac -cp tests/java/classes -d "$RUNNER_TEMP/legacy-core" "$RUNNER_TEMP/legacy-core/TestMain.java"
+          if java -cp "$RUNNER_TEMP/legacy-core:tests/java/classes" TestCoreHarnessFailure > "$RUNNER_TEMP/legacy-core.log" 2>&1; then
+            echo 'FAIL: failure-propagation regression unexpectedly passed the broken original'
+            exit 1
+          fi
+          echo 'PASS: regression rejects broken original TestMain; corrected full core suite passed'
+          tail -4 "$RUNNER_TEMP/legacy-core.log"
+      - name: Summarize actual large-file Helper observations
+        run: |
+          python3 - <<'PY'
+          import pathlib,json,re
+          for file in pathlib.Path("evidence").glob("**/large-download-memory.json"):
+              rows=json.loads(file.read_text())
+              values=[]
+              for row in rows:
+                  m=re.search(r"TOTAL PSS:\s*(\d+)",row.get("de.evp.helfer.debug",""))
+                  if m: values.append(int(m[1]))
+              print("LARGE_FILE_HELPER_PSS",file,values,"KiB; sampled observations, not a measured peak or leak verdict")
+          PY
