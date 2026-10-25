@@ -140,8 +140,20 @@ def write_results():
                     str(r.get("detail", "")).replace("|", "/").replace("\n", " ")[:700] + " |")
     (OUT / "REPORT.md").write_text("\n".join(rows) + "\n", encoding="utf8")
 
+def dismiss_addon_notice():
+    notice = visible_label("was added", contains=True)
+    if not notice:
+        return False
+    ok = visible_label("OK")
+    wait(lambda: ok and ok.exists and ok.info.get("enabled"), timeout=8)
+    ok.click()
+    wait(lambda: not visible_label("was added", contains=True), timeout=8)
+    return True
+
 def click(label, scroll=False):
     # Accessible user-facing labels, no product debug hooks.
+    if label != "OK":
+        dismiss_addon_notice()
     selectors = (D(text=label), D(description=label))
     for sel in selectors:
         if sel.exists(timeout=1):
@@ -157,6 +169,12 @@ def click(label, scroll=False):
                 sel.click()
                 return
     if label in ("Close", "Schließen", "Play", "Wiedergabe", "Subtitles", "Untertitel") and reveal():
+        for sel in selectors:
+            if sel.exists:
+                sel.click()
+                return
+    if label != "OK" and dismiss_addon_notice():
+        wait(lambda: any(sel.exists for sel in selectors), timeout=8)
         for sel in selectors:
             if sel.exists:
                 sel.click()
@@ -340,9 +358,11 @@ def launch_url(url):
         D.app_start(FIREFOX, stop=False)
         wait(lambda: D.app_current().get("package") == FIREFOX, timeout=10)
     for _ in range(3):
+        dismiss_addon_notice()
         until = time.monotonic() + 4
         bar = None
         while time.monotonic() < until:
+            dismiss_addon_notice()
             bar = visible_label("Search or enter address", contains=True)
             if bar:
                 break
@@ -363,6 +383,7 @@ def launch_url(url):
                   "--es", "com.android.browser.application_id", "android-e2e-coordinator", "-p", FIREFOX)
             NAVIGATION_INITIALIZED = True
             time.sleep(1)
+            dismiss_addon_notice()
             return
         if D.app_current().get("package") != FIREFOX:
             raise AssertionError("Firefox lost foreground before navigation")
@@ -390,11 +411,9 @@ def extension():
         if "kadri@owndot" in data and "Installed" in data:
             break
         time.sleep(1)
-    # The RDP acknowledgement can precede Firefox's native post-install dialog.
-    added = D(textContains="was added")
-    if added.exists(timeout=5):
-        click("OK")
-        wait(lambda: not added.exists, timeout=5)
+    # Firefox can defer this native notice until the browser returns to foreground.
+    time.sleep(.5)
+    dismiss_addon_notice()
     NAVIGATION_INITIALIZED = False  # web-ext explicitly restarted Firefox
     if ROUTE == "userscript":
         # The real manager intercepts a .user.js navigation and opens its own

@@ -99,8 +99,12 @@ jobs:
               print(file)
               labels=[n.attrib.get("text") or n.attrib.get("content-desc") for n in ET.parse(file).iter("node")]
               print(re.sub(r"[0-9a-f]{32}","<disposable-id>",repr([x for x in labels if x])[:12000]))
+          for file in sorted(pathlib.Path("previous-ui-evidence").glob("**/real_extension_install.xml")):
+              for node in ET.parse(file).iter("node"):
+                  attrs=node.attrib
+                  if "was added" in str(attrs) or attrs.get("text")=="OK" or attrs.get("content-desc")=="OK": print("ADDON_DIALOG_NODE",attrs)
           import base64
-          for name in ("firefox-before-settings.png","settings_export_import.png"):
+          for name in ("firefox-before-settings.png","real_extension_install.png"):
               files=sorted(pathlib.Path("previous-ui-evidence").glob("**/"+name))
               if files:
                   encoded=base64.b64encode(files[0].read_bytes()).decode()
