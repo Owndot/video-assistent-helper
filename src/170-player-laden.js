@@ -134,6 +134,7 @@
           KADRI_HOOKS.loadHls().then(again, again);
           return;
         }
+        if (!IS_KADRI && typeof loadBundledHls === 'function') loadBundledHls();
         if (typeof Hls !== 'undefined' && Hls.isSupported()) {
           // Untertitel zeichnet der Player selbst (⋯ → Untertitel) – hls.js lädt sie nur
           const hls = new Hls({ enableWorker: false, subtitleDisplay: false, startPosition: st.startTime > 1 ? st.startTime : -1 });

@@ -46,12 +46,18 @@ public interface Fetcher {
             } catch (Exception ignored) { return false; }
         }
 
-        /** HTTP referrers never contain URL userinfo or a fragment. Preserve raw path/query. */
+        /** strict-origin-when-cross-origin; preserve raw same-origin path/query only. */
         static String referrerFor(String referer, String url) {
             if (!pageHeadersFor(referer, url)) return null;
             try {
-                URL page = new URL(referer);
-                return new URL(page.getProtocol(), page.getHost(), page.getPort(), page.getFile()).toExternalForm();
+                URL page = new URL(referer), target = new URL(url);
+                if (!"http".equals(target.getProtocol()) && !"https".equals(target.getProtocol())) return null;
+                boolean same = page.getProtocol().equalsIgnoreCase(target.getProtocol()) &&
+                    page.getHost().equalsIgnoreCase(target.getHost()) &&
+                    (page.getPort() < 0 ? page.getDefaultPort() : page.getPort()) ==
+                    (target.getPort() < 0 ? target.getDefaultPort() : target.getPort());
+                return new URL(page.getProtocol(), page.getHost(), page.getPort(),
+                    same ? (page.getFile().isEmpty() ? "/" : page.getFile()) : "/").toExternalForm();
             } catch (Exception ignored) { return null; }
         }
 
@@ -91,7 +97,11 @@ public interface Fetcher {
                 if(!"http".equals(protocol)&&!"https".equals(protocol))throw new IOException("Only HTTP(S) redirects are allowed");
                 HttpURLConnection c=open(current.toExternalForm());
                 if(fileTransfer)c.setRequestProperty("Accept-Encoding","identity");
-                if(!credentials)c.setRequestProperty("Cookie","");
+                if(!credentials) {
+                    c.setRequestProperty("Cookie","");
+                    c.setRequestProperty("Referer","");
+                    c.setRequestProperty("Origin","");
+                }
                 if(off>=0&&len>0)c.setRequestProperty("Range","bytes="+off+"-"+(off+len-1));
                 else if(off>=0&&ifRange!=null)c.setRequestProperty("Range","bytes="+off+"-");
                 if(ifRange!=null)c.setRequestProperty("If-Range",ifRange);

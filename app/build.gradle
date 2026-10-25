@@ -11,6 +11,7 @@ android {
     compileSdk 34
 
     defaultConfig {
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         applicationId 'de.evp.helfer'
         minSdk ((project.findProperty('migrationFixtureMinSdk') ?: '26') as int)
         targetSdk 34
@@ -103,3 +104,9 @@ def verifyReleaseApk = tasks.register('verifyReleaseApk') {
     }
 }
 tasks.configureEach { if (name == 'assembleRelease') dependsOn verifyReleaseApk }
+
+// Instrumentation only: no production dependency or protocol change.
+dependencies {
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}

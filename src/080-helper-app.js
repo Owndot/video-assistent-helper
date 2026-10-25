@@ -32,7 +32,7 @@
     return new Promise((res) => {
       const x = gmXhr();
       if (!x) { res({ st: 502 }); return; }
-      const headers = { Referer: location.href };
+      const headers = { Referer: mediaReferrer(u) };
       if (sizeOnly) headers.Range = 'bytes=0-0';
       else if (off >= 0 && len > 0) headers.Range = 'bytes=' + off + '-' + (off + len - 1);
       try {
@@ -128,7 +128,7 @@
         req = xhr({
           method: 'GET',
           url: u,
-          headers: { Range: 'bytes=0-1', Referer: location.href },   // wie der Web-Player der Seite
+          headers: { Range: 'bytes=0-1', Referer: mediaReferrer(u) },   // wie der Web-Player der Seite
           timeout: 4000,
           onreadystatechange: (r) => { if (r && r.readyState >= 2 && r.finalUrl) finish(r.finalUrl, desc(r.status, r.finalUrl)); },
           onload: (r) => finish((r && r.finalUrl) || u, desc(r && r.status, r && r.finalUrl)),
@@ -147,7 +147,7 @@
     const timer = setTimeout(() => { try { ctl && ctl.abort(); } catch (e) {} }, 2500);
     try {
       const res = await fetch(u, {
-        headers: { Range: 'bytes=0-1' },
+        headers: { Range: 'bytes=0-1' }, referrerPolicy: 'strict-origin-when-cross-origin',
         credentials: 'include',
         cache: 'no-store',
         signal: ctl ? ctl.signal : undefined,

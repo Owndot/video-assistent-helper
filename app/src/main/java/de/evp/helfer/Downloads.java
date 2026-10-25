@@ -92,9 +92,10 @@ public class Downloads {
             net = px;
         } else net = new Fetcher.Http(referer, ua, cookie);
         // DownloadManager replays manual headers across origin redirects.
-        // Credentialed files use the existing native hop policy and a bounded stream.
+        // Cookie/referrer-bearing files use the existing native hop policy and a bounded stream.
         boolean carriesCookie = !proxy && ((Fetcher.Http) net).cookieFor(url);
-        if ("file".equals(kind) && !proxy && !carriesCookie) {
+        boolean carriesReferrer = !proxy && Fetcher.Http.referrerFor(referer, url) != null;
+        if ("file".equals(kind) && !proxy && !carriesCookie && !carriesReferrer) {
             state.put(id, "Download-Manager");
             long dmId = fileDownload(c, url, referer, ua, title);
             watch(c, id, dmId);
@@ -112,8 +113,8 @@ public class Downloads {
         DownloadManager dm = (DownloadManager) c.getSystemService(Context.DOWNLOAD_SERVICE);
         String name = safeName(title, extOf(url, "mp4"));
         DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
-        String pageReferrer = Fetcher.Http.referrerFor(referer, url);
-        if (pageReferrer != null) r.addRequestHeader("Referer", pageReferrer);
+        // DownloadManager replays custom headers across redirects, including TLS downgrades.
+        // Referrer-bearing transfers use Fetcher.Http.streamToFile; never attach one here.
         if (ua != null && !ua.isEmpty()) r.addRequestHeader("User-Agent", ua);
         r.setTitle(name);
         r.setDescription("Video-Assistent");

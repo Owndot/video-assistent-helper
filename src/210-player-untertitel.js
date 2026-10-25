@@ -158,11 +158,11 @@
     function gmText(u) {
       return new Promise((res) => {
         const x = /^(data|blob):/i.test(u) ? null : gmXhr();
-        if (!x) { fetch(u, { credentials: 'include' }).then((r) => (r.ok ? r.text() : ''), () => '').then(res, () => res('')); return; }
+        if (!x) { fetch(u, { credentials: 'include', referrerPolicy: 'strict-origin-when-cross-origin' }).then((r) => (r.ok ? r.text() : ''), () => '').then(res, () => res('')); return; }
         try {
           // Anmeldung (Cookies) nur an die eigene Seite – Adressen fremder Server ohne
           const anon = baseDomain(hostOf(u)) !== baseDomain(location.hostname);
-          x({ method: 'GET', url: u, timeout: 20000, headers: { Referer: location.href }, anonymous: anon,
+          x({ method: 'GET', url: u, timeout: 20000, headers: { Referer: mediaReferrer(u) }, anonymous: anon,
             onload: (r) => res(r.status >= 200 && r.status < 300 ? String(r.responseText || '') : ''),
             onerror: () => res(''), ontimeout: () => res(''), onabort: () => res('') });
         } catch (e) { res(''); }

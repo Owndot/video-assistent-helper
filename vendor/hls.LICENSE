@@ -1,0 +1,6 @@
+hls.js 1.7.3 – https://github.com/video-dev/hls.js
+Copyright (c) 2017 Dailymotion (http://www.dailymotion.com)
+Licensed under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+src/remux/mp4-generator.js and src/demux/exp-golomb.js implementation in this project
+are derived from the HLS library for video.js (https://github.com/videojs/videojs-contrib-hls)
+Copyright 2013-2014 Brightcove, licensed under the Apache License, Version 2.0.
