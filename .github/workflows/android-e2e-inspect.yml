@@ -52,10 +52,22 @@ jobs:
                   rows=words(crop)
                   clock=[r["text"] for r in rows if re.fullmatch(r"\d{1,2}:\d{2}",r["text"]) and int(r["left"])<crop.width*.3]
                   print("RECORDED_CLOCK",str(video),round(begin+i*.5,2),clock,flush=True)
-              selected=[frames[max(0,len(frames)-21)],frames[-2] if len(frames)>1 else frames[0]]
-              for frame in selected:
-                  print("E2E_PNG_BEGIN "+video.parents[1].name+"-"+frame.name,flush=True)
-                  encoded=base64.b64encode(frame.read_bytes()).decode()
-                  for at in range(0,len(encoded),12000):print("E2E_PNG_DATA "+encoded[at:at+12000],flush=True)
+              from PIL import ImageDraw,ImageFont
+              for part in range(0,len(frames),14):
+                  group=frames[part:part+14]
+                  sheet=Image.new("RGB",(640,90*len(group)),"white")
+                  draw=ImageDraw.Draw(sheet);font=ImageFont.load_default(size=15)
+                  for n,frame in enumerate(group):
+                      im=Image.open(frame)
+                      t=begin+(part+n)*.5
+                      draw.text((2,n*90+4),str(round(t,2)),fill="black",font=font)
+                      pts=im.crop((0,int(im.height*.34),int(im.width*.33),int(im.height*.40)))
+                      footer=im.crop((0,int(im.height*.86),int(im.width*.30),int(im.height*.92)))
+                      sheet.paste(pts.resize((280,75)),(70,n*90))
+                      sheet.paste(footer.resize((280,75)),(355,n*90))
+                  output=io.BytesIO();sheet.save(output,format="PNG")
+                  print("E2E_PNG_BEGIN "+video.parents[1].name+"-time-grid-"+str(part))
+                  encoded=base64.b64encode(output.getvalue()).decode()
+                  for at in range(0,len(encoded),12000):print("E2E_PNG_DATA "+encoded[at:at+12000])
                   print("E2E_PNG_END",flush=True)
           PY
