@@ -54,6 +54,11 @@ Konkreter abschließend geprüfter Run und Ergebnis stehen im PR-Text und im
 begleitenden Abschlussbericht. Diese Nachweise sind JVM-/TLS-/Socket-Tests,
 keine neu ausgeführten Android-Gerätetests.
 
+Die ältere TestMain-Fixture hatte eine erfundene HTTPS-Herkunft und einen
+reinen HTTP-Zielserver, der den Herkunftskopf verlangte. Sie verwendet jetzt
+HTTP als synthetische Herkunft. Cookie-Fremdseiten- und Medienassertionen
+bleiben unverändert; TLS-Downgrades haben einen eigenen echten HTTPS-Test.
+
 Keine Player-/Userscript-/Kadri-Runtime wurde verändert. Keine vollständige
 Browser- oder Emulator-Matrix und kein neues Testframework sind vorgesehen.
 

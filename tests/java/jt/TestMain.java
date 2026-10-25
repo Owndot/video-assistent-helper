@@ -31,7 +31,8 @@ public class TestMain {
   }
 
   public static void main(String[] a) throws Exception {
-    Fetcher ok = new Fetcher.Http("https://example.test/watch/1", "Mozilla/5.0 Test", "");
+    // This fixture server is HTTP. Real HTTPS/downgrade behavior is covered by TestTlsCookieBoundary.
+    Fetcher ok = new Fetcher.Http("http://example.test/watch/1", "Mozilla/5.0 Test", "");
     run("dash_timeline", "d1/manifest.mpd", "dash", ok);
     run("dash_duration", "d2/manifest.mpd", "dash", ok);
     run("dash_singlefile", "d3/manifest.mpd", "dash", ok);
@@ -40,7 +41,7 @@ public class TestMain {
     run("hls_enc", "enc/master.m3u8", "hls", ok);
     // Erwartet: ohne Cookie 403 · Cookie einer FREMDEN Seite wird nicht mitgeschickt → 403 · eigene Seite → Datei
     run("ck_ohne_cookie (erwartet 403)", "ck/film.mp4", "file", ok);
-    run("ck_fremde_seite (erwartet 403)", "ck/film.mp4", "file", new Fetcher.Http("https://example.test/watch/1", "Mozilla/5.0 Test", "a=1; sess=abc"));
+    run("ck_fremde_seite (erwartet 403)", "ck/film.mp4", "file", new Fetcher.Http("http://example.test/watch/1", "Mozilla/5.0 Test", "a=1; sess=abc"));
     run("ck_eigene_seite", "ck/film.mp4", "file", new Fetcher.Http("http://127.0.0.1:8791/watch/1", "Mozilla/5.0 Test", "a=1; sess=abc"));
     // Über den "Browser": der Helfer fragt, ein zweiter Faden (wie das Skript) holt mit Sitzung und liefert
     Fetcher.Proxy px = new Fetcher.Proxy();
