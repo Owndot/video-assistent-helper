@@ -68,11 +68,21 @@ def allow_firefox_notifications():
     print("UI: allowed Android notification permission for the disposable Firefox profile", flush=True)
     return True
 
+def dismiss_fullscreen_tutorial():
+    notice = D(text="Viewing full screen", packageName="com.android.systemui")
+    if not notice.exists: return False
+    confirm = D(textMatches="(?i)got it", packageName="com.android.systemui")
+    if not confirm.exists: return False
+    confirm.click()
+    print("UI: confirmed Android's first-use immersive fullscreen tutorial", flush=True)
+    return True
+
 def wait(fn, timeout=20, interval=0.25):
     until = time.monotonic() + timeout
     last = None
     while time.monotonic() < until:
         try:
+            if D is not None: dismiss_fullscreen_tutorial()
             if D is not None and allow_firefox_notifications():
                 # Resume the owned source if the platform prompt interrupted its first Play.
                 source_play = D(text="Play fixture")
@@ -167,6 +177,9 @@ class VisualControl:
     def click(self):
         print("Visual UI tap:", self.hit, flush=True)
         D.click(self.hit["x"], self.hit["y"])
+    def long_click(self, duration=.7):
+        print("Visual UI long press:", self.hit, flush=True)
+        D.long_click(self.hit["x"], self.hit["y"], duration=duration)
 
 def icon_control(key):
     hit = visual.locate(D.screenshot(), key, DENSITY)
@@ -177,6 +190,12 @@ def entry_control():
         for selector in (D(descriptionContains=label), D(textContains=label)):
             if selector.exists: return selector
     return icon_control("I.player")
+
+def label_control(label):
+    for selector in (D(text=label), D(description=label)):
+        if selector.exists: return selector
+    hit = visual.phrase(D.screenshot(), label)
+    return VisualControl(hit) if hit else None
 
 def player_controls_visible():
     return D(description="Close").exists or D(description="Schließen").exists or bool(icon_control("P.close"))
@@ -536,6 +555,7 @@ def player_entry(kind="direct"):
 
 def reveal():
     global LAST_REVEAL_AT
+    dismiss_fullscreen_tutorial()
     close = D(description="Close")
     close_de = D(description="Schließen")
     if close.exists or close_de.exists or icon_control("P.close"):
@@ -625,15 +645,20 @@ def seek_restore():
     observed_at = time.monotonic()
     before = playing_times()
     sel = D(descriptionMatches=r".*(s vor|s forward).*")
-    assert sel.exists, "Native accessible forward control missing"
-    sel.click()
+    if sel.exists:
+        sel.click()
+    else:
+        # The existing public double-tap gesture also works when Gecko omits AX.
+        w, h = D.window_size()
+        D.double_click(w*.80, h*.50, interval=.10)
     time.sleep(.6)
     after = playing_times()
-    assert before != after, "Seek did not change clock"
     def seconds(label):
         m, sec = map(int, label.split(":"))
         return m * 60 + sec
+    assert before and after, "Cannot read player clock around seek"
     own_time = min(map(seconds, after))
+    assert own_time - min(map(seconds, before)) >= 9, "Forward seek did not advance by the default ten seconds"
     sampled_at = time.monotonic()
     click("Schließen") if D(description="Schließen").exists else click("Close")
     def restored():
@@ -671,10 +696,12 @@ def ui_helper_download():
     selector = D(descriptionContains="Herunterladen")
     if not selector.exists:
         selector = D(descriptionContains="Download")
-    assert selector.exists, "No visible download control"
+    if not selector.exists:
+        selector = icon_control("I.download")
+    assert selector, "No visible download control"
     selector.long_click(duration=.7)
-    wait(lambda: D(text="With the helper").exists or D(text="Mit dem Helper").exists, timeout=8)
-    click("With the helper") if D(text="With the helper").exists else click("Mit dem Helper")
+    option = wait(lambda: label_control("With the helper") or label_control("Mit dem Helper"), timeout=8)
+    option.click()
 
 
 def downloads():
@@ -790,7 +817,7 @@ def background():
     (OUT / "pip-activity.txt").write_text(dump)
     D.app_start(FIREFOX)
     reveal()
-    assert D(description="Schließen").exists or D(description="Close").exists
+    assert player_controls_visible()
     if not pip:
         raise Blocked("Browser returned to player; Android did not expose a pinned PiP task in this route. See recording/dumpsys.")
     return "Android pinned PiP task present after Home; player restored on returning."
@@ -801,7 +828,7 @@ def subtitles():
     reveal()
     click("Untertitel") if D(description="Untertitel").exists else click("Subtitles")
     click("E2E English")
-    wait(lambda: D(text="ANDROID E2E SUBTITLE").exists)
+    wait(lambda: label_control("ANDROID E2E SUBTITLE"))
     shot("rendered-owned-subtitle")
     click("Schließen") if D(description="Schließen").exists else click("Close")
     return "VTT selected through actual player menu; rendered owned subtitle accessible on screen."

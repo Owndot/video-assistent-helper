@@ -1,9 +1,10 @@
 # Controlled real Android E2E
 
 This suite installs real test APKs and official Firefox on Android API 33/35,
-operates accessible controls with Android UI Automator (uiautomator2), captures
+operates actual controls with Android UI Automator (uiautomator2), captures
 ADB screen recordings/screenshots/hierarchies/logcat, and loads **unmodified**
-Kadri dist/firefox with Mozilla web-ext. No GM shim, simulated browser API,
+Kadri dist/firefox with Mozilla web-ext. Screenshot matching/OCR handles controls omitted by Firefox's Android accessibility tree.
+No GM shim, simulated browser API,
 Playwright mobile emulation, open-shadow test build or direct invocation of
 player internals is used.
 
@@ -18,14 +19,17 @@ work belongs on codex/android-e2e. A manual workflow_dispatch is also provided
 once GitHub makes the workflow available for dispatch (normally after it exists
 on the default branch). Do not merge anything solely to obtain that button.
 
-First matrix: [33,35]. During harness calibration execution.json restricts a
+First full matrix: [33,35]. During harness calibration execution.json restricts a
 controlled push to [33]; select [33,35] deliberately for the final comparison. Exact Firefox version is recorded. Default latest is
 resolved through Mozilla product details; for a repeated baseline use the
 recorded exact version. Mozilla HTTPS APK origin and downloaded digest are
 recorded; this does not independently pin Mozilla's signing certificate.
 
 Local prerequisites: Linux/macOS shell, Android SDK/adb and running disposable
-API33/35 emulator, JDK17, Gradle8.9, Node22, Python3.12, ffmpeg, zip.
+API33/35 emulator, JDK17, Gradle8.9, Node22, Python3.12, ffmpeg, Tesseract OCR, zip, and the Cairo shared library.
+Python image dependencies are pinned in requirements.txt (OpenCV/CairoSVG/Pillow).
+The SVG paths in icons.json come from the player's existing Material Icons
+(Apache2.0); they are screenshot targets, not player instrumentation.
 Install requirements.txt and web-ext@10.8.0. Reproduce the build job to create
 e2e-bundle (two debug APKs, official Firefox APK+JSON, unmodified Kadri Firefox
 directory and source-commit records), then:
@@ -36,8 +40,12 @@ directory and source-commit records), then:
 Use ONLY an empty emulator. Setup grants notification/overlay permissions and
 battery exemption with adb and stops/installs test apps. These are infrastructure
 steps, not proof that every Settings permission screen has been navigated.
-The pairing step itself uses the actual Helper Connect button, Android resolver,
-Firefox, Kadri storage and the Helper HTTP service.
+Firefox is provisioned as the emulator's default browser with Android's role
+command, to exclude the preinstalled WebView Browser Tester. This is setup,
+not proof of default-browser Settings navigation. The pairing step itself uses
+the actual Helper Connect button, Android resolver/Firefox, extension or manager
+storage and the Helper HTTP service. Known Android first-use notification and
+immersive-fullscreen prompts are acknowledged through their actual native UI.
 
 The debug key is generated with two-day validity, never taken from history.
 Both APKs have test IDs (.debug / .e2ecompeting). The second uses identical Java
@@ -102,11 +110,12 @@ fallback to fake content injection. Temporary extensions disappear on browser
 restart; helper-only restarts do not restart Firefox. Persistent/signed add-on
 installation and Firefox process-death recovery are separate scenarios.
 
-Fixtures for subtitles, alternate source, cross-host redirects, slow downloads
-and delayed headers are present. Subtitle UI selection, source/quality change,
-notification cancellation, authenticated download redirect leakage and resolver
-contention measurements still need end-to-end assertions. Their existence is
-not a passing test. Chrome DNR/worker lifecycle stays in the existing actual
+Fixtures and assertions for subtitles, alternate source, cross-host redirects,
+slow downloads, notification cancellation and concurrent-download handoff are
+implemented. Their presence is not a passing test: consult the executed run's
+per-case status. Own-player quality selection and delayed-header contention on
+Android still need separate assertions. Native credentialed redirect checks
+have passed on API33; this does not imply the browser download UI has passed. Chrome DNR/worker lifecycle stays in the existing actual
 desktop Chromium suite; Android Firefox cannot validate Chrome DNR.
 
 Production signature migration is not exercised here; use the existing
@@ -172,3 +181,29 @@ and bounded retry/resume checks are described in FINDINGS.md. Do not reuse an
 older APK bundle across this app-source change; the workflow equality guard
 must reject that. Before browser setup succeeds, native APK API checks remain
 native-only evidence, not evidence of browser pairing or playback.
+
+## Inspect evidence without rebuilding or running an emulator
+
+.github/workflows/android-e2e-inspect.yml reads an existing completed run's
+artifacts with contents:read/actions:read. It has no Android job, APK build,
+repository write permission or release operation. Set execution.json previous_run
+and deliberately advance only codex/android-e2e-inspect to run the inspector.
+Its workflow_dispatch becomes available under GitHub's usual default-branch
+constraint. Ordinary commits never start it. This separates screenshot/log
+diagnosis from new device executions.
+
+The main workflow supports an explicit smoke scope for driver calibration.
+A green smoke run would cover only setup/install/pair/play-pause/crash checks;
+all omitted functional cases remain NOT_TESTED. Use scope full with APIs33/35
+for functional validation. The lightweight screenshot calibration runs before
+emulator allocation and must pass its positive and negative controls.
+
+Visual/OCR polling contributes observer overhead. Entry-to-controls timings
+must be compared only with the same instrumentation, source, browser version
+and emulator configuration. They are not decoded first-frame times. Read the
+raw PSS/CPU samples before drawing performance conclusions; emulator power
+readings cannot establish Samsung battery consumption.
+
+Current findings, confirmed native checks and lifecycle tradeoffs are recorded
+in FINDINGS.md. Until full browser scenarios pass on both APIs, this work is
+not a merge-readiness verdict for either security PR.

@@ -58,7 +58,7 @@ The native Fetcher.Http path passed the same site-boundary control in that run.
 This is platform DownloadManager behavior with manually supplied headers, not
 a simulation or a JVM-only finding.
 
-Correction under test:
+Correction (confirmed for the installed APK on API33):
 - Ordinary files without a permitted manual Cookie still use DownloadManager.
 - Cookie-bearing native files stream through Fetcher.Http's existing per-hop
   credential policy. DownloadManager never receives manual Cookie headers.
@@ -82,3 +82,42 @@ Hard process death during such a file and persistence/resume across process
 recreation are not guaranteed by this small fix. Completion uses the existing
 cache-to-MediaStore copy, so its extra disk I/O should be measured.
 No production APK, production signer, release, or default-branch change is made.
+
+## Confirmed correction and remaining validation
+
+Runs [40182442969](https://github.com/Owndot/video-assistent-helper/actions/runs/40182442969)
+and [40183356625](https://github.com/Owndot/video-assistent-helper/actions/runs/40183356625)
+used the corrected real APK on API33. The credentialed-file check received its
+Cookie on the first hop, received none on the foreign hop, and verified the
+completed saved file against the fixture SHA256. Native HLS saved a playable
+file with audio/video and the expected duration verified by ffprobe.
+These checks use the installed application's native API; they do not establish
+browser pairing, UI-triggered downloads, or Android35 coverage.
+
+The same runs passed the real SAF export/change/import round trip (pairing key
+excluded from export), eight Helper force-stop/restart cycles with the same key
+and recovered port, missing/wrong-key and foreign Host rejection, and the
+collision between two installed test APKs. PSS observations are retained; no
+battery or leak verdict is inferred.
+
+## Firefox Android accessibility limitation in the test driver
+
+Real run [40185452608](https://github.com/Owndot/video-assistent-helper/actions/runs/40185452608)
+installed the unchanged Kadri add-on into official Firefox158.0.1 on API33.
+The captured screenshot shows the genuine Player pill and advancing source
+video. The Android UI hierarchy omits the pill's closed-shadow content.
+This is an automation limitation, not proof that Kadri failed to load.
+
+The driver uses UI Automator where accessible. For omitted rendered controls,
+it matches the production Material SVG glyphs against actual screenshots and
+taps the matched coordinates through UI Automator. OCR reads rendered clocks
+and menu text when necessary. It never opens the shadow root, patches the
+extension, or invokes player functions. The entry threshold is calibrated on
+the captured real frame with a negative control that removes the actual icon.
+Image recognition still needs runtime validation and can fail when browser
+rendering/layout changes; a low-confidence match fails instead of blind tapping.
+The added host image/OCR dependencies are confined to the test runner.
+
+An exit-info test regex was also corrected to match Android's real reason
+format. Earlier raw exit-info/logcat artifacts remain evidence, but the previous
+regex alone was not sufficient evidence of native-crash/ANR absence.
