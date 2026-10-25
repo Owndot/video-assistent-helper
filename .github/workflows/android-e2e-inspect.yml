@@ -1,42 +1,57 @@
-name: Read final transfer completion (no tests or emulator)
+name: Bounded native header and socket diagnostics
 on:
   push:
     branches: [codex/android-e2e-inspect]
 permissions:
   contents: read
-  actions: read
 jobs:
-  inspect:
+  stop-stalled-run:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 2
+    permissions:
+      actions: write
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          run-id: 40208810093
-          repository: Owndot/video-assistent-helper
-          github-token: ${{ github.token }}
-          name: android-e2e-api-33
-          path: evidence
-      - name: Join already recorded request and later completion snapshots
+      - name: Cancel only the stalled test run (no release or repository mutation)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
-          import json,pathlib
-          rows={}
-          for p in pathlib.Path("evidence/kadri").glob("*-http-events.json"):
-              for r in json.loads(p.read_text()):
-                  rows[(r.get("event"),r.get("id"),r.get("received"))]=r
-          rows=list(rows.values())
-          native=[r for r in rows if r.get("event")=="request" and r.get("path","").startswith("/slow/parallel-") and not r.get("range") and not r.get("fetch_dest")]
-          ends={r["id"]:r for r in rows if r.get("event")=="transfer_end"}
-          redirect=[r for r in rows if r.get("event")=="request" and r.get("path")=="/page/redirect"]
-          for r in native:
-              print("NATIVE_BEGIN",json.dumps(r));print("NATIVE_END",json.dumps(ends.get(r["id"])))
-          for i,a in enumerate(native):
-              for b in native[i+1:]:
-                  if a["path"]==b["path"]:continue
-                  x,y=ends.get(a["id"],{}),ends.get(b["id"],{})
-                  if x.get("complete") and y.get("complete"):
-                      left=max(a["received"],b["received"]);right=min(x["received"],y["received"])
-                      print("ACTUAL_COMPLETE_OVERLAP_SECONDS",right-left)
-                      print("REDIRECT_PAGE_DURING_BOTH_TRANSFERS",[r["received"] for r in redirect if left<=r["received"]<=right])
+          import urllib.request,urllib.error,json,os
+          base="https://api.github.com/repos/Owndot/video-assistent-helper/actions/runs/40219442784"
+          headers={"Authorization":"Bearer "+os.environ["GH_TOKEN"],"Accept":"application/vnd.github+json"}
+          with urllib.request.urlopen(urllib.request.Request(base,headers=headers),timeout=20) as r:
+              state=json.load(r)["status"]
+          if state!="completed":
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(base+"/cancel",headers=headers,data=b"",method="POST"),timeout=20) as r:
+                      print("Requested cancellation of stalled test run40219442784:",r.status)
+              except urllib.error.HTTPError as e:
+                  if e.code!=409:raise
+                  print("Run already ending; cancellation no longer applicable")
+          else: print("Run already completed; no cancellation")
           PY
+  focused:
+    needs: stop-stalled-run
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 29158de32ff2a21aab9d2011d01c67892f7d430b
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile existing native tests
+        run: tests/java/build.sh
+      - name: Isolated referrer privacy (45s cap and thread dump on timeout)
+        run: timeout --signal=QUIT --kill-after=5s 45s java -cp tests/java/classes de.evp.helfer.TestReferrerPrivacy
+      - name: Isolated TLS boundary
+        if: always()
+        run: timeout --signal=QUIT --kill-after=5s 45s java -cp tests/java/classes de.evp.helfer.TestTlsCookieBoundary
+      - name: Isolated bounded local sockets
+        if: always()
+        run: timeout --signal=QUIT --kill-after=5s 45s java -cp tests/java/classes TestMiniServerLimits
