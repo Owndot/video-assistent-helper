@@ -69,20 +69,45 @@ def allow_firefox_notifications():
     return True
 
 def dismiss_fullscreen_tutorial():
-    notice = D(text="Viewing full screen", packageName="com.android.systemui")
+    notice = D(resourceId="android:id/immersive_cling_title")
+    if not notice.exists:
+        notice = D(text="Viewing full screen")
     if not notice.exists: return False
-    confirm = D(textMatches="(?i)got it", packageName="com.android.systemui")
+    confirm = D(resourceId="android:id/ok")
+    if not confirm.exists:
+        confirm = D(textMatches="(?i)got it")
     if not confirm.exists: return False
     confirm.click()
     print("UI: confirmed Android's first-use immersive fullscreen tutorial", flush=True)
     return True
+
+def dismiss_translation_sheet():
+    close = D(description="Close Translations sheet")
+    if close.exists and D(textContains="Try private translations").exists:
+        close.click()
+        print("UI: dismissed Firefox translation suggestion without translating the installer", flush=True)
+        return True
+    return False
+
+def tap_fresh(selector):
+    for attempt in range(3):
+        try:
+            selector.click()
+            return
+        except Exception as exc:
+            # UiObject.click resolves bounds before sending the tap. A stale
+            # lookup has sent no input; re-query that exact selector, not a case.
+            if "StaleObjectException" not in str(exc) or attempt == 2: raise
+            time.sleep(.2)
 
 def wait(fn, timeout=20, interval=0.25):
     until = time.monotonic() + timeout
     last = None
     while time.monotonic() < until:
         try:
-            if D is not None: dismiss_fullscreen_tutorial()
+            if D is not None:
+                dismiss_fullscreen_tutorial()
+                dismiss_translation_sheet()
             if D is not None and allow_firefox_notifications():
                 # Resume the owned source if the platform prompt interrupted its first Play.
                 source_play = D(text="Play fixture")
@@ -99,8 +124,8 @@ def wait(fn, timeout=20, interval=0.25):
 
 def redact(s):
     if KEY:
-        s = s.replace(KEY, "<disposable-pair-key>")
-    return re.sub(r"(/pair)#?[0-9a-f]{32}", r"\1#<disposable-pair-key>", s)
+        s = s.replace(KEY, "[disposable-pair-key]")
+    return re.sub(r"(/pair)#?[0-9a-f]{32}", r"\1#[disposable-pair-key]", s)
 
 def request(path, key=True):
     headers = {"X-EVP-Key": AUTH_KEY} if key else {}
@@ -336,7 +361,7 @@ def export_import():
     if D(description="Show roots").exists:
         D(description="Show roots").click()
         if D(text="Downloads").exists(timeout=2):
-            D(text="Downloads").click()
+            tap_fresh(D(text="Downloads"))
     field = D(resourceId="android:id/text1", className="android.widget.EditText")
     if not field.exists:
         field = D(className="android.widget.EditText")
@@ -360,7 +385,7 @@ def export_import():
     if D(description="Show roots").exists(timeout=2):
         D(description="Show roots").click()
         if D(text="Downloads").exists(timeout=2):
-            D(text="Downloads").click()
+            tap_fresh(D(text="Downloads"))
     click("e2e-settings-" + ROUTE + ".txt")
     wait(lambda: prefs().get("theme") == "light")
     assert prefs().get("key") == KEY
@@ -914,6 +939,8 @@ def opening_cycles():
 def native_context():
     """Restore the actual test app after another case's system-UI failure."""
     global KEY, AUTH_KEY
+    # Browser scenarios are finished; isolate native API checks from Firefox PiP.
+    D.app_stop(FIREFOX)
     open_app()
     wait(unauthenticated_ready)
     KEY = prefs()["key"]
@@ -1090,17 +1117,17 @@ def main():
         case("device_volume_brightness_swipes", gestures, ["player_play_pause"])
         case("seek_and_restore", seek_restore, ["player_play_pause"])
         for kind in ("redirect", "hls", "embedded"):
-            case("play_" + kind, lambda k=kind: source(k), ["real_browser_pairing"])
-        case("subtitle_selection", subtitles, ["real_browser_pairing"])
-        case("site_source_switch", switch_source, ["real_browser_pairing"])
-        case("orientation_roundtrip", rotation, ["real_browser_pairing"])
-        case("player_open_close_memory", opening_cycles, ["real_browser_pairing"])
-        case("download_cancel", cancel_download, ["real_browser_pairing"])
-        case("parallel_downloads", downloads, ["real_browser_pairing"])
-        case("large_download_memory", large_download, ["real_browser_pairing"])
+            case("play_" + kind, lambda k=kind: source(k), ["player_play_pause"])
+        case("subtitle_selection", subtitles, ["player_play_pause"])
+        case("site_source_switch", switch_source, ["player_play_pause"])
+        case("orientation_roundtrip", rotation, ["player_play_pause"])
+        case("player_open_close_memory", opening_cycles, ["player_play_pause"])
+        case("download_cancel", cancel_download, ["player_play_pause"])
+        case("parallel_downloads", downloads, ["player_play_pause"])
+        case("large_download_memory", large_download, ["player_play_pause"])
         case("background_pip_return", background, ["large_download_memory"])
-        case("paired_helper_restart", paired_restart, ["real_browser_pairing"])
-        case("pairing_reset_roundtrip", reset_pairing, ["real_browser_pairing"])
+        case("paired_helper_restart", paired_restart, ["player_play_pause"])
+        case("pairing_reset_roundtrip", reset_pairing, ["player_play_pause"])
         case("native_hls_download", native_hls_download, ["helper_setup"])
         case("native_cookie_redirect", native_cookie_redirect, ["helper_setup"])
         case("native_downloadmanager_cookie_redirect", lambda: native_cookie_redirect("file"), ["helper_setup"])
