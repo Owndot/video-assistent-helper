@@ -209,7 +209,7 @@ class Handler(BaseHTTPRequestHandler):
                             self.wfile.flush()
                             left -= len(chunk)
                             if u.path.startswith(("/slow/", "/slowhls/")) and f.suffix != ".m3u8":
-                                time.sleep(0.1)
+                                time.sleep(0.3 if u.path.startswith("/slowhls/") else 0.1)
                     completed = left == 0
                 except (BrokenPipeError, ConnectionResetError):
                     pass

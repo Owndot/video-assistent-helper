@@ -83,11 +83,22 @@ def dismiss_fullscreen_tutorial():
 
 def dismiss_translation_sheet():
     close = D(description="Close Translations sheet")
-    if close.exists and D(textContains="Try private translations").exists:
-        close.click()
-        print("UI: dismissed Firefox translation suggestion without translating the installer", flush=True)
-        return True
-    return False
+    if not close.exists or not D(textContains="Try private translations").exists:
+        return False
+    later = D(text="Not now")
+    if later.exists: tap_fresh(later)
+    else: D.press("back")
+    until = time.monotonic() + 1
+    while time.monotonic() < until:
+        if not D(description="Close Translations sheet").exists:
+            print("UI: Firefox translation sheet visibly closed without translating", flush=True)
+            return True
+        time.sleep(.15)
+    D.press("back")
+    time.sleep(.3)
+    assert not D(description="Close Translations sheet").exists, "Native Firefox translation sheet did not close"
+    print("UI: Firefox translation sheet closed with Android Back", flush=True)
+    return True
 
 def tap_fresh(selector):
     for attempt in range(3):
@@ -587,29 +598,28 @@ def player_entry(kind="direct"):
 def reveal():
     global LAST_REVEAL_AT
     dismiss_fullscreen_tutorial()
-    close = D(description="Close")
-    close_de = D(description="Schließen")
-    if close.exists or close_de.exists or icon_control("P.close"):
-        return True
-    # Default is picture-only. Reveal via a genuine single tap before waiting
-    # for controls; do not change the preference or the product's visibility.
+    # Gecko can retain a Close AX node while CSS opacity hides the controls.
+    # Confirm actual rendered pixels before treating them as visible.
+    if icon_control("P.close"): return True
     now = time.monotonic()
-    if now - LAST_REVEAL_AT > 0.9:
+    if now - LAST_REVEAL_AT > .9:
         w, h = D.window_size()
-        D.click(w * 0.5, h * 0.35)
+        D.click(w*.5, h*.35)
         LAST_REVEAL_AT = now
-        time.sleep(0.25)
-    return close.exists or close_de.exists or bool(icon_control("P.close"))
+        time.sleep(.25)
+    return bool(icon_control("P.close"))
 
 def playing_times():
+    wait(reveal, timeout=8)
     root = ET.fromstring(D.dump_hierarchy())
+    height = D.window_size()[1]
     vals = []
     for node in root.iter("node"):
         for attr in ("text", "content-desc"):
             t = node.attrib.get(attr, "").strip()
             if re.fullmatch(r"\d{1,2}:\d{2}", t):
                 bounds = list(map(int, re.findall(r"\d+", node.attrib.get("bounds", ""))))
-                if len(bounds) == 4 and bounds[1] > D.window_size()[1] * .15:
+                if len(bounds) == 4 and bounds[1] > height * .15:
                     vals.append(t)
     if not vals:
         image = D.screenshot()
@@ -864,10 +874,10 @@ def subtitles():
     reveal()
     click("Untertitel") if D(description="Untertitel").exists else click("Subtitles")
     click("E2E English")
-    wait(lambda: label_control("ANDROID E2E SUBTITLE"))
+    wait(lambda: visual.phrase(D.screenshot(), "ANDROID E2E SUBTITLE"))
     shot("rendered-owned-subtitle")
     click("Schließen") if D(description="Schließen").exists else click("Close")
-    return "VTT selected through actual player menu; rendered owned subtitle accessible on screen."
+    return "VTT selected through actual player menu; rendered owned subtitle confirmed by screenshot OCR."
 
 def switch_source():
     button = player_entry()

@@ -3,7 +3,7 @@
     33
   ],
   "route": "both",
-  "scope": "full",
-  "previous_run": 40187457324,
-  "reuse_bundle_run": 40187457324
+  "scope": "smoke",
+  "previous_run": 40188960790,
+  "reuse_bundle_run": 40188960790
 }
