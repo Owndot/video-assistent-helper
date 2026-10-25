@@ -23,6 +23,8 @@ jobs:
       - name: Host security tests
         run: |
           python3 -m unittest discover -s tests/security -v
+          python3 -m py_compile tests/android_e2e/*.py
+          python3 -m unittest discover -s tests/android_e2e -p test_seek_clock.py -v
           python3 -m py_compile tools/profile-helper.py tools/check-update.py tools/compare-exposed-signature.py
           for script in tools/collect-device-snapshot.sh tools/build-migration-fixtures.sh tools/test-migration-device.sh; do bash -n "$script"; done
       - name: Userscript credential boundary regression
@@ -107,6 +109,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           tests/java/run_core_tests.sh
+          javac -cp tests/java/classes -d tests/java/classes tests/android_e2e/TestCredentialedStream.java
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestCredentialedStream
       - name: Isolated debug APK with disposable test key
         shell: bash
         run: |

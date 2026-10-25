@@ -913,15 +913,6 @@ def downloads():
         files = [x for x in now - before if x.endswith(".mp4") and
                  shell("stat", "-c", "%s", "/sdcard/Download/Video-Assistent/" + x, check=False).strip() in expected_sizes]
         return files if len(files) >= 2 else None
-    files = wait(finished, timeout=60)
-    hashes = {}
-    for i, filename in enumerate(files):
-        local = OUT / ("download-" + str(i) + ".mp4")
-        adb("pull", "/sdcard/Download/Video-Assistent/" + filename, str(local))
-        hashes[filename] = hashlib.sha256(local.read_bytes()).hexdigest()
-        assert local.stat().st_size > 10000
-        local.unlink()  # artifacts retain hashes and screen evidence, not duplicate owned media
-    assert set(hashes.values()) == expected_hashes, "Saved videos do not match both distinct fixtures"
     def overlapping():
         with urllib.request.urlopen("http://127.0.0.1:8765/events") as response:
             events = json.load(response)
@@ -937,7 +928,19 @@ def downloads():
                 if left <= resolving_at and right >= resolved_at:
                     return {"both_active_through_handoff": True, "overlap_ms": round((right-left)*1000, 1),
                             "first_request": one["id"], "second_request": two["id"]}
-    overlap = wait(overlapping, timeout=5)
+    # The fixture intentionally takes ~52s per 16MiB transfer. DownloadManager
+    # may preallocate zero-filled padding, so size/hash alone are not completion.
+    # Await complete server transfers before inspecting the saved files.
+    overlap = wait(overlapping, timeout=60)
+    files = wait(finished, timeout=60)
+    hashes = {}
+    for i, filename in enumerate(files):
+        local = OUT / ("download-" + str(i) + ".mp4")
+        adb("pull", "/sdcard/Download/Video-Assistent/" + filename, str(local))
+        hashes[filename] = hashlib.sha256(local.read_bytes()).hexdigest()
+        assert local.stat().st_size > 10000
+        local.unlink()  # artifacts retain hashes and screen evidence, not duplicate owned media
+    assert set(hashes.values()) == expected_hashes, "Saved videos do not match both distinct fixtures"
     return {"parallel_ui_downloads": len(files), "sha256": hashes, "server_transfer_evidence": overlap,
             "browser_handoff_during_downloads_ms": player_during_download_ms,
             "note": "Actual concurrent complete transfers and two saved-file hashes; UI/redirect timing, not Chrome-DNR resolution timing"}
