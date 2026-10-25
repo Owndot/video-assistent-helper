@@ -1,9 +1,11 @@
 {
   "apis": [
-    33
+    33,
+    35
   ],
   "route": "both",
-  "scope": "controls",
+  "scope": "full",
   "previous_run": 0,
-  "reuse_bundle_run": 40200445981
+  "reuse_bundle_run": 0,
+  "kadri_sha": "f76c209db9a3749007f4cd6a180d6d8509eb5971"
 }

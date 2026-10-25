@@ -1,5 +1,8 @@
 # Controlled real Android E2E
 
+Executed results and unresolved cases: [VALIDATION-REPORT.md](VALIDATION-REPORT.md).
+The full browser suite is not green; installed tests are not a merge approval.
+
 This suite installs real test APKs and official Firefox on Android API 33/35,
 operates actual controls with Android UI Automator (uiautomator2), captures
 ADB screen recordings/screenshots/hierarchies/logcat, and loads **unmodified**
@@ -19,8 +22,7 @@ work belongs on codex/android-e2e. A manual workflow_dispatch is also provided
 once GitHub makes the workflow available for dispatch (normally after it exists
 on the default branch). Do not merge anything solely to obtain that button.
 
-First full matrix: [33,35]. During harness calibration execution.json restricts a
-controlled push to [33]; select [33,35] deliberately for the final comparison. Exact Firefox version is recorded. Default latest is
+Full matrix: [33,35]. During harness calibration execution.json selects one API deliberately; select [33,35] only for a planned full comparison. Exact Firefox version is recorded. Default latest is
 resolved through Mozilla product details; for a repeated baseline use the
 recorded exact version. Mozilla HTTPS APK origin and downloaded digest are
 recorded; this does not independently pin Mozilla's signing certificate.
@@ -53,14 +55,16 @@ sources to exercise a real socket collision. No production-ID APK is installed.
 Do not reuse this environment with personal profiles/accounts or real pairing
 credentials. Temporary pairing credentials may appear in video/UI hierarchies;
 only disposable test state is present. Text logs mask the pairing key.
-The test identity and APK bundle expire after two days; evidence after seven.
+The signing certificate has two-day validity and its private key is deleted
+after the build. The APK bundle is retained for two days; device evidence for
+seven. Artifact retention is not revocation of previously downloaded APKs.
 
 ## Owned media server
 
 server.py generates two 60-second MP4s, an MPEG-TS HLS VOD and a WebVTT subtitle
 with ffmpeg. It serves exact, suffix and open-ended Range responses (416 for
 invalid/multipart ranges), HEAD, same/cross-host redirects, slow body delivery
-and delayed headers. Ten host fixture-contract tests run before allocating an
+and delayed headers. Eleven host fixture-contract tests run before allocating an
 emulator. That host check is **not** Android coverage.
 
 adb reverse exposes the host server to device loopback:8765, adb forward
@@ -115,7 +119,7 @@ slow downloads, notification cancellation and concurrent-download handoff are
 implemented. Their presence is not a passing test: consult the executed run's
 per-case status. Own-player quality selection and delayed-header contention on
 Android still need separate assertions. Native credentialed redirect checks
-have passed on API33; this does not imply the browser download UI has passed. Chrome DNR/worker lifecycle stays in the existing actual
+have passed on API33 and API35; this does not imply the browser download UI has passed. Chrome DNR/worker lifecycle stays in the existing actual
 desktop Chromium suite; Android Firefox cannot validate Chrome DNR.
 
 Production signature migration is not exercised here; use the existing
@@ -192,7 +196,7 @@ Its workflow_dispatch becomes available under GitHub's usual default-branch
 constraint. Ordinary commits never start it. This separates screenshot/log
 diagnosis from new device executions.
 
-The main workflow supports an explicit smoke scope for driver calibration.
+The main workflow supports explicit smoke and controls scopes for driver calibration. Controls adds real native volume positive control, browser swipes and seek/restore to the smoke cases.
 A green smoke run would cover only setup/install/pair/play-pause/crash checks;
 all omitted functional cases remain NOT_TESTED. Use scope full with APIs33/35
 for functional validation. The lightweight screenshot calibration runs before
@@ -207,3 +211,24 @@ readings cannot establish Samsung battery consumption.
 Current findings, confirmed native checks and lifecycle tradeoffs are recorded
 in FINDINGS.md. Until full browser scenarios pass on both APIs, this work is
 not a merge-readiness verdict for either security PR.
+
+Package RAM snapshots use Android's documented meminfo --package option on
+API33/35 so Firefox content/GPU processes are included instead of measuring only
+the main browser process. Earlier raw main-process snapshots must not be called
+total Firefox RAM. PSS is proportional shared memory, not private allocation.
+The owned parallel-download fixtures are two different 16MiB playable MP4s with
+slow bodies; their actual complete-transfer intervals must cover the whole
+recorded player handoff, and both saved files must match their distinct hashes.
+Browser media requests are excluded by Range/Fetch-Metadata observations.
+
+Trusted pointer down/up/cancel plus first/14px-threshold movement observations
+come from passive listeners on the owned fixture page. They do not inspect or
+invoke closed-shadow player internals. The driver verifies actual input timing;
+a harness gesture missing the existing 450ms/14px or 300ms double-tap semantics
+is FAIL/category=test_input, never a passing product assertion. Requested UI
+Automator durations are not assumed to equal browser event durations.
+
+The build now runs the existing full native core suite before an emulator. Its
+TestMain fails on unexpected errors and unexpected successful rejections;
+ffmpeg -xerror must decode every successful output. The injected failure probe
+regresses the old swallowed exception. This remains host/JVM validation.

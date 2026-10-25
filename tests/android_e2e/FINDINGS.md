@@ -58,7 +58,7 @@ The native Fetcher.Http path passed the same site-boundary control in that run.
 This is platform DownloadManager behavior with manually supplied headers, not
 a simulation or a JVM-only finding.
 
-Correction (confirmed for the installed APK on API33):
+Correction (confirmed for the installed APK on API33 and API35):
 - Ordinary files without a permitted manual Cookie still use DownloadManager.
 - Cookie-bearing native files stream through Fetcher.Http's existing per-hop
   credential policy. DownloadManager never receives manual Cookie headers.
@@ -121,3 +121,32 @@ The added host image/OCR dependencies are confined to the test runner.
 An exit-info test regex was also corrected to match Android's real reason
 format. Earlier raw exit-info/logcat artifacts remain evidence, but the previous
 regex alone was not sufficient evidence of native-crash/ANR absence.
+
+## Later actual API33/API35 confirmation and browser limits
+
+Full run [40192612290](https://github.com/Owndot/video-assistent-helper/actions/runs/40192612290)
+repeated the installed-APK security checks on both APIs, with separate fresh
+Helper/Firefox state for each route. Native HLS saved audio/video of the
+expected duration; credentialed cross-site redirect files matched the source
+SHA256. SAF transfer, eight restarts, auth/Host rejection and real socket
+collision passed. These native checks are independent of browser UI failures.
+
+Real Kadri and real Violentmonkey/userscript installation and browser pairing
+passed on both APIs. API33 demonstrated moving own-player video, pause/resume,
+redirect/HLS playback and rotation through both routes. API35 handoff passed
+for Kadri in run40194913791; its pause/resume glyph changed correctly but a
+later rendered-clock OCR assertion failed. No full browser suite is green.
+
+Captured subtitle_selection.png on API33 visibly contains ANDROID E2E SUBTITLE;
+the full-frame OCR missed it. Several older Close/download touches used stale
+short-lived control locations. The invalid uiautomator2 double_click interval
+argument and these observation failures are harness defects, not established
+player defects. Fresh-context HTTP traces exclude a stale pre-pair tab as the
+explanation for the volume failures in run40192612290. Gesture integration
+remains unresolved pending an Android native-volume positive control.
+
+No claim is made for production update migration, physical battery consumption,
+Wi-Fi/LAN performance, Vivaldi, process-death persistence of credentialed files,
+or a stable-versus-development performance regression comparison.
+
+See [VALIDATION-REPORT.md](VALIDATION-REPORT.md) for the completed full API33/35 comparison, exact per-route counts, actual 128MiB hash/PSS observations, and independently verified harness regressions. Full browser validation remains incomplete.
