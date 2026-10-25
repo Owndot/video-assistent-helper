@@ -273,8 +273,28 @@ def dismiss_addon_notice():
     wait(lambda: not visible_label("was added", contains=True), timeout=8)
     return True
 
+def tap_player_icon(label):
+    keys = {"Close":("P.close",),"Schließen":("P.close",),
+            "Play":("P.pause","P.play"),"Wiedergabe":("P.pause","P.play"),
+            "Subtitles":("P.cc",),"Untertitel":("P.cc",)}
+    def attempt():
+        # Match and tap from one current screenshot; no slow AX waits between
+        # detecting a short-lived control and sending its real touch.
+        frame = D.screenshot()
+        for key in keys[label]:
+            hit = visual.locate(frame, key, DENSITY)
+            if hit:
+                VisualControl(hit).click()
+                return True
+        reveal()
+        return False
+    wait(attempt, timeout=10)
+
 def click(label, scroll=False):
     # Accessible user-facing labels, no product debug hooks.
+    if label in ("Close","Schließen","Play","Wiedergabe","Subtitles","Untertitel"):
+        tap_player_icon(label)
+        return
     if label != "OK":
         dismiss_addon_notice()
     selectors = (D(text=label), D(description=label))
