@@ -157,8 +157,13 @@ class Handler(BaseHTTPRequestHandler):
             data = (ROOT.parent / "browser/web/hls.min.js").read_bytes()
             self.reply(200, data, "application/javascript")
         elif u.path.startswith("/page/"):
-            self.reply(200, page(u.path.rsplit("/", 1)[1], self.server.server_port, q.get("label", [""])[0]).encode(), "text/html; charset=utf-8")
+            kind = u.path.rsplit("/", 1)[1]
+            headers = {"Set-Cookie": "e2e_bounded_stream=disposable; Path=/; SameSite=Lax"} if kind == "large" else None
+            self.reply(200, page(kind, self.server.server_port, q.get("label", [""])[0]).encode(), "text/html; charset=utf-8", headers)
         elif u.path.startswith(("/media/", "/slow/", "/slowhls/")):
+            if u.path == "/media/large.mp4" and "e2e_bounded_stream=disposable" not in self.headers.get("Cookie", ""):
+                self.reply(403, b'{"error":"owned fixture requires its disposable cookie"}')
+                return
             relative = ("hls/" if u.path.startswith("/slowhls/") else "") + u.path.split("/", 2)[2]
             f = (MEDIA / relative).resolve()
             if MEDIA.resolve() not in f.parents or not f.is_file():

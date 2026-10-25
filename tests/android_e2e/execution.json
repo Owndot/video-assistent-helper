@@ -1,9 +1,10 @@
 {
   "apis": [
-    33
+    33,
+    35
   ],
-  "route": "both",
-  "scope": "smoke",
-  "previous_run": 40190193053,
-  "reuse_bundle_run": 40190193053
+  "route": "kadri",
+  "scope": "full",
+  "previous_run": 40190916412,
+  "reuse_bundle_run": 40190916412
 }

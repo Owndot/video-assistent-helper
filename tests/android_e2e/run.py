@@ -415,7 +415,7 @@ def restart():
         open_app()
         wait(unauthenticated_ready)
         assert prefs().get("key") == KEY
-        samples.append({"cycle": i + 1, "meminfo": shell("dumpsys", "meminfo", PKG)})
+        samples.append({"cycle": i + 1, "meminfo": shell("dumpsys", "meminfo", "--package", PKG)})
     (OUT / "helper-restart-memory.json").write_text(json.dumps(samples), encoding="utf8")
     return "8 real force-stop/restart cycles, same key, bound port recovered. PSS observations; no leak threshold invented."
 
@@ -835,7 +835,7 @@ def large_download():
         while not stop.is_set():
             row = {"at": time.monotonic()}
             for pkg in (PKG, FIREFOX, "com.android.providers.downloads"):
-                row[pkg] = shell("dumpsys", "meminfo", pkg, check=False)
+                row[pkg] = shell("dumpsys", "meminfo", "--package", pkg, check=False)
             samples.append(row)
             stop.wait(1)
     sampler = threading.Thread(target=sample, daemon=True)
@@ -865,7 +865,7 @@ def large_download():
     assert actual == expected, "Large download bytes corrupted"
     return {"bytes": expected_size, "sha256": actual, "seconds_including_ui": elapsed,
             "memory_samples": len(samples),
-            "note": "128MiB real file/disk round trip, instrumented PSS observations. Not a multi-GB bound or physical power measurement."}
+            "note": "128MiB cookie-protected file through native credentialed streaming and MediaStore, with actual hash and package PSS observations. Not a formal peak-memory bound, multi-GB or physical power measurement."}
 
 
 def background():
@@ -966,8 +966,8 @@ def opening_cycles():
         button.click()
         wait(reveal)
         samples.append({"cycle": i + 1, "entry_to_controls_ms": round((time.monotonic() - start) * 1000, 1),
-            "helper_pss": shell("dumpsys", "meminfo", PKG),
-            "firefox_pss": shell("dumpsys", "meminfo", FIREFOX),
+            "helper_pss": shell("dumpsys", "meminfo", "--package", PKG),
+            "firefox_pss": shell("dumpsys", "meminfo", "--package", FIREFOX),
             "cpu": shell("dumpsys", "cpuinfo")})
         click("Schließen") if D(description="Schließen").exists else click("Close")
     (OUT / "player-cycle-observations.json").write_text(json.dumps(samples), encoding="utf8")

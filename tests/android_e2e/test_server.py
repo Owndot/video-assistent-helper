@@ -56,6 +56,12 @@ class FixtureContract(unittest.TestCase):
     def test_multi_range_rejected(self):
         self.assertEqual(self.get(range_="bytes=1-2,4-5")[0], 416)
 
+    def test_large_fixture_requires_page_cookie(self):
+        self.assertEqual(self.get("/media/large.mp4")[0], 403)
+        status, headers, _ = self.get("/page/large")
+        self.assertEqual(status, 200)
+        self.assertIn("e2e_bounded_stream=disposable", headers["Set-Cookie"])
+
     def test_head(self):
         s, h, b = self.get(method="HEAD")
         self.assertEqual((s, h["Content-Length"], b), (200, "10", b""))

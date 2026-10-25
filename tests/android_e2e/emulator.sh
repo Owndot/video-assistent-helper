@@ -22,8 +22,8 @@ python3 tests/android_e2e/server.py > "$result_root/fixture-server.log" 2>&1 &
 fixture_pid=$!
 cleanup() {
   kill "$fixture_pid" 2>/dev/null || true
-  adb shell dumpsys meminfo de.evp.helfer.debug > "$result_root/final-helper-meminfo.txt" || true
-  adb shell dumpsys meminfo org.mozilla.firefox > "$result_root/final-firefox-meminfo.txt" || true
+  adb shell dumpsys meminfo --package de.evp.helfer.debug > "$result_root/final-helper-meminfo.txt" || true
+  adb shell dumpsys meminfo --package org.mozilla.firefox > "$result_root/final-firefox-meminfo.txt" || true
   adb shell dumpsys activity exit-info de.evp.helfer.debug > "$result_root/helper-exit-info.txt" || true
   adb shell dumpsys activity exit-info org.mozilla.firefox > "$result_root/firefox-exit-info.txt" || true
 }
