@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import signal
 import shlex
+import shlex
 import subprocess
 import sys
 import threading
@@ -160,7 +161,8 @@ def click(label, scroll=False):
     raise AssertionError("Visible control absent: " + label)
 
 def open_app():
-    D.app_start(PKG, stop=False)
+    # Explicit task restoration dismisses a stale system picker from a failed prior case.
+    shell("am", "start", "-W", "-n", PKG + "/de.evp.helfer.MainActivity", "-f", "0x14000000")
     wait(lambda: D.app_current().get("package") == PKG and D(className="android.widget.ScrollView").exists)
     time.sleep(0.6)
 
@@ -237,7 +239,13 @@ def export_import():
         field = D(className="android.widget.EditText")
     if field.exists:
         field.set_text("e2e-settings-" + ROUTE + ".txt")
-    click("SAVE") if D(text="SAVE").exists else click("Save")
+    # Finish IME input before touching the moving SAF save footer.
+    D.press("back")
+    time.sleep(.4)
+    save = D(textMatches="(?i)save")
+    wait(lambda: save.exists and save.info.get("enabled"), timeout=8)
+    save.click()
+    wait(lambda: D.app_current().get("package") == PKG, timeout=10)
     wait(lambda: shell("test", "-f", "/sdcard/Download/e2e-settings-" + ROUTE + ".txt", check=False).strip() == ""
          and "theme" in shell("cat", "/sdcard/Download/e2e-settings-" + ROUTE + ".txt", check=False))
     raw = shell("cat", "/sdcard/Download/e2e-settings-" + ROUTE + ".txt")
@@ -266,67 +274,62 @@ def restart():
     (OUT / "helper-restart-memory.json").write_text(json.dumps(samples), encoding="utf8")
     return "8 real force-stop/restart cycles, same key, bound port recovered. PSS observations; no leak threshold invented."
 
+def visible_label(label, contains=False):
+    selectors = (D(textContains=label), D(descriptionContains=label)) if contains else (D(text=label), D(description=label))
+    width, height = D.window_size()
+    for selector in selectors:
+        if selector.exists:
+            info = selector.info
+            bounds = info.get("visibleBounds") or info.get("bounds") or {}
+            if (bounds.get("right", 0) > bounds.get("left", 0) and
+                    0 <= bounds.get("top", -1) < bounds.get("bottom", 0) <= height - 60):
+                return selector
+
+def swipe_find(label, contains=False, limit=8):
+    for attempt in range(limit + 1):
+        selector = visible_label(label, contains)
+        if selector:
+            return selector
+        if attempt == limit:
+            break
+        # Compose menus can scroll without publishing scrollable=true.
+        # Exercise the same physical gesture a user makes, inside the list.
+        width, height = D.window_size()
+        D.swipe(width*.78, height*.80, width*.78, height*.34, duration=.45)
+        time.sleep(.3)
+    shot("missing-" + re.sub(r"\W+", "-", label))
+    raise AssertionError("Visible label not reached by real swipes: " + label)
+
 def firefox_prepare():
     D.app_start(FIREFOX)
-    # Fenix onboarding is version-dependent. Only dismiss known onboarding;
-    # an unknown screen is a captured infrastructure failure, never a pass.
     for _ in range(8):
         found = False
         for text in ("Not now", "Skip", "Start browsing", "Continue", "Get started"):
-            if D(text=text).exists(timeout=0.4):
+            if D(text=text).exists(timeout=.4):
                 D(text=text).click()
                 found = True
-                time.sleep(0.5)
+                time.sleep(.5)
                 break
         if not found:
             break
     launch_url("http://127.0.0.1:8765/health")
-    # Firefox release supports the real remote debugging toggle.
-    menu = D(resourceIdMatches=".*:(id/)(menuButton|mozac_browser_menu_button|menu_button)")
-    if menu.exists(timeout=3):
-        menu.click()
-    else:
-        for desc in ("More options", "Menu", "Open menu"):
-            if D(description=desc).exists:
-                D(description=desc).click()
-                break
-        else:
-            raise AssertionError("Firefox browser menu not found")
-    # Firefox 158 groups Settings under the actual "More" menu.
-    more = D(descriptionMatches=r"More(?: Collapsed)?")
-    if not more.exists(timeout=1):
-        more = D(textMatches=r"More(?: Collapsed)?")
-    if more.exists:
+    menu = D(description="More options")
+    if not menu.exists(timeout=3):
+        menu = D(resourceIdMatches=".*:(id/)(menuButton|mozac_browser_menu_button|menu_button)")
+    assert menu.exists, "Firefox browser menu not found"
+    menu.click()
+    more = visible_label("More Collapsed")
+    if more:
         more.click()
     shot("firefox-before-settings")
-    print("Firefox before Settings:", [(n.attrib.get("text"), n.attrib.get("content-desc"), n.attrib.get("bounds")) for n in ET.fromstring(D.dump_hierarchy()).iter("node") if n.attrib.get("text") or n.attrib.get("content-desc")], flush=True)
-    click("Settings", scroll=True)
-    row = D(textContains="Remote debugging")
-    if not row.exists:
-        row = D(descriptionContains="Remote debugging")
-    if not row.exists:
-        try:
-            D(scrollable=True).scroll.to(textContains="Remote debugging")
-        except Exception:
-            D(scrollable=True).scroll.to(descriptionContains="Remote debugging")
-        row = D(textContains="Remote debugging")
-        if not row.exists:
-            row = D(descriptionContains="Remote debugging")
-    assert row.exists
-    tree = ET.fromstring(D.dump_hierarchy())
-    parents = {child: parent for parent in tree.iter() for child in parent}
-    toggles = []
-    for node in tree.iter("node"):
-        if "Remote debugging" in node.attrib.get("text", ""):
-            parent = parents.get(node)
-            for _ in range(2):
-                if parent is not None:
-                    toggles.extend(n for n in parent.iter("node") if n.attrib.get("checkable") == "true")
-                    parent = parents.get(parent)
-    if not any(n.attrib.get("checked") == "true" for n in toggles):
-        row.click()
+    swipe_find("Settings").click()
+    shot("firefox-settings")
+    row = swipe_find("Remote debugging", contains=True)
+    # Every route starts with pm clear Firefox, so this toggle starts disabled.
+    row.click()
+    shot("firefox-remote-debug-enabled")
     D.press("back")
-    return "Real Firefox installed; Remote debugging via USB enabled through UI."
+    return "Fresh real Firefox profile; Remote debugging via USB enabled through actual UI swipes/toggle."
 
 def launch_url(url):
     shell("am", "start", "-W", "-a", "android.intent.action.VIEW", "-d", url, "-p", FIREFOX)
@@ -739,7 +742,17 @@ def opening_cycles():
     (OUT / "player-cycle-observations.json").write_text(json.dumps(samples), encoding="utf8")
     return "6 real open/close cycles with timing/PSS/CPU observations. No baseline or leak verdict inferred."
 
+def native_context():
+    """Restore the actual test app after another case's system-UI failure."""
+    global KEY, AUTH_KEY
+    open_app()
+    wait(unauthenticated_ready)
+    KEY = prefs()["key"]
+    AUTH_KEY = KEY
+    assert request("/ping")["ok"]
+
 def native_hls_download():
+    native_context()
     before = set(shell("ls", "/sdcard/Download/Video-Assistent", check=False).splitlines())
     params = urllib.parse.urlencode({"u": "http://127.0.0.1:8765/media/hls/index.m3u8",
         "ref": "http://127.0.0.1:8765/page/hls", "c": "e2e_sentinel=disposable",
@@ -767,6 +780,7 @@ def native_hls_download():
 
 
 def native_cookie_redirect(kind="hls"):
+    native_context()
     # This is deliberately labeled real Android HTTP/API integration, not UI interaction.
     start = time.monotonic()
     before_files = set(shell("ls", "/sdcard/Download/Video-Assistent", check=False).splitlines())
