@@ -1,14 +1,15 @@
 """Real servers and browser/manager; no production endpoints or credentials.
 Run with --userscript (VM_DIR required) or --kadri (EXT_DIR required).
 """
-import argparse, functools, http.server, json, os, pathlib, ssl, subprocess, tempfile, threading, time
+import argparse, functools, json, os, pathlib, ssl, subprocess, tempfile, threading, time
+import http.server as http_server
 from urllib.parse import urlsplit, parse_qs, quote
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 MEDIA = pathlib.Path(os.environ.get('FIXTURE_MEDIA', '/tmp/privacy-media'))
 HITS = []
-class Handler(http.server.SimpleHTTPRequestHandler):
+class Handler(http_server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs): super().__init__(*args, directory=str(MEDIA), **kwargs)
     def log_message(self, *args): pass
     def end_headers(self):
@@ -78,8 +79,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix='privacy-') as tmp:
         cert, key = pathlib.Path(tmp)/'cert.pem', pathlib.Path(tmp)/'key.pem'
         subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(key),'-out',str(cert),'-days','1','-subj','/CN=TEST-ONLY'],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        plain=http.server.ThreadingHTTPServer(('127.0.0.1',0), Handler)
-        secure=http.server.ThreadingHTTPServer(('127.0.0.1',0), Handler)
+        plain=http_server.ThreadingHTTPServer(('127.0.0.1',0), Handler)
+        secure=http_server.ThreadingHTTPServer(('127.0.0.1',0), Handler)
         tls=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);tls.load_cert_chain(cert,key);secure.socket=tls.wrap_socket(secure.socket,server_side=True)
         for s in (plain,secure): threading.Thread(target=s.serve_forever,daemon=True).start()
         http=f'http://a.test:{plain.server_port}';https=f'https://a.test:{secure.server_port}';foreign=f'https://b.test:{secure.server_port}'
@@ -104,6 +105,8 @@ def main():
                     return result
                 first=install(code.replace('// @version      19.29','// @version      19.28'))
                 updated=install(code)
+                assert first['where']['id']==updated['where']['id'] and first.get('isNew') and not updated.get('isNew'), (first.get('where'),updated.get('where'))
+                assert updated['update']['meta']['version']=='19.29',updated.get('update')
                 print('PASS: real Violentmonkey installs and updates the bundled userscript',flush=True)
             page=context.new_page();page.goto(https+'/PRIVATE_PATH_SECRET?token=QUERY_SECRET#FRAGMENT_SECRET');page.wait_for_timeout(700)
             source=page.url.split('#')[0]
