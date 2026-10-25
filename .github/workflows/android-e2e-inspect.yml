@@ -101,7 +101,8 @@ jobs:
       - name: Regress normalized-contrast bug using old and current real-frame matchers
         run: |
           git fetch --no-tags --depth=1 origin 2dd504302223a420bb61ac9c9e8f69bd02a0d7f2
-          for file in visual.py reference/controls.png reference/subtitle.png; do
+          mkdir -p tests/android_e2e/reference
+          for file in visual.py icons.json reference/entry.png reference/controls.png reference/subtitle.png; do
             git show "FETCH_HEAD:tests/android_e2e/$file" > "tests/android_e2e/$file"
           done
           python3 tests/android_e2e/visual.py tests/android_e2e/reference/entry.png tests/android_e2e/reference/subtitle.png tests/android_e2e/reference/controls.png
