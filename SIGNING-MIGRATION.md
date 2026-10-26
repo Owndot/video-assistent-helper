@@ -1,25 +1,32 @@
-# Current policy
+# Produktionsmigration: Option A freigegeben
 
-Containment PR #2 is merged on main. Current signing files/credentials are removed and releases paused; public historical copies remain compromised. The exposed certificate was independently matched to the pinned published APK in audit run 40117549391. See MIGRATION-VALIDATION.md for the approved legacy-reinstall policy. No production successor key or rotation is approved; do not use the exposed identity for release builds.
+Stand: 26.10.2026; geprüfter Ausgangsstand Helper `7c3c1c2`. Die Eigentümerentscheidung nach Astra-Prüfung ersetzt die früheren Vorschläge einer produktiven Lineage oder einer Aufteilung nach Android-Version.
 
-# Release signing migration
+- Neuer, ausschließlich lokal verwalteter Produktionssignierschlüssel; keine Produktionsschlüssel in GitHub, Actions, PRs oder Testcode.
+- Unveränderte `applicationId`: `de.evp.helfer`.
+- Keine Lineage und kein weiterer Einsatz des kompromittierten Signierschlüssels.
+- Auf **allen unterstützten Android-Versionen**: alte Produktions-App vollständig deinstallieren, anschließend frisch installieren und alle Browser neu koppeln.
+- Spätere reguläre Updates: derselbe neue Signierer und steigender `versionCode`.
 
-The release application ID remains `de.evp.helfer`. Never replace the production key silently.
+**Noch keine sichere neue Produktions-APK verfügbar.** Die Strategie ist freigegeben; Schlüsselgenerierung, Produktionssignierprozess, Build und Veröffentlichung werden in diesem Arbeitspaket nicht umgesetzt. Arbeitspaket 2 und eine spätere Veröffentlichungsfreigabe bleiben separat. [Issue #3](https://github.com/Owndot/video-assistent-helper/issues/3) bleibt offen.
 
-## Exposure assessment (2026-10-24)
-The GitHub API now reports this repository as **public**. The earlier private-visibility observation is obsolete. Containment PR #2 has now removed signing material from current main; historical copies remain exposed.
-The tracked keystore and embedded credentials were removed from branch HEAD, but remain reachable in parent commit `b05fd2de60d27d368eda60ff32be8b361a695f45`. Repository readers with history access can recover them. Moving credentials into secrets does not revoke historical copies.
-No key rotation, history rewrite, release or tag mutation has been performed during this correction.
+## Aktuell: historische APK nicht installieren
 
-## Preserve updates
-1. Make an encrypted offline backup of the original production keystore and restrict access.
-2. Obtain a previously distributed production APK from a trusted installation or release. Run `apksigner verify --print-certs old.apk` locally. Record only the public signing-certificate SHA-256.
-3. Independently compare that fingerprint with the existing keystore. Do not configure repository-wide production signing secrets for ordinary CI. Preserve the verified old identity offline pending the owner's rotation decision; any later production signing must use an independently reviewed, protected release process.
-4. For local release builds also set EVP_CERT_SHA256 and the four EVP signing variables, plus a RELEASE_VERSION_CODE greater than the installed production APK.
-5. Run Helper safe validation on this branch. It has no publish input or release job and uses disposable signing only. The only APK artifact is the separate debug app.
-6. Verify the finished APK and perform the device procedure in ANDROID-UPDATE-CHECK.md before merging or distributing.
-7. Publication is currently paused in containment PR #2 and absent from the security-branch validation workflow. The main APK workflow has been replaced by debug-only validation. No production release path may be enabled before the incident and signing decision are resolved.
-8. Restrict workflow edits and signing-secret access. If historical key exposure warrants rotation, design and test an Android-supported signing lineage/migration for supported devices first. Keep compatibility for existing installations; neither a replacement key nor a history rewrite alone solves this.
+Die öffentliche historische APK 1.0.84 (Tag `neueste`, Asset-ID `667389794`) verwendet den kompromittierten Signierer. Weder ihr Dateiname noch GitHubs „Latest“-Kennzeichnung sind eine Empfehlung. Kadri und das Userscript funktionieren ohne Helper; „Helper-App“ in den Player-Einstellungen deaktivieren. Die historische Datei nicht als Übergangslösung installieren.
 
-## Verification limits
-The local workspace remains unavailable. The pinned published APK certificate comparison, Gradle builds and disposable-key APK update tests have executed successfully; see MIGRATION-RESULTS.md for exact run IDs and platform coverage. A separately archived/device-installed production APK and the actual production successor remain unverified. No production key or lineage has been generated. Repository-secret configuration and physical OEM migration are not established by these tests. No private passwords or key material belong in reports, screenshots or test output.
+Die frühere Vorgabe, APK-Assets als historische Downloads zu erhalten, ist aufgehoben. Die dauerhafte Entfernung der nicht freigegebenen APK-Assets ist jetzt ausdrücklich beauftragt; Tags, Quellcode und Releaseinformationen bleiben erhalten. Die Löschung ist wegen des hier fehlenden Release-Schreibzugriffs noch ausstehend; [Bestandsaufnahme, genaue Löschschritte und Prüfungen](HISTORICAL-RELEASE-WARNING.md). Ein Dokumentationsmerge allein entfernt keine APK.
+
+Die alte APK wurde bereits unabhängig vom Buildpfad geprüft: [Audit 40117549391](https://github.com/Owndot/video-assistent-helper/actions/runs/40117549391). Ihr Zertifikat stimmt mit dem exponierten historischen Schlüssel überein. [MIGRATION-RESULTS.md](MIGRATION-RESULTS.md) enthält die öffentlichen Hashwerte und Grenzen dieser Evidenz. Historische Kopien sind dadurch nicht widerrufen.
+
+## Nutzeranleitung — erst nach separater APK-Freigabe anwenden
+
+1. Helper-Nutzung in allen Browsern vorübergehend deaktivieren und laufende Helper-Downloads beenden. Sprache, Design und Autostart manuell notieren. Die historische APK hat keinen Export; keinen mit dem alten Schlüssel signierten Exporter nachinstallieren. Browser-/Userscript-Einstellungen sind unabhängig von der Helper-App.
+2. Android-Einstellungen → Apps → Video-Assistent Helper → Deinstallieren. Die Produktions-App `de.evp.helfer` vollständig entfernen, einschließlich privater App-Daten. Keine Option zum Behalten der App-Daten wählen, keine alte App-Sicherung wiederherstellen. Nicht nur deaktivieren, nicht nur Cache leeren und nicht versuchen, den Nachfolger darüberzuinstallieren. Relevante bereits gespeicherte Downloads vorher außerhalb des privaten App-Speichers sichern.
+3. Erst die separat freigegebene, neu signierte Produktions-APK aus der dann bekanntgegebenen Projektquelle verwenden und nach deren Verifikationsanleitung prüfen. Aktuell gibt es dafür **keinen empfohlenen Download**.
+4. Frisch installieren, benötigte Android-Berechtigungen erneut erteilen und notierte Einstellungen manuell setzen. Die neue Installation erzeugt einen neuen Kopplungsschlüssel; den alten Schlüssel oder Kopplungsstatus nicht übernehmen.
+5. Den vertrauenswürdigen neuen Helper starten, jeden Browser ausdrücklich neu koppeln und damit gespeicherte alte Client-Schlüssel ersetzen. Erst danach Helper-Nutzung aktivieren. Bei Portkonflikt oder Verdacht auf lokale Schadsoftware die [Wiederherstellungsanleitung](HELPER-BETA-SECURITY.md#bei-verdacht-zurücksetzen-und-neu-koppeln) befolgen. Ein Verbindungssymbol ist kein kryptografischer Servernachweis.
+6. Nach dieser einmaligen vollständigen Migration sind reguläre Updates mit demselben neuen Signierer und höherem `versionCode` vorgesehen. Das gilt nicht für den Übergang vom alten kompromittierten Signierer.
+
+## Nachweise und spätere Freigabe
+
+[MIGRATION-VALIDATION.md](MIGRATION-VALIDATION.md) trennt historische Wegwerfschlüssel-Tests von der noch ausstehenden Prüfung des echten Nachfolgers. [ANDROID-UPDATE-CHECK.md](ANDROID-UPDATE-CHECK.md) unterscheidet die einmalige Neuinstallation von künftigen gleich signierten Updates. Es wurde hier weder eine neue APK noch ein Schlüssel oder eine Lineage erzeugt; bestehende Testresultate werden nicht als Produktionsfreigabe umgedeutet.

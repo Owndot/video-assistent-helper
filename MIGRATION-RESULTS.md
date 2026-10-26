@@ -1,8 +1,13 @@
 # Executed migration evidence — 2026-10-24
 
+## Current decision — 2026-10-26
+Option A is approved: a new exclusively locally managed production signer, unchanged `de.evp.helfer`, no lineage and no further use of the compromised signer. All supported Android versions require full uninstall/fresh install and browser re-pairing; future updates retain the same new signer and increase versionCode. No safe newly signed production APK is available yet. The historical 1.0.84 APK must not be installed; Kadri and the userscript work without Helper.
+
+The results below remain historical fixture evidence, including the unselected v3.1 path. They are not a production-artifact approval. Current user procedure: [SIGNING-MIGRATION.md](SIGNING-MIGRATION.md); validation boundaries: [MIGRATION-VALIDATION.md](MIGRATION-VALIDATION.md). This work package does not generate a key or APK or implement signing.
+
 ## Containment
 PR #2 is merged at a7d031e2f39109c237153029b1b79f2f0ac3efa8. Current main has no keystore or embedded signing passwords; its APK workflow is debug-only with no publication command. No active main workflow runs were observed at the final check.
-The repository remains PUBLIC; historical copies are not revoked. The owner should still restrict access.
+The repository remains PUBLIC; historical copies are not revoked. Public source distribution does not make the historical APK safe.
 
 ## Actual production identity
 Read-only, no-checkout audit:
@@ -30,5 +35,5 @@ Initial matrix failures were strict legacy error-code assumptions in the harness
 
 ## Limits and next gate
 This proves installation mechanics for disposable APKs on representative emulators. It does not test every OEM or intermediate Android release, production signer migration, actual pairing RPC, file picker UI, physical brightness/volume, battery or player performance.
-The new production key and lineage do not exist in this task. No production rotation or release is approved or performed.
-Use MIGRATION-VALIDATION.md for the physical-device checklist. Complete physical-device and performance review before merging the two main security PRs. The separate containment hotfix is already merged by explicit owner instruction.
+No production key or lineage was generated in those tests. Option A now excludes a production lineage. Production signing and APK publication remain separate, unperformed steps.
+The source PRs have since been merged after explicit owner approval. This does not certify a future production artifact; follow the current Option A validation plan in MIGRATION-VALIDATION.md before its separate release approval.

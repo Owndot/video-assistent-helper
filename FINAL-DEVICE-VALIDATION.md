@@ -34,7 +34,7 @@ Run F01-F15 for every supported device/browser configuration. Record one row per
 | F15 | If available, send playback to the supported external player/cast receiver; return to browser and reopen at the recorded position. | Correct URL/context and position; no unwanted second stream. Record receiver/app; unavailable hardware is NOT TESTED. |
 
 For F12, do not install a random production-ID APK as a second helper. Use an already trusted installation on the spare device; otherwise mark that two-package test NOT TESTED.
-Emulator fixture v3.1 tests prove mechanics with test identities only. A future approved production lineage still needs its own device upgrade test before distribution.
+Emulator fixture v3.1 tests remain historical mechanics evidence only. The approved production strategy is now [Option A](SIGNING-MIGRATION.md): full uninstall/fresh install on all supported Android versions, no lineage; the actual new production artifact remains unvalidated.
 
 
 ## Baseline performance protocol
@@ -57,4 +57,4 @@ Emulator fixture v3.1 tests prove mechanics with test identities only. A future 
 
 ## Exit gate
 Physical device rows, battery and OEM/service/PiP behavior remain NOT TESTED until executed by the device owner.
-Do not merge the two main security PRs, generate a production successor key, rotate the production signer or publish from this procedure.
+The reviewed source PRs have since been merged by explicit owner approval. This device-test procedure authorizes no production key generation, signing or publication; these remain separate from the documentation work package.

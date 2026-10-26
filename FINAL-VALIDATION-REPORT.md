@@ -3,6 +3,10 @@
 Stand: 25.10.2026. Maßgeblicher Abschlussbericht; ältere Berichte bleiben als
 historische Evidenz erhalten. Keine produktive Veröffentlichung oder Merge-Freigabe.
 
+## Aktuelle Signaturentscheidung — 26.10.2026
+
+Die frühere v3.1-/Lineage-Planung in diesem historischen Bericht ist durch die freigegebene [Option A](SIGNING-MIGRATION.md) ersetzt: neuer ausschließlich lokaler Signierer, gleiche Paket-ID, keine Lineage, vollständige Deinstallation/Neuinstallation und neue Kopplung auf allen unterstützten Android-Versionen. Die geprüften Source-PRs sind inzwischen mit Eigentümerfreigabe gemergt. Noch keine sicher neu signierte Produktions-APK verfügbar; vorhandene Testresultate bleiben mit ihren ursprünglichen Grenzen erhalten.
+
 ## Letzte Validierung
 
 [Android-Kernlauf40208810093](https://github.com/Owndot/video-assistent-helper/actions/runs/40208810093):

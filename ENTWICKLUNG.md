@@ -88,8 +88,7 @@ speichert ihn per `GM_setValue('helperKey')` (übersteht Skript-Updates).
 
 ## 4. Bauen
 
-- **App:** jeder Push auf `main` baut per GitHub Actions eine signierte APK (`keystore.jks`, Passwort im
-  `app/build.gradle`) und ersetzt das Release **neueste**. Versionsnummer = Build-Nummer.
+- **App:** Produktionsveröffentlichung ist pausiert; historische Release-APKs mit kompromittiertem Signierer nicht installieren. CI verwendet nur isolierte Testidentitäten. Die freigegebene [Option A](SIGNING-MIGRATION.md) sieht einen ausschließlich lokal verwalteten neuen Produktionssignierer ohne Lineage vor. Dessen Signierprozess wird erst im separaten Arbeitspaket 2 vorbereitet; kein Push auf `main` ist eine Produktionsfreigabe.
 - **Skript:** kein Build. `@version` und die Zeile `Video-Assistent X.Y` in der Diagnose hochzählen, Datei nach
   `userscript/` kopieren.
 

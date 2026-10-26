@@ -6,7 +6,7 @@ auf allen Seiten. Besteht aus zwei Teilen:
 | Teil | Was es ist | Wo |
 |---|---|---|
 | **Userscript** | der Player selbst (läuft in Vivaldi/Chrome **und Firefox** mit Violentmonkey) | `userscript/video-assistent.user.js` |
-| **Helper-App** | kleine Android-App für alles, was ein Browser nicht darf (Helligkeit, Lautstärke, Downloads) | `app/` → fertige APK unter **Releases** |
+| **Helper-App** | kleine Android-App für alles, was ein Browser nicht darf (Helligkeit, Lautstärke, Downloads) | `app/` → derzeit **keine sicher neu signierte Produktions-APK freigegeben** |
 
 Der Player funktioniert auch **ohne** Helper-App – dann regeln die Gesten nur das Video selbst.
 
@@ -89,25 +89,32 @@ dort YTDLnis). Den Vollbild-Hinweis des Browsers („zum Beenden … von oben zi
 
 ## Installieren
 
-**Signaturmigration:** Der bisherige APK-Signierschlüssel ist kompromittiert. Es gibt noch keinen freigegebenen produktiven Nachfolgeschlüssel. Test-APKs sind separate Debug-Installationen; keine Testdatei über eine Produktionsinstallation erzwingen. Geplante Wege und Teststatus: [MIGRATION-VALIDATION.md](MIGRATION-VALIDATION.md), [S26-Gerätetests](S26-ANDROID17-TEST.md).
+> **NICHT INSTALLIEREN:** Die historische Helper-APK 1.0.84 verwendet einen kompromittierten Signierschlüssel. Eine sicher neu signierte Nachfolgeversion ist noch nicht freigegeben. Kadri und das Userscript können ohne Helper genutzt werden. Auch GitHubs „Latest“-Kennzeichnung ist derzeit keine Installationsempfehlung.
 
+Die Entfernung historischer APK-Assets aus den offiziellen Releases ist beauftragt. Solange sie noch erreichbar sind, bleiben sie ausdrücklich **nicht zur Installation freigegeben**; [Ausführungsstand und Löschanleitung](HISTORICAL-RELEASE-WARNING.md).
 
 1. **Violentmonkey** in Vivaldi installieren (Erweiterungen, ab Vivaldi 8.2 auf Android).
-2. **Userscript:** `userscript/video-assistent.user.js` in Violentmonkey installieren (alte Version vorher löschen).
-3. **Helper-App (optional):** unter **[Releases → neueste Veröffentlichung](https://github.com/Owndot/video-assistent-helper/releases/latest)** `VideoAssistent-Helper.apk` laden und installieren.
-   In der App die Karten der Reihe nach antippen:
-   1. Helligkeit erlauben („Über anderen Apps einblenden“)
-   2. vom Akku-Sparen ausnehmen
-   3. Benachrichtigung erlauben
-   4. **Mit dem Browser verbinden** → Vivaldi wählen → „✓ Verbunden“
-   „Ausprobieren: 3 Sekunden dunkel“ prüft die Helligkeit.
+2. **Userscript:** [video-assistent.user.js](userscript/video-assistent.user.js) in Violentmonkey installieren (alte Version vorher löschen).
+3. **Helper vorerst weglassen:** keine historische APK installieren. In den Player-Einstellungen „Helper-App“ deaktivieren, insbesondere bei einer alten Installation. Ohne Helper bleiben der Player und die Browser-/externen Downloadwege nutzbar; Systemhelligkeit, Systemlautstärke und Helper-Downloads fehlen.
 
-Gewöhnliche Updates benötigen dieselbe freigegebene Signieridentität oder eine geprüfte Signierhistorie. Für die aktuelle Sicherheitsmigration ist auf älteren Android-Versionen eine Neuinstallation vorgesehen; erst die freigegebene Migrationsanleitung befolgen.
+### Spätere Helper-Migration: freigegebene Option A
+
+Für alle unterstützten Android-Versionen bleibt die `applicationId` **`de.evp.helfer`**. Der Nachfolger erhält einen neuen, ausschließlich lokal verwalteten Produktionssignierschlüssel. **Keine Lineage, kein weiterer Einsatz des kompromittierten Signierers und kein Darüberinstallieren über die alte Produktions-App.** Die Freigabe dieser Strategie bedeutet noch keine Freigabe einer neuen APK; Erzeugung des Schlüssels und Produktionssignierung gehören erst zum separaten Arbeitspaket 2.
+
+Erst wenn eine sicher neu signierte Produktions-APK separat freigegeben ist:
+
+1. Laufende Helper-Downloads beenden und Sprache, Design und Autostart manuell notieren. Die historische APK hat keinen Einstellungsexport. Browser-/Userscript-Einstellungen sind getrennt; alte Kopplungsschlüssel nicht übernehmen.
+2. In Android unter Einstellungen → Apps → Video-Assistent Helper die alte Produktions-App **vollständig deinstallieren**. Keine App-Daten behalten oder aus einer alten App-Sicherung zurückspielen.
+3. Die dann ausdrücklich freigegebene neue APK aus der angekündigten Projektquelle prüfen und frisch installieren; Systemberechtigungen erneut erteilen und die drei Einstellungen von Hand setzen.
+4. Den vertrauenswürdigen neuen Helper starten und jeden gewünschten Browser über „Mit dem Browser verbinden“ neu koppeln; erst danach Helper-Nutzung wieder aktivieren. Bei Portkonflikt oder Verdacht auf fremde lokale Software zuerst den [vertrauenswürdigen Zustand wiederherstellen](HELPER-BETA-SECURITY.md#bei-verdacht-zurücksetzen-und-neu-koppeln).
+5. Künftige reguläre Updates verwenden **denselben neuen Signierer** und einen **steigenden `versionCode`**.
+
+Vollständige Anleitung und Entscheidungsgrenzen: [SIGNING-MIGRATION.md](SIGNING-MIGRATION.md). Teststatus: [MIGRATION-RESULTS.md](MIGRATION-RESULTS.md), [MIGRATION-VALIDATION.md](MIGRATION-VALIDATION.md). Test-/Debug-APKs sind kein sicher freigegebener Produktionsnachfolger.
 
 ### Firefox (Android)
 
 Alles funktioniert auch in Firefox. Violentmonkey aus den Firefox-Add-ons installieren, dann dasselbe Skript.
-Die Helper-App muss **jeden Browser einmal koppeln**: in der App bei „Mit dem Browser verbinden“ auf
+Bei einem später freigegebenen neuen Helper muss **jeder Browser neu gekoppelt werden**: in der App bei „Mit dem Browser verbinden“ auf
 **Weiterer Browser** tippen und Firefox wählen (der Schlüssel bleibt derselbe, Vivaldi bleibt verbunden).
 
 Unterschiede zu Vivaldi:
