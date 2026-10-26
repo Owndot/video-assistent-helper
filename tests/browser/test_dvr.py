@@ -3,6 +3,7 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 # Rechts „Live“, links „LIVE“ bzw. „−5:30“ (so weit hinter live – „live“ ist, wo hls.js live spielt, etwas vor dem
 # Ende der Liste); Spulen zeigt „−1:30“; ganz rechts = wieder live.
 import time
+from gesture_fixture import bounded_mouse
 exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])
 with sync_playwright() as p:
     b = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
@@ -30,22 +31,23 @@ with sync_playwright() as p:
           w.classList.add("ctl");
         })''' % R)
     reveal_controls(); i0 = info()
+    move = bounded_mouse(pg)
     check('Live mit Zurückspulen: rechts „Live“, links „LIVE“ (am Live-Rand), Leiste ganz rechts', i0['times'][1] == 'Live' and i0['times'][0] == 'LIVE' and i0['bar'] > 900 and i0['b'] - i0['a'] > 100, i0)
     br = pg.evaluate('() => { const r = %s.querySelector(".vbar").getBoundingClientRect(); return [r.left, r.top + r.height / 2, r.width - 14]; }' % R)
     x, y, W = br; X = lambda f: x + 7 + f * W
     # zurückspulen auf 40 % des Bereichs → Schild „−1:4x“, danach links „−1:4x“
-    pg.mouse.move(X(0.95), y); pg.mouse.down(); pg.mouse.move(X(0.4), y, steps=4); time.sleep(0.3)
+    move(X(0.95), y); pg.mouse.down(); move(X(0.4), y, steps=4); time.sleep(0.3)
     i1 = info(); pg.mouse.up(); time.sleep(1.5); reveal_controls(); i2 = info()
     want = i1['b'] - (i1['a'] + 0.4 * (i1['b'] - i1['a']))   # so weit hinter live
     def back(s): return int(s.lstrip('−').split(':')[0]) * 60 + int(s.split(':')[1]) if s.startswith('−') else 0
     check('Spulen im Live-Bereich: Schild zeigt „−m:ss“ hinter live', i1['lab'].startswith('−') and want - 22 <= back(i1['lab']) <= want + 3, [i1['lab'], round(want)])
     check('… losgelassen: Video dort, links „−m:ss“', abs((i2['b'] - i2['t']) - want) <= 5 and i2['times'][0].startswith('−'), [i2, round(want)])
     # ganz nach rechts → wieder live
-    pg.mouse.move(X(0.4), y); pg.mouse.down(); pg.mouse.move(X(1.0) + 20, y, steps=4); time.sleep(0.3)
+    move(X(0.4), y); pg.mouse.down(); move(X(1.0) + 20, y, steps=4); time.sleep(0.3)
     i3 = info(); pg.mouse.up(); time.sleep(1.5); reveal_controls(); i4 = info()
     check('ganz nach rechts: wieder live („LIVE“)', i3['lab'] == 'LIVE' and i4['b'] - i4['t'] < 25 and i4['times'][0] == 'LIVE', [i3['lab'], i4])
     # Lupe auch bei Live (Bereich ≥ 1,5 min): Grenzen als „−m:ss“
-    pg.mouse.move(X(0.6), y); pg.mouse.down(); pg.mouse.move(X(0.5), y, steps=3); pg.mouse.move(X(0.5), y + 90, steps=4); time.sleep(0.3)
+    move(X(0.6), y); pg.mouse.down(); move(X(0.5), y, steps=3); move(X(0.5), y + 90, steps=4); time.sleep(0.3)
     z = pg.evaluate('() => { const r = %s; return [r.querySelector(".vp").classList.contains("zoom"), r.querySelector(".vprev b").textContent, [...r.querySelectorAll(".vtime")].map(e => e.textContent)]; }' % R); pg.mouse.up(); time.sleep(0.5)
     check('Live: nach unten → Lupe, Grenzen „−m:ss“', z[0] and z[1].startswith('Lupe') and z[2][0].startswith('−'), z)
     check('keine Fehler', not errs, errs)

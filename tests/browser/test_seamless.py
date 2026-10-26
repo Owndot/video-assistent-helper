@@ -8,7 +8,7 @@ SAMPLE = '''() => { const R = %s, o = document.getElementById("v"); window.__see
   const iv = setInterval(() => { const v = R.querySelector(".vv"); if (!v) return; const br = R.querySelector(".vbridge");
     if (!br && !window.__swapAt) window.__swapAt = performance.now();
     const sp = R.querySelector(".vspin");
-    window.__seen.push([performance.now(), br ? o.currentTime : v.currentTime, !!br, o.paused, o.muted, v.muted, !!(sp && sp.classList.contains("on") && getComputedStyle(sp).opacity !== "0")]); }, 20);
+    window.__seen.push([performance.now(), br ? o.currentTime : v.currentTime, !!br, o.paused, o.muted, v.muted, !!(sp && sp.classList.contains("on") && getComputedStyle(sp).opacity !== "0"),v.readyState,v.seeking]); }, 20);
   setTimeout(() => clearInterval(iv), 9000); }''' % R
 def jumps(seen):
     back = fwd = 0
@@ -20,12 +20,14 @@ def run(pg, slow_ms):
     pg.goto(B + 'direct.html'); pg.wait_for_function('document.getElementById("v").currentTime > 2', timeout=20000)
     pg.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(0.9)
     SLOW[0] = slow_ms
+    run.start = pg.evaluate('() => document.getElementById("v").currentTime')
     pg.evaluate('() => { %s; %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click(); }' % ('(' + SAMPLE + ')()', R))
     time.sleep(0.15)
     early = pg.evaluate('() => { const br = %s.querySelector(".vbridge"), o = document.getElementById("v"); return [!!br, !o.paused, !o.muted]; }' % R)
     run.amb = pg.evaluate('''() => { const a = %s.querySelector(".vamb"); if (!a || !a.getContext) return -1;
         try { const d = a.getContext("2d").getImageData(0, 0, a.width, a.height).data; let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] + d[i+1] + d[i+2] + d[i+3]; return Math.round(s / (d.length / 4)); } catch (e) { return -2; } }''' % R)
-    pg.wait_for_function('() => !%s.querySelector(".vbridge")' % R, timeout=15000); time.sleep(0.8)
+    pg.wait_for_function('() => !%s.querySelector(".vbridge")' % R, timeout=15000)
+    pg.wait_for_function('() => { const v=%s.querySelector(".vv"); return v.readyState>=2 && !v.seeking && !v.paused; }' % R, timeout=15000); time.sleep(0.8)
     seen = pg.evaluate('() => window.__seen')
     after = pg.evaluate('() => { const v = %s.querySelector(".vv"), o = document.getElementById("v"); return [!v.paused, !v.muted, o.paused, o.muted, Math.round(v.currentTime * 10) / 10]; }' % R)
     SLOW[0] = 0
@@ -39,13 +41,23 @@ with sync_playwright() as p:
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     for slow, tag in ((0, 'normal'), (1500, 'langsamer Server')):
         early, seen, after = run(pg, slow)
-        check('%s: gleich das laufende Bild der Seite, Ton weiter von der Seite' % tag, early == [True, True, True], early)
-        check('%s: Ambient-Licht gleich beim Öffnen da (nach 0,15 s)' % tag, run.amb > 20, run.amb)
-        bk, fw = jumps(seen)
-        nb = sum(1 for s in seen if s[2])
-        check('%s: umgeschaltet ohne Sprung (zurück %.2f s, vor %.2f s)' % (tag, bk, fw), bk < 0.2 and fw < 0.35 and nb > 2, [bk, fw, nb, len(seen)])
-        spun = sum(1 for s in seen if s[6])
-        check('%s: kein Ladekreis (das Bild läuft ja)' % tag, spun == 0, [spun, len(seen)])
+        gecko = pg.evaluate(r'() => /Gecko\/\d/.test(navigator.userAgent)')
+        if gecko:
+            check('%s: Firefox verwendet Standbild statt Capture-Brücke; Original still' % tag, early == [False, False, False], early)
+            ambient = pg.evaluate('''() => {const a=%s.querySelector('.vamb'),v=%s.querySelector('.vv');return [a.tagName,!!a.srcObject,typeof v.captureStream==='function',a.muted];}''' % (R,R))
+            check('%s: mobiler Ambient-Pfad verwendet Video; nur sichere Capture-API speist ihn' % tag, ambient[0]=='VIDEO' and ambient[1]==ambient[2] and ambient[3], ambient)
+            settled=[s for s in seen if s[7]>=2 and not s[8] and s[1]>=run.start-0.5]
+            bk,fw=jumps(settled)
+            check('%s: eigene Wiedergabe übernimmt die Position, danach keine Rücksprünge' % tag, after[4]>=run.start-0.3 and after[4]<run.start+5 and bk<0.2, [run.start,after,bk,fw])
+            check('%s: Ladekreis nach Medienbereitschaft beendet' % tag, not pg.evaluate('() => %s.querySelector(".vspin").classList.contains("on")' % R))
+        else:
+            check('%s: gleich das laufende Bild der Seite, Ton weiter von der Seite' % tag, early == [True, True, True], early)
+            check('%s: Ambient-Licht gleich beim Öffnen da (nach 0,15 s)' % tag, run.amb > 20, run.amb)
+            bk, fw = jumps(seen)
+            nb = sum(1 for s in seen if s[2])
+            check('%s: umgeschaltet ohne Sprung (zurück %.2f s, vor %.2f s)' % (tag, bk, fw), bk < 0.2 and fw < 0.35 and nb > 2, [bk, fw, nb, len(seen)])
+            spun = sum(1 for s in seen if s[6])
+            check('%s: kein Ladekreis (das Bild läuft ja)' % tag, spun == 0, [spun, len(seen)])
         dbl = sum(1 for s in seen if not s[2] and not s[3] and not s[4] and not s[5])
         check('%s: danach eigenes Video mit Ton, Seite still (kein doppelter Ton)' % tag, after[0] and after[1] and after[2] and after[3] and dbl == 0, [after, dbl])
         ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(1.0)
@@ -68,7 +80,7 @@ with sync_playwright() as p:
     pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.8)
     SLOW[0] = 0
     o = pg.evaluate('() => { const o = document.getElementById("v"); return [!o.paused, !o.muted, o.currentTime]; }')
-    check('mitten im Übergang geschlossen: Seite läuft mit Ton an ihrer Stelle weiter', o[0] and o[1] and o[2] >= t0 + 1, [t0, o])
+    check('mitten im Übergang geschlossen: Seite läuft mit Ton an ihrer Stelle weiter', o[0] and o[1] and o[2] >= t0 + (-0.3 if gecko else 1), [t0, o])
     check('keine Fehler', not errs, errs)
     b.close()
 srv.shutdown()

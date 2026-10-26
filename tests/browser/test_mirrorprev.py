@@ -70,7 +70,8 @@ def run(cdn_body, tag):
     return mirror, far, seen, dur, errs
 m, far, seen, dur, errs = run(CLIP, 'Seitendaten mit Datei')
 check('Spiegeln aktiv (Facebook)', m)
-check('nie gesehene Stelle: nur die Zeit', not far[0] and far[2].split(' · ')[0] == fmt(0.7 * dur), far)
+# Fractional pointer coordinates may round to the adjacent CSS pixel; time is floored.
+check('nie gesehene Stelle: nur die Zeit', not far[0] and abs(sum(int(n) * f for n,f in zip(far[2].split(' · ')[0].split(':'),(60,1))) - 0.7 * dur) <= 1, far)
 check('angeschaute Stelle: ebenso nur die Zeit (gleich aussehend)', not seen[0] and seen[2].split(' · ')[0] in ('0:03', '0:04'), seen)
 check('über Angeschautes und Neues ziehen: kein Flackern (immer gleich)', len(FLICK[0]) == 1 and FLICK[0][0].startswith('false'), FLICK[0])
 check('Datei aus den Seitendaten wird nicht geladen', HITS[0] == 0, HITS)
