@@ -107,8 +107,8 @@ Gewöhnliche Updates benötigen dieselbe freigegebene Signieridentität oder ein
 ### Firefox (Android)
 
 Alles funktioniert auch in Firefox. Violentmonkey aus den Firefox-Add-ons installieren, dann dasselbe Skript.
-Die Helper-App muss **jeden Browser einmal koppeln**: in der App bei „4 · Mit dem Browser verbinden“ auf
-**Erneut** tippen und Firefox wählen (der Schlüssel bleibt derselbe, Vivaldi bleibt verbunden).
+Die Helper-App muss **jeden Browser einmal koppeln**: in der App bei „Mit dem Browser verbinden“ auf
+**Weiterer Browser** tippen und Firefox wählen (der Schlüssel bleibt derselbe, Vivaldi bleibt verbunden).
 
 Unterschiede zu Vivaldi:
 - Glas: einfaches Milchglas statt Wellen-/Lupen-Glas (Firefox kann diesen Filter nicht hinter Flächen zeichnen)
@@ -117,14 +117,8 @@ Unterschiede zu Vivaldi:
 
 ## Sicherheit der Helper-App
 
-- **Nur auf dem Handy:** Die App lauscht nur auf `127.0.0.1` – aus dem WLAN oder Internet ist sie nicht erreichbar.
-- **Eigener Schlüssel:** Beim ersten Start erzeugt die App einen zufälligen 128-Bit-Schlüssel (`SecureRandom`), nur
-  in ihrem privaten Speicher. Jede Installation hat einen anderen; „Verbinden“ übergibt ihn nur im `#`-Teil der
-  Adresse an das Skript (den sieht kein Server), das Skript entfernt ihn sofort aus der Adresse. Ohne den Schlüssel
-  antwortet die App mit „verboten“ (den alten festen Schlüssel früherer Versionen nimmt sie nicht mehr an).
-- **Webseiten kommen nicht ran:** Der Schlüssel steckt in einem eigenen Kopf (`X-EVP-Key`) – den dürfen Webseiten
-  nicht an fremde Adressen schicken. Seiten, deren Name auf 127.0.0.1 zeigt („DNS-Rebinding“), werden am Namen erkannt
-  und abgelehnt.
+- **Loopback und Schlüssel:** Der echte Helper lauscht auf `127.0.0.1:47811` und prüft bei geschützten Anfragen einen zufälligen 128-Bit-Schlüssel aus privatem App-Speicher (`X-EVP-Key`). Der Port ist kein Identitätsnachweis. Das anfängliche Kopplungsfragment wird nicht im HTTP-Abruf übertragen; anschließend sendet der Client den Schlüssel als Header. Der alte feste Schlüssel wird abgelehnt.
+- **Grenze der ersten Beta:** Gegenseitige kryptografische Serverauthentifizierung fehlt. Ein fremder lokaler Listener kann unter bestimmten Bedingungen den gespeicherten Schlüssel und sensible Helper-Daten erhalten. Host-/CORS-Schutz gegen gewöhnliche Webseiten schützt nicht vor bereits installierter Schadsoftware. Dieses Restrisiko ist für die erste GitHub-Beta akzeptiert; [Issue #4](https://github.com/Owndot/video-assistent-helper/issues/4) bleibt offen.
 - **Cookies:** Die App hat keinen Zugriff auf die Cookies des Browsers. Nur beim Download schickt das Skript die
   Cookies **der Seite mit dem Video** mit; die App gibt sie nur an diese Seite weiter, nie an fremde Server aus einer
   Playlist, und speichert sie nicht. Beim „Laden über den Browser“ gehen Cookies nur an die Seite selbst und den
@@ -132,7 +126,7 @@ Unterschiede zu Vivaldi:
 - **Rechte:** Internet (nur für Downloads und den lokalen Empfänger), über anderen Apps einblenden (unsichtbares
   1-Pixel-Fenster für die Helligkeit), Benachrichtigung, Start nach dem Einschalten. Kein Zugriff auf Kontakte,
   Fotos, Standort, Mikrofon oder andere Apps.
-- Ein neuer Schlüssel: in der App den Status „✓ Verbunden“ lange drücken, dann neu verbinden.
+- **Bei Verdacht:** Helper-Nutzung zunächst deaktivieren, den vertrauenswürdigen Geräte-/Portzustand herstellen, dann die Karte „Mit dem Browser verbinden“ lange drücken und alle Browser neu koppeln. Ein Reset allein beseitigt keine aktive Schadsoftware. Details, Grenzen und die vollständige Anleitung: [Helper-Beta-Sicherheit](HELPER-BETA-SECURITY.md).
 
 ## Einstellungen
 

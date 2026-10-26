@@ -1,5 +1,11 @@
 # Helper-Authentifizierung: Entscheidungsvorschlag, keine Implementierung
 
+## Entscheidung für die erste öffentliche GitHub-Beta
+
+Nach Astra-Prüfung der Stände Helper `e8c9584` und Kadri `cc14bcd` akzeptiert die Projektfreigabe die fehlende gegenseitige kryptografische Serverauthentifizierung als begrenztes Restrisiko. [Helper #4](https://github.com/Owndot/video-assistent-helper/issues/4) bleibt offen. Aktuelle Funktionsbeschreibung, Bedrohungsgrenze, Reset-Anleitung und gezielte Nachweise: [HELPER-BETA-SECURITY.md](HELPER-BETA-SECURITY.md). Kein neues Protokoll wird in dieser Beta-Runde eingeführt.
+
+## Vorschläge für eine separat freizugebende spätere Phase
+
 Die bestehende Authentifizierung bleibt in dieser Runde unverändert. Die Auswahl eines Verfahrens und jedes neue Protokoll benötigen eine separate Freigabe.
 
 Geeignete standardisierte Optionen sind TLS zu einem verlässlich authentisierten lokalen Dienst mit zufälligen, widerrufbaren Zugangsdaten oder HTTP Message Signatures ([RFC 9421](https://www.rfc-editor.org/rfc/rfc9421)) mit einer etablierten Implementierung und standardisiertem HMAC-SHA-256 bzw. asymmetrischem Signaturverfahren. Ein Body würde über Content-Digest ([RFC 9530](https://www.rfc-editor.org/rfc/rfc9530)) eingebunden. Keine selbst erfundene Challenge-/Signaturkonstruktion und kein bloßes Hashen eines Tokens. OAuth-Loopback-Codefluss mit PKCE ([RFC 8252](https://www.rfc-editor.org/rfc/rfc8252), [RFC 7636](https://www.rfc-editor.org/rfc/rfc7636)) ist eine weitere Option, falls mehrere Clients und ein separater Autorisierungsdialog gewünscht sind; er ersetzt nicht die Authentisierung des Servers.
