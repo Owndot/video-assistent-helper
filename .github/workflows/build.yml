@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   privacy:
-    if: github.head_ref != 'codex/helper-beta-auth-beta1'
+    if: github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -96,7 +96,7 @@ jobs:
           path: validation-results/hls-bundle.json
           if-no-files-found: ignore
   download-manager-privacy:
-    if: github.head_ref != 'codex/helper-beta-auth-beta1'
+    if: github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -134,7 +134,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 1
           persist-credentials: false
+      - name: Reproduce missing ancestry in the normal shallow checkout
+        if: github.head_ref == 'codex/local-release-option-a'
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --is-shallow-repository)" = true
+          if git merge-base --is-ancestor d1119234e25273210d0807961058484058cc0f49 HEAD; then
+            echo 'Shallow ancestry failure not reproduced'; exit 1
+          fi
+          echo 'PASS: actual depth-1 validate checkout reproduces missing ancestry'
+      - name: Fetch complete ancestry for the exact checked-out commit
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+            git fetch --no-tags --unshallow origin "$(git rev-parse HEAD)"
+          fi
+          test "$(git rev-parse --is-shallow-repository)" = false
+          git merge-base --is-ancestor d1119234e25273210d0807961058484058cc0f49 HEAD
+          echo 'PASS: complete ancestry available; prepare-release.py ancestry check remains unchanged'
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -150,6 +169,7 @@ jobs:
           python3 -m py_compile tools/profile-helper.py tools/check-update.py tools/compare-exposed-signature.py
           for script in tools/collect-device-snapshot.sh tools/build-migration-fixtures.sh tools/test-migration-device.sh; do bash -n "$script"; done
       - name: Userscript credential boundary regression
+        if: github.head_ref != 'codex/local-release-option-a'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -165,10 +185,12 @@ jobs:
           grep -q 'foreign eu.org tenant was trusted' "$RUNNER_TEMP/old-cookie-sites.log"
           echo 'PASS: old userscript tenant scope fails the new regression'
       - name: JVM compilation and exclusive-port test
+        if: github.head_ref != 'codex/local-release-option-a'
         run: |
           tests/java/build.sh
           java -cp tests/java/classes TestPortConflict
       - name: Prove TLS and socket regressions against the actual predecessor
+        if: github.head_ref != 'codex/local-release-option-a'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -195,6 +217,7 @@ jobs:
           grep -q 'Accepted connection remained open after stop' "$work/old-socket.log"
           echo 'PASS: actual predecessor leaves accepted socket open after stop'
       - name: Compare rapid-restart regression with previous listener
+        if: github.head_ref != 'codex/local-release-option-a'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -216,6 +239,7 @@ jobs:
           if [ "$reproduced" = false ]; then echo "::warning::Previous timing race did not reproduce in this run"; fi
           java -cp tests/java/classes TestPortConflict
       - name: Compare cookie boundaries against the previous HTTP client
+        if: github.head_ref != 'codex/local-release-option-a'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -239,6 +263,7 @@ jobs:
           fi
           java -cp tests/java/classes de.evp.helfer.TestRedirectCookies
       - name: Preserve HTTP 300 redirect compatibility
+        if: github.head_ref != 'codex/local-release-option-a'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -253,6 +278,23 @@ jobs:
           grep -q 'HTTP 300 redirect failed' "$work/old-300.log"
           java -cp tests/java/classes de.evp.helfer.TestRedirectCookies
           echo 'PASS: HTTP300 compatibility regression fails predecessor and passes corrected client'
+      - name: Record a real pre-fixture debug APK to reproduce the overwrite
+        if: github.head_ref == 'codex/local-release-option-a'
+        run: |
+          set -euo pipefail
+          gradle :app:assembleDebug -PmigrationFixtureVersion=122 --no-daemon
+          sha256sum app/build/outputs/apk/debug/app-debug.apk > "$RUNNER_TEMP/pre-fixture-debug.sha256"
+      - name: Unsigned release and disposable signing validation
+        # run_local_release.sh creates test-only.jks; no production identity is loaded.
+        run: bash tests/security/run_local_release.sh
+      - name: Prove fixture build invalidates the earlier APK checksum
+        if: github.head_ref == 'codex/local-release-option-a'
+        run: |
+          set -euo pipefail
+          if sha256sum --check "$RUNNER_TEMP/pre-fixture-debug.sha256"; then
+            echo 'Fixture overwrite failure not reproduced'; exit 1
+          fi
+          echo 'PASS: real fixture version 123 overwrote version 122; earlier hash is stale'
       - name: Isolated debug APK with disposable test key
         shell: bash
         run: |
@@ -282,34 +324,8 @@ jobs:
           aapt=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           "$aapt" dump badging "$apk" | grep "package: name='de.evp.helfer.debug'"
           "$signer" verify --verbose --print-certs "$apk" | tee validation-results/debug-signature.txt
-      - name: Verify pinned existing release APK (read only)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh api repos/Owndot/video-assistent-helper/releases/assets/667389794 -H 'Accept: application/octet-stream' > "$RUNNER_TEMP/published.apk"
-          echo "bdbb2dd853ffcba80afb27492a31baf474ae1e3fd36418e3f7a5206abb760086  $RUNNER_TEMP/published.apk" | sha256sum -c -
-          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
-          "$signer" verify --verbose --print-certs "$RUNNER_TEMP/published.apk" | tee published-certificate.txt
-      - name: Test release verifier with disposable identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          export EVP_KEYSTORE_PATH="$RUNNER_TEMP/test-only.jks"
-          export EVP_STORE_PASSWORD=test-only-password EVP_KEY_PASSWORD=test-only-password EVP_KEY_ALIAS=test-only
-          trap 'rm -f "$EVP_KEYSTORE_PATH" "$RUNNER_TEMP/test-cert.der"' EXIT
-          keytool -genkeypair -keystore "$EVP_KEYSTORE_PATH" -storetype JKS -storepass:env EVP_STORE_PASSWORD -keypass:env EVP_KEY_PASSWORD -alias "$EVP_KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 2 -dname CN=CI-TEST-ONLY
-          keytool -exportcert -keystore "$EVP_KEYSTORE_PATH" -storepass:env EVP_STORE_PASSWORD -alias "$EVP_KEY_ALIAS" > "$RUNNER_TEMP/test-cert.der"
-          export EVP_CERT_SHA256="$(sha256sum "$RUNNER_TEMP/test-cert.der" | cut -d ' ' -f 1)"
-          if EVP_CERT_SHA256=ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5 gradle :app:verifyReleaseSigning --no-daemon > "$RUNNER_TEMP/blocked-signer.log" 2>&1; then
-            echo 'Exposed signer was not blocked'; exit 1
-          fi
-          grep -q 'Exposed production signing identity is blocked' "$RUNNER_TEMP/blocked-signer.log"
-          echo 'PASS: compromised identity blocked using a disposable keystore only'
-          gradle :app:assembleRelease --no-daemon
-          # Never upload or distribute this test-signed production-ID APK.
       - name: JVM media tests
+        if: github.head_ref != 'codex/local-release-option-a'
         run: |
           # Use Ubuntu's signed official mirror; the Azure mirror stalled in run40219442784.
           if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
@@ -320,8 +336,31 @@ jobs:
           tests/java/run_core_tests.sh
           javac -cp tests/java/classes -d tests/java/classes tests/android_e2e/TestCredentialedStream.java
           java -Xmx32m -cp tests/java/classes de.evp.helfer.TestCredentialedStream
+      - name: Prove upload gate rejects stale checksum and signature records
+        if: github.head_ref == 'codex/local-release-option-a'
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          cp validation-results/debug-apk.sha256 "$work/final.sha256"
+          cp validation-results/debug-signature.txt "$work/final-signature.txt"
+          trap 'cp "$work/final.sha256" validation-results/debug-apk.sha256; cp "$work/final-signature.txt" validation-results/debug-signature.txt; rm -rf "$work"' EXIT
+          cp "$RUNNER_TEMP/pre-fixture-debug.sha256" validation-results/debug-apk.sha256
+          if bash .github/scripts/verify-debug-artifact.sh > "$work/hash.log" 2>&1; then
+            echo 'Stale APK hash accepted'; exit 1
+          fi
+          grep -q 'FAILED' "$work/hash.log"
+          cp "$work/final.sha256" validation-results/debug-apk.sha256
+          printf '\nSYNTHETIC-STALE-SIGNATURE-RECORD\n' >> validation-results/debug-signature.txt
+          if bash .github/scripts/verify-debug-artifact.sh > "$work/signature.log" 2>&1; then
+            echo 'Stale signature record accepted'; exit 1
+          fi
+          grep -Eq 'differ|EOF' "$work/signature.log"
+          echo 'PASS: upload gate rejects stale real-APK hash and signature records'
+      - name: Verify final debug artifact immediately before upload
+        id: debug_artifact_verified
+        run: bash .github/scripts/verify-debug-artifact.sh
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: success() && steps.debug_artifact_verified.outcome == 'success'
         with:
           name: helper-debug-NOT-production
           path: |

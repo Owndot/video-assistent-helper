@@ -1,6 +1,6 @@
 # Option A: spätere Produktionsprüfung — noch nicht ausgeführt
 
-Die freigegebene [Option A](SIGNING-MIGRATION.md) behält `de.evp.helfer`, verwendet einen neuen ausschließlich lokal verwalteten Signierer und **keine Lineage**. Es gibt noch keine sicher neu signierte freigegebene Produktions-APK. Dieser Prüfplan erzeugt oder veröffentlicht nichts und ist kein Auftrag, die Prüfungen in Arbeitspaket 1 zu beginnen.
+Die freigegebene [Option A](SIGNING-MIGRATION.md) behält `de.evp.helfer`, verwendet einen neuen ausschließlich lokal verwalteten Signierer und **keine Lineage**. Es gibt noch keine sicher neu signierte freigegebene Produktions-APK. Dieser Prüfplan erzeugt oder veröffentlicht nichts und erteilt keine Freigabe für Produktionsschlüsselgenerierung oder reale Gerätetests. Der vorbereitete lokale Build-/Prüfablauf steht in [LOCAL-RELEASE-MACOS.md](LOCAL-RELEASE-MACOS.md).
 
 ## Einmaliger Wechsel vom kompromittierten Signierer
 
@@ -14,9 +14,9 @@ Die freigegebene [Option A](SIGNING-MIGRATION.md) behält `de.evp.helfer`, verwe
 
 Erst für zwei APKs **desselben neuen Signierers** ist der bestehende Host-Preflight vorgesehen:
 
-`python3 tools/check-update.py trusted-new-signer-previous.apk next.apk --expected-cert NEW_PUBLIC_CERT_SHA256`
+`python3 tools/verify-release.py next.apk --previous-apk trusted-new-signer-previous.apk --version-code NEXT_CODE --version-name NEXT_NAME`
 
-Er prüft mit Android-SDK-Werkzeugen die APK-Signaturen, gleiche Produktions-Paket-ID und steigenden `versionCode`. Dieser Same-Signer-Check ist kein Lineage-Verifikator und keine Freigabe eines Alt-zu-Neu-In-place-Upgrades. Bei solchen späteren regulären Updates ist `adb install -r next.apk` der normale Prüfweg; App-Einstellungen und die nach der Migration neu eingerichtete Kopplung sollen erhalten bleiben.
+Er verwendet die separat vom Eigentümer bestätigte `release/production-policy.json` und prüft mit Android-SDK-Werkzeugen Signaturen, gleiche Produktions-Paket-ID, API 26, nicht debuggable und steigenden `versionCode`. Die ausgelieferte Policy ist absichtlich UNAPPROVED. Dieser Same-Signer-Check ist kein Lineage-Verifikator und keine Freigabe eines Alt-zu-Neu-In-place-Upgrades. Bei solchen späteren regulären Updates ist `adb install -r next.apk` der normale Prüfweg; App-Einstellungen und die nach der Migration neu eingerichtete Kopplung sollen erhalten bleiben.
 
 ## Evidenzgrenzen
 
