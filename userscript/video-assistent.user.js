@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
-// @version      19.29
+// @version      19.30
 // @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
 // @match        *://*/*
 // @run-at       document-start
@@ -2222,9 +2222,16 @@ const buildPslBase = () => {
       if (!x) { res(null); return; }
       let done = false;
       const fin = (v) => { if (!done) { done = true; res(v); } };
+      // Other tabs can re-pair while this document remains open. Read the current
+      // trusted store for every new request; never retry or persist a candidate here.
+      let key = keyOverride || helperKey;
+      if (!keyOverride && typeof GM_getValue === 'function') {
+        try { key = GM_getValue('helperKey', '') || 'evp-1'; }
+        catch (e) { fin(null); return; }
+      }
       try {
         x({
-          method: body ? 'POST' : 'GET', url: HELPER + path, headers: { 'X-EVP-Key': keyOverride || helperKey }, timeout: to, anonymous: true,
+          method: body ? 'POST' : 'GET', url: HELPER + path, headers: { 'X-EVP-Key': key }, timeout: to, anonymous: true,
           data: body || undefined,
           onload: (r) => { try { fin(r.status === 200 ? JSON.parse(r.responseText) : null); } catch (e) { fin(null); } },
           onerror: () => fin(null), ontimeout: () => fin(null), onabort: () => fin(null),
@@ -7385,7 +7392,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   // ---------- Diagnose (lange auf "Player" drücken) ----------
   function diag(v, r) {
     return maskUrls([
-      'Video-Assistent 19.29',
+      'Video-Assistent 19.30',
       'Seite: ' + location.host + location.pathname,
       'Video-src: ' + (v ? String(v.currentSrc || v.src || '-').slice(0, 90) : 'kein Video'),
       'Ergebnis: ' + (r.how || 'nichts') + (r.best ? ' – ' + r.best.slice(0, 110) : ''),
