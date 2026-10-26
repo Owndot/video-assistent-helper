@@ -2,40 +2,35 @@ plugins {
     id 'com.android.application'
 }
 
-def signingEnv = ['EVP_KEYSTORE_PATH', 'EVP_STORE_PASSWORD', 'EVP_KEY_ALIAS', 'EVP_KEY_PASSWORD', 'EVP_CERT_SHA256']
-def hasReleaseSigning = signingEnv.every { System.getenv(it) }
-def runNo = (project.findProperty('migrationFixtureVersion') ?: System.getenv('GITHUB_RUN_NUMBER') ?: System.getenv('RELEASE_VERSION_CODE') ?: '1') as int
+// Release inputs are public metadata, never signing credentials.
+def releaseCode = project.findProperty('releaseVersionCode')
+def releaseName = project.findProperty('releaseVersionName')
+def fixtureVersion = project.findProperty('migrationFixtureVersion')
+def fixtureMinSdk = project.findProperty('migrationFixtureMinSdk')
+def debugCode = releaseCode != null ? 1 : (fixtureVersion ?: System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int
+if (releaseCode != null && !(releaseCode.toString() ==~ /[1-9][0-9]{0,9}/ && releaseCode.toString().toLong() <= 2100000000L)) {
+    throw new GradleException('Explicit releaseVersionCode must be in 1..2100000000.')
+}
 
 android {
     namespace 'de.evp.helfer'
     compileSdk 34
-
+    buildToolsVersion '34.0.0'
     defaultConfig {
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         applicationId 'de.evp.helfer'
-        minSdk ((project.findProperty('migrationFixtureMinSdk') ?: '26') as int)
+        minSdk ((fixtureMinSdk ?: '26') as int)
         targetSdk 34
-        versionCode runNo
-        versionName "1.0." + runNo
-    }
-
-    signingConfigs {
-        externalRelease {
-            if (hasReleaseSigning) {
-                storeFile file(System.getenv('EVP_KEYSTORE_PATH'))
-                storePassword System.getenv('EVP_STORE_PASSWORD')
-                keyAlias System.getenv('EVP_KEY_ALIAS')
-                keyPassword System.getenv('EVP_KEY_PASSWORD')
-            }
-        }
+        versionCode releaseCode != null ? releaseCode.toString().toInteger() : debugCode
+        versionName releaseName != null ? releaseName.toString() : '1.0.' + debugCode
     }
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.externalRelease
+            debuggable false
+            signingConfig null
         }
         debug {
-            // Separate debug identity; installs alongside the production app.
             applicationIdSuffix '.debug'
         }
     }
@@ -49,63 +44,22 @@ android {
     }
 }
 
-def verifyReleaseSigning = tasks.register('verifyReleaseSigning') {
+def verifyReleaseInputs = tasks.register('verifyReleaseInputs') {
     doLast {
-        if (!hasReleaseSigning || !file(System.getenv('EVP_KEYSTORE_PATH')).isFile()) {
-            throw new GradleException('Release signing requires the existing production keystore and EVP_* environment variables. No fallback key is permitted.')
+        if (releaseCode == null || releaseName == null ||
+            !(releaseName.toString() ==~ /[0-9][0-9A-Za-z.+-]{0,63}/)) {
+            throw new GradleException('Release requires explicit releaseVersionCode and releaseVersionName; CI numbers are not release versions.')
         }
-        if (!System.getenv('GITHUB_RUN_NUMBER') && !System.getenv('RELEASE_VERSION_CODE')) {
-            throw new GradleException('Local release builds require an explicit increasing RELEASE_VERSION_CODE.')
+        if (fixtureVersion != null || fixtureMinSdk != null) {
+            throw new GradleException('Migration fixture properties are forbidden for release tasks.')
         }
-        if (runNo <= 0) throw new GradleException('Release versionCode must be positive.')
-        def expected = System.getenv('EVP_CERT_SHA256').replaceAll('[:\\s]', '').toLowerCase(java.util.Locale.ROOT)
-        if (!(expected ==~ /[0-9a-f]{64}/)) throw new GradleException('Invalid expected production certificate SHA-256.')
-        // Verified compromised identity: never sign another ordinary release with this key.
-        if (expected == 'ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5') {
-            throw new GradleException('Exposed production signing identity is blocked. Migration requires separate approval; use a disposable test identity for validation.')
-        }
-        def ks = java.security.KeyStore.getInstance('JKS')
-        file(System.getenv('EVP_KEYSTORE_PATH')).withInputStream { input ->
-            ks.load(input, System.getenv('EVP_STORE_PASSWORD').toCharArray())
-        }
-        def alias = System.getenv('EVP_KEY_ALIAS')
-        if (!ks.isKeyEntry(alias)) throw new GradleException('Release alias is not a private-key entry.')
-        def cert = ks.getCertificate(alias)
-        def actual = java.security.MessageDigest.getInstance('SHA-256').digest(cert.encoded).encodeHex().toString()
-        if (actual != expected) throw new GradleException('Production signing identity mismatch; refusing release build.')
     }
 }
 tasks.configureEach {
-    if (name != 'verifyReleaseSigning' && name.contains('Release') &&
-        (name.startsWith('assemble') || name.startsWith('bundle') ||
-         name.startsWith('package') || name.startsWith('validateSigning'))) {
-        dependsOn verifyReleaseSigning
-    }
+    if (name != 'verifyReleaseInputs' && name.contains('Release')) dependsOn verifyReleaseInputs
 }
 
-def verifyReleaseApk = tasks.register('verifyReleaseApk') {
-    dependsOn 'packageRelease', verifyReleaseSigning
-    doLast {
-        def apk = file('build/outputs/apk/release/app-release.apk')
-        if (!apk.isFile()) throw new GradleException('Release APK missing.')
-        def suffix = System.getProperty('os.name').toLowerCase(java.util.Locale.ROOT).contains('windows') ? '.bat' : ''
-        def signer = new File(android.sdkDirectory, "build-tools/${android.buildToolsVersion}/apksigner" + suffix)
-        if (!signer.isFile()) throw new GradleException('Android SDK apksigner missing; release cannot be verified.')
-        def output = new ByteArrayOutputStream()
-        exec {
-            commandLine signer.absolutePath, 'verify', '--verbose', '--print-certs', apk.absolutePath
-            standardOutput = output
-        }
-        def fingerprints = (output.toString('UTF-8') =~ /Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)/).collect { it[1].toLowerCase(java.util.Locale.ROOT) }
-        def expected = System.getenv('EVP_CERT_SHA256').replaceAll('[:\\s]', '').toLowerCase(java.util.Locale.ROOT)
-        if (fingerprints.size() != 1 || fingerprints[0] != expected) {
-            throw new GradleException('Finished APK does not have the expected production signer.')
-        }
-    }
-}
-tasks.configureEach { if (name == 'assembleRelease') dependsOn verifyReleaseApk }
-
-// Instrumentation only: no production dependency or protocol change.
+// Instrumentation only; debug and disposable fixtures retain their existing separation.
 dependencies {
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'

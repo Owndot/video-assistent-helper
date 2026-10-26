@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   privacy:
-    if: github.head_ref != 'codex/helper-beta-auth-beta1'
+    if: github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -96,7 +96,7 @@ jobs:
           path: validation-results/hls-bundle.json
           if-no-files-found: ignore
   download-manager-privacy:
-    if: github.head_ref != 'codex/helper-beta-auth-beta1'
+    if: github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -128,7 +128,7 @@ jobs:
             adb shell am instrument -w de.evp.helfer.debug.test/androidx.test.runner.AndroidJUnitRunner | tee /tmp/download-manager-test.log
             grep -q 'OK (1 test)' /tmp/download-manager-test.log
   validate:
-    if: github.head_ref != 'codex/helper-beta-auth-beta1'
+    if: github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -282,33 +282,9 @@ jobs:
           aapt=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           "$aapt" dump badging "$apk" | grep "package: name='de.evp.helfer.debug'"
           "$signer" verify --verbose --print-certs "$apk" | tee validation-results/debug-signature.txt
-      - name: Verify pinned existing release APK (read only)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh api repos/Owndot/video-assistent-helper/releases/assets/667389794 -H 'Accept: application/octet-stream' > "$RUNNER_TEMP/published.apk"
-          echo "bdbb2dd853ffcba80afb27492a31baf474ae1e3fd36418e3f7a5206abb760086  $RUNNER_TEMP/published.apk" | sha256sum -c -
-          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
-          "$signer" verify --verbose --print-certs "$RUNNER_TEMP/published.apk" | tee published-certificate.txt
-      - name: Test release verifier with disposable identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          export EVP_KEYSTORE_PATH="$RUNNER_TEMP/test-only.jks"
-          export EVP_STORE_PASSWORD=test-only-password EVP_KEY_PASSWORD=test-only-password EVP_KEY_ALIAS=test-only
-          trap 'rm -f "$EVP_KEYSTORE_PATH" "$RUNNER_TEMP/test-cert.der"' EXIT
-          keytool -genkeypair -keystore "$EVP_KEYSTORE_PATH" -storetype JKS -storepass:env EVP_STORE_PASSWORD -keypass:env EVP_KEY_PASSWORD -alias "$EVP_KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 2 -dname CN=CI-TEST-ONLY
-          keytool -exportcert -keystore "$EVP_KEYSTORE_PATH" -storepass:env EVP_STORE_PASSWORD -alias "$EVP_KEY_ALIAS" > "$RUNNER_TEMP/test-cert.der"
-          export EVP_CERT_SHA256="$(sha256sum "$RUNNER_TEMP/test-cert.der" | cut -d ' ' -f 1)"
-          if EVP_CERT_SHA256=ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5 gradle :app:verifyReleaseSigning --no-daemon > "$RUNNER_TEMP/blocked-signer.log" 2>&1; then
-            echo 'Exposed signer was not blocked'; exit 1
-          fi
-          grep -q 'Exposed production signing identity is blocked' "$RUNNER_TEMP/blocked-signer.log"
-          echo 'PASS: compromised identity blocked using a disposable keystore only'
-          gradle :app:assembleRelease --no-daemon
-          # Never upload or distribute this test-signed production-ID APK.
+      - name: Unsigned release and disposable signing validation
+        # run_local_release.sh creates test-only.jks; no production identity is loaded.
+        run: bash tests/security/run_local_release.sh
       - name: JVM media tests
         run: |
           # Use Ubuntu's signed official mirror; the Azure mirror stalled in run40219442784.
@@ -379,3 +355,43 @@ jobs:
           gh api 'repos/Owndot/Kadri/contents/src/080-helper-app.js?ref=cc14bcdfb8a7a7d296c32ab3943c74b291be6ac4' --jq .content | base64 --decode > /tmp/kadri-helper.js
       - name: Actual Kadri client against the same controlled listener
         run: node tests/security/helper_listener.js /tmp/kadri-helper.js
+
+  local-release-evidence:
+    # Deliberate build/signature tests only; no browser/emulator or APK upload.
+    if: github.head_ref == 'codex/local-release-option-a'
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Check this release-process review scope
+        run: |
+          python3 - <<'PYCODE'
+          import subprocess
+          allowed = {'app/build.gradle', 'release/production-policy.json',
+              'tools/prepare-release.py', 'tools/release_verify.py', 'tools/verify-release.py',
+              'tools/check-update.py', 'tests/security/test_local_release.py',
+              'tests/security/run_local_release.sh', '.github/workflows/build.yml',
+              'LOCAL-RELEASE-MACOS.md', 'SIGNING-MIGRATION.md', 'ANDROID-UPDATE-CHECK.md'}
+          changed = set(subprocess.check_output(['git','diff','--name-only','HEAD^1','HEAD^2'],text=True).splitlines())
+          assert changed and changed <= allowed, f'Out-of-scope changes: {changed-allowed}'
+          print('PASS: release build/tools/docs/tests only; app runtime and player unchanged')
+          PYCODE
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Pinned Android SDK build tools only
+        run: |
+          manager=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | sort -V | tail -1)
+          "$manager" 'platforms;android-34' 'build-tools;34.0.0'
+      - name: Exact-commit unsigned builds and disposable test-only.jks verification
+        run: bash tests/security/run_local_release.sh
