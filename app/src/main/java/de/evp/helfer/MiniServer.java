@@ -234,8 +234,14 @@ public class MiniServer {
     }
 
     // ---------- Laden über den Browser: Anfragen abholen und Daten annehmen ----------
+    /** Do not alias long query values onto an existing signed-int identity. */
+    static int identity(String value) {
+        long id = num(value, Long.MAX_VALUE);
+        return id < Integer.MIN_VALUE || id > Integer.MAX_VALUE ? -1 : (int)id;
+    }
+
     public static String pull(Map<Integer, Fetcher.Proxy> proxies, Map<Integer, String> state, Map<String, String> p) {
-        int job = (int) num(p.get("job"), -1);
+        int job = identity(p.get("job"));
         Fetcher.Proxy px = proxies.get(job);
         if (px == null) return "{\"ok\":true,\"done\":true,\"state\":" + js(state.get(job)) + "}";
         StringBuilder sb = new StringBuilder("{\"ok\":true,\"done\":false,\"reqs\":[");
@@ -250,18 +256,18 @@ public class MiniServer {
     }
 
     public static String push(Map<Integer, Fetcher.Proxy> proxies, Map<String, String> p, byte[] body) {
-        Fetcher.Proxy px = proxies.get((int) num(p.get("job"), -1));
+        Fetcher.Proxy px = proxies.get(identity(p.get("job")));
         if (px == null) return "{\"ok\":false}";
-        int id = (int) num(p.get("id"), -1), st = (int) num(p.get("st"), 0);
+        int id = identity(p.get("id")), st = (int) num(p.get("st"), 0);
         long total = num(p.get("total"), -1);
         if (body == null && st < 400) st = 502;
         return "{\"ok\":" + px.push(id, st, total, body) + "}";
     }
 
     public static String pushStream(Map<Integer, Fetcher.Proxy> proxies, Map<String, String> p, InputStream in, long length) throws Exception {
-        Fetcher.Proxy px = proxies.get((int) num(p.get("job"), -1));
+        Fetcher.Proxy px = proxies.get(identity(p.get("job")));
         if (px == null) return "{\"ok\":false}";
-        int id = (int) num(p.get("id"), -1), st = (int) num(p.get("st"), 0);
+        int id = identity(p.get("id")), st = (int) num(p.get("st"), 0);
         long total = num(p.get("total"), -1);
         return "{\"ok\":" + px.pushStream(id, st, total, in, length) + "}";
     }

@@ -180,7 +180,7 @@ public class HelferService extends Service {
             case "/pull":
                 return MiniServer.pull(Downloads.proxies, Downloads.state, p);
             case "/dlstate": {
-                String st = Downloads.state.get((int) MiniServer.num(p.get("id"), -1));
+                String st = Downloads.state.get(MiniServer.identity(p.get("id")));
                 return "{\"ok\":true,\"state\":" + MiniServer.js(st) + "}";
             }
             case "/end":

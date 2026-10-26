@@ -6,7 +6,8 @@
   let helperKey = 'evp-1';
   try { if (typeof GM_getValue === 'function') helperKey = GM_getValue('helperKey', '') || 'evp-1'; } catch (e) {}
   // to = Wartezeit in ms (Abholen beim Laden über den Browser wartet bis zu 8 s), body = Daten für POST /push
-  async function helper(path, to, body, keyOverride) {
+  async function helper(path, to, body, keyOverride, job) {
+    if (job && job.cancelled) return null;
     to = to || 1200;
     const x = CONFIG.systemHelper === false ? null : gmXhr();
     if (!x) return null;
@@ -18,11 +19,13 @@
       else if (typeof __KADRI__ !== 'undefined' && __KADRI__) key = await KADRI_HELPER_KEY();
       else key = typeof GM_getValue === 'function' ? (GM_getValue('helperKey', '') || 'evp-1') : helperKey;
     } catch (e) { return null; }
-    if (typeof key !== 'string' || !key) return null;
+    if (typeof key !== 'string' || !key || job && job.cancelled) return null;
     return new Promise((res) => {
       let done = false, request;
-      const fin = (v) => { if (!done) { done = true; clearTimeout(timer); res(v); } };
-      const timer = setTimeout(() => { fin(null); try { if (request) request.abort(); } catch (e) {} }, to + 400);
+      const fin = (v) => { if (!done) { done = true; clearTimeout(timer); if (job) job.aborters.delete(abort); res(v); } };
+      const abort = () => { fin(null); try { if (request) request.abort(); } catch (e) {} };
+      const timer = setTimeout(abort, to + 400);
+      if (job) job.aborters.add(abort);
       try {
         request = x({
           method: body ? 'POST' : 'GET', url: HELPER + path, headers: { 'X-EVP-Key': key }, timeout: to, anonymous: true,
@@ -30,6 +33,7 @@
           onload: (r) => { try { fin(r.status === 200 ? JSON.parse(r.responseText) : null); } catch (e) { fin(null); } },
           onerror: () => fin(null), ontimeout: () => fin(null), onabort: () => fin(null),
         });
+        if (done && job && job.cancelled && request) request.abort();
       } catch (e) { fin(null); }
     });
   }
@@ -37,8 +41,9 @@
   // Der Helfer sagt, was er braucht (/pull) – das Skript lädt es mit der Sitzung des Browsers und liefert (/push).
   // Läuft, solange die Seite offen ist (der Player darf zu sein).
   // anon = ohne Cookies: für Adressen fremder Seiten (eine bösartige Playlist darf nicht mit deiner Sitzung woanders abrufen)
-  function gmGet(u, off, len, sizeOnly, anon, expectedValidator) {
+  function gmGet(u, off, len, sizeOnly, anon, expectedValidator, expectedTotal = -1, job) {
     return new Promise((res) => {
+      if (job && job.cancelled) { res({ st: 499 }); return; }
       const x = gmXhr();
       if (!x) { res({ st: 502 }); return; }
       const ranged = sizeOnly || off >= 0 && len > 0;
@@ -51,10 +56,13 @@
       const finish = (value, abort) => {
         if (done) return;
         done = true; clearTimeout(timer);
+        if (job) job.aborters.delete(cancel);
         if (abort) { if (request) { try { request.abort(); } catch (e) {} } else pendingAbort = true; }
         res(value);
       };
+      const cancel = () => finish({ st: 499 }, true);
       const timer = setTimeout(() => finish({ st: 504 }, true), 60400);
+      if (job) job.aborters.add(cancel);
       function parse(r, headOnly) {
         const st = +r.status;
         if (st >= 400) return { st: st };
@@ -89,6 +97,7 @@
           span = b - a + 1;
           if (span !== count && (total < 0 || b !== total - 1) || declared >= 0 && declared !== span) return bad();
         }
+        if (expectedTotal >= 0 && total >= 0 && total !== expectedTotal) return bad();
         if (headOnly) return { st: st, total: total, validator: validator, body: null };
         const data = r.response;
         if (Object.prototype.toString.call(data) !== '[object ArrayBuffer]') return bad();
@@ -96,6 +105,7 @@
         if (sizeOnly) return { st: st, total: total, validator: validator, body: null };
         if (st === 200) {
           total = data.byteLength;
+          if (expectedTotal >= 0 && total !== expectedTotal) return bad();
           if (ranged) {
             if (start >= total) return bad();
             const end = Math.min(start + count, total);
@@ -120,41 +130,100 @@
       } catch (e) { finish({ st: 502 }, true); }
     });
   }
-  const proxyJobs = new Set();
-  // One shared gate covers fetch AND upload across jobs, rather than four bodies per job.
+  const proxyJobs = new Map();
   let proxyActive = 0;
   const proxyWaiting = [];
-  async function proxyTransfer(run) {
-    if (proxyActive >= 2) await new Promise((resolve) => proxyWaiting.push(resolve));
-    else proxyActive++;
-    try { return await run(); }
-    finally { const next = proxyWaiting.shift(); if (next) next(); else proxyActive--; }
+  function pumpProxy() {
+    while (proxyActive < 2 && proxyWaiting.length) {
+      const entry = proxyWaiting.shift();
+      if (entry.job.cancelled) { entry.resolve(false); continue; }
+      proxyActive++; entry.resolve(true);
+    }
   }
-  // allow = Domains, an die die Browser-Sitzung (Cookies) mitgehen darf: die Seite selbst und der Server des Videos
+  function cancelProxyJob(job) {
+    if (job.cancelled) return;
+    job.cancelled = true;
+    for (let i = proxyWaiting.length - 1; i >= 0; i--) {
+      if (proxyWaiting[i].job === job) proxyWaiting.splice(i, 1)[0].resolve(false);
+    }
+    for (const abort of [...job.aborters]) { try { abort(); } catch (e) {} }
+    pumpProxy();
+  }
+  async function proxyTransfer(job, run) {
+    const acquired = await new Promise((resolve) => {
+      if (job.cancelled) { resolve(false); return; }
+      proxyWaiting.push({ job, resolve }); pumpProxy();
+    });
+    if (!acquired) return;
+    try { if (!job.cancelled) await run(); }
+    catch (e) { cancelProxyJob(job); }
+    finally { proxyActive--; pumpProxy(); }
+  }
+  function proxyPause(job, ms) {
+    return new Promise((resolve) => {
+      let timer;
+      const wake = () => { clearTimeout(timer); job.aborters.delete(wake); resolve(); };
+      if (job.cancelled) { resolve(); return; }
+      job.aborters.add(wake); timer = setTimeout(wake, ms);
+    });
+  }
+  function proxyAlive(reply) {
+    if (!reply) return null;
+    return reply.ok === true && typeof reply.state === 'string' &&
+      !/^(fertig|abgebrochen|Fehler\b)/i.test(reply.state);
+  }
+  // allow = domains whose browser session may be used, unchanged from the existing policy.
   async function proxyLoop(job, allow) {
     if (proxyJobs.has(job)) return;
+    const state = { cancelled: false, aborters: new Set() };
     const ok = (u) => { const d = baseDomain(hostOf(u)); return !!d && (allow || []).indexOf(d) >= 0; };
-    proxyJobs.add(job);
-    const validators = new Map();
+    proxyJobs.set(job, state);
+    const transfers = new Map();
     try {
       let idle = 0;
-      while (true) {
-        const r = await helper('/pull?job=' + job, 12000);
-        if (!r) { if (++idle > 5) break; await new Promise((ok) => setTimeout(ok, 1000)); continue; }
+      while (!state.cancelled) {
+        const r = await helper('/pull?job=' + job, 12000, null, null, state);
+        if (!r) { if (++idle > 5) break; await proxyPause(state, 1000); continue; }
         idle = 0;
         if (r.done) break;
-        await Promise.all((r.reqs || []).map((q) => proxyTransfer(async () => {
-          if (!/^https?:\/\//i.test(q.u)) { await helper('/push?job=' + job + '&id=' + q.id + '&st=400&total=-1', 60000, new ArrayBuffer(0)); return; }
-          const g = await gmGet(q.u, q.o, q.l, q.s, !ok(q.u), validators.get(q.u));
-          if (q.s && g.validator && g.st < 400) validators.set(q.u, g.validator);
-          const st = g.st || 502;
-          const body = g.body && st < 400 ? g.body : new ArrayBuffer(0);
-          await helper('/push?job=' + job + '&id=' + q.id + '&st=' + st + '&total=' + (g.total || -1), 60000, body);
-        })));
+        const requests = r.reqs || [];
+        if (!requests.length) continue; // /pull already provides the idle wait.
+        const status = await helper('/dlstate?id=' + job, 1200, null, null, state);
+        if (!proxyAlive(status)) { cancelProxyJob(state); break; }
+        // Poll only while a batch owns active or queued work, one request at a time.
+        let batchDone = false, stopWatch, missedStatus = 0;
+        const watcher = (async () => {
+          while (!batchDone && !state.cancelled) {
+            await new Promise((resolve) => {
+              let timer;
+              stopWatch = () => { clearTimeout(timer); state.aborters.delete(stopWatch); resolve(); };
+              state.aborters.add(stopWatch); timer = setTimeout(stopWatch, 2000);
+            });
+            if (batchDone || state.cancelled) break;
+            const reply = await helper('/dlstate?id=' + job, 1200, null, null, state);
+            const alive = proxyAlive(reply);
+            if (alive === false || alive === null && ++missedStatus >= 3) cancelProxyJob(state);
+            if (alive === true) missedStatus = 0;
+          }
+        })().catch(() => cancelProxyJob(state));
+        try {
+          await Promise.all(requests.map((q) => proxyTransfer(state, async () => {
+            let g;
+            if (!/^https?:\/\//i.test(q.u)) g = { st: 400 };
+            else {
+              const expected = transfers.get(q.u);
+              g = await gmGet(q.u, q.o, q.l, q.s, !ok(q.u), expected && expected.validator, expected ? expected.total : -1, state);
+              if (q.s && g.st < 400) transfers.set(q.u, { validator: g.validator, total: g.total });
+            }
+            if (state.cancelled) return;
+            const st = g.st || 502, body = g.body && st < 400 ? g.body : new ArrayBuffer(0);
+            const reply = await helper('/push?job=' + job + '&id=' + q.id + '&st=' + st + '&total=' + (g.total == null ? -1 : g.total), 60000, body, null, state);
+            if (!reply || reply.ok !== true || st >= 400 && st < 500) cancelProxyJob(state);
+          })));
+        } finally { batchDone = true; if (stopWatch) stopWatch(); await watcher; }
       }
-    } finally {
-      proxyJobs.delete(job);
-    }
+    } catch (e) { cancelProxyJob(state); }
+    finally { cancelProxyJob(state); proxyJobs.delete(job); }
   }
   // Koppel-Seite der Helfer-App (http://127.0.0.1:47811/pair#SCHLÜSSEL): Schlüssel prüfen und dauerhaft merken.
   // Der Schlüssel steht nur im #-Teil – den sieht weder der Server noch eine andere App.
@@ -208,6 +277,7 @@
       try {
         req = xhr({
           method: 'GET',
+          kadriPurpose: 'player-resolve',
           url: u,
           headers: { Range: 'bytes=0-1', Referer: mediaReferrer(u) },   // wie der Web-Player der Seite
           timeout: 4000,

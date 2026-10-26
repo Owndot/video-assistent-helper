@@ -38,6 +38,7 @@ function response(status,headers,bytes=10,head=false){
  let active=0,peak=0,peakArrays=0,posted=0;const pulled=new Set();const LENGTH=64<<20;
  const helper=async(p,to,body)=>{
   const u=new URL(p,'http://helper');
+  if(u.pathname==='/dlstate')return {ok:true,state:'startet'};
   if(u.pathname==='/pull'){
    const job=u.searchParams.get('job');if(pulled.has(job))return {done:true};pulled.add(job);
    return {reqs:Array.from({length:4},(_,i)=>({id:i,u:'http://fixture.test/'+job+'-'+i,o:-1,l:-1,s:false}))};

@@ -1,7 +1,7 @@
 # Browser Proxy memory: compatible correction and remaining limits
 
 Base: Helper f5040b02e3184a995462fbfcb1e6aaf3f3d54adb (reviewed PR #15 merge),
-Kadri 186b25072223c3a25a62176ae4063e1bef3c6344. Issue #5 remains open.
+Kadri 186b25072223c3a25a62176ae4063e1bef3c6344. Issue #5 remains open. Review corrections: see FOUR-REVIEW-FIXES.md.
 
 ## Actual data flow
 
@@ -22,7 +22,7 @@ partial file. Native paths from PR #15 are unchanged.
 
 ## Integrity, cancellation and compatibility
 
-The wire format stays /pull + fixed-length POST /push with the same job/id/st/
+The wire format stays /pull + fixed-length POST /push with opaque signed-int job IDs and the same job/id/st/
 total fields, X-EVP-Key, origin/cookie rules and pairing. Production uses the new
 streaming handler; small custom Java handlers have a bounded compatibility
 adapter. Authentication and Host validation precede body processing. Inbound
@@ -33,6 +33,7 @@ The client validates exposed upstream framing, Content-Length where applicable,
 Content-Range start/end/total and actual decoded body length. HTTP 200 despite
 Range is sliced to the exact window and normalized to 206 for the existing wire
 format. Invalid responses become terminal 422 errors instead of corrupt files.
+The probed total is pinned until completion and checked per window/final file.
 Strong ETag (or Last-Modified) captured by a size probe is sent as If-Range and
 checked on subsequent windows. A changed/missing validator fails the request.
 Without a usable validator, the unchanged protocol cannot prove identity across
@@ -47,6 +48,8 @@ new clients work with old Helper, but old Helper still has the ingress OOM.
 Use both reviewed changes together for their combined benefit. Shared source is
 identical in the two PRs. No release/version/policy approval is implied.
 
+Browser job cancellation drops queued work and aborts owned GET/upload handles.
+Active batches alone check the existing /dlstate endpoint; see FOUR-REVIEW-FIXES.md.
 Closing/cancelling a Proxy wakes pending waiters, rejects late pushes and cleans
 owned files. Copy loops check cancellation between chunks. A blocked ingress
 read can wait for the existing 20-second socket timeout. Each Proxy request now
@@ -84,7 +87,8 @@ internally before callbacks; a manager without early headers still buffers its
 size probe. Kadri's bridge accumulates one complete response and Base64 upload
 copies. A single huge response or several tabs can still exhaust browser RAM.
 The Android Java heap is bounded per transfer; metadata parsers and concurrency
-still add memory. Host tests do not verify Android/OEM cache eviction, process
+still add memory. Job identity is durably reserved before use; do not reset its private journal independently of pairing state.
+Host tests do not verify Android/OEM cache eviction, process
 lifecycle or real Samsung memory behavior. Actual manager/browser RSS is not
 measured by the callback fixture. Issue #5's complete criteria remain unmet.
 

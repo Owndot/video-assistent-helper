@@ -523,10 +523,39 @@ jobs:
           if node tests/security/proxy_memory.js "$old" > "$old/browser.log" 2>&1; then echo 'Old size probe unexpectedly passed'; exit 1; fi
           grep -q 'size probe buffered its response body' "$old/browser.log"
           echo 'PASS: actual predecessor exhausts Java heap in authenticated /push and buffers size-probe body'
+      - name: Reproduce the reviewed size, identity and cancellation findings
+        if: github.head_ref == 'codex/browser-proxy-memory'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/review-four"
+          mkdir -p "$old/classes" "$old/src"
+          for name in Fetcher MiniServer Downloads; do
+            gh api "repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/$name.java?ref=5e52c3228b7907fbced062acf83df47492fe48df" --jq .content | base64 --decode > "$old/$name.java"
+          done
+          grep -q 'AtomicInteger(100)' "$old/Downloads.java"
+          javac -cp tests/java/classes -d "$old/classes" "$old/Fetcher.java" "$old/MiniServer.java"
+          if java -Xmx32m -cp "$old/classes:tests/java/classes" de.evp.helfer.TestTransferIntegrity > "$old/size.log" 2>&1; then echo 'Size regression not reproduced'; exit 1; fi
+          grep -q 'Eight-byte transfer accepted 6 bytes' "$old/size.log"
+          if java -Xmx32m -cp "$old/classes:tests/java/classes" de.evp.helfer.TestJobIdentity --legacy --http > "$old/identity.log" 2>&1; then echo 'Stale identity not reproduced'; exit 1; fi
+          grep -q 'Stale upload accepted after process reset: OLD' "$old/identity.log"
+          gh api 'repos/Owndot/video-assistent-helper/contents/src/080-helper-app.js?ref=5e52c3228b7907fbced062acf83df47492fe48df' --jq .content | base64 --decode > "$old/src/080-helper-app.js"
+          for case in size queue; do
+            if node tests/security/proxy_review.js "$old" --case="$case" > "$old/$case-client.log" 2>&1; then echo "Client $case regression not reproduced"; exit 1; fi
+          done
+          grep -q 'client accepted eight-versus-six bytes with unchanged ETag' "$old/size-client.log"
+          grep -q 'cancelled queued GM work started' "$old/queue-client.log"
+          echo 'PASS: reviewed production readers/client and authenticated reset transport reproduce the three findings'
       - name: Proxy streaming, browser bounds and unchanged authentication
         run: |
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestTransferIntegrity
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestJobIdentity
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestJobIdentity --http
+          bash tests/java/run_job_id_processes.sh
           java -Xmx32m -cp tests/java/classes de.evp.helfer.TestProxyMemory
           java -Xmx32m -cp tests/java/classes de.evp.helfer.TestProxyIngress
+          node tests/security/proxy_review.js
           node --max-old-space-size=32 --expose-gc tests/security/proxy_memory.js
           node tests/security/gm_headers.js
           node tools/build.js --check
