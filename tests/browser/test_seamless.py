@@ -65,9 +65,42 @@ with sync_playwright() as p:
     pg.goto(B + 'direct.html'); pg.wait_for_function('document.getElementById("v").currentTime > 2', timeout=20000)
     pg.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(0.9)
     pg.evaluate('() => document.getElementById("v").pause()'); time.sleep(0.3)
-    pg.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R); time.sleep(0.15)
-    st = pg.evaluate('() => [!!%s.querySelector(".vbridge"), !!%s.querySelector(".vposter")]' % (R, R))
-    check('Video stand: kein Spiegeln, Standbild', not st[0] and st[1], st)
+    # A poster has no minimum lifetime: playing may replace it before 150ms.
+    # Observe the native event without changing any player handler.
+    pg.evaluate('''() => {
+      const r=window.__evpRoot; window.__pausedOpenPlaying=false;
+      r.addEventListener('playing',e=>{if(e.target.matches('.vv')) window.__pausedOpenPlaying=true;},true);
+      window.__pausedOpenTime=document.getElementById('v').currentTime;
+      window.__pausedOpenAt=performance.now();
+      r.querySelector("button[aria-label='Im Videoplayer öffnen']").click();
+    }'''); time.sleep(0.15)
+    st = pg.evaluate('''() => {
+      const r=window.__evpRoot,v=r.querySelector('.vv'),o=document.getElementById('v');
+      const visible=e=>{if(!e)return false;const c=getComputedStyle(e),b=e.getBoundingClientRect();
+        return e.isConnected && c.display!=='none' && c.visibility==='visible' && +c.opacity>0 && b.width>0 && b.height>0;};
+      const p=r.querySelector('canvas.vposter');
+      return {bridge:!!r.querySelector('.vbridge'),wrap:visible(r.querySelector('.vp')),
+        poster:visible(p) && p.width>0 && p.height>0, video:visible(v),
+        ready:v.readyState, seeking:v.seeking, played:window.__pausedOpenPlaying,
+        width:v.videoWidth,height:v.videoHeight,time:v.currentTime,start:window.__pausedOpenTime,
+        elapsed:(performance.now()-window.__pausedOpenAt)/1000,rate:v.playbackRate,
+        sourceSilent:o.paused && o.muted};
+    }''')
+    def valid_picture(s):
+        ready_video = (s['video'] and s['ready']>=2 and not s['seeking'] and s['played']
+                       and s['width']>0 and s['height']>0
+                       and s['start']-0.25 <= s['time'] <= s['start']+s['elapsed']*s['rate']+0.25)
+        return s['wrap'] and not s['bridge'] and s['sourceSilent'] and (s['poster'] or ready_video)
+    check('Video stand: sichtbares Standbild oder bereits bereites Video an derselben Stelle, keine Brücke', valid_picture(st), st)
+    check('Bildprüfung lehnt leeren/verborgenen Player und falsche Videoposition ab',
+          not valid_picture(dict(st,poster=False,video=False))
+          and not valid_picture(dict(st,wrap=False))
+          and not valid_picture(dict(st,poster=False,time=st['start']-1)), st)
+    pg.wait_for_function('() => { const v=%s.querySelector(".vv"); return window.__pausedOpenPlaying && v.readyState>=2 && !v.seeking && !v.paused; }' % R, timeout=15000)
+    check('nach Bereitschaft: Standbild entfernt, Video sichtbar und kein Ladekreis', pg.evaluate('''() => {
+      const r=window.__evpRoot,v=r.querySelector('.vv');return !r.querySelector('.vposter') &&
+        v.videoWidth>0 && getComputedStyle(v).visibility==='visible' && !r.querySelector('.vspin').classList.contains('on');
+    }'''))
     ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(1.0)
     # Schließen mitten im Übergang: Seite läuft an ihrer Stelle weiter (kein Zurückspringen)
     SLOW[0] = 3000

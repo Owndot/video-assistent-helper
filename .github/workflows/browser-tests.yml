@@ -22,7 +22,70 @@ permissions:
   contents: read
 
 jobs:
+  firefox-precheck:
+    # PRs first prove only the two corrected Firefox cases; failed prechecks block the matrix.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Userscript passt zu src/
+        run: node tools/build.js --check
+
+      - uses: actions/cache/restore@v4
+        id: browser-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-firefox-neu-1.64.1
+
+      - name: Werkzeuge
+        timeout-minutes: 8
+        run: |
+          # Avoid the known hanging Azure mirror; retain normal Ubuntu trust.
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+            fi
+          done
+          echo 'Acquire::Retries "1"; Acquire::http::Timeout "20"; Acquire::https::Timeout "20";' | sudo tee /etc/apt/apt.conf.d/99-evp-ci-timeouts > /dev/null
+          # Same pinned Firefox engine as the existing regression job.
+          pip install playwright==1.64.1 pillow==13.0.0
+          python -m playwright install --with-deps firefox
+          sudo apt-get install -y ffmpeg
+
+      - uses: actions/cache/save@v4
+        if: steps.browser-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-firefox-neu-1.64.1
+
+      - name: Only the two remaining Firefox cases
+        env:
+          BROWSER: firefox
+          TESTS: 'test_mirrorprev.py test_seamless.py'
+        run: tests/browser/run_all.sh
+      - name: Exact precheck logs
+        if: always()
+        run: |
+          python - <<'PYLOG'
+          from pathlib import Path
+          for name in ('test_mirrorprev', 'test_seamless'):
+              p = Path('tests/browser/out') / (name + '.log')
+              if p.exists():
+                  print(p)
+                  print(p.read_text())
+          PYLOG
+
   test:
+    needs: firefox-precheck
+    if: ${{ !cancelled() && (needs.firefox-precheck.result == 'success' || needs.firefox-precheck.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -95,7 +158,13 @@ jobs:
       - name: Exact failed assertions
         if: always()
         run: |
-          rg -n 'FAIL |ERGEBNIS:|Traceback|Error:' tests/browser/out/*.log || true
+          python - <<'PYLOG'
+          from pathlib import Path
+          for p in sorted(Path('tests/browser/out').glob('*.log')):
+              for line in p.read_text().splitlines():
+                  if any(k in line for k in ('FAIL ', 'ERGEBNIS:', 'Error:', 'Traceback', 'Pointer:', 'outside viewport')):
+                      print(str(p) + ': ' + line)
+          PYLOG
 
       - uses: actions/upload-artifact@v4
         if: always()
