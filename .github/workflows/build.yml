@@ -547,14 +547,33 @@ jobs:
           grep -q 'client accepted eight-versus-six bytes with unchanged ETag' "$old/size-client.log"
           grep -q 'cancelled queued GM work started' "$old/queue-client.log"
           echo 'PASS: reviewed production readers/client and authenticated reset transport reproduce the three findings'
+      - name: Reproduce legacy full-response and initial-status regressions
+        if: github.head_ref == 'codex/browser-proxy-memory'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/review-two"
+          mkdir -p "$old/classes" "$old/src"
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/Fetcher.java?ref=5d5100c9adc34c05bea7b2bb1b1bc3ce24186ea9' --jq .content | base64 --decode > "$old/Fetcher.java"
+          javac -cp tests/java/classes -d "$old/classes" "$old/Fetcher.java"
+          if java -Xmx32m -cp "$old/classes:tests/java/classes" de.evp.helfer.TestLegacyFullResponse --http > "$old/length.log" 2>&1; then echo 'Legacy length regression not reproduced'; exit 1; fi
+          grep -q 'Legacy HTTP200 accepted eight-byte prefix: 01234567' "$old/length.log"
+          gh api 'repos/Owndot/video-assistent-helper/contents/src/080-helper-app.js?ref=5d5100c9adc34c05bea7b2bb1b1bc3ce24186ea9' --jq .content | base64 --decode > "$old/src/080-helper-app.js"
+          if node tests/security/proxy_initial_status.js "$old" > "$old/status.log" 2>&1; then echo 'Initial status regression not reproduced'; exit 1; fi
+          grep -q 'initial status timeout discarded pulled work' "$old/status.log"
+          echo 'PASS: reviewed production code accepts the wrong prefix over HTTP and drops the timed-out initial batch'
       - name: Proxy streaming, browser bounds and unchanged authentication
         run: |
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestLegacyFullResponse
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestLegacyFullResponse --http
           java -Xmx32m -cp tests/java/classes de.evp.helfer.TestTransferIntegrity
           java -Xmx32m -cp tests/java/classes de.evp.helfer.TestJobIdentity
           java -Xmx32m -cp tests/java/classes de.evp.helfer.TestJobIdentity --http
           bash tests/java/run_job_id_processes.sh
           java -Xmx32m -cp tests/java/classes de.evp.helfer.TestProxyMemory
           java -Xmx32m -cp tests/java/classes de.evp.helfer.TestProxyIngress
+          node tests/security/proxy_initial_status.js
           node tests/security/proxy_review.js
           node --max-old-space-size=32 --expose-gc tests/security/proxy_memory.js
           node tests/security/gm_headers.js

@@ -645,7 +645,11 @@ public interface Fetcher {
                     }
                     if(status==206 && (r.off<0 || r.len<=0 || bytes<=0 || bytes>r.len || total>=0 && r.off+bytes>total || bytes<r.len && (total<0 || r.off+bytes!=total)))
                         throw new ResponseError("Mismatched proxy range length");
-                    if(status==200 && total>=0 && bytes!=total)throw new ResponseError("Mismatched proxy total length");
+                    // In the existing wire format st=200 carries the full representation.
+                    // Normalized partial windows use st=206; size probes never enter this block.
+                    long actual = file.length();
+                    if(status==200 && (total>=0 && actual!=total || r.expectedTotal>=0 && actual!=r.expectedTotal))
+                        throw new ResponseError("Mismatched proxy total length");
                 }
                 synchronized(open) {
                     if(open.get(id)!=r || closed || r.cancelled)return false;

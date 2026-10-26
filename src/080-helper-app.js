@@ -188,8 +188,14 @@
         if (r.done) break;
         const requests = r.reqs || [];
         if (!requests.length) continue; // /pull already provides the idle wait.
-        const status = await helper('/dlstate?id=' + job, 1200, null, null, state);
-        if (!proxyAlive(status)) { cancelProxyJob(state); break; }
+        // Keep this pulled batch while status is temporarily unknown; never re-pull it.
+        let initialAlive = null;
+        for (let attempt = 0; attempt < 3 && !state.cancelled; attempt++) {
+          initialAlive = proxyAlive(await helper('/dlstate?id=' + job, 1200, null, null, state));
+          if (initialAlive !== null) break; // Confirmed active or terminal, not a transport failure.
+          if (attempt < 2) await proxyPause(state, 2000);
+        }
+        if (initialAlive !== true) { cancelProxyJob(state); break; }
         // Poll only while a batch owns active or queued work, one request at a time.
         let batchDone = false, stopWatch, missedStatus = 0;
         const watcher = (async () => {
