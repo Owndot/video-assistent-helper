@@ -195,13 +195,14 @@ public class HlsCore {
     }
 
     // ---------- Laden ----------
-    private byte[] decrypt(Seg s, byte[] data) throws Exception {
-        if (s.key == null || !"AES-128".equals(s.key.method) || s.key.uri == null) return data;
+    private Cipher decryptor(Seg s) throws Exception {
+        if (s.key == null || !"AES-128".equals(s.key.method) || s.key.uri == null) return null;
         byte[] k;
         synchronized (keys) {
             k = keys.get(s.key.uri);
             if (k == null) { k = fetch(s.key.uri, -1, -1); keys.put(s.key.uri, k); }
         }
+        if (k.length != 16) throw new IOException("Invalid AES-128 key length");
         byte[] iv = s.key.iv;
         if (iv == null) {
             iv = new byte[16];
@@ -210,7 +211,7 @@ public class HlsCore {
         }
         Cipher c = Cipher.getInstance("AES/CBC/PKCS5Padding");
         c.init(Cipher.DECRYPT_MODE, new SecretKeySpec(k, 0, 16, "AES"), new IvParameterSpec(iv));
-        return c.doFinal(data);
+        return c;
     }
 
     void downloadMedia(Media m, File out, String tag, Listener l, AtomicInteger done, int total) throws Exception {
@@ -226,10 +227,31 @@ public class HlsCore {
                 final Seg s = all.get(i);
                 fs.add(pool.submit(() -> {
                     if (l != null && l.cancelled()) throw new IOException("abgebrochen");
-                    byte[] d = fetch(s.url, s.off, s.len);
-                    d = decrypt(s, d);
+                    Cipher cipher = decryptor(s);
                     File f = new File(work, tag + "_" + idx);
-                    try (OutputStream o = new FileOutputStream(f)) { o.write(d); }
+                    File raw = cipher == null ? f : new File(work, tag + "_" + idx + ".encrypted");
+                    boolean complete = false;
+                    try {
+                        net.download(s.url, s.off, s.len, raw, l);
+                        if (cipher != null) {
+                            // JCE update/doFinal preserves padding-error reporting without full-segment arrays.
+                            byte[] buffer = new byte[64 << 10];
+                            try (InputStream in = new FileInputStream(raw); OutputStream o = new FileOutputStream(f)) {
+                                int count;
+                                while ((count = in.read(buffer)) != -1) {
+                                    Fetcher.checkCancelled(l);
+                                    byte[] decoded = cipher.update(buffer, 0, count);
+                                    if (decoded != null) o.write(decoded);
+                                }
+                                Fetcher.checkCancelled(l);
+                                o.write(cipher.doFinal());
+                            }
+                        }
+                        complete = true;
+                    } finally {
+                        if (cipher != null) raw.delete();
+                        if (!complete) f.delete();
+                    }
                     parts[idx] = f;
                     int n = done.incrementAndGet();
                     if (l != null) l.progress(n, total);
