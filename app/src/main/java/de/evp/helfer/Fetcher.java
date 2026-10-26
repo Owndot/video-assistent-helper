@@ -477,7 +477,7 @@ public interface Fetcher {
         volatile boolean closed;
 
         public Proxy() { this(new java.io.File(System.getProperty("java.io.tmpdir"), "evp-proxy-"+System.nanoTime())); }
-        public Proxy(java.io.File spool) { this(spool, 120000); }
+        public Proxy(java.io.File spool) { this(spool, 600000); }
         Proxy(java.io.File spool, long timeoutMs) { this.spool=spool; this.timeoutMs=timeoutMs; }
         private static void discard(Req r) { if (r.file != null) r.file.delete(); }
         private void active(Req r, HlsCore.Listener l) throws IOException {
@@ -547,7 +547,8 @@ public interface Fetcher {
                         long left=TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime());
                         if(left<=0)throw new java.net.SocketTimeoutException("Proxy response timeout");
                         if(r.done.await(Math.min(2000,left),TimeUnit.MILLISECONDS))break;
-                        if(System.currentTimeMillis()-lastPull>45000)throw new IOException("Page closed – downloading via the browser needs the page to stay open");
+                        // /pull is silent while GM buffers/uploads or waits for the document gate.
+                        // Use the finite request lease instead of misclassifying that as a closed page.
                     }
                     active(r,l);
                     if(r.status==200 || r.status==206 || r.status>=400 && r.status<500) { delivered=true; return r; }

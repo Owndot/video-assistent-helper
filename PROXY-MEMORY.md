@@ -50,7 +50,12 @@ identical in the two PRs. No release/version/policy approval is implied.
 Closing/cancelling a Proxy wakes pending waiters, rejects late pushes and cleans
 owned files. Copy loops check cancellation between chunks. A blocked ingress
 read can wait for the existing 20-second socket timeout. Each Proxy request now
-has a 120-second absolute deadline even if /pull continues. Network failures
+has a ten-minute absolute deadline, including time queued behind the client gate.
+The old 45-second /pull-silence heuristic is removed: the client deliberately
+stops polling while it fetches/uploads, so silence does not prove page closure.
+This avoids false failures for queued transfers but a closed browser can now take
+up to the request deadline to be detected; explicit app cancellation wakes waiters
+immediately. Network failures
 retain at most three existing Proxy attempts; permanent 4xx errors are not
 retried. Browser GET has its existing 60-second timeout plus an abort watchdog;
 completed helper upload watchdogs are cleared promptly. No persistent resume
