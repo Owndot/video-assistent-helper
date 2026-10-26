@@ -17,6 +17,38 @@ used this byte-array API. AES decryption allocated another complete segment.
 input and `-Xmx32m`, and requires the original OutOfMemoryError. It does not use
 network data, real media URLs or production secrets.
 
+### Review correction: contradictory response framing
+
+Reviewed head `8074aff7f535f9faa738dd97a973fc46ea8de8d1` stopped a complete
+HTTP 200 body after the declared Content-Length. With `Transfer-Encoding:
+chunked`, `Content-Length: 4` and ten decoded bytes, it returned/saved `0123`
+successfully. The platform decoded chunk framing while the application trusted
+the contradictory length metadata.
+
+`copyResponse()` now inspects both single-header access and the case-insensitive
+header map before copying. Transfer-Encoding plus Content-Length, differing
+Content-Length values, malformed lengths and unsupported transfer codings are
+permanent ResponseErrors. Chunked without Content-Length remains supported.
+For complete known-length 200/206 responses, an extra decoded byte also causes
+a permanent error; intentionally sliced HTTP-200 Range windows still stop early.
+Neither failure returns a byte array or a successful file; `Http.download()`
+removes its temporary output and does not retry these errors.
+
+`TestResponseFraming` uses a raw HTTP/1.1 socket fixture (a framework might
+normalize conflicting headers). It explicitly checks what HttpURLConnection
+exposes: both header APIs retain TE=chunked and CL=4, getContentLengthLong reports
+4, but the decoded stream returns `0123456789`. The same production test must
+fail against the reviewed head, showing both truncated outputs, and pass against
+the correction. The simulated fixture additionally verifies the final-byte guard
+when a transport exposes CL=4 without TE but still supplies ten decoded bytes.
+
+These checks validate headers and bytes exposed by HttpURLConnection, not an
+independent raw-wire parser in the app. CI verifies the OpenJDK provider. Android
+and OEM provider behavior is not runtime-verified here. If a provider or upstream
+intermediary hides contradictory framing and also truncates the stream, this API
+cannot recover the original wire evidence; no universal raw-wire detection claim
+is made. No new HTTP stack or protocol is introduced.
+
 ## Correction and compatibility
 
 * Native HLS/DASH media goes through `Http.download()` to existing private staging
@@ -70,6 +102,8 @@ after process death is promised.
 tests/java/build.sh
 java -Xmx32m -cp tests/java/classes de.evp.helfer.TestMemoryWindows
 java -Xmx32m -cp tests/java/classes de.evp.helfer.TestMemoryHttp
+java -Xmx32m -cp tests/java/classes de.evp.helfer.TestResponseFraming --simulated
+java -Xmx32m -cp tests/java/classes de.evp.helfer.TestResponseFraming
 tests/java/run_core_tests.sh
 javac -cp tests/java/classes -d tests/java/classes tests/android_e2e/TestCredentialedStream.java
 java -Xmx32m -cp tests/java/classes de.evp.helfer.TestCredentialedStream
@@ -88,7 +122,8 @@ the credentialed MP4 resume suite cover unchanged authentication/redirect paths.
 The existing media fixtures exercise HLS AES with explicit/sequence IV, fMP4,
 byte ranges, DASH, MP4 and Proxy compatibility; ffmpeg fully decodes the outputs.
 
-The memory job runs on normal PRs and main. Only the historical OOM proof and
-the reused broader media compatibility run are limited to this work branch.
+The memory/framing tests run on normal PRs and main. Only the historical OOM and
+reviewed-framing failure proofs and the reused broader media compatibility run
+are limited to this work branch.
 This branch skips APK, browser and emulator jobs. All fixtures and keys are
 synthetic; CI has contents:read only and creates no APK or release.

@@ -481,8 +481,27 @@ jobs:
           gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/Fetcher.java?ref=b42f213d22e5caef63efc3768958923c07077ea3' --jq .content | base64 --decode > "$old/Fetcher.java"
           javac -cp tests/java/classes -d "$old/classes" "$old/Fetcher.java" tests/java/jt/de/evp/helfer/TestMemoryBaseline.java
           java -Xmx32m -cp "$old/classes:tests/java/classes" de.evp.helfer.TestMemoryBaseline
+      - name: Reproduce reviewed HTTP framing truncation
+        if: github.head_ref == 'codex/native-media-memory'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/framing-baseline"
+          mkdir -p "$old/classes"
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/Fetcher.java?ref=8074aff7f535f9faa738dd97a973fc46ea8de8d1' --jq .content | base64 --decode > "$old/Fetcher.java"
+          javac -cp tests/java/classes -d "$old/classes" "$old/Fetcher.java"
+          if java -Xmx32m -cp "$old/classes:tests/java/classes" de.evp.helfer.TestResponseFraming > "$old/proof.log" 2>&1; then
+            echo 'Reviewed framing regression unexpectedly passed'; exit 1
+          fi
+          cat "$old/proof.log"
+          grep -q 'retains TE=chunked and CL=4 in both APIs; getContentLengthLong=4, decoded=0123456789' "$old/proof.log"
+          grep -q 'Framing accepted by production paths: fetch=0123, download=4 bytes (0123)' "$old/proof.log"
+          echo 'PASS: real parser exposes both headers; reviewed code silently truncates both outputs'
       - name: Bounded memory, ranges, cancellation and real HTTP
         run: |
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestResponseFraming --simulated
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestResponseFraming
           java -Xmx32m -cp tests/java/classes de.evp.helfer.TestMemoryWindows
           java -Xmx32m -cp tests/java/classes de.evp.helfer.TestMemoryHttp
       - name: Native media and existing proxy compatibility

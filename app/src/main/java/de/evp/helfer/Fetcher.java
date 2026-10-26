@@ -234,6 +234,40 @@ public interface Fetcher {
             if (off >= 0 && len > 0 && off > Long.MAX_VALUE - len) throw new ResponseError("Range overflow");
         }
 
+        private static List<String> headerValues(HttpURLConnection c, String name) {
+            List<String> values = new ArrayList<>();
+            for (Map.Entry<String, List<String>> field : c.getHeaderFields().entrySet()) {
+                if (name.equalsIgnoreCase(field.getKey())) values.addAll(field.getValue());
+            }
+            String value = c.getHeaderField(name);
+            if (values.isEmpty() && value != null) values.add(value);
+            return values;
+        }
+
+        /** Validate exposed framing before trusting a length or writing body bytes.
+         * HttpURLConnection can decode chunked while still reporting the raw CL.
+         */
+        private static long responseLength(HttpURLConnection c) throws ResponseError {
+            List<String> lengths = headerValues(c, "Content-Length");
+            List<String> transfers = headerValues(c, "Transfer-Encoding");
+            if (!transfers.isEmpty()) {
+                if (!lengths.isEmpty()) throw new ResponseError("Conflicting Transfer-Encoding and Content-Length");
+                if (transfers.size() != 1 || !"chunked".equalsIgnoreCase(transfers.get(0).trim()))
+                    throw new ResponseError("Unsupported media Transfer-Encoding");
+                return -1;
+            }
+            long body = -1;
+            for (String declared : lengths) {
+                long value;
+                try { value = Long.parseLong(declared.trim()); }
+                catch (NumberFormatException e) { throw new ResponseError("Invalid Content-Length"); }
+                if (value < 0) throw new ResponseError("Negative Content-Length");
+                if (body >= 0 && body != value) throw new ResponseError("Conflicting Content-Length values");
+                body = value;
+            }
+            return body;
+        }
+
         /** Copy one validated representation/window with a fixed 64KiB buffer.
          * A 200 response to Range is sliced while reading, never materialized.
          */
@@ -246,13 +280,7 @@ public interface Fetcher {
             if (ranged && off > Long.MAX_VALUE - len) throw new ResponseError("Range overflow");
             String encoding = c.getHeaderField("Content-Encoding");
             if (encoding != null && !encoding.equalsIgnoreCase("identity")) throw new ResponseError("Unexpected media Content-Encoding");
-            long body = c.getContentLengthLong();
-            String declared = c.getHeaderField("Content-Length");
-            if (declared != null) {
-                try { body = Long.parseLong(declared.trim()); }
-                catch (NumberFormatException e) { throw new ResponseError("Invalid Content-Length"); }
-                if (body < 0) throw new ResponseError("Negative Content-Length");
-            }
+            long body = responseLength(c);
             long expected = body, skip = 0;
             if (code == 206) {
                 String raw = c.getHeaderField("Content-Range");
@@ -299,7 +327,10 @@ public interface Fetcher {
                 if (expected >= 0 && received != expected && !(code == 200 && ranged && body < 0))
                     throw new java.io.EOFException("Incomplete media body");
                 if (code == 200 && ranged) c.disconnect(); // Stop an ignored-Range body before stream close can drain it.
-                if (code == 206 && in.read() != -1) throw new ResponseError("Media body exceeds Content-Range");
+                // A decoded stream must also agree with a declared full-body length.
+                // Intentional windows from an ignored Range stop early instead.
+                if (!(code == 200 && ranged) && expected >= 0 && in.read() != -1)
+                    throw new ResponseError("Media body exceeds declared length/range");
             }
         }
 
