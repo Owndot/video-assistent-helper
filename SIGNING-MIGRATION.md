@@ -14,6 +14,8 @@ Stand: 26.10.2026; geprüfter Ausgangsstand Helper `7c3c1c2`. Die Eigentümerent
 
 Die öffentliche historische APK 1.0.84 (Tag `neueste`, Asset-ID `667389794`) verwendet den kompromittierten Signierer. Weder ihr Dateiname noch GitHubs „Latest“-Kennzeichnung sind eine Empfehlung. Kadri und das Userscript funktionieren ohne Helper; „Helper-App“ in den Player-Einstellungen deaktivieren. Die historische Datei nicht als Übergangslösung installieren.
 
+Die frühere Vorgabe, APK-Assets als historische Downloads zu erhalten, ist aufgehoben. Die dauerhafte Entfernung der nicht freigegebenen APK-Assets ist jetzt ausdrücklich beauftragt; Tags, Quellcode und Releaseinformationen bleiben erhalten. Die Löschung ist wegen des hier fehlenden Release-Schreibzugriffs noch ausstehend; [Bestandsaufnahme, genaue Löschschritte und Prüfungen](HISTORICAL-RELEASE-WARNING.md). Ein Dokumentationsmerge allein entfernt keine APK.
+
 Die alte APK wurde bereits unabhängig vom Buildpfad geprüft: [Audit 40117549391](https://github.com/Owndot/video-assistent-helper/actions/runs/40117549391). Ihr Zertifikat stimmt mit dem exponierten historischen Schlüssel überein. [MIGRATION-RESULTS.md](MIGRATION-RESULTS.md) enthält die öffentlichen Hashwerte und Grenzen dieser Evidenz. Historische Kopien sind dadurch nicht widerrufen.
 
 ## Nutzeranleitung — erst nach separater APK-Freigabe anwenden

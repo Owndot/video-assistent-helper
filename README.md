@@ -91,6 +91,8 @@ dort YTDLnis). Den Vollbild-Hinweis des Browsers („zum Beenden … von oben zi
 
 > **NICHT INSTALLIEREN:** Die historische Helper-APK 1.0.84 verwendet einen kompromittierten Signierschlüssel. Eine sicher neu signierte Nachfolgeversion ist noch nicht freigegeben. Kadri und das Userscript können ohne Helper genutzt werden. Auch GitHubs „Latest“-Kennzeichnung ist derzeit keine Installationsempfehlung.
 
+Die Entfernung historischer APK-Assets aus den offiziellen Releases ist beauftragt. Solange sie noch erreichbar sind, bleiben sie ausdrücklich **nicht zur Installation freigegeben**; [Ausführungsstand und Löschanleitung](HISTORICAL-RELEASE-WARNING.md).
+
 1. **Violentmonkey** in Vivaldi installieren (Erweiterungen, ab Vivaldi 8.2 auf Android).
 2. **Userscript:** [video-assistent.user.js](userscript/video-assistent.user.js) in Violentmonkey installieren (alte Version vorher löschen).
 3. **Helper vorerst weglassen:** keine historische APK installieren. In den Player-Einstellungen „Helper-App“ deaktivieren, insbesondere bei einer alten Installation. Ohne Helper bleiben der Player und die Browser-/externen Downloadwege nutzbar; Systemhelligkeit, Systemlautstärke und Helper-Downloads fehlen.

@@ -1,35 +1,65 @@
-# Historischen APK-Download warnen — Arbeitspaket 1
+# Historische APK-Assets entfernen — aktualisierte Eigentümerfreigabe
 
-## Tatsächlich beobachteter Zustand (26.10.2026)
+## Auftrag und tatsächlich geprüfter Zustand
 
-Das Repository ist öffentlich. GitHubs `releases/latest` liefert Release-ID `421300300`, Tag `neueste`, Titel „Video-Assistent Helper 1.0.84“. Die APK ist weiter öffentlich als Asset `667389794` (`VideoAssistent-Helper.apk`, 50.616 Bytes) gelistet. Öffentlicher Dateihash: `bdbb2dd853ffcba80afb27492a31baf474ae1e3fd36418e3f7a5206abb760086`. Es wurde keine APK heruntergeladen, erzeugt oder verändert.
+Die Eigentümerfreigabe erlaubt jetzt ausdrücklich die dauerhafte Löschung historischer Release-APK-Assets mit kompromittiertem Signierer oder ohne öffentliche Installationsfreigabe. Sie ersetzt die frühere Vorgabe, diese APK-Assets zu erhalten. Git-Tags, Quellcode, Git-Historie, Release-Datensätze und andere Dateien bleiben erhalten.
 
-Die aktuelle Beschreibung fordert noch auf: „Auf dem Handy öffnen, VideoAssistent-Helper.apk antippen und installieren. Neue Versionen lassen sich einfach drüber installieren.“ Diese Aufforderung ist für den kompromittierten Signierer falsch.
+Die vollständige zugängliche Releaseliste wurde über die GitHub-API erneut geprüft (100 Einträge pro Seite; die zweite Seite ist leer). Es existiert genau ein öffentliches Release und genau ein APK-Asset:
 
-**Die Live-Metadaten wurden in diesem Arbeitspaket noch nicht geändert:** Die verfügbare GitHub-Verbindung bietet nur lesenden Release-Zugriff; der CLI-Zugriff scheitert am Sandbox-Netzwerkzugang. Der Warnhinweis im Draft-PR ersetzt keine Warnung am veröffentlichten Release. Bis zur manuellen Änderung bleibt dort die irreführende Aufforderung sichtbar.
+| Release / Tag | Release-ID | APK / Asset-ID | Grund für Entfernung |
+|---|---|---|---|
+| Video-Assistent Helper 1.0.84 / `neueste` | `421300300` | `VideoAssistent-Helper.apk` / `667389794` | Kompromittierter Signierer, bereits durch Audit 40117549391 belegt; keine sichere Installationsfreigabe |
 
-## Genaue manuelle Änderung durch den Repository-Eigentümer
+APK-Dateigröße: 50.616 Bytes. Öffentlicher SHA-256: `bdbb2dd853ffcba80afb27492a31baf474ae1e3fd36418e3f7a5206abb760086`.
 
-1. Im angemeldeten GitHub-Konto [historischen Release bearbeiten](https://github.com/Owndot/video-assistent-helper/releases/edit/neueste) öffnen. Kontrollieren: Tag `neueste`, Version 1.0.84. Alternativ [Releaseansicht](https://github.com/Owndot/video-assistent-helper/releases/tag/neueste) → Stiftsymbol.
-2. Nur den Release-Titel durch diesen Text ersetzen:
+**Ausführungsstand: noch kein Asset gelöscht, kein Release umbenannt.** Die GitHub-Verbindung stellt keine Release-/Asset-Schreiboperation bereit. Der CLI-Zugriff blieb bei der Sandbox-Netzwerkfreigabe hängen und wurde abgebrochen. Die abschließende API-Abfrage listet das APK-Asset weiterhin öffentlich. Dieser Dokumentations-PR entfernt keine Release-Datei; die nachstehenden Schritte sind noch durch den Eigentümer auszuführen.
 
-   **HISTORISCH – NICHT INSTALLIEREN – Helper 1.0.84 (kompromittierte Signatur)**
+## Genaue manuelle Schritte
 
-3. Die **gesamte** bisherige Beschreibung durch den folgenden Text ersetzen. Damit entfallen beide alten deutschen und englischen Installationsaufforderungen:
+1. [Historischen Release bearbeiten](https://github.com/Owndot/video-assistent-helper/releases/edit/neueste) im berechtigten GitHub-Konto öffnen. Version 1.0.84, Tag `neueste`, Release-ID `421300300` prüfen.
+2. Unter den vorhandenen Assets **ausschließlich** `VideoAssistent-Helper.apk` entfernen und die dauerhafte Löschung bestätigen. Keine Quellcodearchive, Tags, anderen Dateien oder den Release selbst löschen. Alternativ im bereits authentifizierten lokalen GitHub-CLI genau diesen Asset-Endpunkt löschen:
+
+```sh
+# Vorher Identität/Datei nochmals prüfen; bei Abweichung anhalten.
+gh api repos/Owndot/video-assistent-helper/releases/assets/667389794 \
+  --jq '{id,name,size,digest}'
+# Ausschließlich das freigegebene APK-Asset dauerhaft löschen.
+gh api --method DELETE repos/Owndot/video-assistent-helper/releases/assets/667389794
+```
+
+3. Nach erfolgreicher Entfernung den Release-Titel setzen auf:
+
+   **HISTORISCH – KEINE APK VERFÜGBAR – Helper 1.0.84**
+
+4. Die gesamte bisherige Beschreibung durch den folgenden Text ersetzen, damit die alten Installationsaufforderungen entfallen. Falls die Löschung noch nicht gelingt, zunächst nur die Warnung übernehmen und nicht behaupten, das Asset sei bereits entfernt.
 
 ```markdown
-> **NICHT INSTALLIEREN:** Diese historische APK verwendet einen kompromittierten Signierschlüssel. Eine sicher neu signierte Nachfolgeversion ist noch nicht freigegeben. Kadri und das Userscript können ohne Helper genutzt werden.
+> **NICHT INSTALLIEREN:** Die historische APK dieser Version verwendet einen kompromittierten Signierschlüssel. Eine sicher neu signierte Nachfolgeversion ist noch nicht freigegeben. Kadri und das Userscript können ohne Helper genutzt werden.
 >
-> **DO NOT INSTALL:** This historical APK uses a compromised signing key. No safely re-signed successor APK has been approved for distribution yet. Kadri and the userscript can be used without Helper.
+> **DO NOT INSTALL:** This version's historical APK uses a compromised signing key. No safely re-signed successor APK has been approved for distribution yet. Kadri and the userscript can be used without Helper.
 
-Version 1.0.84 bleibt ausschließlich als historisches Artefakt erhalten. Auch eine „Latest“-Kennzeichnung durch GitHub ist keine Installationsempfehlung.
+Historische, nicht mehr installierbare Version 1.0.84. Das alte APK-Asset wurde aus diesem Release entfernt. Releaseinformationen, Git-Tag und Quellcode bleiben als historische Dokumentation erhalten. Eine „Latest“-Kennzeichnung ist keine Installationsempfehlung.
 
 Die freigegebene Nachfolgestrategie ist Option A: neuer ausschließlich lokal verwalteter Produktionssignierer, unveränderte applicationId de.evp.helfer, keine Lineage und kein weiterer Einsatz des kompromittierten Signierers. Bestehende Nutzer müssen die alte Produktions-App vollständig deinstallieren, bevor sie einen separat freigegebenen Nachfolger frisch installieren und alle Browser neu koppeln. Künftige Updates verwenden denselben neuen Signierer und einen steigenden versionCode.
 
-Aktuell keine historische APK installieren oder als Update darüberinstallieren. Bis zur gesonderten Freigabe einer neuen Produktions-APK den Player ohne Helper verwenden und „Helper-App“ in den Player-Einstellungen deaktivieren.
+Bis zur gesonderten Freigabe einer neuen Produktions-APK den Player ohne Helper verwenden und „Helper-App“ in den Player-Einstellungen deaktivieren.
 ```
 
-4. Tag, Zielcommit, Assets, Dateinamen sowie sonstige Release-Einstellungen unverändert lassen. Keine Datei entfernen, keine neue hochladen, keinen Tag oder Release löschen/erzeugen. Mit **Update release** speichern.
-5. [Releaseansicht](https://github.com/Owndot/video-assistent-helper/releases/tag/neueste) und [GitHubs Latest-Ansicht](https://github.com/Owndot/video-assistent-helper/releases/latest) kontrollieren: Warnung ganz oben, historischer Titel, keine bisherige Installationsaufforderung. Die vorhandene APK bleibt absichtlich öffentlich; ihre Erreichbarkeit ist keine Empfehlung. Asset-ID/Dateihash und Tag müssen unverändert bleiben.
+5. Mit **Update release** speichern; Tag, Zielcommit und sonstige Release-Einstellungen unverändert lassen. Keine neue Datei hochladen.
 
-Nach manueller Anwendung kann dieser Statusvermerk in einer späteren reinen Dokumentationskorrektur aktualisiert werden. Die [Option-A-Anleitung](SIGNING-MIGRATION.md) wird mit diesem Draft-PR vorgeschlagen; es wird hier nichts gemergt und kein Produktionssignierprozess implementiert.
+## Verifikation nach manueller Ausführung — derzeit noch ausstehend
+
+- Alle Release-Assets erneut paginiert prüfen. Die folgende Ausgabe muss für APK-Assets leer sein; zusätzliche noch vorhandene APK-Assets müssen einzeln auf Freigabe geprüft werden.
+- Die Asset-ID `667389794` muss anschließend für den berechtigten Eigentümer mit „Not Found“ antworten. Ein Berechtigungs- oder Netzwerkfehler allein ist kein Löschbeweis.
+- [Releaseansicht](https://github.com/Owndot/video-assistent-helper/releases/tag/neueste) und [Latest-Ansicht](https://github.com/Owndot/video-assistent-helper/releases/latest) müssen den historischen Titel und die Warnung zeigen, ohne APK-Download. Den bisherigen direkten APK-Download zusätzlich auf fehlende Verfügbarkeit prüfen.
+- Release `421300300` und Tag `neueste` müssen weiterhin existieren; deren Erhalt ist beabsichtigt.
+
+```sh
+gh api --paginate 'repos/Owndot/video-assistent-helper/releases?per_page=100' \
+  --jq '.[] | {release: .id, tag: .tag_name, apks: [.assets[] | select(.name | test("\\.apk$"; "i")) | {id,name}]}'
+gh api repos/Owndot/video-assistent-helper/releases/assets/667389794
+gh api repos/Owndot/video-assistent-helper/releases/421300300 --jq '{id,tag_name,name,assets:[.assets[].name]}'
+gh api repos/Owndot/video-assistent-helper/git/ref/tags/neueste --jq .object.sha
+```
+
+Ein Entfernen offizieller Downloads widerruft keine bereits heruntergeladenen Kopien. Nutzeranleitung und Option A: [SIGNING-MIGRATION.md](SIGNING-MIGRATION.md). Noch keine sichere neue Produktions-APK verfügbar; keine neue APK, Schlüsselgenerierung oder Signierimplementierung in diesem Arbeitspaket.
