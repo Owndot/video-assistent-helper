@@ -1,17 +1,23 @@
-# Required production update validation (not yet executed)
+# Option A: spätere Produktionsprüfung — noch nicht ausgeführt
 
-Host preflight (Android SDK tools on PATH):
-`python3 tools/check-update.py trusted-old.apk app/build/outputs/apk/release/app-release.apk --expected-cert PUBLIC_CERT_SHA256`
+Die freigegebene [Option A](SIGNING-MIGRATION.md) behält `de.evp.helfer`, verwendet einen neuen ausschließlich lokal verwalteten Signierer und **keine Lineage**. Es gibt noch keine sicher neu signierte freigegebene Produktions-APK. Dieser Prüfplan erzeugt oder veröffentlicht nichts und ist kein Auftrag, die Prüfungen in Arbeitspaket 1 zu beginnen.
 
-This verifies both APK signatures with apksigner, the production package ID and an increasing versionCode. It cannot prove preservation of runtime state.
+## Einmaliger Wechsel vom kompromittierten Signierer
 
-On each supported Android version / representative device:
-1. Install the previously distributed production APK and pair the intended browser. Select distinctive language/theme/autostart settings. Record them without recording keys.
-2. Exercise playback, HLS, subtitles, PiP, casting, media-server playback, brightness/volume and downloads.
-3. Install the newly verified production APK with `adb install -r new.apk`. Do not uninstall, clear data or use downgrade flags.
-4. Confirm the same package was updated, settings persist and the already-paired browser still authenticates without re-pairing.
-5. Repeat player handoff and functionality checks, including interrupted and parallel downloads.
-6. Start debug and production helpers in both orders. Only the app that owns the endpoint may report itself ready; the other must show a port conflict and must not open a pairing URL.
-7. Stop the endpoint owner, retry the other app and explicitly pair it. Browser endpoint remains port 47811; switching installations requires pairing the intended helper.
+- Eine alte APK nicht zur Testvorbereitung erneut installieren. Auf einem bereits vorhandenen Testbestand Downloads beenden und die drei Helper-Einstellungen manuell notieren. Die historische APK hat keinen Export.
+- Alten Produktions-Helper vollständig deinstallieren, ohne App-Daten zu behalten oder wiederherzustellen. Keine Installation mit `adb install -r` über die alte App und kein Signatur-/Downgrade-Bypass.
+- Die später separat freigegebene neue APK anhand ihrer veröffentlichten Verifikationsanleitung prüfen: Paket-ID, APK-Hash, neuer öffentlicher Signierer und keine Lineage/Vertrauensbeziehung zum alten Signierer. Den privaten Schlüssel niemals in CI oder Prüfberichte übertragen.
+- Frisch installieren; Einstellungen manuell setzen, Systemberechtigungen erneuern und jeden Browser neu koppeln. Die neue App darf keine alten privaten Daten oder Kopplungsschlüssel übernehmen.
+- Ein höher versioniertes Update des alten Signierers muss nach der Migration abgewiesen werden. Für mechanische Tests nur vorhandene Wegwerfidentitäten verwenden; den kompromittierten Produktionsschlüssel nicht erneut einsetzen.
 
-Record device, Android version, old/new APK SHA-256, public signing-certificate SHA-256 and results. Current status: **UNTESTED**. No device-test pass is claimed.
+## Reguläre Updates nach abgeschlossener Migration
+
+Erst für zwei APKs **desselben neuen Signierers** ist der bestehende Host-Preflight vorgesehen:
+
+`python3 tools/check-update.py trusted-new-signer-previous.apk next.apk --expected-cert NEW_PUBLIC_CERT_SHA256`
+
+Er prüft mit Android-SDK-Werkzeugen die APK-Signaturen, gleiche Produktions-Paket-ID und steigenden `versionCode`. Dieser Same-Signer-Check ist kein Lineage-Verifikator und keine Freigabe eines Alt-zu-Neu-In-place-Upgrades. Bei solchen späteren regulären Updates ist `adb install -r next.apk` der normale Prüfweg; App-Einstellungen und die nach der Migration neu eingerichtete Kopplung sollen erhalten bleiben.
+
+## Evidenzgrenzen
+
+Den tatsächlichen Nachfolger und spätere gleich signierte Updates erst im gesonderten Freigabeschritt prüfen. Modell/Android-Version, Paket-ID, versionCode, öffentliche Zertifikats- und APK-SHA-256 sowie reale Ergebnisse protokollieren; keine Schlüssel oder Cookies. Vorhandene Funktions-/Gerätechecklisten bleiben bestehen, werden hier aber nicht ausgeführt. Aktueller Status der echten Option-A-Produktionsmigration: **NICHT GETESTET**. [Historische Wegwerfschlüssel-Nachweise](MIGRATION-RESULTS.md) ersetzen diese Prüfung nicht.
