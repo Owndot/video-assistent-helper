@@ -7,6 +7,8 @@ on:
   push:
     branches: [main, codex/security-phase-1]
     paths: ['src/**', 'tools/build.js', 'userscript/**', 'tests/browser/**']
+  pull_request:
+    paths: ['src/**', 'userscript/**', 'tests/browser/**', '.github/workflows/browser-tests.yml']
   workflow_dispatch:
     inputs:
       tests:
@@ -45,6 +47,11 @@ jobs:
       - name: Userscript passt zu src/
         run: node tools/build.js --check
 
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ matrix.browser == 'chromium' && '1.56.0' || '1.64.1' }}
+
       - name: Werkzeuge
         run: |
           # Chromium: gleiche Version wie beim Entwickeln (neuere verweigern Größenänderung im Vollbild)
@@ -55,7 +62,7 @@ jobs:
       - name: Tests (${{ matrix.browser }})
         env:
           BROWSER: ${{ matrix.browser == 'chromium' && 'chromium' || 'firefox' }}
-          TESTS: ${{ github.event.inputs.tests || 'test_*.py' }}
+          TESTS: ${{ github.event.inputs.tests || (github.event_name == 'pull_request' && 'test_dvr.py test_framekey.py test_mirrorprev.py test_prevretry.py test_scrubbar.py test_scrubfuzz.py test_seamless.py test_swipeseek.py') || 'test_*.py' }}
         run: |
           cd tests/browser
           # streng: jede fehlgeschlagene Prüfung / jeder Absturz macht den Lauf rot (Ergebnis steht trotzdem in der Übersicht)
@@ -68,6 +75,11 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
+      - name: Exact failed assertions
+        if: always()
+        run: |
+          rg -n 'FAIL |ERGEBNIS:|Traceback|Error:' tests/browser/out/*.log || true
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -75,4 +87,5 @@ jobs:
           path: |
             tests/browser/ergebnis-*.txt
             tests/browser/*.png
+            tests/browser/out/*.log
           if-no-files-found: ignore
