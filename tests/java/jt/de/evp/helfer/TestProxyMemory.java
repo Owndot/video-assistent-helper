@@ -29,10 +29,12 @@ public final class TestProxyMemory {
             byte[] bytes=range.get(5,TimeUnit.SECONDS);check(bytes.length==4<<20,"Window length");for(int i=0;i<bytes.length;i++)check(bytes[i]==TestMemoryWindows.value(((8L<<20)+13)+i),"Window bytes");bytes=null;
             Future<byte[]> valid=threads.submit(()->px.fetch("http://fixture/media",10,20));r=request(px);px.pushStream(r.id,206,100,new TestMemoryWindows.Generated(20,10),20);
             check(valid.get().length==20,"Valid 206");
-            Future<byte[]> bad=threads.submit(()->px.fetch("http://fixture/media",10,20));r=request(px);
-            try{px.pushStream(r.id,206,100,new TestMemoryWindows.Generated(19,10),19);throw new AssertionError("Short 206 accepted");}catch(Fetcher.ResponseError expected){}
-            try{bad.get();throw new AssertionError("Bad response accepted");}catch(ExecutionException expected){check(expected.getCause() instanceof Fetcher.HttpError,"Wrong range error");}
-            check(px.pull(1,1).isEmpty(),"Invalid response retried");
+            for(long[] invalid:new long[][]{{19,100},{20,10},{0,10}}){
+                Future<byte[]> bad=threads.submit(()->px.fetch("http://fixture/media",10,20));r=request(px);
+                try{px.pushStream(r.id,206,invalid[1],new TestMemoryWindows.Generated(invalid[0],10),invalid[0]);throw new AssertionError("Invalid 206 extent accepted");}catch(Fetcher.ResponseError expected){}
+                try{bad.get();throw new AssertionError("Bad response accepted");}catch(ExecutionException expected){check(expected.getCause() instanceof Fetcher.HttpError,"Wrong range error");}
+                check(px.pull(1,1).isEmpty(),"Invalid response retried");
+            }
             Future<byte[]> metadata=threads.submit(()->px.fetch("http://fixture/manifest",-1,-1));r=request(px);px.pushStream(r.id,200,-1,new TestMemoryWindows.Generated(LARGE,0),LARGE);
             try{metadata.get();throw new AssertionError("Oversize array accepted");}catch(ExecutionException expected){check(expected.getCause() instanceof Fetcher.ResponseError,"Wrong budget error");}
             px.close();empty(root);

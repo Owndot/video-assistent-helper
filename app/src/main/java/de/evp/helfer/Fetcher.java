@@ -604,7 +604,7 @@ public interface Fetcher {
                             out.write(buffer,0,n); remaining-=n;
                         }
                     }
-                    if(status==206 && (r.off<0 || r.len<=0 || bytes>r.len || bytes<r.len && (total<0 || r.off+bytes!=total)))
+                    if(status==206 && (r.off<0 || r.len<=0 || bytes<=0 || bytes>r.len || total>=0 && r.off+bytes>total || bytes<r.len && (total<0 || r.off+bytes!=total)))
                         throw new ResponseError("Mismatched proxy range length");
                     if(status==200 && total>=0 && bytes!=total)throw new ResponseError("Mismatched proxy total length");
                 }
