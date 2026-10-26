@@ -409,12 +409,12 @@ public interface Fetcher {
     static java.io.File toFile(Fetcher net, String url, java.io.File out, HlsCore.Listener l) throws Exception {
         long size = -1;
         try { size = net.size(url); } catch (HttpError e) { throw e; } catch (Exception ignored) {}
+        if (size <= 0) {
+            java.io.File result = net.download(url, -1, -1, out, l);
+            if (l != null) l.progress(1, 1);
+            return result;
+        }
         try (java.io.OutputStream o = new java.io.FileOutputStream(out)) {
-            if (size <= 0) {
-                o.write(net.fetch(url, -1, -1));
-                if (l != null) l.progress(1, 1);
-                return out;
-            }
             long part = 4L << 20;
             int total = (int) ((size + part - 1) / part);
             for (int i = 0; i < total; i++) {
@@ -463,81 +463,171 @@ public interface Fetcher {
     class Proxy implements Fetcher {
         public static class Req {
             public final int id; public final String url; public final long off, len; public final boolean sizeOnly;
-            volatile byte[] body; volatile int status; volatile long total = -1;
+            volatile java.io.File file; volatile int status; volatile long total = -1;
+            volatile boolean cancelled; boolean receiving;
             final java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
-            Req(int id, String url, long off, long len, boolean sizeOnly) { this.id = id; this.url = url; this.off = off; this.len = len; this.sizeOnly = sizeOnly; }
+            Req(int id, String url, long off, long len, boolean sizeOnly) { this.id=id; this.url=url; this.off=off; this.len=len; this.sizeOnly=sizeOnly; }
         }
         private final AtomicInteger ids = new AtomicInteger();
         private final LinkedBlockingQueue<Req> waiting = new LinkedBlockingQueue<>();
         private final Map<Integer, Req> open = new HashMap<>();
+        private final java.io.File spool;
+        private final long timeoutMs;
         volatile long lastPull = System.currentTimeMillis();
-        volatile boolean closed = false;
+        volatile boolean closed;
 
-        @Override
-        public byte[] fetch(String url, long off, long len) throws IOException {
-            Req r = ask(url, off, len, false);
-            if (r.status >= 400 || r.body == null) throw new HttpError(r.status > 0 ? r.status : 502);
-            return cut(r.body, off, len, r.status);
+        public Proxy() { this(new java.io.File(System.getProperty("java.io.tmpdir"), "evp-proxy-"+System.nanoTime())); }
+        public Proxy(java.io.File spool) { this(spool, 120000); }
+        Proxy(java.io.File spool, long timeoutMs) { this.spool=spool; this.timeoutMs=timeoutMs; }
+        private static void discard(Req r) { if (r.file != null) r.file.delete(); }
+        private void active(Req r, HlsCore.Listener l) throws IOException {
+            checkCancelled(l);
+            if (closed || r.cancelled) throw new IOException("abgebrochen");
         }
-
-        @Override
-        public long size(String url) throws IOException {
-            Req r = ask(url, 0, 1, true);
-            if (r.status >= 400) throw new HttpError(r.status);
-            return r.total;
+        private long start(Req r) throws IOException {
+            if (r.status != 200 && r.status != 206 || r.file == null) throw new HttpError(r.status > 0 ? r.status : 502);
+            if (r.off >= 0 && r.len > 0 && r.status == 200) {
+                if (r.off >= r.file.length()) throw new ResponseError("Range starts past EOF");
+                return r.off;
+            }
+            return 0;
         }
-
-        private Req ask(String url, long off, long len, boolean sizeOnly) throws IOException {
-            IOException last = null;
-            for (int attempt = 0; attempt < 3; attempt++) {
-                Req r = new Req(ids.incrementAndGet(), url, off, len, sizeOnly);
-                synchronized (open) { open.put(r.id, r); }
-                waiting.add(r);
-                try {
-                    // warten, bis das Skript liefert; ist die Seite zu (kein Abholen mehr), aufgeben
-                    while (!r.done.await(2, TimeUnit.SECONDS)) {
-                        if (closed) throw new IOException("abgebrochen");
-                        if (System.currentTimeMillis() - lastPull > 45000) throw new IOException(Tr.t("Seite geschlossen – Download über den Browser braucht die offene Seite", "Page closed – downloading via the browser needs the page to stay open"));
-                    }
-                } catch (InterruptedException e) {
-                    throw new IOException("abgebrochen");
-                } finally {
-                    synchronized (open) { open.remove(r.id); }
+        private long length(Req r, long start) {
+            long available=r.file.length()-start;
+            return r.off>=0 && r.len>0 ? Math.min(r.len,available) : available;
+        }
+        @Override public byte[] fetch(String url, long off, long len) throws IOException {
+            if (len > MAX_ARRAY_BYTES) throw new ResponseError("Proxy byte array exceeds budget; use media download stream");
+            Req r=ask(url,off,len,false,null);
+            try {
+                long start=start(r), count=length(r,start);
+                if(count>MAX_ARRAY_BYTES) throw new ResponseError("Proxy response exceeds byte-array budget");
+                byte[] data=new byte[(int)count];
+                try(java.io.RandomAccessFile in=new java.io.RandomAccessFile(r.file,"r")) { in.seek(start); in.readFully(data); }
+                active(r,null);
+                return data;
+            } finally { discard(r); }
+        }
+        @Override public java.io.File download(String url,long off,long len,java.io.File out,HlsCore.Listener l) throws IOException {
+            Req r=null; boolean complete=false;
+            try {
+                r=ask(url,off,len,false,l);
+                active(r,l);
+                long start=start(r), count=length(r,start);
+                if(start==0 && count==r.file.length() && r.file.renameTo(out)) {
+                    active(r,l); complete=true; return out;
                 }
-                if (r.status > 0 && r.status < 400 && r.body != null) return r;
-                if (r.status == 401 || r.status == 403 || r.status == 404) return r;
-                if (sizeOnly && r.status > 0 && r.status < 400) return r;
-                last = new HttpError(r.status > 0 ? r.status : 502);
+                try(java.io.RandomAccessFile in=new java.io.RandomAccessFile(r.file,"r"); java.io.OutputStream file=new java.io.FileOutputStream(out)) {
+                    in.seek(start); byte[] buffer=new byte[64<<10];
+                    while(count>0) {
+                        active(r,l); int n=in.read(buffer,0,(int)Math.min(count,buffer.length));
+                        if(n<0) throw new java.io.EOFException("Incomplete proxy spool");
+                        file.write(buffer,0,n); count-=n;
+                    }
+                }
+                active(r,l); complete=true; return out;
+            } finally { if(r!=null)discard(r); if(!complete) out.delete(); }
+        }
+        @Override public long size(String url) throws IOException {
+            Req r=ask(url,0,1,true,null);
+            try { if(r.status>=400) throw new HttpError(r.status); return r.total; }
+            finally { discard(r); }
+        }
+        private Req ask(String url,long off,long len,boolean sizeOnly,HlsCore.Listener l) throws IOException {
+            if(off>=0 && len>0 && off>Long.MAX_VALUE-len) throw new ResponseError("Range overflow");
+            IOException last=null;
+            for(int attempt=0;attempt<3;attempt++) {
+                checkCancelled(l);
+                Req r=new Req(ids.incrementAndGet(),url,off,len,sizeOnly); boolean delivered=false;
+                synchronized(open) { if(closed)throw new IOException("abgebrochen"); open.put(r.id,r); waiting.add(r); }
+                long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+                try {
+                    while(true) {
+                        active(r,l);
+                        long left=TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime());
+                        if(left<=0)throw new java.net.SocketTimeoutException("Proxy response timeout");
+                        if(r.done.await(Math.min(2000,left),TimeUnit.MILLISECONDS))break;
+                        if(System.currentTimeMillis()-lastPull>45000)throw new IOException("Page closed – downloading via the browser needs the page to stay open");
+                    }
+                    active(r,l);
+                    if(r.status==200 || r.status==206 || r.status>=400 && r.status<500) { delivered=true; return r; }
+                    last=new HttpError(r.status>0?r.status:502);
+                } catch(InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("abgebrochen",e); }
+                finally {
+                    synchronized(open) { open.remove(r.id); r.cancelled=!delivered; }
+                    waiting.remove(r);
+                    if(!delivered)discard(r);
+                }
             }
             throw last;
         }
-
-        /** Für das Skript: bis zu max offene Anfragen (wartet kurz, wenn gerade keine da ist) */
-        public List<Req> pull(int max, long waitMs) {
-            lastPull = System.currentTimeMillis();
-            List<Req> out = new ArrayList<>();
+        public List<Req> pull(int max,long waitMs) {
+            lastPull=System.currentTimeMillis(); List<Req> result=new ArrayList<>();
             try {
-                Req first = waiting.poll(waitMs, TimeUnit.MILLISECONDS);
-                if (first != null) out.add(first);
-            } catch (InterruptedException ignored) {}
-            waiting.drainTo(out, Math.max(0, max - out.size()));
-            lastPull = System.currentTimeMillis();
-            return out;
+                Req r=waiting.poll(waitMs,TimeUnit.MILLISECONDS);
+                while(r!=null) {
+                    synchronized(open) { if(open.get(r.id)==r && !r.cancelled)result.add(r); }
+                    if(result.size()>=max)break;
+                    r=waiting.poll();
+                }
+            } catch(InterruptedException e) { Thread.currentThread().interrupt(); }
+            lastPull=System.currentTimeMillis(); return result;
         }
-
-        public boolean push(int id, int status, long total, byte[] body) {
+        /** Legacy Java callers; production HTTP ingress uses pushStream without a body array. */
+        public boolean push(int id,int status,long total,byte[] body) {
+            if(body==null && status<400)status=502;
+            try { return pushStream(id,status,total,new java.io.ByteArrayInputStream(body==null?new byte[0]:body),body==null?0:body.length); }
+            catch(IOException e) { return false; }
+        }
+        public boolean pushStream(int id,int status,long total,InputStream in,long bytes) throws IOException {
             Req r;
-            synchronized (open) { r = open.get(id); }
-            if (r == null) return false;
-            r.status = status;
-            r.total = total;
-            r.body = body;
-            r.done.countDown();
-            return true;
+            synchronized(open) {
+                r=open.get(id);
+                if(r==null || closed || r.cancelled || r.receiving || r.done.getCount()==0)return false;
+                r.receiving=true;
+            }
+            java.io.File file=null;
+            try {
+                active(r,null);
+                if(bytes<0)throw new ResponseError("Invalid proxy body length");
+                if(status!=200 && status!=206 && status<400)throw new ResponseError("Unexpected proxy status");
+                if(!r.sizeOnly && status<400) {
+                    if(!spool.isDirectory() && !spool.mkdirs())throw new IOException("No proxy spool directory");
+                    file=java.io.File.createTempFile("proxy-",".part",spool);
+                    try(java.io.OutputStream out=new java.io.FileOutputStream(file)) {
+                        byte[] buffer=new byte[64<<10]; long remaining=bytes;
+                        while(remaining>0) {
+                            active(r,null);
+                            int n=in.read(buffer,0,(int)Math.min(buffer.length,remaining));
+                            if(n<0)throw new java.io.EOFException("Incomplete proxy upload");
+                            out.write(buffer,0,n); remaining-=n;
+                        }
+                    }
+                    if(status==206 && (r.off<0 || r.len<=0 || bytes>r.len || bytes<r.len && (total<0 || r.off+bytes!=total)))
+                        throw new ResponseError("Mismatched proxy range length");
+                    if(status==200 && total>=0 && bytes!=total)throw new ResponseError("Mismatched proxy total length");
+                }
+                synchronized(open) {
+                    if(open.get(id)!=r || closed || r.cancelled)return false;
+                    r.file=file; file=null; r.status=status; r.total=total; r.done.countDown();
+                }
+                return true;
+            } catch(IOException e) {
+                synchronized(open) {
+                    if(open.get(id)==r && !r.cancelled) { r.status=e instanceof ResponseError?422:502; r.done.countDown(); }
+                }
+                throw e;
+            } finally {
+                if(file!=null)file.delete();
+                synchronized(open) { r.receiving=false; }
+            }
         }
-
         public void close() {
-            closed = true;
+            synchronized(open) {
+                closed=true;
+                for(Req r:open.values()) { r.cancelled=true; discard(r); r.done.countDown(); }
+                open.clear(); waiting.clear();
+            }
         }
     }
 }

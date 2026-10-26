@@ -87,7 +87,7 @@ public class Downloads {
         if (kind == null || kind.isEmpty() || "auto".equals(kind)) kind = path.endsWith(".m3u8") ? "hls" : path.endsWith(".mpd") ? "dash" : "file";
         final Fetcher net;
         if (proxy) {
-            Fetcher.Proxy px = new Fetcher.Proxy();
+            Fetcher.Proxy px = new Fetcher.Proxy(new File(c.getCacheDir(), "dl" + id));
             proxies.put(id, px);
             net = px;
         } else net = new Fetcher.Http(referer, ua, cookie);

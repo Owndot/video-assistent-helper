@@ -20,51 +20,122 @@
     } catch (e) { return null; }
     if (typeof key !== 'string' || !key) return null;
     return new Promise((res) => {
-      let done = false;
-      const fin = (v) => { if (!done) { done = true; res(v); } };
+      let done = false, request;
+      const fin = (v) => { if (!done) { done = true; clearTimeout(timer); res(v); } };
+      const timer = setTimeout(() => { fin(null); try { if (request) request.abort(); } catch (e) {} }, to + 400);
       try {
-        x({
+        request = x({
           method: body ? 'POST' : 'GET', url: HELPER + path, headers: { 'X-EVP-Key': key }, timeout: to, anonymous: true,
           data: body || undefined,
           onload: (r) => { try { fin(r.status === 200 ? JSON.parse(r.responseText) : null); } catch (e) { fin(null); } },
           onerror: () => fin(null), ontimeout: () => fin(null), onabort: () => fin(null),
         });
       } catch (e) { fin(null); }
-      setTimeout(() => fin(null), to + 400);
     });
   }
   // ---------- Laden über den Browser (für Server, die nur dem eingeloggten Browser etwas geben) ----------
   // Der Helfer sagt, was er braucht (/pull) – das Skript lädt es mit der Sitzung des Browsers und liefert (/push).
   // Läuft, solange die Seite offen ist (der Player darf zu sein).
   // anon = ohne Cookies: für Adressen fremder Seiten (eine bösartige Playlist darf nicht mit deiner Sitzung woanders abrufen)
-  function gmGet(u, off, len, sizeOnly, anon) {
+  function gmGet(u, off, len, sizeOnly, anon, expectedValidator) {
     return new Promise((res) => {
       const x = gmXhr();
       if (!x) { res({ st: 502 }); return; }
+      const ranged = sizeOnly || off >= 0 && len > 0;
+      const start = sizeOnly ? 0 : off, count = sizeOnly ? 1 : len;
+      if (ranged && (!Number.isSafeInteger(start) || !Number.isSafeInteger(count) || count <= 0 || !Number.isSafeInteger(start + count))) { res({ st: 422 }); return; }
       const headers = { Referer: mediaReferrer(u) };
-      if (sizeOnly) headers.Range = 'bytes=0-0';
-      else if (off >= 0 && len > 0) headers.Range = 'bytes=' + off + '-' + (off + len - 1);
-      try {
-        x({
-          method: 'GET', url: u, headers: headers, responseType: 'arraybuffer', timeout: 60000, anonymous: !!anon,
-          onload: (r) => {
-            let total = -1;
-            const m = /content-range:\s*bytes\s+\d+-\d+\/(\d+)/i.exec(r.responseHeaders || '');
-            if (m) total = +m[1];
-            else if (sizeOnly && r.status === 200) { const l = /content-length:\s*(\d+)/i.exec(r.responseHeaders || ''); if (l) total = +l[1]; }
-            res({ st: r.status, total: total, body: sizeOnly ? null : r.response });
-          },
-          onerror: () => res({ st: 502 }), ontimeout: () => res({ st: 504 }), onabort: () => res({ st: 499 }),
+      if (ranged) headers.Range = 'bytes=' + start + '-' + (start + count - 1);
+      if (ranged && !sizeOnly && expectedValidator) headers['If-Range'] = expectedValidator;
+      let request, done = false, pendingAbort = false;
+      const finish = (value, abort) => {
+        if (done) return;
+        done = true; clearTimeout(timer);
+        if (abort) { if (request) { try { request.abort(); } catch (e) {} } else pendingAbort = true; }
+        res(value);
+      };
+      const timer = setTimeout(() => finish({ st: 504 }, true), 60400);
+      function parse(r, headOnly) {
+        const st = +r.status;
+        if (st >= 400) return { st: st };
+        if (st !== 200 && st !== 206) return { st: 422 };
+        const fields = {};
+        String(r.responseHeaders || '').split(/\r?\n/).forEach((line) => {
+          const at = line.indexOf(':'); if (at <= 0) return;
+          const name = line.slice(0, at).trim().toLowerCase(), value = line.slice(at + 1).trim();
+          (fields[name] || (fields[name] = [])).push(value);
         });
-      } catch (e) { res({ st: 502 }); }
+        const values = (name) => fields[name] || [];
+        const single = (name) => values(name)[0] || '';
+        const bad = () => ({ st: 422 });
+        const lengths = values('content-length'), transfers = values('transfer-encoding');
+        if (lengths.length && transfers.length) return bad();
+        if (transfers.length && (transfers.length !== 1 || !/^chunked$/i.test(transfers[0]))) return bad();
+        let declared = -1;
+        for (const value of lengths) {
+          if (!/^\d+$/.test(value) || !Number.isSafeInteger(+value) || declared >= 0 && declared !== +value) return bad();
+          declared = +value;
+        }
+        const encoded = single('content-encoding') && !/^identity$/i.test(single('content-encoding'));
+        const etag = single('etag');
+        const validator = etag && !/^W\//i.test(etag) ? etag : single('last-modified');
+        if (expectedValidator && validator !== expectedValidator) return bad();
+        let total = encoded ? -1 : declared, span = -1;
+        if (st === 206) {
+          const cr = /^bytes (\d+)-(\d+)\/(\d+|\*)$/i.exec(single('content-range'));
+          if (!ranged || encoded || values('content-range').length !== 1 || !cr) return bad();
+          const a = +cr[1], b = +cr[2]; total = cr[3] === '*' ? -1 : +cr[3];
+          if (![a, b, total].every(Number.isSafeInteger) || a !== start || b < a || b >= start + count || total >= 0 && b >= total) return bad();
+          span = b - a + 1;
+          if (span !== count && (total < 0 || b !== total - 1) || declared >= 0 && declared !== span) return bad();
+        }
+        if (headOnly) return { st: st, total: total, validator: validator, body: null };
+        const data = r.response;
+        if (Object.prototype.toString.call(data) !== '[object ArrayBuffer]') return bad();
+        if (!encoded && declared >= 0 && declared !== data.byteLength || span >= 0 && span !== data.byteLength) return bad();
+        if (sizeOnly) return { st: st, total: total, validator: validator, body: null };
+        if (st === 200) {
+          total = data.byteLength;
+          if (ranged) {
+            if (start >= total) return bad();
+            const end = Math.min(start + count, total);
+            return { st: 206, total: total, validator: validator, body: start === 0 && end === total ? data : data.slice(start, end) };
+          }
+        }
+        return { st: st, total: total, validator: validator, body: data };
+      }
+      try {
+        request = x({
+          method: 'GET', url: u, headers: headers, responseType: 'arraybuffer', timeout: 60000, anonymous: !!anon,
+          onreadystatechange: (r) => {
+            // A size probe never needs its body, including unknown-size/ignored Range.
+            if (!sizeOnly || r.readyState !== 2 || !(r.status === 200 || r.status === 206)) return;
+            if (r.status === 206 && !/content-range:/i.test(r.responseHeaders || '')) return;
+            finish(parse(r, true), true);
+          },
+          onload: (r) => { if (!done) finish(parse(r, false)); },
+          onerror: () => finish({ st: 502 }, true), ontimeout: () => finish({ st: 504 }, true), onabort: () => finish({ st: 499 }),
+        });
+        if (pendingAbort && request) request.abort();
+      } catch (e) { finish({ st: 502 }, true); }
     });
   }
   const proxyJobs = new Set();
+  // One shared gate covers fetch AND upload across jobs, rather than four bodies per job.
+  let proxyActive = 0;
+  const proxyWaiting = [];
+  async function proxyTransfer(run) {
+    if (proxyActive >= 2) await new Promise((resolve) => proxyWaiting.push(resolve));
+    else proxyActive++;
+    try { return await run(); }
+    finally { const next = proxyWaiting.shift(); if (next) next(); else proxyActive--; }
+  }
   // allow = Domains, an die die Browser-Sitzung (Cookies) mitgehen darf: die Seite selbst und der Server des Videos
   async function proxyLoop(job, allow) {
     if (proxyJobs.has(job)) return;
     const ok = (u) => { const d = baseDomain(hostOf(u)); return !!d && (allow || []).indexOf(d) >= 0; };
     proxyJobs.add(job);
+    const validators = new Map();
     try {
       let idle = 0;
       while (true) {
@@ -72,13 +143,14 @@
         if (!r) { if (++idle > 5) break; await new Promise((ok) => setTimeout(ok, 1000)); continue; }
         idle = 0;
         if (r.done) break;
-        await Promise.all((r.reqs || []).map(async (q) => {
+        await Promise.all((r.reqs || []).map((q) => proxyTransfer(async () => {
           if (!/^https?:\/\//i.test(q.u)) { await helper('/push?job=' + job + '&id=' + q.id + '&st=400&total=-1', 60000, new ArrayBuffer(0)); return; }
-          const g = await gmGet(q.u, q.o, q.l, q.s, !ok(q.u));
+          const g = await gmGet(q.u, q.o, q.l, q.s, !ok(q.u), validators.get(q.u));
+          if (q.s && g.validator && g.st < 400) validators.set(q.u, g.validator);
           const st = g.st || 502;
           const body = g.body && st < 400 ? g.body : new ArrayBuffer(0);
           await helper('/push?job=' + job + '&id=' + q.id + '&st=' + st + '&total=' + (g.total || -1), 60000, body);
-        }));
+        })));
       }
     } finally {
       proxyJobs.delete(job);

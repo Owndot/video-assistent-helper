@@ -27,6 +27,14 @@ public class MiniServer {
     public interface Handler {
         String get(String path, Map<String, String> p);
         String push(Map<String, String> p, byte[] body);
+        /** Compatibility adapter for small custom handlers; production overrides this. */
+        default String pushStream(Map<String, String> p, InputStream in, long length) throws Exception {
+            if (length < 0 || length > Fetcher.MAX_ARRAY_BYTES) throw new Fetcher.ResponseError("Legacy handler body exceeds budget");
+            byte[] body = new byte[(int) length];
+            int at = 0;
+            while (at < body.length) { int n = in.read(body, at, body.length - at); if (n < 0) throw new java.io.EOFException(); at += n; }
+            return push(p, body);
+        }
     }
 
     private final int port;
@@ -134,7 +142,8 @@ public class MiniServer {
             String[] lines = new String(hb.toByteArray(), StandardCharsets.ISO_8859_1).split("\r?\n");
             if (lines.length == 0 || lines[0].isEmpty()) { s.close(); return; }
             String k = null, host = null, lang = null;
-            long clen = 0;
+            long clen = -1;
+            boolean badFraming = false, transfer = false;
             for (int i = 1; i < lines.length; i++) {
                 String line = lines[i];
                 int c = line.indexOf(':');
@@ -143,7 +152,11 @@ public class MiniServer {
                 if (name.equalsIgnoreCase("x-evp-key")) k = line.substring(c + 1).trim();
                 else if (name.equalsIgnoreCase("host")) host = line.substring(c + 1).trim();
                 else if (name.equalsIgnoreCase("accept-language")) lang = line.substring(c + 1).trim();
-                else if (name.equalsIgnoreCase("content-length")) { try { clen = Long.parseLong(line.substring(c + 1).trim()); } catch (Exception ignored) {} }
+                else if (name.equalsIgnoreCase("transfer-encoding")) transfer = true;
+                else if (name.equalsIgnoreCase("content-length")) {
+                    try { long value = Long.parseLong(line.substring(c + 1).trim()); if (value < 0 || clen >= 0 && clen != value) badFraming = true; clen = value; }
+                    catch (Exception invalid) { badFraming = true; }
+                }
             }
             String[] parts = lines[0].split(" ");
             String method = parts.length > 0 ? parts[0] : "";
@@ -161,15 +174,10 @@ public class MiniServer {
             if (!("GET".equals(method) || post) || k == null || !keyOk.test(k)) { reply(s, 403, "{\"ok\":false}"); return; }
             Map<String, String> p = parseQuery(query);
             if (post) {
+                // The unchanged /push wire format is a fixed-length binary body.
+                if (transfer || badFraming || clen < 0) { reply(s, 400, "{\"ok\":false}"); return; }
                 if (clen < 0 || clen > (256L << 20)) { reply(s, 413, "{\"ok\":false}"); return; }
-                byte[] body = new byte[(int) clen];
-                int got = 0;
-                while (got < clen) {
-                    int n = in.read(body, got, (int) clen - got);
-                    if (n < 0) break;
-                    got += n;
-                }
-                reply(s, 200, handler.push(p, got == clen ? body : null));
+                reply(s, 200, handler.pushStream(p, in, clen));
                 return;
             }
             reply(s, 200, handler.get(path, p));
@@ -248,5 +256,13 @@ public class MiniServer {
         long total = num(p.get("total"), -1);
         if (body == null && st < 400) st = 502;
         return "{\"ok\":" + px.push(id, st, total, body) + "}";
+    }
+
+    public static String pushStream(Map<Integer, Fetcher.Proxy> proxies, Map<String, String> p, InputStream in, long length) throws Exception {
+        Fetcher.Proxy px = proxies.get((int) num(p.get("job"), -1));
+        if (px == null) return "{\"ok\":false}";
+        int id = (int) num(p.get("id"), -1), st = (int) num(p.get("st"), 0);
+        long total = num(p.get("total"), -1);
+        return "{\"ok\":" + px.pushStream(id, st, total, in, length) + "}";
     }
 }
