@@ -39,6 +39,9 @@ public class TestMain {
     run("dash_drm", "d4/manifest.mpd", "dash", ok);
     run("dash_live", "d5/manifest.mpd", "dash", ok);
     run("hls_enc", "enc/master.m3u8", "hls", ok);
+    run("hls_sequence_iv", "enc2/noiv.m3u8", "hls", ok);
+    run("hls_fmp4", "fm/master.m3u8", "hls", ok);
+    run("hls_byterange", "br/one.m3u8", "hls", ok);
     // Erwartet: ohne Cookie 403 · Cookie einer FREMDEN Seite wird nicht mitgeschickt → 403 · eigene Seite → Datei
     run("ck_ohne_cookie (erwartet 403)", "ck/film.mp4", "file", ok);
     run("ck_fremde_seite (erwartet 403)", "ck/film.mp4", "file", new Fetcher.Http("http://example.test/watch/1", "Mozilla/5.0 Test", "a=1; sess=abc"));
@@ -61,6 +64,7 @@ public class TestMain {
     script.start();
     run("proxy_datei", "ck/film.mp4", "file", px);
     run("proxy_dash", "d1/manifest.mpd", "dash", px);
+    run("proxy_hls", "enc/master.m3u8", "hls", px);
     script.interrupt();
   }
 }

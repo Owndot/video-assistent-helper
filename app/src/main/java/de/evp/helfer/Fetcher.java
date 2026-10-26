@@ -18,6 +18,25 @@ import java.util.concurrent.atomic.AtomicInteger;
 public interface Fetcher {
     byte[] fetch(String url, long off, long len) throws IOException;
 
+    // Byte-array API is for bounded metadata/windows. Media streams use disk.
+    int MAX_ARRAY_BYTES = 4 << 20;
+
+    default java.io.File download(String url, long off, long len, java.io.File out, HlsCore.Listener listener) throws IOException {
+        // Preserve existing custom/Browser-Proxy implementations and wire format.
+        byte[] data = fetch(url, off, len);
+        checkCancelled(listener);
+        try (java.io.OutputStream file = new java.io.FileOutputStream(out)) { file.write(data); }
+        return out;
+    }
+
+    static void checkCancelled(HlsCore.Listener listener) throws IOException {
+        if (Thread.currentThread().isInterrupted() || listener != null && listener.cancelled()) throw new IOException("abgebrochen");
+    }
+
+    class ResponseError extends IOException {
+        ResponseError(String message) { super(message); }
+    }
+
     /** Gesamtgröße einer Datei (-1 = unbekannt) – nur für Dateien in Stücken nötig */
     long size(String url) throws IOException;
 
@@ -211,34 +230,162 @@ public interface Fetcher {
             throw failure != null ? failure : new IOException("File download failed");
         }
 
+        private static void validateRange(long off, long len) throws ResponseError {
+            if (off >= 0 && len > 0 && off > Long.MAX_VALUE - len) throw new ResponseError("Range overflow");
+        }
+
+        private static List<String> headerValues(HttpURLConnection c, String name) {
+            List<String> values = new ArrayList<>();
+            for (Map.Entry<String, List<String>> field : c.getHeaderFields().entrySet()) {
+                if (name.equalsIgnoreCase(field.getKey())) values.addAll(field.getValue());
+            }
+            String value = c.getHeaderField(name);
+            if (values.isEmpty() && value != null) values.add(value);
+            return values;
+        }
+
+        /** Validate exposed framing before trusting a length or writing body bytes.
+         * HttpURLConnection can decode chunked while still reporting the raw CL.
+         */
+        private static long responseLength(HttpURLConnection c) throws ResponseError {
+            List<String> lengths = headerValues(c, "Content-Length");
+            List<String> transfers = headerValues(c, "Transfer-Encoding");
+            if (!transfers.isEmpty()) {
+                if (!lengths.isEmpty()) throw new ResponseError("Conflicting Transfer-Encoding and Content-Length");
+                if (transfers.size() != 1 || !"chunked".equalsIgnoreCase(transfers.get(0).trim()))
+                    throw new ResponseError("Unsupported media Transfer-Encoding");
+                return -1;
+            }
+            long body = -1;
+            for (String declared : lengths) {
+                long value;
+                try { value = Long.parseLong(declared.trim()); }
+                catch (NumberFormatException e) { throw new ResponseError("Invalid Content-Length"); }
+                if (value < 0) throw new ResponseError("Negative Content-Length");
+                if (body >= 0 && body != value) throw new ResponseError("Conflicting Content-Length values");
+                body = value;
+            }
+            return body;
+        }
+
+        /** Copy one validated representation/window with a fixed 64KiB buffer.
+         * A 200 response to Range is sliced while reading, never materialized.
+         */
+        private void copyResponse(HttpURLConnection c, long off, long len, java.io.OutputStream out,
+                                  HlsCore.Listener listener, boolean array) throws IOException {
+            int code = c.getResponseCode();
+            if (code >= 400) throw new HttpError(code);
+            if (code != 200 && code != 206) throw new ResponseError("Unexpected media HTTP status " + code);
+            boolean ranged = off >= 0 && len > 0;
+            if (ranged && off > Long.MAX_VALUE - len) throw new ResponseError("Range overflow");
+            String encoding = c.getHeaderField("Content-Encoding");
+            if (encoding != null && !encoding.equalsIgnoreCase("identity")) throw new ResponseError("Unexpected media Content-Encoding");
+            long body = responseLength(c);
+            long expected = body, skip = 0;
+            if (code == 206) {
+                String raw = c.getHeaderField("Content-Range");
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("bytes (\\d+)-(\\d+)/(\\d+|\\*)").matcher(raw == null ? "" : raw);
+                if (!ranged || !m.matches()) throw new ResponseError("Invalid media Content-Range");
+                try {
+                    long start = Long.parseLong(m.group(1)), end = Long.parseLong(m.group(2));
+                    long total = "*".equals(m.group(3)) ? -1 : Long.parseLong(m.group(3));
+                    if (start != off || end < start || end >= off + len || total >= 0 && end >= total)
+                        throw new ResponseError("Mismatched media Content-Range");
+                    if (end != off + len - 1 && (total < 0 || end != total - 1))
+                        throw new ResponseError("Incomplete requested media range");
+                    expected = end - start + 1;
+                    if (body >= 0 && body != expected) throw new ResponseError("Content-Length/Range mismatch");
+                } catch (NumberFormatException e) { throw new ResponseError("Media Content-Range overflow"); }
+            } else if (ranged) {
+                skip = off;
+                if (body >= 0 && off >= body) throw new ResponseError("Range starts past EOF");
+                expected = body < 0 ? len : Math.min(len, body - off);
+            }
+            if (array && (expected > MAX_ARRAY_BYTES || ranged && len > MAX_ARRAY_BYTES))
+                throw new ResponseError("Response exceeds byte-array budget; use media download stream");
+            byte[] buffer = new byte[64 << 10];
+            try (InputStream in = new BufferedInputStream(c.getInputStream())) {
+                while (skip > 0) {
+                    checkCancelled(listener);
+                    int n = in.read(buffer, 0, (int) Math.min(buffer.length, skip));
+                    if (n < 0) throw new java.io.EOFException("Incomplete ignored-Range prefix");
+                    if (n == 0) continue;
+                    skip -= n;
+                }
+                long received = 0;
+                while (expected < 0 || received < expected) {
+                    checkCancelled(listener);
+                    int want = (int) Math.min(buffer.length, expected < 0 ? buffer.length : expected - received);
+                    int n = in.read(buffer, 0, want);
+                    if (n < 0) break;
+                    if (n == 0) continue;
+                    if (array && received + n > MAX_ARRAY_BYTES) throw new ResponseError("Response exceeds byte-array budget");
+                    out.write(buffer, 0, n); // Synchronous disk write supplies backpressure.
+                    received += n;
+                }
+                // Unknown-length 200 Range windows may end at EOF before len.
+                if (expected >= 0 && received != expected && !(code == 200 && ranged && body < 0))
+                    throw new java.io.EOFException("Incomplete media body");
+                if (code == 200 && ranged) c.disconnect(); // Stop an ignored-Range body before stream close can drain it.
+                // A decoded stream must also agree with a declared full-body length.
+                // Intentional windows from an ignored Range stop early instead.
+                if (!(code == 200 && ranged) && expected >= 0 && in.read() != -1)
+                    throw new ResponseError("Media body exceeds declared length/range");
+            }
+        }
+
         @Override
         public byte[] fetch(String url, long off, long len) throws IOException {
+            validateRange(off, len);
+            if (len > MAX_ARRAY_BYTES) throw new ResponseError("Requested byte array exceeds budget; use media download stream");
             IOException last = null;
             for (int attempt = 0; attempt < 4; attempt++) {
                 HttpURLConnection c = null;
                 try {
-                    c = response(url,off,len);
-                    int code = c.getResponseCode();
-                    if (code >= 400) {
-                        HttpError e = new HttpError(code);
-                        if (code == 401 || code == 403 || code == 404 || code == 410) throw e;   // Wiederholen hilft hier nicht
-                        throw (IOException) e;
-                    }
-                    try (InputStream in = new BufferedInputStream(c.getInputStream())) {
-                        byte[] data = readAll(in, len);
-                        return cut(data, off, len, code);
-                    }
-                } catch (HttpError e) {
+                    c = response(url, off, len, null, true);
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    copyResponse(c, off, len, out, null, true);
+                    return out.toByteArray();
+                } catch (ResponseError e) { throw e; }
+                catch (HttpError e) {
                     if (e.code == 401 || e.code == 403 || e.code == 404 || e.code == 410) throw e;
                     last = e;
-                } catch (IOException e) {
-                    last = e;
-                } finally {
-                    if (c != null) c.disconnect();
-                }
-                try { Thread.sleep(600L * (attempt + 1)); } catch (InterruptedException ie) { throw new IOException("abgebrochen"); }
+                } catch (IOException e) { last = e; }
+                finally { if (c != null) c.disconnect(); }
+                if (attempt < 3) try { Thread.sleep(600L * (attempt + 1)); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("abgebrochen", e); }
             }
-            throw last != null ? last : new IOException(Tr.t("Download fehlgeschlagen", "Download failed"));
+            throw last != null ? last : new IOException("Media request failed");
+        }
+
+        @Override
+        public java.io.File download(String url, long off, long len, java.io.File out, HlsCore.Listener listener) throws IOException {
+            validateRange(off, len);
+            IOException last = null;
+            boolean complete = false;
+            try {
+                for (int attempt = 0; attempt < 4; attempt++) {
+                    checkCancelled(listener);
+                    HttpURLConnection c = null;
+                    try {
+                        c = response(url, off, len, null, true);
+                        try (java.io.OutputStream file = new java.io.FileOutputStream(out)) {
+                            copyResponse(c, off, len, file, listener, false);
+                        }
+                        checkCancelled(listener);
+                        complete = true;
+                        return out;
+                    } catch (ResponseError e) { throw e; }
+                    catch (HttpError e) {
+                        if (e.code == 401 || e.code == 403 || e.code == 404 || e.code == 410) throw e;
+                        last = e;
+                    } catch (IOException e) { checkCancelled(listener); last = e; }
+                    finally { if (c != null) c.disconnect(); }
+                    if (attempt < 3) try { Thread.sleep(600L * (attempt + 1)); }
+                    catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("abgebrochen", e); }
+                }
+                throw last != null ? last : new IOException("Media download failed");
+            } finally { if (!complete && out.exists()) out.delete(); }
         }
 
         @Override
@@ -286,10 +433,15 @@ public interface Fetcher {
     }
 
     static byte[] readAll(InputStream in, long hint) throws IOException {
-        ByteArrayOutputStream bo = new ByteArrayOutputStream(hint > 0 ? (int) Math.min(hint, 64 << 20) : 1 << 16);
+        long limit = hint > 0 ? Math.min(hint, MAX_ARRAY_BYTES) : MAX_ARRAY_BYTES;
+        ByteArrayOutputStream bo = new ByteArrayOutputStream();
         byte[] buf = new byte[64 << 10];
         int n;
-        while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+        while ((n = in.read(buf)) != -1) {
+            checkCancelled(null);
+            if ((long) bo.size() + n > limit) throw new ResponseError("Response exceeds byte-array budget");
+            bo.write(buf, 0, n);
+        }
         return bo.toByteArray();
     }
 

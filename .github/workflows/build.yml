@@ -10,7 +10,7 @@ permissions:
   contents: read
 jobs:
   privacy:
-    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery'
+    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -99,7 +99,7 @@ jobs:
           path: validation-results/hls-bundle.json
           if-no-files-found: ignore
   download-manager-privacy:
-    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery'
+    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -131,7 +131,7 @@ jobs:
             adb shell am instrument -w de.evp.helfer.debug.test/androidx.test.runner.AndroidJUnitRunner | tee /tmp/download-manager-test.log
             grep -q 'OK (1 test)' /tmp/download-manager-test.log
   validate:
-    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/pairing-key-recovery'
+    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -452,3 +452,71 @@ jobs:
           node tests/security/hls_license.js
           node tests/security/referrer.js
           node tests/security/gm_headers.js
+
+  native-media-memory:
+    # Fast JVM regressions remain active for future PRs and main; no APK/SDK.
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile actual cores and memory regressions
+        run: tests/java/build.sh
+      - name: Reproduce baseline heap exhaustion
+        if: github.head_ref == 'codex/native-media-memory'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/memory-baseline"
+          mkdir -p "$old/classes"
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/Fetcher.java?ref=b42f213d22e5caef63efc3768958923c07077ea3' --jq .content | base64 --decode > "$old/Fetcher.java"
+          javac -cp tests/java/classes -d "$old/classes" "$old/Fetcher.java" tests/java/jt/de/evp/helfer/TestMemoryBaseline.java
+          java -Xmx32m -cp "$old/classes:tests/java/classes" de.evp.helfer.TestMemoryBaseline
+      - name: Reproduce reviewed HTTP framing truncation
+        if: github.head_ref == 'codex/native-media-memory'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/framing-baseline"
+          mkdir -p "$old/classes"
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/Fetcher.java?ref=8074aff7f535f9faa738dd97a973fc46ea8de8d1' --jq .content | base64 --decode > "$old/Fetcher.java"
+          javac -cp tests/java/classes -d "$old/classes" "$old/Fetcher.java"
+          if java -Xmx32m -cp "$old/classes:tests/java/classes" de.evp.helfer.TestResponseFraming > "$old/proof.log" 2>&1; then
+            echo 'Reviewed framing regression unexpectedly passed'; exit 1
+          fi
+          cat "$old/proof.log"
+          grep -q 'retains TE=chunked and CL=4 in both APIs; getContentLengthLong=4, decoded=0123456789' "$old/proof.log"
+          grep -q 'Framing accepted by production paths: fetch=0123, download=4 bytes (0123)' "$old/proof.log"
+          echo 'PASS: real parser exposes both headers; reviewed code silently truncates both outputs'
+      - name: Bounded memory, ranges, cancellation and real HTTP
+        run: |
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestResponseFraming --simulated
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestResponseFraming
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestMemoryWindows
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestMemoryHttp
+      - name: Native media and existing proxy compatibility
+        # This PR skips the broad Android/browser jobs. Reuse existing fixtures here once.
+        if: github.head_ref == 'codex/native-media-memory'
+        run: |
+          set -euo pipefail
+          # Hosted runners can resolve Ubuntu through mirror+file lists as well as deb822.
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+            fi
+          done
+          timeout 90 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          timeout 180 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install --no-install-recommends -y ffmpeg
+          tests/java/run_core_tests.sh
+          javac -cp tests/java/classes -d tests/java/classes tests/android_e2e/TestCredentialedStream.java
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestCredentialedStream
