@@ -24,9 +24,9 @@ public final class TestProxyMemory {
             }
             System.out.println("PASS: Proxy streams known/unknown 64MiB bodies and exact bytes at 32MiB heap");
             Fetcher.Proxy px=new Fetcher.Proxy(root.resolve("ranges").toFile());
-            Future<byte[]> range=threads.submit(()->px.fetch("http://fixture/media",8L<<20,4L<<20));
+            Future<byte[]> range=threads.submit(()->px.fetch("http://fixture/media",(8L<<20)+13,4L<<20));
             Fetcher.Proxy.Req r=request(px);px.pushStream(r.id,200,LARGE,new TestMemoryWindows.Generated(LARGE,0),LARGE);
-            byte[] bytes=range.get(5,TimeUnit.SECONDS);check(bytes.length==4<<20,"Window length");for(int i=0;i<bytes.length;i++)check(bytes[i]==TestMemoryWindows.value((8L<<20)+i),"Window bytes");bytes=null;
+            byte[] bytes=range.get(5,TimeUnit.SECONDS);check(bytes.length==4<<20,"Window length");for(int i=0;i<bytes.length;i++)check(bytes[i]==TestMemoryWindows.value(((8L<<20)+13)+i),"Window bytes");bytes=null;
             Future<byte[]> valid=threads.submit(()->px.fetch("http://fixture/media",10,20));r=request(px);px.pushStream(r.id,206,100,new TestMemoryWindows.Generated(20,10),20);
             check(valid.get().length==20,"Valid 206");
             Future<byte[]> bad=threads.submit(()->px.fetch("http://fixture/media",10,20));r=request(px);
@@ -37,7 +37,16 @@ public final class TestProxyMemory {
             try{metadata.get();throw new AssertionError("Oversize array accepted");}catch(ExecutionException expected){check(expected.getCause() instanceof Fetcher.ResponseError,"Wrong budget error");}
             px.close();empty(root);
             System.out.println("PASS: ignored Range slices the spool, valid 206 preserved, malformed length/oversize metadata rejected and cleaned");
-            Fetcher.Proxy parallel=new Fetcher.Proxy(root.resolve("parallel").toFile());List<Future<?>> fs=new ArrayList<>();
+            java.util.concurrent.CyclicBarrier directoryRace=new java.util.concurrent.CyclicBarrier(2);
+            java.util.concurrent.atomic.AtomicInteger probes=new java.util.concurrent.atomic.AtomicInteger();
+            File racedDirectory=new File(root.toFile(),"parallel"){
+                @Override public boolean isDirectory(){
+                    if(probes.getAndIncrement()<2){boolean observed=super.isDirectory();try{directoryRace.await(5,TimeUnit.SECONDS);}catch(Exception e){throw new AssertionError(e);}return observed;}
+                    return super.isDirectory();
+                }
+                @Override public synchronized boolean mkdirs(){return super.mkdirs();}
+            };
+            Fetcher.Proxy parallel=new Fetcher.Proxy(racedDirectory);List<Future<?>> fs=new ArrayList<>();
             for(int i=0;i<2;i++){final int id=i;fs.add(threads.submit(()->{File out=root.resolve("parallel"+id).toFile();parallel.download("http://fixture/"+id,-1,-1,out,null);TestMemoryWindows.fileHash(out,LARGE,id);out.delete();return null;}));}
             List<Fetcher.Proxy.Req> pending=new ArrayList<>();while(pending.size()<2)pending.addAll(parallel.pull(2,2000));
             List<Future<?>> writers=new ArrayList<>();for(Fetcher.Proxy.Req item:pending){int id=Integer.parseInt(item.url.substring(item.url.length()-1));writers.add(CompletableFuture.runAsync(()->{try{parallel.pushStream(item.id,200,-1,new TestMemoryWindows.Generated(LARGE,id),LARGE);}catch(Exception e){throw new RuntimeException(e);}}));}

@@ -44,9 +44,9 @@ public final class TestProxyIngress {
                 Fetcher.Proxy.Req r=TestProxyMemory.request(px);check(post(base,r.id,200,total,LARGE,0).contains("true"),"Stream upload rejected");
                 f.get(5,TimeUnit.SECONDS);TestMemoryWindows.fileHash(out,LARGE,0);out.delete();TestProxyMemory.empty(root);
             }
-            Future<byte[]> range=threads.submit(()->px.fetch("http://fixture/media",8L<<20,4L<<20));Fetcher.Proxy.Req r=TestProxyMemory.request(px);
+            Future<byte[]> range=threads.submit(()->px.fetch("http://fixture/media",(8L<<20)+13,4L<<20));Fetcher.Proxy.Req r=TestProxyMemory.request(px);
             check(post(base,r.id,200,LARGE,LARGE,0).contains("true"),"Ignored Range upload");byte[] bytes=range.get();
-            for(int i=0;i<bytes.length;i++)check(bytes[i]==TestMemoryWindows.value((8L<<20)+i),"Ignored Range bytes");bytes=null;
+            for(int i=0;i<bytes.length;i++)check(bytes[i]==TestMemoryWindows.value(((8L<<20)+13)+i),"Ignored Range bytes");bytes=null;
             Future<byte[]> valid=threads.submit(()->px.fetch("http://fixture/media",10,20));r=TestProxyMemory.request(px);check(post(base,r.id,206,100,20,10).contains("true"),"206 upload");check(valid.get().length==20,"206 length");
             List<Future<?>> consumers=new ArrayList<>();for(int i=0;i<2;i++){final int id=i;consumers.add(threads.submit(()->{File out=root.resolve("parallel"+id).toFile();px.download("http://fixture/"+id,-1,-1,out,null);TestMemoryWindows.fileHash(out,LARGE,id);out.delete();return null;}));}
             List<Fetcher.Proxy.Req> pending=new ArrayList<>();while(pending.size()<2)pending.addAll(px.pull(2,2000));List<Future<?>> producers=new ArrayList<>();

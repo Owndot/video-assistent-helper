@@ -593,7 +593,7 @@ public interface Fetcher {
                 if(bytes<0)throw new ResponseError("Invalid proxy body length");
                 if(status!=200 && status!=206 && status<400)throw new ResponseError("Unexpected proxy status");
                 if(!r.sizeOnly && status<400) {
-                    if(!spool.isDirectory() && !spool.mkdirs())throw new IOException("No proxy spool directory");
+                    if(!spool.isDirectory() && !spool.mkdirs() && !spool.isDirectory())throw new IOException("No proxy spool directory");
                     file=java.io.File.createTempFile("proxy-",".part",spool);
                     try(java.io.OutputStream out=new java.io.FileOutputStream(file)) {
                         byte[] buffer=new byte[64<<10]; long remaining=bytes;
