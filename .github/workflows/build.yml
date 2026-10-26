@@ -7,6 +7,7 @@ permissions:
   contents: read
 jobs:
   privacy:
+    if: github.head_ref != 'codex/helper-beta-auth-beta1'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -95,6 +96,7 @@ jobs:
           path: validation-results/hls-bundle.json
           if-no-files-found: ignore
   download-manager-privacy:
+    if: github.head_ref != 'codex/helper-beta-auth-beta1'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -126,6 +128,7 @@ jobs:
             adb shell am instrument -w de.evp.helfer.debug.test/androidx.test.runner.AndroidJUnitRunner | tee /tmp/download-manager-test.log
             grep -q 'OK (1 test)' /tmp/download-manager-test.log
   validate:
+    if: github.head_ref != 'codex/helper-beta-auth-beta1'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -327,3 +330,52 @@ jobs:
             validation-results/debug-source-commit.txt
             validation-results/debug-signature.txt
           if-no-files-found: ignore
+
+  beta-auth-evidence:
+    # Explicitly scoped documentation/test review: no browser, emulator or APK jobs.
+    if: github.head_ref == 'codex/helper-beta-auth-beta1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Reject changes outside this documentation and test scope
+        run: |
+          python3 - <<'PYCODE'
+          import subprocess
+          allowed = {
+              'README.md', 'HELPER-AUTH-DECISION.md', 'HELPER-BETA-SECURITY.md',
+              'SECURITY-CORRECTIONS.md', '.github/workflows/build.yml',
+              'tests/security/helper_listener.js', 'tests/java/run_beta_auth_tests.sh',
+              'tests/java/beta_auth/android/content/Context.java',
+              'tests/java/beta_auth/android/content/SharedPreferences.java',
+              'tests/java/beta_auth/de/evp/helfer/TestBetaAuth.java',
+          }
+          changed = set(subprocess.check_output(['git','diff','--name-only','HEAD^1','HEAD^2'],text=True).splitlines())
+          assert changed and changed <= allowed, f'Out-of-scope changes: {changed - allowed}'
+          print('PASS: only allowlisted documentation/test/workflow changes; runtime sources and artifacts unchanged')
+          PYCODE
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Real listener, reset, old-key rejection and restart evidence
+        run: bash tests/java/run_beta_auth_tests.sh
+      - name: Actual Helper client against a controlled foreign listener
+        run: node tests/security/helper_listener.js
+      - name: Retrieve reviewed Kadri client source read-only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api 'repos/Owndot/Kadri/contents/src/080-helper-app.js?ref=cc14bcdfb8a7a7d296c32ab3943c74b291be6ac4' --jq .content | base64 --decode > /tmp/kadri-helper.js
+      - name: Actual Kadri client against the same controlled listener
+        run: node tests/security/helper_listener.js /tmp/kadri-helper.js
