@@ -1,5 +1,8 @@
 name: Helper safe validation
 on:
+  push:
+    branches: [main]
+    paths: ['app/**', 'src/**', 'userscript/**', 'vendor/**', 'tests/**', 'tools/**', '.github/workflows/**']
   workflow_dispatch:
   pull_request:
     paths: ['app/**', 'src/**', 'userscript/**', 'vendor/**', 'tests/**', 'tools/**', '.github/workflows/**']
@@ -7,7 +10,7 @@ permissions:
   contents: read
 jobs:
   privacy:
-    if: github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery'
+    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -96,7 +99,7 @@ jobs:
           path: validation-results/hls-bundle.json
           if-no-files-found: ignore
   download-manager-privacy:
-    if: github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery'
+    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -128,7 +131,7 @@ jobs:
             adb shell am instrument -w de.evp.helfer.debug.test/androidx.test.runner.AndroidJUnitRunner | tee /tmp/download-manager-test.log
             grep -q 'OK (1 test)' /tmp/download-manager-test.log
   validate:
-    if: github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/pairing-key-recovery'
+    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/pairing-key-recovery'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -419,8 +422,7 @@ jobs:
       - name: Actual Kadri client against the same controlled listener
         run: node tests/security/helper_listener.js /tmp/kadri-helper.js
 
-  pairing-recovery:
-    if: github.head_ref == 'codex/pairing-key-recovery'
+  helper-key-regression:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -431,6 +433,7 @@ jobs:
         with:
           node-version: '22'
       - name: Reproduce old stored-key snapshot without modifying main
+        if: github.head_ref == 'codex/pairing-key-recovery'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -440,9 +443,11 @@ jobs:
           if node tests/security/helper_repair_check.js /tmp/helper-old > /tmp/old-key.log 2>&1; then echo 'Baseline unexpectedly recovered'; exit 1; fi
           grep -q 'userscript kept stale key' /tmp/old-key.log
           echo 'PASS: unchanged main reproduces stale-key failure'
+      - name: Current Helper key regression tests
+        run: node tests/security/helper_repair_check.js
       - name: Focused userscript and existing security checks
+        if: github.head_ref == 'codex/pairing-key-recovery'
         run: |
-          node tests/security/helper_repair_check.js
           node tools/build.js --check
           node tests/security/hls_license.js
           node tests/security/referrer.js

@@ -6,20 +6,22 @@
   let helperKey = 'evp-1';
   try { if (typeof GM_getValue === 'function') helperKey = GM_getValue('helperKey', '') || 'evp-1'; } catch (e) {}
   // to = Wartezeit in ms (Abholen beim Laden über den Browser wartet bis zu 8 s), body = Daten für POST /push
-  function helper(path, to, body, keyOverride) {
+  async function helper(path, to, body, keyOverride) {
     to = to || 1200;
+    const x = CONFIG.systemHelper === false ? null : gmXhr();
+    if (!x) return null;
+    // Freeze one trusted key per request. Kadri must never fall back to its
+    // document cache when persistent storage is missing or fails.
+    let key;
+    try {
+      if (keyOverride !== undefined && keyOverride !== null) key = keyOverride;
+      else if (typeof __KADRI__ !== 'undefined' && __KADRI__) key = await KADRI_HELPER_KEY();
+      else key = typeof GM_getValue === 'function' ? (GM_getValue('helperKey', '') || 'evp-1') : helperKey;
+    } catch (e) { return null; }
+    if (typeof key !== 'string' || !key) return null;
     return new Promise((res) => {
-      const x = CONFIG.systemHelper === false ? null : gmXhr();
-      if (!x) { res(null); return; }
       let done = false;
       const fin = (v) => { if (!done) { done = true; res(v); } };
-      // Other tabs can re-pair while this document remains open. Read the current
-      // trusted store for every new request; never retry or persist a candidate here.
-      let key = keyOverride || helperKey;
-      if (!keyOverride && typeof GM_getValue === 'function') {
-        try { key = GM_getValue('helperKey', '') || 'evp-1'; }
-        catch (e) { fin(null); return; }
-      }
       try {
         x({
           method: body ? 'POST' : 'GET', url: HELPER + path, headers: { 'X-EVP-Key': key }, timeout: to, anonymous: true,
