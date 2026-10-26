@@ -10,7 +10,7 @@ permissions:
   contents: read
 jobs:
   privacy:
-    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory'
+    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory' && github.head_ref != 'codex/browser-proxy-memory'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -99,7 +99,7 @@ jobs:
           path: validation-results/hls-bundle.json
           if-no-files-found: ignore
   download-manager-privacy:
-    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory'
+    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory' && github.head_ref != 'codex/browser-proxy-memory'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -131,7 +131,7 @@ jobs:
             adb shell am instrument -w de.evp.helfer.debug.test/androidx.test.runner.AndroidJUnitRunner | tee /tmp/download-manager-test.log
             grep -q 'OK (1 test)' /tmp/download-manager-test.log
   validate:
-    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory'
+    if: github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory' && github.head_ref != 'codex/browser-proxy-memory'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -498,6 +498,87 @@ jobs:
           grep -q 'retains TE=chunked and CL=4 in both APIs; getContentLengthLong=4, decoded=0123456789' "$old/proof.log"
           grep -q 'Framing accepted by production paths: fetch=0123, download=4 bytes (0123)' "$old/proof.log"
           echo 'PASS: real parser exposes both headers; reviewed code silently truncates both outputs'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Reproduce old authenticated ingress OOM and browser size-probe buffering
+        if: github.head_ref == 'codex/browser-proxy-memory'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/proxy-baseline"
+          mkdir -p "$old/classes" "$old/src"
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/MiniServer.java?ref=f5040b02e3184a995462fbfcb1e6aaf3f3d54adb' --jq .content | base64 --decode > "$old/MiniServer.java"
+          javac -cp tests/java/classes -d "$old/classes" "$old/MiniServer.java"
+          if timeout 20 java -Xmx32m -cp "$old/classes:tests/java/classes" de.evp.helfer.TestProxyIngress > "$old/ingress.log" 2>&1; then
+            echo 'Old ingress unexpectedly passed'; exit 1
+          else
+            code=$?
+          fi
+          test "$code" = 1
+          cat "$old/ingress.log"
+          grep -q 'OutOfMemoryError: Java heap space' "$old/ingress.log"
+          gh api 'repos/Owndot/video-assistent-helper/contents/src/080-helper-app.js?ref=f5040b02e3184a995462fbfcb1e6aaf3f3d54adb' --jq .content | base64 --decode > "$old/src/080-helper-app.js"
+          if node tests/security/proxy_memory.js "$old" > "$old/browser.log" 2>&1; then echo 'Old size probe unexpectedly passed'; exit 1; fi
+          grep -q 'size probe buffered its response body' "$old/browser.log"
+          echo 'PASS: actual predecessor exhausts Java heap in authenticated /push and buffers size-probe body'
+      - name: Reproduce the reviewed size, identity and cancellation findings
+        if: github.head_ref == 'codex/browser-proxy-memory'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/review-four"
+          mkdir -p "$old/classes" "$old/src"
+          for name in Fetcher MiniServer Downloads; do
+            gh api "repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/$name.java?ref=5e52c3228b7907fbced062acf83df47492fe48df" --jq .content | base64 --decode > "$old/$name.java"
+          done
+          grep -q 'AtomicInteger(100)' "$old/Downloads.java"
+          javac -cp tests/java/classes -d "$old/classes" "$old/Fetcher.java" "$old/MiniServer.java"
+          if java -Xmx32m -cp "$old/classes:tests/java/classes" de.evp.helfer.TestTransferIntegrity > "$old/size.log" 2>&1; then echo 'Size regression not reproduced'; exit 1; fi
+          grep -q 'Eight-byte transfer accepted 6 bytes' "$old/size.log"
+          if java -Xmx32m -cp "$old/classes:tests/java/classes" de.evp.helfer.TestJobIdentity --legacy --http > "$old/identity.log" 2>&1; then echo 'Stale identity not reproduced'; exit 1; fi
+          grep -q 'Stale upload accepted after process reset: OLD' "$old/identity.log"
+          gh api 'repos/Owndot/video-assistent-helper/contents/src/080-helper-app.js?ref=5e52c3228b7907fbced062acf83df47492fe48df' --jq .content | base64 --decode > "$old/src/080-helper-app.js"
+          for case in size queue; do
+            if node tests/security/proxy_review.js "$old" --case="$case" > "$old/$case-client.log" 2>&1; then echo "Client $case regression not reproduced"; exit 1; fi
+          done
+          grep -q 'client accepted eight-versus-six bytes with unchanged ETag' "$old/size-client.log"
+          grep -q 'cancelled queued GM work started' "$old/queue-client.log"
+          echo 'PASS: reviewed production readers/client and authenticated reset transport reproduce the three findings'
+      - name: Reproduce legacy full-response and initial-status regressions
+        if: github.head_ref == 'codex/browser-proxy-memory'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/review-two"
+          mkdir -p "$old/classes" "$old/src"
+          gh api 'repos/Owndot/video-assistent-helper/contents/app/src/main/java/de/evp/helfer/Fetcher.java?ref=5d5100c9adc34c05bea7b2bb1b1bc3ce24186ea9' --jq .content | base64 --decode > "$old/Fetcher.java"
+          javac -cp tests/java/classes -d "$old/classes" "$old/Fetcher.java"
+          if java -Xmx32m -cp "$old/classes:tests/java/classes" de.evp.helfer.TestLegacyFullResponse --http > "$old/length.log" 2>&1; then echo 'Legacy length regression not reproduced'; exit 1; fi
+          grep -q 'Legacy HTTP200 accepted eight-byte prefix: 01234567' "$old/length.log"
+          gh api 'repos/Owndot/video-assistent-helper/contents/src/080-helper-app.js?ref=5d5100c9adc34c05bea7b2bb1b1bc3ce24186ea9' --jq .content | base64 --decode > "$old/src/080-helper-app.js"
+          if node tests/security/proxy_initial_status.js "$old" > "$old/status.log" 2>&1; then echo 'Initial status regression not reproduced'; exit 1; fi
+          grep -q 'initial status timeout discarded pulled work' "$old/status.log"
+          echo 'PASS: reviewed production code accepts the wrong prefix over HTTP and drops the timed-out initial batch'
+      - name: Proxy streaming, browser bounds and unchanged authentication
+        run: |
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestLegacyFullResponse
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestLegacyFullResponse --http
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestTransferIntegrity
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestJobIdentity
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestJobIdentity --http
+          bash tests/java/run_job_id_processes.sh
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestProxyMemory
+          java -Xmx32m -cp tests/java/classes de.evp.helfer.TestProxyIngress
+          node tests/security/proxy_initial_status.js
+          node tests/security/proxy_review.js
+          node --max-old-space-size=32 --expose-gc tests/security/proxy_memory.js
+          node tests/security/gm_headers.js
+          node tools/build.js --check
+          node tests/security/hls_license.js
       - name: Bounded memory, ranges, cancellation and real HTTP
         run: |
           java -Xmx32m -cp tests/java/classes de.evp.helfer.TestResponseFraming --simulated
@@ -506,7 +587,7 @@ jobs:
           java -Xmx32m -cp tests/java/classes de.evp.helfer.TestMemoryHttp
       - name: Native media and existing proxy compatibility
         # This PR skips the broad Android/browser jobs. Reuse existing fixtures here once.
-        if: github.head_ref == 'codex/native-media-memory'
+        if: github.head_ref == 'codex/native-media-memory' || github.head_ref == 'codex/browser-proxy-memory'
         run: |
           set -euo pipefail
           # Hosted runners can resolve Ubuntu through mirror+file lists as well as deb822.

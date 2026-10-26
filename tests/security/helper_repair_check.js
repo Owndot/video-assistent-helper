@@ -79,7 +79,7 @@ async function extension(target){
 }
 async function userscript(){
  let key=OLD,accepted=OLD,broken=false;const requests=[];
- const c={CONFIG:{systemHelper:true},setTimeout:()=>0,GM_getValue:()=>{if(broken)throw Error('synthetic storage error');return key;},gmXhr:()=>o=>{requests.push(o);o.onload({status:o.headers['X-EVP-Key']===accepted?200:403,responseText:'{"ok":true}'});}};
+ const c={CONFIG:{systemHelper:true},setTimeout:()=>0,clearTimeout(){},GM_getValue:()=>{if(broken)throw Error('synthetic storage error');return key;},gmXhr:()=>o=>{requests.push(o);o.onload({status:o.headers['X-EVP-Key']===accepted?200:403,responseText:'{"ok":true}'});}};
  vm.runInNewContext(body+'\nglobalThis.testHelper=helper;',c);
  assert.notEqual(await c.testHelper('/ping'),null);key=NEW;accepted=NEW;assert.notEqual(await c.testHelper('/ping'),null,'userscript kept stale key');
  assert.equal(await c.testHelper('/ping',1200,null,BAD),null);broken=true;const before=requests.length;assert.equal(await c.testHelper('/ping'),null);assert.equal(requests.length,before);

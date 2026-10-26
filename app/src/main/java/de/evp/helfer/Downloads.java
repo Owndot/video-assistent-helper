@@ -31,7 +31,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Downloads für den Videoplayer im Browser.
@@ -49,7 +48,6 @@ public class Downloads {
         new java.util.concurrent.ThreadPoolExecutor(2, 2, 30, java.util.concurrent.TimeUnit.SECONDS,
             new java.util.concurrent.LinkedBlockingQueue<>());
     static { credentialedFiles.allowCoreThreadTimeOut(true); }
-    private static final AtomicInteger ids = new AtomicInteger(100);
     static final Map<Integer, Boolean> cancel = new ConcurrentHashMap<>();
     static final Map<Integer, String> state = new ConcurrentHashMap<>();
     static final Map<Integer, Fetcher.Proxy> proxies = new ConcurrentHashMap<>();
@@ -79,15 +77,27 @@ public class Downloads {
      * Startet einen Download; Rückgabe: Kennung (für Fortschritt / Abholen).
      * kind: file | hls | dash | auto · proxy: über den Browser laden (das Skript holt die Daten mit seiner Sitzung)
      */
-    static int start(Context ctx, String url, String referer, String ua, String cookie, String title, String kind, boolean proxy) {
+    static int start(Context ctx, String url, String referer, String ua, String cookie, String title, String kind, boolean proxy) throws java.io.IOException {
         final Context c = ctx.getApplicationContext();
         channel(c);
-        final int id = ids.incrementAndGet();
+        final int id = JobIds.reserve(new File(c.getFilesDir(), "download-job-ids-v1"), directory -> {
+            // Explicit directory fsync: a read-only FileChannel.force may be a no-op on a provider.
+            java.io.FileDescriptor descriptor = null;
+            try {
+                descriptor = android.system.Os.open(directory.getAbsolutePath(),
+                    android.system.OsConstants.O_RDONLY | android.system.OsConstants.O_DIRECTORY, 0);
+                android.system.Os.fsync(descriptor);
+            } catch (android.system.ErrnoException e) { throw new java.io.IOException("Job ID directory sync failed", e); }
+            finally {
+                if (descriptor != null) try { android.system.Os.close(descriptor); }
+                catch (android.system.ErrnoException e) { throw new java.io.IOException("Job ID directory close failed", e); }
+            }
+        });
         String path = url.split("[?#]")[0].toLowerCase(Locale.ROOT);
         if (kind == null || kind.isEmpty() || "auto".equals(kind)) kind = path.endsWith(".m3u8") ? "hls" : path.endsWith(".mpd") ? "dash" : "file";
         final Fetcher net;
         if (proxy) {
-            Fetcher.Proxy px = new Fetcher.Proxy();
+            Fetcher.Proxy px = new Fetcher.Proxy(new File(c.getCacheDir(), "dl" + id));
             proxies.put(id, px);
             net = px;
         } else net = new Fetcher.Http(referer, ua, cookie);

@@ -9,12 +9,12 @@ const source=fs.readFileSync(process.argv[2]||path.join(root,'src/080-helper-app
 const begin=source.indexOf('  function gmGet('),end=source.indexOf('  const proxyJobs',begin);
 assert(begin>=0 && end>begin);
 let request;
-const gmXhr=()=>options=>{request=options;options.onload({status:200,response:new ArrayBuffer(2),responseHeaders:''});return {abort(){}};};
+const gmXhr=()=>options=>{request=options;options.onload({status:206,response:new ArrayBuffer(20),responseHeaders:'Content-Length: 20\r\nContent-Range: bytes 10-29/30'});return {abort(){}};};
 const gmGet=new Function('gmXhr','location','mediaReferrer',source.slice(begin,end)+'return gmGet;')(gmXhr,{href:page},mediaReferrer);
 (async()=>{
  const url='https://foreign.test/movie.mp4?sig=SIGNED%2Ffixture%2Bvalue';
  const r=await gmGet(url,10,20,false,true);
- assert.equal(r.st,200);assert.equal(request.url,url,'signed media URL changed');
+ assert.equal(r.st,206);assert.equal(request.url,url,'signed media URL changed');
  assert.equal(request.headers.Range,'bytes=10-29');
  assert(!/SECRET/.test(request.headers.Referer||''),'GM request leaked synthetic page secret');
  assert.equal(request.headers.Referer,'','HTTPS GM source must survive arbitrary downgrade redirects');

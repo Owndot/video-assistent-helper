@@ -84,7 +84,10 @@ public class HelferService extends Service {
         if (!running) return START_NOT_STICKY;
         if (intent != null && "cancel".equals(intent.getAction())) {
             // "Abbrechen" in der Download-Benachrichtigung
-            Downloads.cancel.put(intent.getIntExtra("id", -1), true);
+            int cancelledId = intent.getIntExtra("id", -1);
+            Downloads.cancel.put(cancelledId, true);
+            Fetcher.Proxy cancelledProxy = Downloads.proxies.get(cancelledId);
+            if (cancelledProxy != null) cancelledProxy.close();
             return START_STICKY;
         }
         if (intent != null && "test".equals(intent.getAction())) {
@@ -139,6 +142,7 @@ public class HelferService extends Service {
         }, new MiniServer.Handler() {
             @Override public String get(String path, Map<String, String> p) { return route(path, p); }
             @Override public String push(Map<String, String> p, byte[] body) { return MiniServer.push(Downloads.proxies, p, body); }
+            @Override public String pushStream(Map<String, String> p, java.io.InputStream in, long length) throws Exception { return MiniServer.pushStream(Downloads.proxies, p, in, length); }
         });
         return server.start();
     }
@@ -176,7 +180,7 @@ public class HelferService extends Service {
             case "/pull":
                 return MiniServer.pull(Downloads.proxies, Downloads.state, p);
             case "/dlstate": {
-                String st = Downloads.state.get((int) MiniServer.num(p.get("id"), -1));
+                String st = Downloads.state.get(MiniServer.identity(p.get("id")));
                 return "{\"ok\":true,\"state\":" + MiniServer.js(st) + "}";
             }
             case "/end":
