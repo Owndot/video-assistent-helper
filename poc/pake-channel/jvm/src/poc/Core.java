@@ -6,20 +6,20 @@ final class Core {
     private Core() {}
 
     static native byte[] identityGenerate();
-    static native String generateCode();
-    static native long windowOpen(String code, byte[] helperPublic, long nowMs, long ttlMs);
-    static native byte[] windowOnM0(long window, byte[] m0, long nowMs);
-    /** registration_id(16) || kadri_public(32) || M3 */
-    static native byte[] windowOnM2(long window, byte[] m2, long nowMs);
-    static native void windowFree(long window);
-    static native byte[] hs1RegistrationId(byte[] hs1);
-    /** pinnedKadriPublic may be empty for unknown/revoked registrations: fails closed. */
-    static native long respond(byte[] identity, byte[] hs1, byte[] pinnedKadriPublic);
-    static native byte[] channelHs2(long channel);
-    static native byte[] channelSessionId(long channel);
-    static native byte[] channelOpenControl(long channel, byte[] record);
-    static native byte[] channelSealControl(long channel, byte[] json);
-    static native byte[] channelSealMedia(long channel, int transfer, long offset, byte[] data);
-    static native byte[] channelSealEnd(long channel, int transfer, long total);
-    static native void channelFree(long channel);
+    /** Returns the helper public key as hex. */
+    static native String hostInit(byte[] identity, byte[] registrations);
+    /** code == null: generate a fresh code. Returns the code for display. */
+    static native String windowOpen(String code, long nowMs, long ttlMs);
+    static native byte[] windowOnM0(byte[] m0, long nowMs);
+    /** registration_id(16) || M3; registration added as pending first. */
+    static native byte[] windowOnM2(byte[] m2, long nowMs);
+    static native byte[] hostHandshake(byte[] hs1, long nowMs);
+    /** session_id(16) || kind(1) || body */
+    static native byte[] hostOpen(byte[] record, long nowMs);
+    static native byte[] hostSealControl(byte[] session, byte[] json, long nowMs);
+    static native byte[] hostSealMedia(byte[] session, int transfer, long offset, byte[] data, long nowMs);
+    static native byte[] hostSealEnd(byte[] session, int transfer, long total, long nowMs);
+    static native byte[] hostExportRegistrations();
+    static native void hostRevokeAll();
+    static native String hostStats(long nowMs);
 }

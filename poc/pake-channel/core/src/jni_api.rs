@@ -1,38 +1,30 @@
-//! JNI surface for the helper side (PoC only). Native state lives behind
-//! numeric handles; Java never sees PAKE scalars or transport keys.
-use crate::channel::{self, Channel};
+//! JNI surface for the helper side (PoC only). One `HelperHost` per process
+//! plus at most one pairing window. Java never sees PAKE scalars, CipherStates
+//! or session keys; it only moves bytes, persists the exported registrations
+//! and dispatches decrypted control records.
+use crate::host::{HelperHost, Limits};
 use crate::pairing::HelperPairingWindow;
 use crate::record::AppRecord;
 use crate::{Error, Identity, ID_LEN, KEY_LEN};
 use jni::objects::{JByteArray, JClass, JString};
 use jni::sys::{jbyteArray, jint, jlong, jstring};
 use jni::JNIEnv;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
 
-static NEXT: AtomicI64 = AtomicI64::new(1);
-static WINDOWS: Mutex<Option<HashMap<i64, HelperPairingWindow>>> = Mutex::new(None);
-static CHANNELS: Mutex<Option<HashMap<i64, (Channel, Vec<u8>)>>> = Mutex::new(None);
-
-fn put<T>(m: &Mutex<Option<HashMap<i64, T>>>, v: T) -> i64 {
-    let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    m.lock().unwrap().get_or_insert_with(HashMap::new).insert(id, v);
-    id
+struct State {
+    host: HelperHost,
+    window: Option<HelperPairingWindow>,
 }
 
-fn with<T, R>(m: &Mutex<Option<HashMap<i64, T>>>, id: i64, f: impl FnOnce(&mut T) -> Result<R, Error>) -> Result<R, Error> {
-    let mut g = m.lock().unwrap();
-    let v = g.get_or_insert_with(HashMap::new).get_mut(&id).ok_or(Error::WrongState)?;
-    f(v)
+static STATE: Mutex<Option<State>> = Mutex::new(None);
+
+fn with<R>(f: impl FnOnce(&mut State) -> Result<R, Error>) -> Result<R, Error> {
+    let mut g = STATE.lock().map_err(|_| Error::Crypto)?;
+    f(g.as_mut().ok_or(Error::WrongState)?)
 }
 
 fn bytes(env: &JNIEnv, a: &JByteArray) -> Result<Vec<u8>, Error> {
     env.convert_byte_array(a).map_err(|_| Error::Malformed)
-}
-
-fn key(b: &[u8]) -> Result<[u8; KEY_LEN], Error> {
-    b.try_into().map_err(|_| Error::Malformed)
 }
 
 fn throw(env: &mut JNIEnv, e: Error) {
@@ -49,11 +41,18 @@ fn ret(env: &mut JNIEnv, r: Result<Vec<u8>, Error>) -> jbyteArray {
     }
 }
 
-fn ret_long(env: &mut JNIEnv, r: Result<i64, Error>) -> jlong {
-    r.unwrap_or_else(|e| {
-        throw(env, e);
-        0
-    })
+fn ret_str(env: &mut JNIEnv, r: Result<String, Error>) -> jstring {
+    match r.and_then(|s| env.new_string(s).map_err(|_| Error::Crypto)) {
+        Ok(s) => s.into_raw(),
+        Err(e) => {
+            throw(env, e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+fn sid(b: &[u8]) -> Result<[u8; ID_LEN], Error> {
+    b.try_into().map_err(|_| Error::Malformed)
 }
 
 #[no_mangle]
@@ -62,126 +61,132 @@ pub extern "system" fn Java_poc_Core_identityGenerate(mut env: JNIEnv, _: JClass
     ret(&mut env, r)
 }
 
+/// Loads the helper identity (private||public, 64 B) and persisted registrations.
 #[no_mangle]
-pub extern "system" fn Java_poc_Core_generateCode(mut env: JNIEnv, _: JClass) -> jstring {
-    match HelperPairingWindow::generate_code().and_then(|c| env.new_string(c).map_err(|_| Error::Crypto)) {
-        Ok(s) => s.into_raw(),
-        Err(e) => {
-            throw(&mut env, e);
-            std::ptr::null_mut()
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "system" fn Java_poc_Core_windowOpen(mut env: JNIEnv, _: JClass, code: JString, helper_public: JByteArray, now: jlong, ttl: jlong) -> jlong {
-    let r = (|| {
-        let code: String = env.get_string(&code).map_err(|_| Error::Malformed)?.into();
-        let w = HelperPairingWindow::open(&code, key(&bytes(&env, &helper_public)?)?, now as u64, ttl as u64)?;
-        Ok(put(&WINDOWS, w))
-    })();
-    ret_long(&mut env, r)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_poc_Core_windowOnM0(mut env: JNIEnv, _: JClass, h: jlong, m0: JByteArray, now: jlong) -> jbyteArray {
-    let r = bytes(&env, &m0).and_then(|m0| with(&WINDOWS, h, |w| w.on_m0(&m0, now as u64)));
-    ret(&mut env, r)
-}
-
-/// Returns registration_id(16) || kadri_public(32) || M3.
-#[no_mangle]
-pub extern "system" fn Java_poc_Core_windowOnM2(mut env: JNIEnv, _: JClass, h: jlong, m2: JByteArray, now: jlong) -> jbyteArray {
-    let r = bytes(&env, &m2).and_then(|m2| {
-        with(&WINDOWS, h, |w| w.on_m2(&m2, now as u64)).map(|(p, m3)| [&p.registration_id[..], &p.peer_public[..], &m3].concat())
-    });
-    ret(&mut env, r)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_poc_Core_windowFree(_: JNIEnv, _: JClass, h: jlong) {
-    if let Some(m) = WINDOWS.lock().unwrap().as_mut() {
-        m.remove(&h);
-    }
-}
-
-/// Responds to HS1 for the registration Java looked up. `pinned` may be empty
-/// (unknown/revoked registration), which fails closed.
-#[no_mangle]
-pub extern "system" fn Java_poc_Core_respond(mut env: JNIEnv, _: JClass, identity: JByteArray, hs1: JByteArray, pinned: JByteArray) -> jlong {
+pub extern "system" fn Java_poc_Core_hostInit(mut env: JNIEnv, _: JClass, identity: JByteArray, registrations: JByteArray) -> jstring {
     let r = (|| {
         let id = bytes(&env, &identity)?;
         if id.len() != 2 * KEY_LEN {
             return Err(Error::Malformed);
         }
         let me = Identity::from_private(&id[..KEY_LEN])?;
-        let hs1 = bytes(&env, &hs1)?;
-        let pinned = bytes(&env, &pinned)?;
-        let pinned = if pinned.is_empty() { None } else { Some(key(&pinned)?) };
-        let (ch, hs2) = channel::respond(&me, &hs1, |_| pinned)?;
-        Ok(put(&CHANNELS, (ch, hs2)))
-    })();
-    ret_long(&mut env, r)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_poc_Core_hs1RegistrationId(mut env: JNIEnv, _: JClass, hs1: JByteArray) -> jbyteArray {
-    let r = bytes(&env, &hs1).and_then(|b| {
-        if b.len() != channel::HS_LEN || &b[..4] != channel::MAGIC {
+        if me.public[..] != id[KEY_LEN..] {
             return Err(Error::Malformed);
         }
-        Ok(b[5..5 + ID_LEN].to_vec())
+        let mut host = HelperHost::new(me, Limits::default());
+        host.import_registrations(&bytes(&env, &registrations)?)?;
+        let public: String = host.public().iter().map(|b| format!("{b:02x}")).collect();
+        *STATE.lock().map_err(|_| Error::Crypto)? = Some(State { host, window: None });
+        Ok(public)
+    })();
+    ret_str(&mut env, r)
+}
+
+/// Opens the single pairing window and returns the code for display.
+#[no_mangle]
+pub extern "system" fn Java_poc_Core_windowOpen(mut env: JNIEnv, _: JClass, code: JString, now: jlong, ttl: jlong) -> jstring {
+    let given: Option<String> = if code.is_null() { None } else { env.get_string(&code).ok().map(Into::into) };
+    let r = with(|s| {
+        let code = match given {
+            Some(c) => c,
+            None => HelperPairingWindow::generate_code()?,
+        };
+        s.window = Some(HelperPairingWindow::open(&code, s.host.public(), now as u64, ttl as u64)?);
+        Ok(code)
     });
-    ret(&mut env, r)
+    ret_str(&mut env, r)
 }
 
 #[no_mangle]
-pub extern "system" fn Java_poc_Core_channelHs2(mut env: JNIEnv, _: JClass, h: jlong) -> jbyteArray {
-    let r = with(&CHANNELS, h, |c| Ok(core::mem::take(&mut c.1)));
+pub extern "system" fn Java_poc_Core_windowOnM0(mut env: JNIEnv, _: JClass, m0: JByteArray, now: jlong) -> jbyteArray {
+    let r = bytes(&env, &m0).and_then(|m0| with(|s| s.window.as_mut().ok_or(Error::WrongState)?.on_m0(&m0, now as u64)));
     ret(&mut env, r)
 }
 
+/// Returns registration_id(16) || M3. The window is closed afterwards in
+/// every case; the registration is added as pending before M3 is released.
 #[no_mangle]
-pub extern "system" fn Java_poc_Core_channelSessionId(mut env: JNIEnv, _: JClass, h: jlong) -> jbyteArray {
-    let r = with(&CHANNELS, h, |c| Ok(c.0.session_id().to_vec()));
-    ret(&mut env, r)
-}
-
-/// Opens a record and returns the control JSON; anything else fails.
-#[no_mangle]
-pub extern "system" fn Java_poc_Core_channelOpenControl(mut env: JNIEnv, _: JClass, h: jlong, rec: JByteArray) -> jbyteArray {
-    let r = bytes(&env, &rec).and_then(|rec| {
-        with(&CHANNELS, h, |c| match AppRecord::decode(&c.0.open(&rec)?)? {
-            AppRecord::Control(b) => Ok(b),
-            _ => Err(Error::Malformed),
+pub extern "system" fn Java_poc_Core_windowOnM2(mut env: JNIEnv, _: JClass, m2: JByteArray, now: jlong) -> jbyteArray {
+    let r = bytes(&env, &m2).and_then(|m2| {
+        with(|s| {
+            let mut w = s.window.take().ok_or(Error::WrongState)?;
+            let (pinned, m3) = w.on_m2(&m2, now as u64)?;
+            s.host.add_pending(&pinned, now as u64)?;
+            Ok([&pinned.registration_id[..], &m3].concat())
         })
     });
     ret(&mut env, r)
 }
 
 #[no_mangle]
-pub extern "system" fn Java_poc_Core_channelSealControl(mut env: JNIEnv, _: JClass, h: jlong, json: JByteArray) -> jbyteArray {
-    let r = bytes(&env, &json).and_then(|j| with(&CHANNELS, h, |c| c.0.seal(&AppRecord::Control(j).encode()?)));
+pub extern "system" fn Java_poc_Core_hostHandshake(mut env: JNIEnv, _: JClass, hs1: JByteArray, now: jlong) -> jbyteArray {
+    let r = bytes(&env, &hs1).and_then(|hs1| with(|s| s.host.handshake(&hs1, now as u64)));
     ret(&mut env, r)
 }
 
+/// Returns sid(16) || kind(1) || body. kind 1 = control JSON. Other
+/// application record kinds from Kadri are rejected (terminal).
 #[no_mangle]
-pub extern "system" fn Java_poc_Core_channelSealMedia(mut env: JNIEnv, _: JClass, h: jlong, transfer: jint, offset: jlong, data: JByteArray) -> jbyteArray {
-    let r = bytes(&env, &data).and_then(|d| {
-        with(&CHANNELS, h, |c| c.0.seal(&AppRecord::Media { transfer: transfer as u32, offset: offset as u64, data: d }.encode()?))
+pub extern "system" fn Java_poc_Core_hostOpen(mut env: JNIEnv, _: JClass, rec: JByteArray, now: jlong) -> jbyteArray {
+    let r = bytes(&env, &rec).and_then(|rec| {
+        with(|s| match s.host.open(&rec, now as u64)? {
+            (sid, AppRecord::Control(b)) => Ok([&sid[..], &[1u8], &b].concat()),
+            (sid, _) => {
+                s.host.close(&sid);
+                Err(Error::Malformed)
+            }
+        })
     });
     ret(&mut env, r)
 }
 
 #[no_mangle]
-pub extern "system" fn Java_poc_Core_channelSealEnd(mut env: JNIEnv, _: JClass, h: jlong, transfer: jint, total: jlong) -> jbyteArray {
-    let r = with(&CHANNELS, h, |c| c.0.seal(&AppRecord::End { transfer: transfer as u32, total: total as u64 }.encode()?));
+pub extern "system" fn Java_poc_Core_hostSealControl(mut env: JNIEnv, _: JClass, session: JByteArray, json: JByteArray, now: jlong) -> jbyteArray {
+    let r = bytes(&env, &session).and_then(|id| {
+        let j = bytes(&env, &json)?;
+        with(|s| s.host.seal(&sid(&id)?, &AppRecord::Control(j), now as u64))
+    });
     ret(&mut env, r)
 }
 
 #[no_mangle]
-pub extern "system" fn Java_poc_Core_channelFree(_: JNIEnv, _: JClass, h: jlong) {
-    if let Some(m) = CHANNELS.lock().unwrap().as_mut() {
-        m.remove(&h);
+pub extern "system" fn Java_poc_Core_hostSealMedia(mut env: JNIEnv, _: JClass, session: JByteArray, transfer: jint, offset: jlong, data: JByteArray, now: jlong) -> jbyteArray {
+    let r = bytes(&env, &session).and_then(|id| {
+        let d = bytes(&env, &data)?;
+        with(|s| s.host.seal(&sid(&id)?, &AppRecord::Media { transfer: transfer as u32, offset: offset as u64, data: d }, now as u64))
+    });
+    ret(&mut env, r)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_poc_Core_hostSealEnd(mut env: JNIEnv, _: JClass, session: JByteArray, transfer: jint, total: jlong, now: jlong) -> jbyteArray {
+    let r = bytes(&env, &session).and_then(|id| with(|s| s.host.seal(&sid(&id)?, &AppRecord::End { transfer: transfer as u32, total: total as u64 }, now as u64)));
+    ret(&mut env, r)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_poc_Core_hostExportRegistrations(mut env: JNIEnv, _: JClass) -> jbyteArray {
+    let r = with(|s| Ok(s.host.export_registrations()));
+    ret(&mut env, r)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_poc_Core_hostRevokeAll(mut env: JNIEnv, _: JClass) {
+    if let Err(e) = with(|s| {
+        s.host.revoke_all();
+        s.window = None;
+        Ok(())
+    }) {
+        throw(&mut env, e);
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_poc_Core_hostStats(mut env: JNIEnv, _: JClass, now: jlong) -> jstring {
+    let r = with(|s| {
+        s.host.sweep(now as u64);
+        let st = s.host.stats();
+        Ok(format!("registrations={} half_open={} established={}", st.registrations, st.half_open, st.established))
+    });
+    ret_str(&mut env, r)
 }

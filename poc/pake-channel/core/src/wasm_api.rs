@@ -49,7 +49,7 @@ impl KadriPairingFlow {
 
 #[wasm_bindgen]
 pub struct KadriHandshake {
-    inner: Option<Initiator>,
+    inner: Initiator,
     hs1: Vec<u8>,
 }
 
@@ -63,14 +63,14 @@ impl KadriHandshake {
         let me = Identity::from_private(&identity[..KEY_LEN]).map_err(js)?;
         let reg: [u8; ID_LEN] = registration_id.try_into().unwrap();
         let (inner, hs1) = Initiator::start(&me, &key(helper_public)?, &reg).map_err(js)?;
-        Ok(Self { inner: Some(inner), hs1 })
+        Ok(Self { inner, hs1 })
     }
     pub fn hs1(&self) -> Vec<u8> {
         self.hs1.clone()
     }
+    /// Single use; any failure leaves no usable state behind.
     pub fn finish(&mut self, hs2: &[u8]) -> Result<KadriChannel, JsError> {
-        let init = self.inner.take().ok_or(js(Error::WrongState))?;
-        Ok(KadriChannel { inner: init.finish(hs2).map_err(js)? })
+        Ok(KadriChannel { inner: self.inner.finish(hs2).map_err(js)? })
     }
 }
 
@@ -81,15 +81,17 @@ pub struct KadriChannel {
 
 #[wasm_bindgen]
 impl KadriChannel {
+    /// Errors are terminal: afterwards every call fails with WrongState.
     pub fn seal_control(&mut self, json: &[u8]) -> Result<Vec<u8>, JsError> {
-        let rec = AppRecord::Control(json.to_vec()).encode().map_err(js)?;
-        self.inner.seal(&rec).map_err(js)
+        self.inner.seal_app(&AppRecord::Control(json.to_vec())).map_err(js)
+    }
+    pub fn is_dead(&self) -> bool {
+        self.inner.is_dead()
     }
     /// Returns [kind] || body: kind 1 control JSON, 2 media (u32 transfer,
     /// u64 offset, data), 3 end (u32 transfer, u64 total).
     pub fn open(&mut self, record: &[u8]) -> Result<Vec<u8>, JsError> {
-        let pt = self.inner.open(record).map_err(js)?;
-        Ok(match AppRecord::decode(&pt).map_err(js)? {
+        Ok(match self.inner.open_app(record).map_err(js)? {
             AppRecord::Control(b) => [&[1u8][..], &b].concat(),
             AppRecord::Media { transfer, offset, data } => [&[2u8][..], &transfer.to_be_bytes(), &offset.to_be_bytes(), &data].concat(),
             AppRecord::End { transfer, total } => [&[3u8][..], &transfer.to_be_bytes(), &total.to_be_bytes()].concat(),

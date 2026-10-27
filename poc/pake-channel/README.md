@@ -1,142 +1,180 @@
-# Helper #4 – isolierter PAKE-/Kanal-Machbarkeitsnachweis (Kandidat B)
+# Helper #4 – isolierter PAKE-/Kanal-Machbarkeitsnachweis (Kandidat B), Revision 2
 
-**Nur Machbarkeitsnachweis. Keine Produktionsfreigabe, keine Implementierungsfreigabe.** Ausschließlich Wegwerf-Identitäten, künstliche Codes und der Nicht-Produktionsport 47899. Kein Android-Build, keine APK, keine Signierung, keine Änderung an `app/`, `src/`, `userscript/`, Kadri, CI, minSdk oder `release/production-policy.json` (bleibt `UNAPPROVED`). Issue #4 bleibt offen. PR #20 (`codex/server-auth-design`) bleibt unverändert und getrennt.
+**Nur Machbarkeitsnachweis. Keine Produktions- oder Implementierungsfreigabe.** Ausschließlich Wegwerf-Identitäten, künstliche Codes und Nicht-Produktionsports (47899 Helper, 47900 Testwebseite, 47902 Firefox-Testbrücke). Kein Android-Build, keine APK, keine Signierung, keine Änderung an `app/`, `src/`, `userscript/`, Kadri, CI, minSdk oder `release/production-policy.json` (bleibt `UNAPPROVED`). Issue #4 bleibt offen, PR #20 unverändert. Alle Änderungen liegen unter `poc/pake-channel/`.
 
-Basis: Helper `main` bb8a42d83eac108c098600e50a20208446134e65, Kadri `main` d52faae455c4518c843bed4c50748c87aea1bf40 (beide am 2026-10-27 als aktuelle Remote-Stände geprüft). Laufergebnisse: [RESULTS-2026-10-27.md](RESULTS-2026-10-27.md).
+Ausgangs-HEAD dieser Revision: 5ab5e21373c881d390be183a7af7894716a64eba (geprüfter Stand des unabhängigen Reviews). Basis weiterhin Helper `main` bb8a42d, Kadri `main` d52faae. Laufprotokolle: [RESULTS-2026-10-27-r2.md](RESULTS-2026-10-27-r2.md); Erstlauf: [RESULTS-2026-10-27.md](RESULTS-2026-10-27.md).
 
-## Ergebnis in einem Satz
+## Ergebnis
 
-Die Kombination **SPAKE2 (RFC 9382, P-256) mit den langfristigen X25519-Schlüsseln als RFC-Identitäten A/B, danach `Noise_KK_25519_ChaChaPoly_SHA256` mit genau diesen gepinnten Schlüsseln** läuft als *ein* Rust-Kern sowohl als WASM im echten Chromium-MV3-Service-Worker als auch per JNI auf der JVM. Alle Positiv- und Negativtests bestehen. **Produktionsblocker:** Weder die PAKE-Bibliothek (`pakery-spake2 0.6.2`) noch `snow 0.10.0` noch die Komposition sind unabhängig auditiert; Android/Vivaldi ist nicht auf Hardware geprüft.
+Protokollversion 2 bindet Pairing-/Registrierungs-ID kryptografisch (RFC-9382-AAD und Noise-Prolog), validiert alle X25519-Schlüssel, macht jeden Kanalfehler terminal und begrenzt HS1-Replays über eine kleine Helper-Sitzungstabelle. Derselbe, bytegleiche WASM-Kern (SHA-256 siehe Ergebnisdatei) läuft jetzt **real in Chromium 153 (MV3-Service-Worker) und Firefox Desktop 158.0.1 (MV2-Hintergrundseite)** gegen denselben JNI-Testhelper; beide Szenarien bestehen vollständig. **Weiterhin Produktionsblocker:** kein unabhängiges Audit von `pakery-*`, `p256`, `snow` und der Komposition; Android/Vivaldi/Firefox Android ungeprüft.
 
-## 1. Bestandsaufnahme (am Code bestätigt)
+## 0. Review-Findings → Umsetzung
 
-| Komponente | Heutiger Stand | Für sichere Kopplung ändern? |
-| --- | --- | --- |
-| Helper `Keys.java` | 128-bit-Zufalls-Bearer als Hex in `SharedPreferences("helfer")`, Flag `paired`. | **Ja:** X25519-Helperidentität (Keystore-umhüllt), Registrierungsliste (Registrierungs-ID → Kadri-Schlüssel), Kopplungsfenster. |
-| Helper `MiniServer.java` | HTTP/1.1, eine Anfrage je Verbindung, `127.0.0.1:47811`, `X-EVP-Key`-Prädikat, unauthentisiertes `GET /pair`, `POST /push` bis 256 MiB gestreamt, Host-Check. | **Ja (Transportkern):** Pairing-/Handshake-/Record-Endpunkte mit Bodylimit 65 556 B; `X-EVP-Key` und `/pair` entfernen. Host-Check, Socket-/Poolgrenzen behalten. |
-| Helper `HelferService.route()` | `/ping /bright /vol /beat /download /pull /push /dlstate /end` aus Query-Parametern. | **Adapter:** gleiche Routenlogik, Eingabe aus entschlüsselten Kontrollrecords statt Query/Header. |
-| Helper `MainActivity.pair()` | Öffnet `http://127.0.0.1:47811/pair#KEY` im Browser; `Keys.reset`. | **Ja (UI):** „Kopplungscode anzeigen“ (Fenster öffnen, 8-stelliger Code, Countdown), „Kopplung widerrufen“. |
-| Helper `Downloads`/`Fetcher`/`HlsCore`/`DashCore` | Proxy `pull`/`push` mit bis zu 4-MiB-Fenstern (`Fetcher.MAX_ARRAY_BYTES`). | **Nein für Kopplung.** Streaming → #5. |
-| Helper `SettingsTransfer` | Exportiert keine Kopplungsdaten. | Nein (beibehalten). |
-| Helper `app/build.gradle` | Keine nativen Bibliotheken. | **Ja (Build):** JNI-`.so` je ABI, Rust-Toolchain/cargo-ndk – Owner-Entscheidung. |
-| Kadri `chrome|firefox/prelude.js` `KADRI_HELPER_KEY` | Content-Script liest `gm:helperKey` aus `storage.local` → **Bearer liegt im Renderer beliebiger Webseiten**. | **Ja:** entfernen. Schlüssel/Kanal nur im Hintergrund. |
-| Kadri `src/080-helper-app.js` `helper()` | Baut `X-EVP-Key`-Header, `/pair#`-Hash-Übernahme, Proxy-`gmGet` puffert Fenster als `ArrayBuffer`. | **Ja:** `helper()` wird semantische Nachricht an den Hintergrund; `/pair`-Übernahme entfällt. Proxy-Pufferung → #5. |
-| Kadri `background.js` | Generischer `kadri-xhr`-Port; Helper-Ausnahme in `guard()` (POST erlaubt, `credentials: omit`, `redirect: error`), DNR-Allow-Regel 50. | **Ja:** Helper-Client (WASM) hier; Helperzugriff aus dem generischen Port entfernen. |
-| Kadri `popup.js` | `fetch /ping` direkt mit Schlüssel. | **Ja:** über Hintergrund. |
-| Kadri `options.html/js` | Keine Kopplungs-UI. | **Ja:** Codeeingabe (vertrauenswürdige Erweiterungsseite). |
-| Kadri `manifest.json` / `tools/build.js` | Keine WASM-CSP, kein WASM-Artefakt. | **Ja:** `'wasm-unsafe-eval'` nur für `extension_pages` (MV3) bzw. Firefox-Äquivalent; reproduzierbarer WASM-Build. |
-| Userscript-Route | Gemeinsame `src/`, GM-Manager. | Kein belegter vertrauenswürdiger Bootstrap/WASM-Kontext → **nicht abgedeckt**; alter Bearer darf nicht parallel weiterlaufen (Produktentscheidung). |
-| Tests | `tests/security/helper_listener.js` (PR #20) reproduziert den Abfluss; Kadri `test_helper.py`, `helper_repair_check.js` setzen den Bearer voraus. | Später: Exposure-Test wird Regressionstest „fremder Listener erhält nichts Vertrauliches“; Bearer-Tests ersetzen. |
-
-## 2. Bibliotheksbewertung (Stand 2026-10-27, Metadaten von crates.io/npm abgefragt)
-
-### PAKE
-
-| Kandidat (exakte Version) | Standard / Vektoren | Audit | Pflege | Bindings | Bewertung |
-| --- | --- | --- | --- | --- | --- |
-| `pakery-spake2 0.6.2` + `pakery-core 0.6.2` + `pakery-crypto 0.6.2` (github.com/djx-y-z/pakery, MIT/Apache-2.0) | RFC 9382, P256-SHA256-HKDF-HMAC; alle 4 Appendix-B-Vektoren bestehen, **unabhängig nachgerechnet** (eigene Python-P-256-Arithmetik, M/N aus dem RFC-Seed neu erzeugt) | **keines** | Erstveröffentlichung 2026-03-07, 10 Releases in 7 Monaten, 0.3→0.6 in sechs Wochen, letzte Version 2026-10-26, ~3 300 Downloads | Rust, `forbid(unsafe_code)`; WASM und JNI im PoC belegt | **PoC-Kandidat, nicht produktionsreif.** Junge, schnell wechselnde API; Abhängigkeit `p256 0.14.0` (README: Arithmetik nie unabhängig auditiert). |
-| RustCrypto `spake2 0.4.0` | Nicht RFC 9382 (Ed25519-Gruppe, python-spake2-kompatibel), keine Key-Confirmation | keines (README) | gepflegt, weit verbreitet | Rust | Ungeeignet: keine RFC-Vektoren, Bestätigung müsste selbst gebaut werden. |
-| `opaque-ke 4.0.1` (Meta) | RFC 9807 | NCC 2021 für v0.5 → Fixes in v1.2; **nicht 4.0.1** | gepflegt | Rust; WASM-Wrapper `@serenity-kit/opaque 1.1.0` | Für Kopplung **nicht empfohlen**: aPAKE braucht authentisierte Registrierung; lokale Selbstregistrierung im Helper kann Kadris eigene Identität nicht binden. Argon2-Standardparameter speicherintensiv. |
-| BoringSSL `spake2plus` (RFC 9383) bzw. TLS-PAKE (`SSL_CREDENTIAL_new_spake2plusv1_*`, draft-bmw-tls-pake13) | RFC 9383, Vektoren im Projekt | Google-intern gepflegt, kein öffentlicher Einzelaudit bekannt | aktiv | C++; Prover/Verifier nur interne API; Browser-`fetch` kann kein TLS-PAKE; WASM- und NDK-Build nötig | Bessere Herkunft, aber deutlich höhere Größe/Build-/Wartungskosten; hier **nicht zur Laufzeit geprüft**. Alternative für die nächste Entscheidung. |
-| CPace (draft-irtf-cfrg-cpace), `pake-cpace 0.1.7` (2023) | Entwurf, älterer Draftstand | keines | gering | Rust | Nicht jetzt. |
-| JS `spake2 1.0.2` (2019), `@niomon/spake2 1.0.4` (2022) | eigene Ed25519-Draft-Vektoren, nicht RFC 9382 P-256 | keines | inaktiv | JS | Ungeeignet. |
-| Java | Kein gepflegtes SPAKE2/RFC-9382 gefunden (Bouncy Castle: J-PAKE, SRP-6a) | – | – | – | Daher Rust-Kern per JNI. |
-
-### Noise
-
-| Kandidat | Audit | Befund | Bewertung |
+| # | Finding | Umsetzung | Nachweis |
 | --- | --- | --- | --- |
-| `snow 0.10.0` (Apache-2.0/MIT, 2025-07-19, ~29,7 Mio. Downloads) | README: **„has not received any formal audit“** | Cacophony-Vektor (unabhängige Haskell-Implementierung) für exakt `Noise_KK_25519_ChaChaPoly_SHA256` besteht. Reine Rust-Primitiven: `curve25519-dalek 4.1.3`, `chacha20poly1305 0.10.1` (README: ein NCC-Audit ohne wesentliche Befunde), `sha2 0.10.9`. snow-Feature `std` zieht `ring` (C/asm) → im PoC deaktiviert. | **PoC-Kandidat**, Auditlücke. |
-| `clatter 2.3.0` | README: kein Audit | PQ-Schwerpunkt | Nicht nötig. |
-| `noise-protocol 0.2.1` (Unlicense) | unbekannt | klein | Nicht weiter verfolgt. |
-| JS `noise-handshake 4.2.0`, `@chainsafe/libp2p-noise 17.0.0` | nicht belegt | libp2p-Variante XX-zentriert | Zwei Implementierungen = doppelter Interop-/Auditumfang → nicht gewählt. |
-| Java `noise-java` | nicht geprüft (Maven-Suche aus Sandbox gesperrt) | – | Nicht gewählt. |
+| 1 | Pairing-/Registrierungs-ID nicht vollständig gebunden | ID wird im Helper **vor** `PartyB::start` gezogen; RFC-9382-AAD = `"kadri-helper-pairing-poc/2"` (26 B, feste Länge) ‖ ID (16 B) auf beiden Seiten; Noise-Prolog = `"kadri-helper-channel-poc/2"` (26 B) ‖ Registrierungs-ID; Registrierungs-ID = Pairing-ID. Feste Längen → eindeutige Kodierung in beiden Richtungen. | `pairing_id_is_bound_in_both_directions` (ID in M1 manipuliert, in M2 zurückgesetzt, in M3 manipuliert, ID-Verwechslung zweier paralleler Kopplungen), `prologue_binds_version_and_registration_id` (ID-Tausch zwischen zwei Registrierungen desselben Schlüssels) |
+| 2 | Argon2-Profil nicht fixiert | Profil in §4 vollständig; KAT mit Referenz-C-Argon2 (argon2-cffi) | `tests/kat.rs`, `vectors/password-scalar-kat.json`, `vectors/argon2_kat.py` |
+| 3 | Fehlersemantik nicht terminal | Jeder Fehler in `Channel::seal/open/seal_app/open_app` verwirft beide CipherStates; Initiator einmalig; Helper entfernt die Sitzung; WASM/JNI erben das | `every_receive_error_is_terminal` (10 Fehlerarten, danach weder Fortsetzung noch weitere Nonce-Nutzung), `replay_and_reorder_are_terminal`, `oversized_seal_is_terminal`, `record_errors_remove_only_that_session` |
+| 4 | HS1-Replay erzeugt Sitzungen / verdrängt | Halb-offene Sitzungen in eigenem Pool (global 4, je Registrierung 2, 10 s), Beförderung erst durch einen authentisierten Record; etablierte Sitzungen (global 4, je Registrierung 2, 120 s idle, 4 h absolut) werden nie durch unauthentisierte Eingaben verdrängt | `replayed_hs1_never_displaces_established_sessions` (400 Replays), `global_half_open_pressure_spares_established_sessions`, Timeout-Tests |
+| 5 | Pairing-/Browser-Guards | HTTP-Gate (nur POST, Host, `application/octet-stream`, `X-Kadri-Helper: 2`, nur Erweiterungs-Origin), keine CORS-Antwort; Low-Order-/nicht-kanonische Schlüssel abgelehnt; ein Kopplungsvorgang je Seite; Registrierung bis zur ersten authentisierten Sitzung „pending“ (10 min), dann bestätigt; Widerruf und Neukopplung | E2E-Abschnitt A/H in beiden Browsern; `invalid_or_low_order_keys_are_rejected`; Host-Tests |
+| 6 | 12 von 17 Review-Mutanten überlebten | Gezielte Tests (Deadlines je Phase inkl. Grenze, ID-Konsistenz, echte Argon2-Ableitung, Recordlängen, leere Handshake-Payloads, geschlossene Sitzungen, Prologbindung, Codegrenzen/-verteilung, Replay, terminale Decodefehler); eigene Mutationsprobe mit 39 Mutanten und begründeten Überlebenden | §9 |
+| 7 | Fremd-Listener-Test ohne lebende Sitzung | Neuer E2E-Abschnitt G: authentisierte lebende Sitzung → echter Helper beendet → fremder Listener übernimmt Port → Request → nur Chiffrat beim Listener, Sitzung verworfen, kein Fallback | E2E G in beiden Browsern |
+| 8 | Firefox fehlt | Firefox-Adapter (MV2-Manifest, Hintergrundseite, CSP), echter Firefox-Desktop-Lauf | §8 |
+| 9 | Durchsatz falsch zugeordnet | Korrigiert und nach Ebenen getrennt | §10 |
+| 10 | Lieferkette | Befunde, Untergrenzen, `--locked`, Advisory-Prüfung | §2 |
 
-**Kleinste Kombination:** ein Rust-Kern (`pakery-spake2`/`-core`/`-crypto` =0.6.2, `snow` =0.10.0 ohne `std`), Bindings über `wasm-bindgen =0.2.104` und `jni =0.21.1`. Eine Codebasis, ein Auditumfang, identisches Verhalten auf beiden Seiten. 118 transitive Crates (inkl. Bindings), ausschließlich permissive Lizenzen (MIT/Apache-2.0/BSD-3/Unlicense-OR-MIT) – mit Kadris GPL-3.0 kompatibel; der Helper hat keine Wurzellizenz (Owner-Entscheidung).
+## 1. Bestandsaufnahme (unverändert gegenüber Revision 1)
 
-## 3. Geprüfte Komposition (keine eigene Kryptografie)
+Für die spätere produktive Umsetzung zu ändern: Helper `Keys.java` (Identität, Registrierungen), Transportteil von `MiniServer.java` (`X-EVP-Key` und `/pair` entfallen), Adapter vor `HelferService.route()`, `MainActivity.pair()` (Code anzeigen, Widerruf), Gradle/JNI. Kadri: `background.js` (einziger Helper-Zugriff), `src/080-helper-app.js` (semantische Nachrichten statt Bearer), `popup.js`, Optionsseite, Manifest-CSP und `tools/build.js`. Insbesondere liest Kadri heute `gm:helperKey` im Content-Script (`prelude.js`); dieser Bearer liegt damit im Renderer beliebiger Webseiten. Download/Proxy/HLS/DASH/Player sind für die Kopplung nicht zu ändern (Streaming → #5). Details: Revision 1 dieses Dokuments (Commit 5ab5e21).
 
-Der Rust-Kern (`core/src`, ~870 Zeilen inkl. Bindings) ruft nur Bibliotheksfunktionen auf und rahmt Bytes. Keine eigene KDF, AEAD, Nonce- oder Handshakelogik.
+## 2. Bibliotheken und Lieferkette
 
-**Kopplung (SPAKE2, Kadri = RFC-Partei A, Helper = B):**
+Exakte Pins (Manifest `=`): `pakery-spake2/-core/-crypto 0.6.2`, `snow 0.10.0`, `curve25519-dalek 4.1.3`, `wasm-bindgen 0.2.104`, `jni 0.21.1`. `rand_core 0.10.1`. Alle Builds mit `cargo build --locked`; das Lockfile ist die Wahrheit, Upgrades erfolgen nicht stillschweigend.
 
-```
-M0 K→H  "KHP1" 01 | kadri_pub[32]
-M1 H→K  "KHP1" 02 | pairing_id[16] | helper_pub[32] | pB[65]
-M2 K→H  "KHP1" 03 | pairing_id[16] | pA[65] | cA[32]
-M3 H→K  "KHP1" 04 | pairing_id[16] | cB[32]
-```
-
-- RFC-Identitäten: `A = "kadri-ext-x25519/1:" || kadri_pub`, `B = "kadri-helper-x25519/1:" || helper_pub`; AAD `"kadri-helper-pairing-poc/1"`. Die beidseitige RFC-Key-Confirmation authentisiert damit genau diese öffentlichen Schlüssel. `Ke` bleibt ungenutzt.
-- `w` = Argon2id (m = 8 MiB, t = 2, p = 1, über `pakery-crypto`) des 8-stelligen Codes, Reduktion mod p. Code: 8 Ziffern (≈26,6 bit), im Helper unverzerrt erzeugt.
-- Helper verifiziert `cA`, **bevor** er `cB` sendet. Ein Versuch je Kopplungsfenster, jeder Fehler verbrennt Fenster bzw. Kadri-Vorgang. TTL Helper 120 s, Kadri 60 s. Pin erst nach erfolgreicher Bestätigung.
-
-**Kanal (Noise KK mit beiden gepinnten statischen Schlüsseln):**
-
-```
-HS1 K→H  "KHC1" 10 | registration_id[16] | noise msg1 (48 B, leere Nutzlast)
-HS2 H→K  "KHC1" 11 | session_id[16]      | noise msg2 (48 B, leere Nutzlast)
-REC      "KHC1" 20 | session_id[16]      | Noise-Transportnachricht ≤ 65 535 B
-```
-
-- Prolog `"kadri-helper-channel-poc/1"`, feste Parameter, keine Aushandlung, kein Fallback. Jede Verbindung neuer Handshake; nach Neustart nur Pins persistent, nie Transportzustand.
-- Zustandsbehafteter `TransportState`: implizite Nonces, strikte Reihenfolge; jeder Authentisierungsfehler macht den Kanal endgültig unbrauchbar.
-- Anwendungsrecords: Kontrolle ≤ 16 KiB, Medien ≤ 60 KiB (61 455 B Klartext + 16 B Tag ≤ 65 535 B), Ende-Record mit Gesamtlänge; Längen exakt geprüft vor Allokation.
-
-**Was ein fremder Portbesitzer maximal erreicht:** DoS; das Kopplungsfenster durch ein eigenes M0 verbrauchen (Nutzer sieht Fehlschlag, neuer Code nötig); eine einzige Online-Codevermutung je Fenster (Erfolgswahrscheinlichkeit 10⁻⁸); öffentliche Schlüssel, Registrierungs-ID und Zeitpunkte sehen. Keine Offline-Prüfung des Codes, kein Handshake-Abschluss, keine Anwendungsdaten.
-
-## 4. Nachweise (Details: [RESULTS-2026-10-27.md](RESULTS-2026-10-27.md))
-
-| Bereich | Ergebnis |
+| Bibliothek | Befund (Stand 2026-10-27) |
 | --- | --- |
-| RFC 9382 Appendix B, 4 Vektoren, über die genutzten Bibliothekseinstiege | PASS |
-| Unabhängige Python-Gegenrechnung (pA, pB, K beidseitig, TT, Hash, Ke, KcA/KcB, cA/cB; M/N aus Seed regeneriert) | 36/36 PASS |
-| Cacophony-Vektor `Noise_KK_25519_ChaChaPoly_SHA256` (Handshake, Handshake-Hash, 4 Transportnachrichten) | PASS |
-| Rust-Protokolltests: Pairing positiv; falscher Code; fremder Listener mit geratenem Code; MITM-Identitätstausch (beide Richtungen); veränderte/ungültige Shares; Reflexion; Replay kompletter Altläufe mit gleichem Code; Timeout; parallele Versuche; Codeformat; Kanal positiv mit 60-KiB-Records; fremder Listener (auch mit eigenem gültigen KK-Responder); falscher Pin beidseitig; widerrufene Registrierung; Manipulation; Replay; Umordnung; Reflexion; Neustart; Prolog-/Downgrade-Abweichung | 12/12 PASS |
-| Mutationsprobe (Identitätsbindung, cA-Prüfung, cB-Prüfung, Fensterverbrennung, Deadline entfernt) | 5/5 Mutanten erkannt |
-| End-to-End: Chromium 153.0.8010.12, MV3-Service-Worker mit WASM unter `'wasm-unsafe-eval'` ↔ JVM-Helper (JNI, `-Xmx32m`) über echtes Loopback-HTTP; Kopplung über Optionsseite | 23/23 PASS |
-| Fremder Listener im E2E: erhält nur M0 (37 B), M2 (118 B), HS1 (69 B); keine URL-, Cookie-, Code-, Marker- oder `X-EVP-Key`-Bytes; kein Record nach fehlgeschlagenem Handshake; bestehender Pin unverändert | PASS |
-| Größen | WASM 270 001 B (gzip 82 317 B) + 14 957 B JS-Glue; JNI-`.so` x86_64-Linux 803 936 B (gzip 321 135 B) – **Android-ABIs nicht gebaut** |
-| Speicher | WASM-Linearspeicher 1,06 MiB initial → 9,19 MiB nach Kopplung (Argon2-Hochwasser, wächst nicht weiter), unverändert während 2 paralleler Transfers (4,2 MB) |
-| RNG | Rust `getrandom` → `crypto.getRandomValues` (WASM) bzw. OS-RNG (JNI) |
+| `pakery-spake2 0.6.2` (+`-core`, `-crypto`) | RFC 9382 P-256; **kein unabhängiges Audit**. Ein Maintainer-Projekt, Erstveröffentlichung 2026-03-07, 0.6.2 vom 2026-10-26. Laut CHANGELOG enthielt **jede Version vor 0.6.1** einen Constant-Time-Defekt im P-256-Encoder der Basis-OPRF und des P-256-DH (betrifft OPAQUE/OPRF; der SPAKE2-Pfad kodiert `K` laut Maintainer nur nach Identitätsprüfung und sei nicht betroffen gewesen; dennoch seit 0.6.1 ebenfalls über einen CT-Encoder). 0.6.2 aktiviert u. a. Zeroize für SHA-2/Argon2/BLAKE2b-Zustände; der Maintainer nennt ausdrücklich verbleibende ungelöschte Werte (u. a. SPAKE2-`K`). Eigene dudect/Valgrind-CT-Jobs im Upstream, **nicht von uns nachvollzogen**. |
+| `crypto-bigint`, `ctutils` (transitiv über `p256 0.14`) | RUSTSEC-2026-0387 (crypto-bigint < 0.7.6, Timing) und RUSTSEC-2026-0385 (ctutils < 0.4.4, nicht-CT Masken/`u128`-Vergleich). Gesperrt: **0.7.10** bzw. **0.4.6**. Zusätzlich direkte Untergrenzen `^0.7.6`/`^0.4.4` im Manifest: `cargo update --precise 0.7.5`/`0.4.3` wird von Cargo abgelehnt (geprüft). |
+| `p256 0.14.0` | README: Kurvenarithmetik **nie unabhängig auditiert**. |
+| `snow 0.10.0` | README: **kein formales Audit**. RUSTSEC-2024-0011 (unauthentisiertes Nonce-Inkrement, < 0.9.5) betrifft 0.10.0 nicht; unabhängig davon verwirft der PoC nach jedem Fehler den gesamten Transportzustand. `std`-Feature deaktiviert (zieht sonst `ring`). |
+| `curve25519-dalek 4.1.3` | RUSTSEC-2024-0344 (Timing in `Scalar::sub`, < 4.1.3) behoben. Zusätzlich nur für Schlüsselvalidierung direkt genutzt (gleiche Version wie in snow). |
+| `chacha20poly1305 0.10.1` | README: ein NCC-Audit ohne wesentliche Befunde (für eine frühere Version; Umfang für 0.10.1 nicht belegt). |
+| `argon2 0.6.0` | über `pakery-crypto`; Profil §4; KAT gegen Referenz-C-Implementierung. |
 
-## 5. Kopplung vs. Streaming – klare Trennung
+`tools/advisory_check.py` prüft das Lockfile gegen eine lokale RustSec-advisory-db (geprüft: Stand `99670cf`, 2026-10-27): **123 Pakete, kein Treffer**. Gegenprobe: ein Lockfile mit crypto-bigint 0.7.5, ctutils 0.4.3, snow 0.9.4, curve25519-dalek 4.1.2 wird mit allen vier Advisories gemeldet. `cargo-audit` selbst wurde nicht ausgeführt.
 
-**Mit Kopplung/Kanal gelöst (im PoC belegt):** Partnerauthentisierung vor jeglichen Anwendungsdaten, verschlüsselte und authentisierte Requests/Responses, Records ≤ 65 535 B mit 60-KiB-Nutzlast, Replay-/Reflexions-/Umordnungsschutz, ACK-getriebenes Ein-Record-pro-Transfer-Muster mit zwei parallelen Transfers.
+Bewertete, aber verworfene Alternativen (Details Revision 1): RustCrypto `spake2 0.4.0` (nicht RFC 9382, keine Bestätigung), `opaque-ke 4.0.1` (Audit nur v0.5–v1.2; aPAKE-Registrierung passt nicht), BoringSSL SPAKE2+ (bessere Herkunft, interne API, hoher Build-/Größenaufwand – weiterhin die ernsthafteste Alternative), CPace (Draft), JS-SPAKE2-Pakete (veraltet, nicht RFC-konform).
 
-**Nicht gelöst – nachgelagert (#5):** Die heutige Proxy-Route puffert bis zu 4-MiB-Fenster vollständig (`gmGet` → `ArrayBuffer`, Base64-Stücke im Hintergrund, `/push`-Body). Der PoC-Durchsatz von **1,2 MiB/s** stammt von einer neuen HTTP-Verbindung je 60-KiB-Record plus JS-Byteprüfung – für Medien unzureichend und ein eigenes, separat zu prüfendes Transportdesign (persistente Verbindung oder Batching ohne Ordnungsbruch, Fetch-BYOB, Spoolgrenzen, Abbruch/Cleanup). Ebenfalls offen: reale 32-MiB-Heap-Messungen auf Android inklusive nativer JNI-Allokationen (Argon2 8 MiB transient).
+## 3. Protokollversion 2 (Komposition, keine eigene Kryptografie)
 
-## 6. Exakte Produktionsblocker
+```
+M0 K→H  "KHP2" 01 | kadri_pub[32]
+M1 H→K  "KHP2" 02 | pairing_id[16] | helper_pub[32] | pB[65]
+M2 K→H  "KHP2" 03 | pairing_id[16] | pA[65] | cA[32]
+M3 H→K  "KHP2" 04 | pairing_id[16] | cB[32]
+HS1 K→H "KHC2" 10 | registration_id[16] | Noise msg1 (48 B, leere Nutzlast)
+HS2 H→K "KHC2" 11 | session_id[16]      | Noise msg2 (48 B, leere Nutzlast)
+REC     "KHC2" 20 | session_id[16]      | Noise-Transportnachricht 16..65 535 B
+```
 
-1. **Kein unabhängiges Audit** von `pakery-spake2/-core/-crypto 0.6.2`, der `p256 0.14.0`-Arithmetik, `snow 0.10.0` und dieser Komposition. pakery ist sehr jung und API-instabil.
-2. **RFC-Text nicht direkt geprüft:** rfc-editor.org/ietf.org waren aus der Sandbox gesperrt. Die Vektordatei stammt aus dem pakery-Repo (Commit 6abbf8235e40d7bce975a44aaf423d0e3c436df6) und muss gegen RFC 9382 Appendix B gedifft werden. M und N wurden unabhängig aus dem RFC-Seed-Verfahren regeneriert.
-3. **Android ungeprüft:** kein NDK-Build, keine ARM-Größen, kein Keystore-Wrapping des X25519-Schlüssels, kein Gerät. **Vivaldi Android ungeprüft:** MV3-Service-Worker, WASM-CSP, Loopback-`fetch`/LNA aus dem Erweiterungshintergrund.
-4. **Firefox ungeprüft:** MV2-Hintergrundseite mit WASM-CSP.
-5. **Userscript-Manager:** kein vertrauenswürdiger Bootstrap/WASM-Kontext belegt.
-6. **Kadri-Schlüsselablage:** privater Schlüssel und Pin nur im Erweiterungsursprung, nicht für Content-Scripts lesbar (heutiges `gm:helperKey` verletzt das). Der PoC nutzt `storage.local`, weil die Testerweiterung keine Content-Scripts hat – das ist **keine** Produktionslösung.
-7. **Streaming-Transport (#5)** wie oben.
-8. **Lieferkette/Build:** Vendoring und gesperrtes Lockfile, reproduzierbarer WASM-Build, cargo-ndk im Gradle-Build, Helper-Lizenz.
+- SPAKE2 (RFC 9382, P256-SHA256-HKDF-HMAC), Kadri = A, Helper = B. `A = "kadri-ext-x25519/2:" ‖ kadri_pub`, `B = "kadri-helper-x25519/2:" ‖ helper_pub`, `AAD = "kadri-helper-pairing-poc/2" ‖ pairing_id`. Der Helper zieht `pairing_id` vor seinem SPAKE2-Vorgang, verifiziert `cA` vor Herausgabe von `cB`. `Ke` bleibt ungenutzt (der Kanal hat eigene Schlüssel aus Noise).
+- Schlüsselvalidierung (beide Seiten, alle Stellen): kanonische Kodierung, auf der Hauptkurve, nicht kleiner Ordnung, nicht der eigene Schlüssel – über `curve25519-dalek` (`to_edwards`, `is_small_order`, Rundweg-Kanonizität).
+- `Noise_KK_25519_ChaChaPoly_SHA256`, Prolog `"kadri-helper-channel-poc/2" ‖ registration_id`. Keine Aushandlung, kein Fallback. Jede Verbindung neuer Handshake.
+- Anwendungsrecords: Kontrolle ≤ 16 KiB, Medien ≤ 60 KiB (61 455 B Klartext + 16 B Tag), Ende-Record; exakte Längenprüfung.
 
-**Realistische Alternativen, falls 1 nicht lösbar ist:** (a) fokussiertes Audit genau dieses gepinnten Paares (pakery-spake2 ≈ 850 Zeilen + genutzte Teile von core/crypto, snow-Handshake/Transport) plus Komposition; (b) BoringSSL-SPAKE2+ (RFC 9383) als PAKE-Kern prüfen – bessere Herkunft, höhere Größe und Buildkosten, interne API; (c) CPace nach RFC-Veröffentlichung; (d) Kandidat C (Plattform-Brücke) bzw. A (Geräte-TLS) laut PR #20.
+## 4. Argon2-Profil (für Protokollversion 2 fixiert)
 
-## 7. Empfohlener nächster unabhängiger Prüfschritt
+| Parameter | Wert |
+| --- | --- |
+| Funktion / Version | Argon2id, Version 0x13 (19) |
+| Implementierung | `argon2 0.6.0` über `pakery-crypto 0.6.2` (`Argon2idKsfWithParams<PocArgon2>`) |
+| Passwort | genau 8 ASCII-Ziffern (`0x30`–`0x39`), keine Normalisierung, alles andere wird abgelehnt |
+| Salt | **16 Nullbytes**, in pakery-crypto 0.6.2 fest verdrahtet (RFC 9807 §7-Wert) |
+| Speicher / Iterationen / Parallelität | m = 8192 KiB, t = 2, p = 1 |
+| Secret / Associated Data | keine |
+| Ausgabelänge | 64 Byte |
+| Reduktion | 64 Byte als **Big-Endian**-Ganzzahl (512 bit) modulo der P-256-Gruppenordnung n; Kodierung des Skalars 32 Byte Big-Endian |
+| KAT | 4 Codes, erzeugt mit `argon2-cffi 25.1.0`/`argon2-cffi-bindings 26.1.0` (Referenz-C `libargon2`) und Python-Ganzzahlen, unabhängig von pakery/argon2-rs |
 
-Vor jeder Produktionsänderung prüft ein unabhängiger Reviewer:
+**Abweichungen gegenüber RFC 9382 (präzise, soweit ohne RFC-Volltext prüfbar):** RFC 9382 schreibt `w = MHF(pw) mod p` vor (p dort die Gruppenordnung) und legt die konkrete MHF und ihre Parameter in die Hand der Anwendung. Unsere Festlegungen sind daher Profilentscheidungen, keine Abweichung vom Protokollkern: (a) fester Null-Salt – vertretbar, weil der Code einmalig, zufällig und nirgends gespeichert ist und SPAKE2 keine Offline-Prüfung aus Mitschnitten erlaubt; (b) moderate Kosten (≈21 ms nativ), weil Online-Versuche ohnehin auf einen je Fenster begrenzt sind; (c) 512-bit-Ausgabe mit Reduktion, damit der Bias vernachlässigbar ist; (d) `Ke` ungenutzt; (e) Identitäten tragen Schlüssel, AAD trägt die Pairing-ID. Der genaue RFC-Wortlaut zu MHF-Ausgabelänge und -Wahl konnte hier nicht zitiert werden (siehe §9, RFC-Quellen) und ist im nächsten Review gegen §3.2 zu prüfen.
 
-1. die **Kompositionsspezifikation** aus Abschnitt 3 (Identitäten als RFC-Identitäten, Rollen, AAD, MHF-Wahl, Codelänge und Versuchspolitik, KK mit Pins, Registrierungs-ID, Sitzungen, kein Fallback, Restrisiko „Fenster verbrauchen“),
-2. den **PoC-Code** in `core/src` (≈870 Zeilen) und die Testabdeckung,
-3. die **Bibliotheksentscheidung**: Audit von pakery+snow beauftragen *oder* BoringSSL-SPAKE2+ evaluieren.
+## 5. Fehlersemantik
 
-Erst danach, getrennt freigegeben: Android-NDK-/Vivaldi-Fähigkeitsnachweis mit Wegwerf-Test-App (kein Produktionssignierer), danach Streamingdesign #5.
+Jeder Fehler eines Kopplungsvorgangs (`KadriPairing`, `HelperPairingWindow`) ist terminal (Fenster „verbrannt“ bzw. Vorgang „Failed“). Jeder Fehler in `Channel` – falsche Magic/Typ, falsche Session-ID, Länge (Header, < Tag, > 65 535 B), Authentisierungsfehler (Manipulation, Abschneiden, Replay, Umordnung, Reflexion), authentisierter aber ungültiger Anwendungsrecord, übergroßer `seal` – setzt den Transportzustand auf `None`, bevor der Fehler zurückkehrt; danach liefern `seal`/`open` nur noch `WrongState`, ohne die CipherStates zu berühren (keine Fortsetzung, keine weitere Nonce-Nutzung). `Initiator::finish` ist einmalig. Der Helper (`HelperHost`) entfernt die betroffene Sitzung; unbekannte Session-IDs ändern nichts. Kadri verwirft die Sitzung nach jedem Fehler und baut nur durch einen neuen Handshake wieder auf.
 
-## 8. Reproduktion
+Abwägung: Wer eine Session-ID kennt, kann diese Sitzung durch einen Müll-Record beenden (DoS). Session-IDs sind 128-bit-zufällig und nur auf dem Loopback-Pfad sichtbar; ein fremder Portbesitzer sieht nur IDs bereits toter Sitzungen.
+
+## 6. Helper-Sitzungen und Limits (`core/src/host.rs`)
+
+| Grenze | Wert |
+| --- | --- |
+| Registrierungen | max. 4; neue Kopplung bei vollem Register scheitert (`RegistryFull`, Fenster verbrannt) |
+| Pending-Registrierung (M3 verloren / nie benutzt) | verfällt nach 10 min ohne erste authentisierte Sitzung |
+| Halb-offene Sitzungen | global 4, je Registrierung 2, Handshake-Frist 10 s; Druck verdrängt nur andere halb-offene |
+| Etablierte Sitzungen | global 4, je Registrierung 2; Leerlauf 120 s, absolut 4 h; Verdrängung nur zugunsten einer neu authentisierten Sitzung, zuerst derselben Registrierung |
+| Bestätigung | erster authentisierter Record bestätigt die Registrierung und zieht ältere Registrierungen desselben Kadri-Schlüssels zurück |
+| Widerruf | entfernt Registrierung(en) und alle zugehörigen Sitzungen |
+
+Replay-Analyse: Ein mitgeschnittenes HS1 (Noise KK Nachricht 1) ist beliebig wiederholbar und erzeugt jeweils nur eine halb-offene Sitzung samt einigen DH-Operationen (Handshake beidseitig < 1 ms nativ). Ohne Kadris privaten Schlüssel kann der Angreifer keinen Record erzeugen, der sie befördert; nach 10 s oder bei Druck verfällt sie. Folge: reine Ressourcen-/DoS-Wirkung auf neue Handshakes, keine Verdrängung etablierter Sitzungen, keine Authentisierungs- oder Vertraulichkeitsverletzung.
+
+## 7. Pairing- und Browser-Guards – DoS vs. Authentisierung
+
+| Prüfpunkt | Ergebnis | Einordnung |
+| --- | --- | --- |
+| Webseite sendet einfachen `no-cors`-POST an `/p1/pair/m0` | erreicht den Server, wird am Gate abgewiesen (`content-type`/`origin`); Fenster bleibt offen | Ohne Gate wäre es DoS (Fenster verbrennen), keine Auth-Verletzung: die Seite kann M1 nicht lesen |
+| Webseite sendet POST mit `X-Kadri-Helper`/Octet-Stream | Preflight `OPTIONS` → 403 ohne CORS-Header → `fetch` scheitert, POST wird nie gesendet | Browser-Gate, **keine Authentisierung**: lokale Apps setzen beliebige Header |
+| Content-Script der Erweiterung | `pair`/Test-Hooks abgelehnt (Absenderprüfung auf Erweiterungsseite), `storage.local` leer, Erweiterungs-IndexedDB nicht erreichbar | Identität/Pin nur in IndexedDB des Erweiterungsursprungs |
+| Parallele Kopplung | Helper: zweites M0 → `WrongState`, erste Kopplung läuft weiter; Kadri: zweiter Vorgang → „pairing already running“ | DoS-Begrenzung |
+| Verlorenes M3 | Kadri pinnt nichts; Helper-Registrierung bleibt pending und verfällt | keine Auth-Verletzung |
+| Fremde App verbraucht das Fenster | Nutzer sieht Fehlschlag, neuer Code nötig; Erfolgswahrscheinlichkeit einer Vermutung 10⁻⁸ | DoS + eine Online-Vermutung |
+| Low-Order-/nicht-kanonische Schlüssel | 12 bekannte Werte + High-Bit-Variante + eigener Schlüssel abgelehnt, in M0, M1, Pins und Registrierungsimport | verhindert DH mit trivialem Ergebnis |
+
+## 8. Firefox und Chromium: ein Kern, kleine Adapter
+
+| | Chromium 153 | Firefox Desktop 158.0.1 |
+| --- | --- | --- |
+| Manifest | MV3, `background.service_worker` (ES-Modul) | MV2, `background.page` mit `<script type="module">` (wie Kadris heutiger Firefox-Build) |
+| CSP | `extension_pages: script-src 'self' 'wasm-unsafe-eval'; object-src 'self'` | `script-src 'self' 'wasm-unsafe-eval'; object-src 'self'` |
+| Kern | identische `kadri_pairing_poc_bg.wasm` (gleicher SHA-256) und JS-Glue | dito |
+| RNG | `getrandom` → `crypto.getRandomValues` | dito |
+| Ablage | IndexedDB des Erweiterungsursprungs (nicht `storage.local`) | dito |
+| Gemeinsamer Code | `ext/shared/background.js`, Options-, Test- und Probe-Seiten | dito |
+| Browserspezifisch | nur `manifest.json` | `manifest.json`, `background.html`, Test-Startskript und Testbrücke |
+| Testtreiber | Playwright 1.63 | Selenium 4.38 + geckodriver 0.37.1 |
+
+Firefox-Besonderheiten: (1) Content-Script-Match-Patterns erlauben in Firefox keinen Port – daher `http://127.0.0.1/*` in beiden Manifesten; die Probe läuft nur auf Port 47900. (2) WebDriver darf `moz-extension://`-Seiten weder ansteuern noch skripten. Die Erweiterungsseiten werden deshalb im Firefox-Testbuild über `ext/firefox/ff-bridge.js` gesteuert (Kommandos per Loopback vom Runner; die Optionsseite füllt ihr eigenes Formular und löst ihren Button aus, statt echter Tastatureingaben). Diese Brücke und `ff-boot.js` sind reine Testinfrastruktur. Webseitenbesuche laufen über echtes WebDriver. Firefox stammt aus dem conda-forge-Paket `firefox-158.0.1-hee9eb32_0` (Mozilla-Release-Build 20261019185856; Mozilla-Downloadserver waren aus der Umgebung gesperrt).
+
+**Firefox Android ist nicht geprüft.** Aus dem Desktop-Lauf folgt keine Android-Aussage.
+
+## 9. Nachweise
+
+«TESTS»
+
+**RFC-9382-Quellen:** Ein direkter Abgleich mit einer offiziellen Quelle war erneut nicht möglich: rfc-editor.org, www.ietf.org, datatracker.ietf.org und der JPNIC-RFC-Spiegel (ftp.nic.ad.jp) wurden von der Egress-Policy abgelehnt (2026-10-27). Unverändert gilt: Vektoren aus pakery-Repo-Commit 6abbf82, unabhängig nachgerechnet (36/36), M/N aus dem RFC-Seed regeneriert. Der Textabgleich gegen RFC 9382 Appendix B bleibt eine 5-Minuten-Aufgabe für den nächsten Review.
+
+## 10. Durchsatz und Speicher – nach Ebenen getrennt
+
+| Ebene | Messung | Aussage |
+| --- | --- | --- |
+| 1. Kryptografie allein (nativ, `examples/bench.rs`, opt-level s) | «BENCH» | Nicht der Engpass. Der Review maß isoliert ≈484 MiB/s; unsere Zahl enthält Record-Kodierung und Kopien. |
+| 2. HTTP/Socket | eine neue HTTP/1.1-Verbindung je 60-KiB-Record, ACK vor dem nächsten | Kosten pro Record, aber nicht die Hauptursache der 1,2 MiB/s |
+| 3. JVM-Stand-in | «TPUT» | Der Einbruch kam vom Nagle-/Delayed-ACK-Zusammenspiel im JDK-`HttpServer`; mit `-Dsun.net.httpserver.nodelay=true` ≈10 MiB/s. **Die Aussage in Revision 1 („neue HTTP-Verbindung je Record“) war falsch und ist hiermit korrigiert.** |
+| 4. Echter Android-`MiniServer` | nicht gemessen | Eigener Socket-Code; Nagle-Verhalten, Puffer und Heap sind dort separat zu messen (#5). Keine Übertragung der JVM-Zahlen. |
+
+Speicher: WASM-Linearspeicher 1,06 MiB initial → 9,19 MiB nach Kopplung (Argon2-Hochwasser von 8 MiB; wächst danach nicht), unverändert während zweier paralleler Transfers. JNI: Argon2 belegt transient 8 MiB nativ außerhalb des Java-Heaps (`-Xmx32m` im Stand-in ausreichend).
+
+## 11. Offene Punkte und Restrisiken
+
+1. **Kein unabhängiges Audit** von `pakery-*` 0.6.2, `p256 0.14.0`, `snow 0.10.0` und dieser Komposition (inkl. Host-Sitzungslogik). Pakery ist jung und ändert sich schnell.
+2. RFC-Textabgleich der Vektoren und von §3.2 (MHF) noch offen (Netzwerkpolicy).
+3. Android, Vivaldi Android und Firefox Android ungeprüft (NDK-Build, Keystore-Umhüllung, Gerät, LNA/Loopback aus dem Erweiterungshintergrund, Lebenszyklus).
+4. DoS durch lokale Apps bleibt möglich (Port belegen, Fenster verbrauchen, Handshake-Pool füllen, bekannte Session-IDs beenden) – keine Vertraulichkeits- oder Authentisierungsverletzung.
+5. Kompromittierter Browser/Erweiterungsprozess, Helper oder Android liegen außerhalb des Modells; X25519-Privatschlüssel liegen im PoC im Klartext in Erweiterungs-IndexedDB bzw. in einer Datei des Stand-ins.
+6. Userscript-Manager: kein vertrauenswürdiger Bootstrap/WASM-Kontext belegt.
+7. Streaming (#5): Proxy-Route puffert weiterhin 4-MiB-Fenster; persistente Verbindung/Batching ist ein eigenes Design.
+8. Testbrücke in Firefox ersetzt echte Tastatureingaben auf Erweiterungsseiten.
+
+## 12. Vor einer Android-/Vivaldi-Prüfung nötig
+
+1. Unabhängiger Re-Review dieser Revision (Komposition v2, `host.rs`-Policy, Fehlersemantik, Tests).
+2. Entscheidung über den Audit-Pfad: gezieltes Audit von pakery-spake2 (+genutzte Teile von core/crypto) und snow, oder Evaluation von BoringSSL-SPAKE2+.
+3. RFC-9382-Textabgleich (Vektoren, §3.2).
+4. Freigabe einer Wegwerf-Test-App (Testsignatur, kein Produktionssignierer) und eines minimalen NDK-Build-Pfads (cargo-ndk, ABI-Liste, Größen) – weiterhin ohne Produktionsänderung.
+5. Festlegung der Android-Schlüsselablage (Keystore-umhülltes X25519) und der Vivaldi-Hintergrundfähigkeiten (MV3-SW, WASM-CSP, Loopback).
+
+## 13. Bedingungen vor einer öffentlichen Veröffentlichung
+
+Abgeschlossenes unabhängiges Audit der gepinnten Bibliotheksversionen und der Komposition; RFC-Abgleich; produktive Umsetzung erst nach erneuter Eigentümerfreigabe (Policy bleibt bis dahin `UNAPPROVED`); kein paralleler Bearer-/Legacy-Pfad; Kadri-Schlüssel nur im Erweiterungsursprung; echte Android-/Vivaldi-/Firefox-Android-Nachweise inkl. 32-MiB-Heap und nativer Speicher; Streaming-Design #5; reproduzierbare, gesperrte Builds mit Advisory-Prüfung in CI; Signier-Thema #3 getrennt gelöst (kein kompromittierter Signierer); dokumentierter Widerruf/Neukopplung für Nutzer.
+
+## Reproduktion
 
 ```sh
-tools/build.sh /tmp/poc-build                       # Rust (JNI + WASM), wasm-bindgen 0.2.104, javac – keine APK
+tools/build.sh /tmp/poc-build            # --locked; JNI + eine WASM-Datei für beide Erweiterungen; keine APK
 python3 -I vectors/independent_check.py vectors/rfc9382-appendix-b.json
-(cd core && cargo test)
-tools/mutation_check.sh
-node browser/run.mjs /tmp/poc-build/jvm "$PWD/core/target/release/libkadri_pairing_poc.so"
+python3 -I vectors/argon2_kat.py /tmp/kat.json && diff <(python3 -m json.tool /tmp/kat.json) <(python3 -m json.tool vectors/password-scalar-kat.json)
+(cd core && cargo test --locked && cargo run --locked --release --example bench)
+python3 -I tools/mutation_check.py
+python3 -I tools/advisory_check.py core/Cargo.lock <advisory-db>
+node browser/run.mjs chromium /tmp/poc-build "$PWD/core/target/release/libkadri_pairing_poc.so" [--nodelay]
+FIREFOX_BIN=… GECKODRIVER=… SELENIUM_DIR=… node browser/run.mjs firefox /tmp/poc-build "$PWD/core/target/release/libkadri_pairing_poc.so" [--nodelay]
 ```
-
-Voraussetzungen: Rust ≥ 1.88 mit `wasm32-unknown-unknown`, `wasm-bindgen-cli 0.2.104`, JDK 17+, Node 22, Playwright mit Chromium. Kein Netzwerkzugriff außer Loopback während der Tests.
