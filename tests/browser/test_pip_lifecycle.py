@@ -78,6 +78,9 @@ with sync_playwright() as p:
     page.evaluate('document.getElementById("v").muted=false')
     page.wait_for_selector('button[aria-label="Im Videoplayer öffnen"]',timeout=15000)
     baseline=page.evaluate(SNAP);samples=[{'stage':'before','resources':baseline,'metrics':metric(browser,ctx,page)}]
+    if EXTENSION:
+        blocked='Native tab/Home/background return NOT VERIFIED: bounded attempts did not establish a native hidden transition under Playwright; no synthetic replacement in installed-extension route.'
+        print('NOT VERIFIED: '+blocked,flush=True);samples[0]['unverified']=[blocked]
     for i in range(6):
         page.evaluate('async () => {const v=document.getElementById("v");v.currentTime=2;v.muted=false;await v.play();}')
         page.wait_for_function('() => {const v=document.getElementById("v");return !v.seeking&&!v.paused&&v.readyState>=2;}')
@@ -93,35 +96,12 @@ with sync_playwright() as p:
         before=page.evaluate('window.__evpRoot.querySelector(".vv").currentTime')
         page.locator('button[aria-label$=" s vor"]').click()
         page.wait_for_function('(a)=>{const v=window.__evpRoot.querySelector(".vv");return !v.seeking&&v.currentTime>a+1;}',arg=before)
-        if i==1:
-            background=None
-            if EXTENSION:
-                # Playwright targets can be separate visible windows. Create an actual
-                # active tab in THIS window, using the installed extension's real API.
-                visibility=ctx.new_cdp_session(page)
-                visibility.send('Emulation.setFocusEmulationEnabled',{'enabled':False})
-                frame=visibility.send('Page.getFrameTree')['frameTree']['frame']['id']
-                native_world=visibility.send('Page.createIsolatedWorld',{'frameId':frame,'worldName':'pip-native-visibility-probe'})['executionContextId']
-                def native_hidden():
-                    return visibility.send('Runtime.evaluate',{'expression':'document.hidden','contextId':native_world,'returnByValue':True})['result']['value']
-                def await_native_hidden(expected):
-                    until=time.monotonic()+5
-                    while native_hidden()!=expected and time.monotonic()<until:time.sleep(.05)
-                    assert native_hidden()==expected, 'native browser visibility did not change'
-                origin_tab=worker.evaluate('async u => (await chrome.tabs.query({})).find(t=>t.url===u)',page.url)
-                assert origin_tab and 'windowId' in origin_tab, 'fixture browser tab not found'
-                background=worker.evaluate('t => chrome.tabs.create({windowId:t.windowId,url:"about:blank",active:true})',origin_tab)
-                print('TAB BACKGROUND:',page.evaluate('({hidden:document.hidden,visibility:document.visibilityState,focus:document.hasFocus()})'),flush=True)
-                assert not worker.evaluate('id => chrome.tabs.get(id)',origin_tab['id'])['active'], 'fixture tab still active'
-                await_native_hidden(True)
-            else:page.evaluate('() => {window.__life.hidden=true;dispatchEvent(new Event("blur"));document.dispatchEvent(new Event("visibilitychange"));}')
+        if i==1 and not EXTENSION:
+            page.evaluate('() => {window.__life.hidden=true;dispatchEvent(new Event("blur"));document.dispatchEvent(new Event("visibilitychange"));}')
             page.wait_for_function('window.__evpRoot.querySelector(".vv").paused')
-            check(('Echter Desktop-Tabwechsel' if EXTENSION else 'Simulierter Hintergrund')+' bei pause-Einstellung hält an, Player bleibt',page.evaluate('!!window.__evpRoot.querySelector(".vp")'))
-            if EXTENSION:
-                worker.evaluate('id => chrome.tabs.update(id,{active:true})',origin_tab['id'])
-                await_native_hidden(False);worker.evaluate('id => chrome.tabs.remove(id)',background['id']);visibility.detach()
-            else:page.evaluate('() => {window.__life.hidden=false;document.dispatchEvent(new Event("visibilitychange"));dispatchEvent(new Event("focus"));}')
-            check('Rückkehr behält die Pause bis zur Bedienung',page.evaluate('window.__evpRoot.querySelector(".vv").paused'))
+            check('Simulierter Hintergrund bei pause-Einstellung hält an, Player bleibt',page.evaluate('!!window.__evpRoot.querySelector(".vp")'))
+            page.evaluate('() => {window.__life.hidden=false;document.dispatchEvent(new Event("visibilitychange"));dispatchEvent(new Event("focus"));}')
+            check('Simulierte Rückkehr behält die Pause bis zur Bedienung',page.evaluate('window.__evpRoot.querySelector(".vv").paused'))
             page.locator('button[aria-label="Wiedergabe"]').click();page.wait_for_function('!window.__evpRoot.querySelector(".vv").paused')
         # The recorded callbacks are the actual production MediaSession handlers.
         ms=page.evaluate('!!window.__life.handlers.pause&&!!window.__life.handlers.play')

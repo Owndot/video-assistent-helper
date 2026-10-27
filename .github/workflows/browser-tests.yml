@@ -184,7 +184,7 @@ jobs:
             cmp "src/$name" "companion-kadri/src/$name"
           done
           node companion-kadri/tools/build.js --test
-      - name: Six cycles with installed Chromium extension and real tab background return
+      - name: Six cycles with installed Chromium extension (native background explicitly unverified)
         if: github.head_ref == 'codex/pip-lifecycle' && matrix.browser == 'chromium'
         env:
           EVP_EXTENSION_PATH: ${{ github.workspace }}/companion-kadri/dist/test
