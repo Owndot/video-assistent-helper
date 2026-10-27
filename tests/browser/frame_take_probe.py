@@ -20,11 +20,11 @@ def take_trial(browser, setup, url, key, activated=True):
     ctx,pg,errs=setup(browser)
     try:
         pg.goto(url)
-        pg.wait_for_function('!!window.__evpRoot')
+        pg.wait_for_function("document.readyState==='complete' && Array.isArray(window.__takeProbes) && typeof GM_getValue==='function'")
         source=next(f for f in pg.frames if 'emb_inner' in f.url)
-        source.wait_for_function('!!window.__evpRoot')
+        source.wait_for_function("document.readyState==='complete' && Array.isArray(window.__takeProbes) && typeof GM_getValue==='function'")
         receiver=source.parent_frame
-        receiver.wait_for_function('!!window.__evpRoot')
+        receiver.wait_for_function("document.readyState==='complete' && Array.isArray(window.__takeProbes) && typeof GM_getValue==='function'")
         source.evaluate('''key=>{
           window.__takeClick=null;
           const b=document.createElement('button');b.id='take-probe';b.textContent='Test frame route';
