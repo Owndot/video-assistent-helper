@@ -22,7 +22,7 @@ if os.environ.get('BROWSER', '').lower() == 'firefox' and not getattr(_pw, '_evp
         'full-screen-api.ignore-widgets': True,    # Vollbild im Fenster (sonst springt es ohne Bildschirm auf 1280 px)
         'full-screen-api.transition-duration.enter': '0 0',
         'full-screen-api.transition-duration.leave': '0 0',
-        'dom.user_activation.transient.timeout': 5.0,
+        'dom.user_activation.transient.timeout': 5000,  # milliseconds: Gecko default, not 5ms
         # Desktop-Firefox legt einen eigenen Bild-im-Bild-Knopf über Videos, der Klicks rechts abfängt (gibt's auf Android nicht)
         'media.videocontrols.picture-in-picture.video-toggle.enabled': False,
     }

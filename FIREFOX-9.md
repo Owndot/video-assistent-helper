@@ -83,8 +83,9 @@ checks, audio ownership, spinner cleanup and close recovery remain.
 
 ## Independent review follow-up: isolated frame-key rejection (P3)
 
-Old invalid takes were sent before activation/focus. A new baseline explicitly
-shows that even the correct key is rejected there. Negative rejection alone
+Old invalid takes were sent before activation/focus. A native DOMContentLoaded baseline explicitly
+shows that even the correct key is rejected without activation/focus. It must
+not use Playwright evaluate(), which itself grants user activation. Negative rejection alone
 was therefore not an authentication proof.
 
 Fresh documents now send the identical take packet (`fs=false`) from the
@@ -110,3 +111,24 @@ activation values without inventing a Firefox activation fallback.
 Only tests, test helpers, this document and scoped CI are changed. Native
 Android, pairing, key derivation, generated userscript and production policy
 are unchanged. No installed-manager or physical Firefox Android claim is made.
+
+### Native activation instrumentation
+
+Playwright's Chromium execution context uses `userGesture: true`; its Firefox
+Runtime calls notifyUserGestureActivation() for evaluation. Therefore trial
+receipts use native console events, not wait_for_function/evaluate between
+click and message handling. The no-input control sends at DOMContentLoaded
+and captures the receiver result before any test evaluation. Subsequent reads
+cannot change the already-recorded conditions or DOM outcome.
+
+The existing Firefox shim set dom.user_activation.transient.timeout to 5.0.
+Gecko defines that integer preference in **milliseconds**, default **5000**.
+The shim now uses the real 5000ms default, so a trusted click does not expire
+before its click handler. No userActivation property, focus or receiver check
+is faked, disabled or bypassed. Correct and invalid controls still require
+trusted native input and the same actual receiver premise vector.
+
+References: Mozilla gecko-dev modules/libpref/init/StaticPrefList.yaml
+(dom.user_activation.transient.timeout); Playwright crExecutionContext.ts
+(userGesture:true) and browser_patches/firefox/juggler/content/Runtime.js
+(notifyUserGestureActivation).

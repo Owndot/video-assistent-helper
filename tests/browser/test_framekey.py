@@ -65,7 +65,6 @@ with sync_playwright() as p:
     check('Gegenprobe: richtiger Schlüssel vor Aktivierung wird ebenfalls abgelehnt',
           unchanged(baseline) and not baseline['record']['premises']['active']
           and not baseline['record']['premises']['focused'],baseline)
-    controls={}
     for name,url,valid,invalid in [('falscher Schlüssel',a_url,ka[0],'0'*40),
                                   ('seitenübergreifendes Replay',b_url,kb[0],ka[0])]:
         assert valid!=invalid
