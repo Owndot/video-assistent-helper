@@ -6,7 +6,8 @@ fails. Survivors are listed with the reason they are acceptable, if any;
 an unexplained survivor fails the run. Sources are always restored.
 Usage: tools/mutation_check.py [name-filter]
 """
-import pathlib, subprocess, sys
+import functools, pathlib, subprocess, sys
+print = functools.partial(print, flush=True)
 
 CORE = pathlib.Path(__file__).resolve().parent.parent / 'core'
 
