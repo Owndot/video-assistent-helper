@@ -46,12 +46,17 @@ public final class TestNativeLifecycle {
         String origin="http://127.0.0.1:"+server.getAddress().getPort();AtomicBoolean cancelled=new AtomicBoolean();
         // Test-only shortened read timeout; production keeps its existing 30s read / 15s connect bound.
         AtomicInteger opens=new AtomicInteger();
-        Fetcher.Http client=new Fetcher.Http(null,null,null){HttpURLConnection open(String u)throws IOException{if(u.endsWith("/stall"))opens.incrementAndGet();HttpURLConnection c=super.open(u);c.setReadTimeout(150);return c;}};
+        Fetcher.Http client=new Fetcher.Http(null,null,null){HttpURLConnection open(String u)throws IOException{if(u.endsWith("/stall"))synchronized(cancelled){opens.incrementAndGet();}HttpURLConnection c=super.open(u);c.setReadTimeout(150);return c;}};
         try {
             Future<?> cancel=executor.submit(()->{try{client.streamToFile(origin+"/stall",cancelOut,new HlsCore.Listener(){public void progress(int a,int b){}public boolean cancelled(){return cancelled.get();}});throw new AssertionError("blocked cancelled read succeeded");}catch(IOException expected){check(!cancelOut.exists(),"cancelled blocked output retained");}});
-            check(blocked.await(3,TimeUnit.SECONDS),"server did not block");cancelled.set(true);
+            check(blocked.await(3,TimeUnit.SECONDS),"server did not block");
+            final int beforeCancel;
+            // A slow first response can legitimately timeout before the server signals
+            // readiness. Linearize the user cancel against production open calls;
+            // prove there is no new attempt AFTER cancellation, not before it.
+            synchronized(cancelled){beforeCancel=opens.get();cancelled.set(true);}
             File healthy=root.resolve("healthy").toFile();client.streamToFile(origin+"/ok",healthy,null);
-            cancel.get(3,TimeUnit.SECONDS);System.out.println("TRANSPORT: cancelled request opens="+opens.get()+", server requests="+calls.get());check(opens.get()==1,"cancelled timeout retried (opens="+opens.get()+", server="+calls.get()+")");check(Files.readString(healthy.toPath()).equals("01234567"),"parallel healthy transfer damaged");healthy.delete();
+            cancel.get(3,TimeUnit.SECONDS);System.out.println("TRANSPORT: opens before cancel="+beforeCancel+", after="+opens.get()+", server requests="+calls.get());check(beforeCancel>=1&&beforeCancel<=4&&opens.get()==beforeCancel,"new attempt after cancellation (before="+beforeCancel+", after="+opens.get()+")");check(Files.readString(healthy.toPath()).equals("01234567"),"parallel healthy transfer damaged");healthy.delete();
             int before=opens.get();failsUrl(client,origin+"/stall",cancelOut);System.out.println("TRANSPORT: timeout attempts="+(opens.get()-before)+", cumulative server requests="+calls.get());check(opens.get()-before==4,"network timeout exceeded four attempts");
             System.out.println("PASS: real blocked read cancellation/timeout cleanup, bounded retries and independent healthy HTTP transfer");
         } finally {release.countDown();server.stop(0);executor.shutdownNow();try(var files=Files.walk(root)){for(Path p:files.sorted(Comparator.reverseOrder()).toList())Files.deleteIfExists(p);}}

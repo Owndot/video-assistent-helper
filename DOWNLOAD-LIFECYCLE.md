@@ -53,7 +53,7 @@ Published rows, foreign owners, other folders and completed legacy files are pre
 `bash tests/java/run_download_lifecycle.sh --transport` additionally runs:
 
 * real local HTTP parsing of conflicting/valid framing;
-* stalled read/timeout cancellation, bounded retries and a simultaneous healthy download (test-only 150 ms read timeout; not a production timeout change);
+* stalled read/timeout cancellation, bounded retries and a simultaneous healthy download (test-only 150 ms read timeout; connection opens are snapshotted atomically at the cancellation event, so legitimate earlier timeout retries do not masquerade as retries after cancellation; not a production timeout change);
 * existing 64 MiB native downloads at `-Xmx32m`, exact SHA-256 bytes, valid Range/If-Range resume, ignored ranges, unknown lengths, invalid ranges and cancellation;
 * a separate JVM killed forcibly **during an actual save**, leaving real private work and a partial pending provider-model file, followed by another JVM's actual startup recovery. Kept complete/foreign/unrelated bytes and refusal to resurrect state are asserted. This is a true host process kill, not a Java exception, and **not** an Android process-kill proof. Legacy crash staging cleanup is seeded, not a real Android 8/9 kill experiment.
 
