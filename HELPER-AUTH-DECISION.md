@@ -1,5 +1,7 @@
 # Helper-Authentifizierung: Entscheidungsvorschlag, keine Implementierung
 
+Aktueller vertiefter Entwurf auf den PiP-Main-Ständen: [SERVER-AUTH-DESIGN.md](SERVER-AUTH-DESIGN.md). Er behandelt insbesondere Listenerwechsel nach einer Challenge, vertrauliche Nutzdaten und ungeprüfte Userscript-/Keystore-Grenzen. Der JWE-Profilvorschlag ist noch nicht angenommen oder implementiert; die folgende Beta-Risikoakzeptanz und Issue #4 bleiben unverändert bestehen.
+
 ## Entscheidung für die erste öffentliche GitHub-Beta
 
 Nach Astra-Prüfung der Stände Helper `e8c9584` und Kadri `cc14bcd` akzeptiert die Projektfreigabe die fehlende gegenseitige kryptografische Serverauthentifizierung als begrenztes Restrisiko. [Helper #4](https://github.com/Owndot/video-assistent-helper/issues/4) bleibt offen. Aktuelle Funktionsbeschreibung, Bedrohungsgrenze, Reset-Anleitung und gezielte Nachweise: [HELPER-BETA-SECURITY.md](HELPER-BETA-SECURITY.md). Kein neues Protokoll wird in dieser Beta-Runde eingeführt.
@@ -29,3 +31,4 @@ Bei Message Signatures müssten Methode, normalisiertes Ziel einschließlich Que
 Pairing braucht eine ausdrücklich bestätigte, gegen Mitlesen und Austauschen geschützte Erstübertragung oder einen separat überprüften Fingerabdruck. Fragmente vermeiden das Senden an den HTTP-Server, sind aber kein eigenständiger sicherer Schlüsseltransport: Seitenskripte, History, Zwischenablage und manipuliertes HTTP bleiben zu betrachten. Schlüssel gehören ausschließlich in privilegierten Managerspeicher/OS-Schlüsselspeicher, niemals in DOM, URL-Query oder Seiten-LocalStorage. Pairing-Codes müssen kurzlebig, einmalig und gegen Versuche begrenzt sein; Widerruf und getrennte Schlüssel pro Client sind vorzusehen.
 
 Serverwechsel muss neu bestätigt werden. Host, Schema, Port, authentisierte Serveridentität und Schlüsselkontext müssen zusammenpassen; gleicher Port ist kein Identitätsnachweis. Kein Schlüsseltransfer an neue Endpunkte über Redirects, keine automatische Wiederverwendung eines Vertrauensentscheids beim Austausch des Servers. Rotation und Gerätewechsel benötigen ein separat spezifiziertes Re-Pairing-/Widerrufsverfahren.
+
