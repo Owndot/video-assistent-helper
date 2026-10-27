@@ -1,0 +1,5 @@
+# Pinned for reproducible native and WASM builds of the PoC core.
+[toolchain]
+channel = "1.97.0"
+profile = "minimal"
+targets = ["wasm32-unknown-unknown", "aarch64-linux-android", "x86_64-linux-android"]

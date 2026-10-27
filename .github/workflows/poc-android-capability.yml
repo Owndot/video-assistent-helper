@@ -1,0 +1,93 @@
+name: PoC Android capability (isolated test app, nothing published)
+
+# Runs only for the separate capability branch. The test APK is built,
+# installed on a disposable emulator and uninstalled again inside this one
+# job; it is never uploaded (the repository is public, so an artifact would
+# be a publication). Only text reports and hashes leave the job.
+on:
+  push:
+    branches: [poc/android-vivaldi-capability]
+    paths: ['poc/**', '.github/workflows/poc-android-capability.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: poc-android-capability
+  cancel-in-progress: true
+
+jobs:
+  build-and-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Pinned toolchains (Rust from rust-toolchain.toml, NDK r27c, SDK 34)
+        run: |
+          set -euo pipefail
+          (cd poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Core tests
+        run: cd poc/pake-channel/core && cargo test --locked
+
+      - name: Native build twice from different paths (reproducibility)
+        run: |
+          set -euo pipefail
+          bash poc/android-capability/tools/build-native.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/native-a.txt"
+          mkdir -p "$RUNNER_TEMP/src2" && git archive HEAD | tar -x -C "$RUNNER_TEMP/src2"
+          (cd "$RUNNER_TEMP/src2" && bash poc/android-capability/tools/build-native.sh "$RUNNER_TEMP/b") | tee "$RUNNER_TEMP/native-b.txt"
+          (cd "$RUNNER_TEMP/a" && sha256sum jniLibs/*/*.so) > "$RUNNER_TEMP/a.sha"
+          (cd "$RUNNER_TEMP/b" && sha256sum jniLibs/*/*.so) > "$RUNNER_TEMP/b.sha"
+          diff "$RUNNER_TEMP/a.sha" "$RUNNER_TEMP/b.sha"
+          echo "REPRODUCIBLE native libraries:"; cat "$RUNNER_TEMP/a.sha"
+
+      - name: Build test APKs (throwaway signer, deleted after the build)
+        run: bash poc/android-capability/tools/build-apk.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/apk.txt"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Instrumentation on a disposable API 34 x86_64 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash poc/android-capability/tools/run-instrumentation.sh "$RUNNER_TEMP/a"
+
+      - name: Collect text-only report (no APK, no keys)
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          cp "$RUNNER_TEMP"/native-a.txt "$RUNNER_TEMP"/native-b.txt "$RUNNER_TEMP"/a.sha "$RUNNER_TEMP"/apk.txt "$RUNNER_TEMP/out/" 2>/dev/null || true
+          cp -r "$RUNNER_TEMP/a/report" "$RUNNER_TEMP/out/" 2>/dev/null || true
+          find "$RUNNER_TEMP/out" -name '*.apk' -delete
+          ls -R "$RUNNER_TEMP/out"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: poc-android-capability-report
+          path: ${{ runner.temp }}/out
+          retention-days: 7
+          if-no-files-found: warn

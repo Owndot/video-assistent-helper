@@ -1,0 +1,57 @@
+plugins {
+    id 'com.android.application'
+}
+
+// TEST APP ONLY. Separate applicationId; never signed with a production or
+// previous helper key. The signing key is a throwaway key whose path and
+// passwords are supplied at build time (tools/build-apk.sh); none is committed.
+def keystorePath = project.findProperty('pocKeystore')
+
+android {
+    namespace 'de.evp.pakepoc'
+    compileSdk 34
+    buildToolsVersion '34.0.0'
+    defaultConfig {
+        applicationId 'de.evp.pakepoc.test'
+        minSdk 29          // Vivaldi Android floor; test app only, production minSdk unchanged
+        targetSdk 34
+        versionCode 1
+        versionName '0.1.0-pake-poc-test'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+    signingConfigs {
+        throwaway {
+            if (keystorePath != null) {
+                storeFile file(keystorePath)
+                storePassword project.findProperty('pocKeystorePass')
+                keyAlias 'pake-poc-throwaway'
+                keyPassword project.findProperty('pocKeystorePass')
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            // Debuggable test build so heap/native memory can be inspected.
+            signingConfig keystorePath != null ? signingConfigs.throwaway : null
+        }
+    }
+    sourceSets {
+        main {
+            jniLibs.srcDirs = [project.findProperty('pocJniLibs') ?: "$buildDir/rust-jni"]
+            assets.srcDirs = ['../../probe']
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    packaging {
+        jniLibs { useLegacyPackaging false }
+    }
+    lint { abortOnError false; checkReleaseBuilds false }
+}
+
+dependencies {
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}
