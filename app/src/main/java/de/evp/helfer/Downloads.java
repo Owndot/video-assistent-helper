@@ -64,14 +64,13 @@ public class Downloads {
     }
     static void cancelJob(int id) {
         Task task=active.get(id); if(task==null)return;
-        Thread worker;
         synchronized(task) {
             if(task.published||task.finished)return;
-            task.cancelled=true; state.put(id,"abgebrochen");worker=task.worker;
+            task.cancelled=true; state.put(id,"abgebrochen");
+            // Signal while the owner cannot unregister/reuse this thread. No provider,
+            // file or proxy cleanup runs here; the owner performs it in finally.
+            if(task.worker!=null)task.worker.interrupt();
         }
-        // No provider/file/proxy cleanup on the service main thread. The interrupted
-        // owner unwinds requests and closes its proxy in streamJob's finally block.
-        if(worker!=null)worker.interrupt();
     }
     static void stopAll() {
         List<Integer> snapshot;
@@ -258,7 +257,8 @@ public class Downloads {
 
     // ---------- Stream (HLS/DASH) oder Datei über den Browser: laden, zusammensetzen, speichern ----------
     private static void streamJob(Context c, int id, String url, String title, String kind, Fetcher net) {
-        Task task=active.computeIfAbsent(id,Task::new);task.worker=Thread.currentThread();
+        Task task=active.computeIfAbsent(id,Task::new);
+        synchronized(task) { task.worker=Thread.currentThread(); }
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
         File work = new File(c.getCacheDir(), "dl" + id);
         final long[] lastShown = {0};
@@ -315,7 +315,8 @@ public class Downloads {
             if (cancelled) nm.cancel(id);
             else doneNote(c, nm, id, shortTitle, null, null, e.getMessage());
         } finally {
-            task.worker=null;active.remove(id,task);
+            synchronized(task) { task.worker=null; }
+            active.remove(id,task);
             Fetcher.Proxy px = proxies.remove(id);
             if (px != null) px.close();
             deleteTree(work);

@@ -103,6 +103,28 @@ public final class TestLifecycleReview {
             System.out.println("PASS: service stop/restart do not wait on admission file work; stale generation cannot register");
         } finally {delay.set(false);release.countDown();worker.shutdownNow();main.shutdownNow();TestDownloadLifecycle.shutdown();TestDownloadLifecycle.remove(root);}
     }
+    static void interruptRace()throws Exception {
+        Path root=Files.createTempDirectory("interrupt-lifetime-");Fake c=new Fake(root);
+        CountDownLatch fetched=new CountDownLatch(1),finishRead=new CountDownLatch(1),signalEntered=new CountDownLatch(1),deliverSignal=new CountDownLatch(1),jobExited=new CountDownLatch(1);
+        AtomicReference<Thread> thread=new AtomicReference<>();AtomicBoolean gate=new AtomicBoolean(true);
+        // Test-only interruption gate exposes the exact signal/worker-reuse interleaving.
+        ExecutorService worker=Executors.newSingleThreadExecutor(r->{Thread t=new Thread(r,"controlled-download-worker"){
+            public void interrupt(){if(gate.get()){signalEntered.countDown();awaitUninterruptibly(deliverSignal);}super.interrupt();}
+        };thread.set(t);return t;}),main=Executors.newSingleThreadExecutor();
+        HelferService service=new HelferService();HelferService.running=true;
+        try {
+            Fetcher net=new Fetcher(){public long size(String u){return 8;}public byte[] fetch(String u,long o,long n){fetched.countDown();awaitUninterruptibly(finishRead);return "01234567".getBytes();}};
+            Future<?> a=worker.submit(()->{try{TestDownloadLifecycle.invoke(c,-804,net);}finally{jobExited.countDown();}return null;});check(fetched.await(3,TimeUnit.SECONDS),"A did not fetch");
+            Future<?> cancel=main.submit(()->service.onStartCommand(new Intent("cancel").putExtra("id",-804),0,4));
+            check(signalEntered.await(3,TimeUnit.SECONDS),"cancel did not reach signal");finishRead.countDown();
+            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(3);
+            while(jobExited.getCount()!=0&&thread.get().getState()!=Thread.State.BLOCKED&&System.nanoTime()<deadline)Thread.yield();
+            check(jobExited.getCount()!=0&&thread.get().getState()==Thread.State.BLOCKED,"worker exited before pending interrupt; could hit next job");
+            deliverSignal.countDown();cancel.get(3,TimeUnit.SECONDS);a.get(3,TimeUnit.SECONDS);gate.set(false);
+            check(worker.submit(()->!Thread.currentThread().isInterrupted()).get(3,TimeUnit.SECONDS),"next job inherited stale interrupt");
+            System.out.println("PASS: pending cancellation signal cannot outlive its worker ownership or interrupt a reused worker");
+        } finally {gate.set(false);finishRead.countDown();deliverSignal.countDown();worker.shutdownNow();main.shutdownNow();worker.awaitTermination(3,TimeUnit.SECONDS);TestDownloadLifecycle.shutdown();TestDownloadLifecycle.remove(root);}
+    }
     @SuppressWarnings("removal")
     static void legacy()throws Exception {
         Path root=Files.createTempDirectory("legacy-review-");Fake c=new Fake(root);Build.VERSION.SDK_INT=26;
@@ -135,6 +157,6 @@ public final class TestLifecycleReview {
         } finally {System.setSecurityManager(previous);Build.VERSION.SDK_INT=29;pool.shutdownNow();TestDownloadLifecycle.remove(root);}
     }
     public static void main(String[] args)throws Exception {
-        switch(args[0]) {case "pending":pending();break;case "blocking":blocking(false);break;case "blocking-after":blocking(true);break;case "admission":admission();break;case "legacy":legacy();break;default:throw new AssertionError("unknown case");}
+        switch(args[0]) {case "pending":pending();break;case "blocking":blocking(false);break;case "blocking-after":blocking(true);break;case "admission":admission();break;case "interrupt-race":interruptRace();break;case "legacy":legacy();break;default:throw new AssertionError("unknown case");}
     }
 }

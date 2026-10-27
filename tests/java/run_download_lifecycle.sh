@@ -9,7 +9,7 @@ mkdir -p "$out"
 mapfile -t fixtures < <(find tests/java/lifecycle -name '*.java' -print)
 javac -cp tests/java/classes -d "$out" "${fixtures[@]}" app/src/main/java/de/evp/helfer/Downloads.java app/src/main/java/de/evp/helfer/HelferService.java
 classpath="$out:tests/java/classes"
-for case in pending blocking blocking-after admission legacy; do
+for case in pending blocking blocking-after admission interrupt-race legacy; do
   java -Djava.security.manager=allow -Xmx32m -cp "$classpath" de.evp.helfer.TestLifecycleReview "$case"
 done
 java -Xmx32m -cp "$classpath" de.evp.helfer.TestDownloadPublication
