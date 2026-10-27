@@ -24,7 +24,7 @@ permissions:
 jobs:
   focused-precheck:
     # First only the two reviewed files in both engines; gate the eight-file regression.
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.head_ref != 'codex/pip-lifecycle'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     strategy:
@@ -100,7 +100,7 @@ jobs:
     needs: focused-precheck
     if: ${{ !cancelled() && (needs.focused-precheck.result == 'success' || needs.focused-precheck.result == 'skipped') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: ${{ github.head_ref == 'codex/pip-lifecycle' && 18 || 60 }}
     strategy:
       fail-fast: false
       matrix:
@@ -153,7 +153,7 @@ jobs:
       - name: Tests (${{ matrix.browser }})
         env:
           BROWSER: ${{ matrix.browser == 'chromium' && 'chromium' || 'firefox' }}
-          TESTS: ${{ github.event.inputs.tests || (github.event_name == 'pull_request' && 'test_dvr.py test_framekey.py test_mirrorprev.py test_prevretry.py test_scrubbar.py test_scrubfuzz.py test_seamless.py test_swipeseek.py') || 'test_*.py' }}
+          TESTS: ${{ github.event.inputs.tests || (github.head_ref == 'codex/pip-lifecycle' && 'test_pip_lifecycle.py test_pipkeep.py test_framekey.py') || (github.event_name == 'pull_request' && 'test_pip_lifecycle.py test_dvr.py test_framekey.py test_mirrorprev.py test_prevretry.py test_scrubbar.py test_scrubfuzz.py test_seamless.py test_swipeseek.py') || 'test_*.py' }}
         run: |
           cd tests/browser
           # streng: jede fehlgeschlagene Prüfung / jeder Absturz macht den Lauf rot (Ergebnis steht trotzdem in der Übersicht)
@@ -168,15 +168,52 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
+      - name: Read-only pinned Kadri companion
+        if: github.head_ref == 'codex/pip-lifecycle' && matrix.browser == 'chromium'
+        uses: actions/checkout@v4
+        with:
+          repository: Owndot/Kadri
+          ref: 64c23a0b0ac4fb94dd7bf91cde8d4b016f6d65ee
+          path: companion-kadri
+          persist-credentials: false
+      - name: Build both actual extension targets and compare shared sources
+        if: github.head_ref == 'codex/pip-lifecycle' && matrix.browser == 'chromium'
+        run: |
+          set -euo pipefail
+          for name in 140-player-ton-licht.js 200-player-mediasession.js 250-player-zurueck.js; do
+            cmp "src/$name" "companion-kadri/src/$name"
+          done
+          node companion-kadri/tools/build.js --test
+      - name: Six cycles with installed Chromium extension (native background explicitly unverified)
+        if: github.head_ref == 'codex/pip-lifecycle' && matrix.browser == 'chromium'
+        env:
+          EVP_EXTENSION_PATH: ${{ github.workspace }}/companion-kadri/dist/test
+        run: |
+          set -euo pipefail
+          cd tests/browser
+          timeout -k 10 240 xvfb-run -a python3 -u test_pip_lifecycle.py | tee out/installed-kadri-cycles.log
+      - name: Existing installed-extension PiP, Helper and security controls
+        if: github.head_ref == 'codex/pip-lifecycle' && matrix.browser == 'chromium'
+        env:
+          TESTS: 'test_pipall.py test_helper.py test_abort.py test_guard.py'
+        run: |
+          bash companion-kadri/tests/run_all.sh
+
       - name: Exact failed assertions
         if: always()
         run: |
           python - <<'PYLOG'
           from pathlib import Path
           for p in sorted(Path('tests/browser/out').glob('*.log')):
+              if p.stem=='test_pip_lifecycle':
+                  print(str(p)+':\n'+p.read_text())
+                  continue
               for line in p.read_text().splitlines():
                   if any(k in line for k in ('FAIL ', 'ERGEBNIS:', 'Error:', 'Traceback', 'Pointer:', 'outside viewport')):
                       print(str(p) + ': ' + line)
+          for p in sorted(Path('companion-kadri/tests/out').glob('*.log')):
+              print(p)
+              print(p.read_text())
           PYLOG
 
       - uses: actions/upload-artifact@v4
@@ -187,4 +224,6 @@ jobs:
             tests/browser/ergebnis-*.txt
             tests/browser/*.png
             tests/browser/out/*.log
+            tests/browser/out/pip-lifecycle-*.json
+            companion-kadri/tests/out/*.log
           if-no-files-found: ignore

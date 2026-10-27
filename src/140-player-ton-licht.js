@@ -117,7 +117,7 @@
       const onVis = () => {
         if (vp !== st) return;
         if (document.hidden) helper('/end');
-        else if (st.sysBright) helperSend('bright', st.bright);
+        else if (st.sysBright) helperSend('bright', Math.max(0.004, gammaToLin(st.bright)));
       };
       onVisChange(onVis);
       st.cleanup.push(() => { clearInterval(beat); offVisChange(onVis); });

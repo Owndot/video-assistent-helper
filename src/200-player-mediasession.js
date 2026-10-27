@@ -29,6 +29,7 @@
       msH('nexttrack', () => seekBy(SKIP()));
       msH('seekto', (d) => { if (d && isFinite(d.seekTime)) { st.userSeekAt = Date.now(); try { M().currentTime = d.seekTime; } catch (e) {} msPos(); } });
       st.cleanup.push(() => {
+        if (vp && vp !== st) return;   // delayed cleanup must not clear the new player's Media Session
         ['play', 'pause', 'stop', 'seekbackward', 'seekforward', 'previoustrack', 'nexttrack', 'seekto'].forEach((a) => msH(a, null));
         try { MS.metadata = null; MS.playbackState = 'none'; } catch (e) {}
       });
