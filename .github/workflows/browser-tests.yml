@@ -22,11 +22,15 @@ permissions:
   contents: read
 
 jobs:
-  firefox-precheck:
-    # PRs first prove only the two corrected Firefox cases; failed prechecks block the matrix.
+  focused-precheck:
+    # First only the two reviewed files in both engines; gate the eight-file regression.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox-neu]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,6 +40,15 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Deterministic playback counterexamples
+        run: python tests/browser/playback_trace_check.py
+      - name: Reproduce the reviewed false positives
+        if: github.head_ref == 'codex/firefox-nine' && matrix.browser == 'firefox-neu'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api 'repos/Owndot/video-assistent-helper/contents/tests/browser/test_seamless.py?ref=a3cf1a5ed215c48f504c6c826bf99b3b7bf8f2e5' --jq .content | base64 --decode > "$RUNNER_TEMP/reviewed-seamless.py"
+          python tests/browser/playback_trace_check.py --reviewed "$RUNNER_TEMP/reviewed-seamless.py"
       - name: Userscript passt zu src/
         run: node tools/build.js --check
 
@@ -43,7 +56,7 @@ jobs:
         id: browser-cache
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-firefox-neu-1.64.1
+          key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ matrix.browser == 'chromium' && '1.56.0' || '1.64.1' }}
 
       - name: Werkzeuge
         timeout-minutes: 8
@@ -55,28 +68,28 @@ jobs:
             fi
           done
           echo 'Acquire::Retries "1"; Acquire::http::Timeout "20"; Acquire::https::Timeout "20";' | sudo tee /etc/apt/apt.conf.d/99-evp-ci-timeouts > /dev/null
-          # Same pinned Firefox engine as the existing regression job.
-          pip install playwright==1.64.1 pillow==13.0.0
-          python -m playwright install --with-deps firefox
+          # Chromium: gleiche Version wie beim Entwickeln (neuere verweigern Größenänderung im Vollbild)
+          if [ "${{ matrix.browser }}" = firefox-neu ]; then pip install playwright==1.64.1 pillow==13.0.0; else pip install playwright==1.56.0 pillow==13.0.0; fi
+          python -m playwright install --with-deps ${{ matrix.browser == 'chromium' && 'chromium' || 'firefox' }}
           sudo apt-get install -y ffmpeg
 
       - uses: actions/cache/save@v4
         if: steps.browser-cache.outputs.cache-hit != 'true'
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-firefox-neu-1.64.1
+          key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ matrix.browser == 'chromium' && '1.56.0' || '1.64.1' }}
 
-      - name: Only the two remaining Firefox cases
+      - name: Only playback and isolated frame-key tests
         env:
-          BROWSER: firefox
-          TESTS: 'test_mirrorprev.py test_seamless.py'
+          BROWSER: ${{ matrix.browser == 'chromium' && 'chromium' || 'firefox' }}
+          TESTS: 'test_seamless.py test_framekey.py'
         run: tests/browser/run_all.sh
       - name: Exact precheck logs
         if: always()
         run: |
           python - <<'PYLOG'
           from pathlib import Path
-          for name in ('test_mirrorprev', 'test_seamless'):
+          for name in ('test_seamless', 'test_framekey'):
               p = Path('tests/browser/out') / (name + '.log')
               if p.exists():
                   print(p)
@@ -84,8 +97,8 @@ jobs:
           PYLOG
 
   test:
-    needs: firefox-precheck
-    if: ${{ !cancelled() && (needs.firefox-precheck.result == 'success' || needs.firefox-precheck.result == 'skipped') }}
+    needs: focused-precheck
+    if: ${{ !cancelled() && (needs.focused-precheck.result == 'success' || needs.focused-precheck.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:

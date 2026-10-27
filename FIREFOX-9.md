@@ -15,7 +15,7 @@ Firefox extension adapters and Helper Android sources are unchanged.
 | Test | Cause and corrected assertion |
 | --- | --- |
 | dvr | A hard-coded 90px downward mouse move can leave the viewport. Constrain fixture input to actual viewport coordinates; retain the same live/seek/zoom assertions. |
-| framekey | The observer counted keyless bootstrap `hello` as an authentication key. Inspect nonempty keys separately, assert keyless messages are only bootstrap, reject a wrong key and cross-origin replay before allowing authenticated fullscreen. Raw manager base key must never be sent; absent ancestorOrigins still fails closed. |
+| framekey | The observer counted keyless bootstrap `hello` as an authentication key. Inspect nonempty keys separately, assert keyless messages are only bootstrap, reject a wrong key and cross-origin replay using fresh-document, trusted-click receiver trials with matched activation/focus/source/geometry and correct-key positive controls. Raw manager base key must never be sent; absent ancestorOrigins still fails closed. |
 | mirrorprev | Exact string equality at 70% ignores native pointer coordinate rounding and integer-second flooring (41 versus 42). Use the pixel-derived interval `[floor(target - duration/trackWidth), floor(target + duration/trackWidth)]`, not a tolerance around the fractional target. Time-only/no-fetch/no-flicker assertions remain; an explicit check rejects ±2s errors. |
 | prevretry | Firefox can reuse a complete media response, so the planned next origin request never happens (`hit=0`). A unique HTTP-500 URL on the actual preview video guarantees a real media error; assert exactly one error, one reload of the known source, and recovered preview. No production handler is replaced. |
 | scrubbar | Lost-capture injection used pointerId=1 rather than the actual browser pointer ID. Record the trusted pointerdown; an unrelated ID must not cancel, the real ID must cancel and restore position. Near-zero negative subpixel deltas may display −0s. Magnifier labels include integer-second and one-CSS-pixel rounding. SVG backdrop refraction is Chromium-only; Firefox must retain the existing CSS blur fallback. |
@@ -26,8 +26,8 @@ Firefox extension adapters and Helper Android sources are unchanged.
 ## Evidence and limits
 
 The existing browser runner remains strict: failed assertions, crashes and
-missing ERGEBNIS lines fail CI. PRs first run only mirrorprev/seamless in Firefox; only a successful
-precheck enables the existing two-browser job. Eight affected files then
+missing ERGEBNIS lines fail CI. PRs first run only seamless/framekey in both engines; only successful
+prechecks enable the existing eight-file two-browser job. Eight affected files then
 run on PRs with Chromium
 1.56.0 and Firefox 1.64.1; main retains the existing browser suite. Browser
 binaries are cached; PRs skip the unrelated performance measurement. The
@@ -53,3 +53,60 @@ sleep; subsequent cleanup is synchronized to native media readiness.
 No new product bug has yet been established by these eight discrepancies;
 no player architecture or authentication change is justified by current evidence.
 Issue #5 remains open and out of scope; production policy remains UNAPPROVED.
+
+## Independent review follow-up: playback history (P2)
+
+The reviewed a3cf1a5 test removed samples below start-0.5, bounded only
+backward jumps and accepted a stationary endpoint. Executing its actual AST
+on controlled traces reproduces false success for 3→6 in 20ms, 3→0→3, and
+800ms at 3s. The same new `evaluate_playback()` judges real and synthetic
+samples; all three must fail. Continuous playback and an initial load/seek
+before stable playback must pass. Empty, sparse/short and later-seeking traces
+must fail too.
+
+For the fixture (opening beyond 2s), stability begins only after native
+loadedmetadata, initial seeked and playing events, decoded media, no bridge,
+non-seeking and non-paused state. The sampler latches that phase once and
+keeps every subsequent chronological sample, regardless of position or later
+readiness changes. A later source/seek/readiness regression cannot restart the
+phase or hide a bad sample. This is test instrumentation, not a player hook.
+
+Observe at least 650ms and eight stable samples (20ms requested cadence,
+actual monotonic wall time used); gaps over 250ms fail as insufficient
+observability. Limit backward jumps to <200ms and forward excess to <350ms;
+cumulative drift is bounded to -250/+350ms. Require positive advancement of
+at least max(200ms, elapsed-250ms), the expected playback rate, and a final
+position consistent both with the first stable sample and original opening
+position/wall time. Loading time may delay initial advancement, but cannot
+excuse a later stable stall. The existing 800ms observation, image-state
+checks, audio ownership, spinner cleanup and close recovery remain.
+
+## Independent review follow-up: isolated frame-key rejection (P3)
+
+Old invalid takes were sent before activation/focus. A new baseline explicitly
+shows that even the correct key is rejected there. Negative rejection alone
+was therefore not an authentication proof.
+
+Fresh documents now send the identical take packet (`fs=false`) from the
+same iframe URL via a native button clicked with Playwright's trusted input.
+Only the key varies within each positive/negative pair. No userActivation,
+focus or production listener is overwritten. A passive capture observer
+records the actual receiver's known source, origin, activation, focused iframe
+and visible dimensions before the production listener; a later task records
+its resulting DOM changes. Positive controls must stretch the frame through
+the actual take route to the top viewport. Wrong-key and A-on-B replay trials
+must have the same valid premise vector and leave iframe styles unchanged.
+The nested B control proves forwarding to the top; replay is rejected at the
+first receiver despite fulfilled activation/focus conditions.
+
+`fs=false` isolates the take/authorization route from the separate fullscreen
+API permission; the existing real-player fullscreen cases remain intact.
+Keyless hello, raw manager-base-key exclusion, origin-derived key stability,
+missing ancestorOrigins and fail-closed iframe playback tests are retained.
+The receiver permits fresh activation OR iframe focus; the trials record both,
+require a real active child click and focused iframe, and compare both parent
+activation values without inventing a Firefox activation fallback.
+
+Only tests, test helpers, this document and scoped CI are changed. Native
+Android, pairing, key derivation, generated userscript and production policy
+are unchanged. No installed-manager or physical Firefox Android claim is made.

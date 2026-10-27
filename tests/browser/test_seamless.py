@@ -3,13 +3,42 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 # der Seite), bis die eigene Kopie an derselben Stelle läuft – dann wird unmerklich umgeschaltet. Die sichtbare Zeit
 # springt dabei weder zurück noch vor. Auch bei langsamem Server. Stand das Video, bleibt es beim Standbild.
 import time
+from playback_trace import evaluate_playback
+from playback_trace_check import self_checks
 exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])
-SAMPLE = '''() => { const R = %s, o = document.getElementById("v"); window.__seen = []; window.__swapAt = 0;
-  const iv = setInterval(() => { const v = R.querySelector(".vv"); if (!v) return; const br = R.querySelector(".vbridge");
-    if (!br && !window.__swapAt) window.__swapAt = performance.now();
-    const sp = R.querySelector(".vspin");
-    window.__seen.push([performance.now(), br ? o.currentTime : v.currentTime, !!br, o.paused, o.muted, v.muted, !!(sp && sp.classList.contains("on") && getComputedStyle(sp).opacity !== "0"),v.readyState,v.seeking]); }, 20);
-  setTimeout(() => clearInterval(iv), 9000); }''' % R
+# Native metadata/seek/playing identify initial synchronization. Stability latches
+# once; later regressions cannot reset it or remove a sample from evaluation.
+SAMPLE = '''() => {
+  const R=%s,o=document.getElementById('v');
+  const life={metadata:false,seeked:false,played:false};
+  window.__seen=[];window.__stableAt=null;
+  window.__traceStart=o.currentTime;window.__openedAt=performance.now();
+  const event=e=>{
+    if(!e.isTrusted || !e.target.matches || !e.target.matches('.vv'))return;
+    if(e.type==='emptied' || e.type==='loadstart')Object.assign(life,{metadata:false,seeked:false,played:false});
+    if(e.type==='loadedmetadata')life.metadata=true;
+    if(e.type==='seeked')life.seeked=true;
+    if(e.type==='playing')life.played=true;
+  };
+  const types=['emptied','loadstart','loadedmetadata','seeked','playing'];
+  types.forEach(t=>R.addEventListener(t,event,true));
+  const sample=()=>{
+    const v=R.querySelector('.vv');if(!v)return;
+    const now=performance.now(),br=R.querySelector('.vbridge'),sp=R.querySelector('.vspin');
+    if(window.__stableAt===null && life.metadata && life.seeked && life.played &&
+       !br && v.readyState>=2 && !v.seeking && !v.paused && v.videoWidth>0)window.__stableAt=now;
+    window.__seen.push([now,br?o.currentTime:v.currentTime,!!br,o.paused,o.muted,v.muted,
+      !!(sp && sp.classList.contains('on') && getComputedStyle(sp).opacity!=='0'),
+      v.readyState,v.seeking,v.paused,window.__stableAt!==null,v.playbackRate]);
+  };
+  const iv=setInterval(sample,20);
+  const limit=setTimeout(()=>clearInterval(iv),9000);
+  window.__stopTrace=()=>{
+    sample();clearInterval(iv);clearTimeout(limit);types.forEach(t=>R.removeEventListener(t,event,true));
+    return {rows:window.__seen,start:window.__traceStart,opened:window.__openedAt};
+  };
+}''' % R
+for name,ok in self_checks(): check('Messreihe: '+name,ok)
 def jumps(seen):
     back = fwd = 0
     for a, b in zip(seen, seen[1:]):
@@ -20,15 +49,15 @@ def run(pg, slow_ms):
     pg.goto(B + 'direct.html'); pg.wait_for_function('document.getElementById("v").currentTime > 2', timeout=20000)
     pg.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(0.9)
     SLOW[0] = slow_ms
-    run.start = pg.evaluate('() => document.getElementById("v").currentTime')
     pg.evaluate('() => { %s; %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click(); }' % ('(' + SAMPLE + ')()', R))
     time.sleep(0.15)
     early = pg.evaluate('() => { const br = %s.querySelector(".vbridge"), o = document.getElementById("v"); return [!!br, !o.paused, !o.muted]; }' % R)
     run.amb = pg.evaluate('''() => { const a = %s.querySelector(".vamb"); if (!a || !a.getContext) return -1;
         try { const d = a.getContext("2d").getImageData(0, 0, a.width, a.height).data; let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] + d[i+1] + d[i+2] + d[i+3]; return Math.round(s / (d.length / 4)); } catch (e) { return -2; } }''' % R)
-    pg.wait_for_function('() => !%s.querySelector(".vbridge")' % R, timeout=15000)
-    pg.wait_for_function('() => { const v=%s.querySelector(".vv"); return v.readyState>=2 && !v.seeking && !v.paused; }' % R, timeout=15000); time.sleep(0.8)
-    seen = pg.evaluate('() => window.__seen')
+    pg.wait_for_function('window.__stableAt !== null', timeout=15000); time.sleep(0.8)
+    trace = pg.evaluate('() => window.__stopTrace()')
+    seen = trace['rows']; run.start = trace['start']; run.opened_at = trace['opened']
+    run.verdict = evaluate_playback(seen,run.start,run.opened_at)
     after = pg.evaluate('() => { const v = %s.querySelector(".vv"), o = document.getElementById("v"); return [!v.paused, !v.muted, o.paused, o.muted, Math.round(v.currentTime * 10) / 10]; }' % R)
     SLOW[0] = 0
     return early, seen, after
@@ -46,9 +75,7 @@ with sync_playwright() as p:
             check('%s: Firefox verwendet Standbild statt Capture-Brücke; Original still' % tag, early == [False, False, False], early)
             ambient = pg.evaluate('''() => {const a=%s.querySelector('.vamb'),v=%s.querySelector('.vv');return [a.tagName,!!a.srcObject,typeof v.captureStream==='function',a.muted];}''' % (R,R))
             check('%s: mobiler Ambient-Pfad verwendet Video; nur sichere Capture-API speist ihn' % tag, ambient[0]=='VIDEO' and ambient[1]==ambient[2] and ambient[3], ambient)
-            settled=[s for s in seen if s[7]>=2 and not s[8] and s[1]>=run.start-0.5]
-            bk,fw=jumps(settled)
-            check('%s: eigene Wiedergabe übernimmt die Position, danach keine Rücksprünge' % tag, after[4]>=run.start-0.3 and after[4]<run.start+5 and bk<0.2, [run.start,after,bk,fw])
+            check('%s: vollstaendiger stabiler Verlauf, positiver Fortschritt und korrekte Schlussposition' % tag, run.verdict['ok'], run.verdict)
             check('%s: Ladekreis nach Medienbereitschaft beendet' % tag, not pg.evaluate('() => %s.querySelector(".vspin").classList.contains("on")' % R))
         else:
             check('%s: gleich das laufende Bild der Seite, Ton weiter von der Seite' % tag, early == [True, True, True], early)
@@ -58,6 +85,7 @@ with sync_playwright() as p:
             check('%s: umgeschaltet ohne Sprung (zurück %.2f s, vor %.2f s)' % (tag, bk, fw), bk < 0.2 and fw < 0.35 and nb > 2, [bk, fw, nb, len(seen)])
             spun = sum(1 for s in seen if s[6])
             check('%s: kein Ladekreis (das Bild läuft ja)' % tag, spun == 0, [spun, len(seen)])
+        if not gecko: check('%s: stabiler eigener Wiedergabeverlauf' % tag, run.verdict['ok'], run.verdict)
         dbl = sum(1 for s in seen if not s[2] and not s[3] and not s[4] and not s[5])
         check('%s: danach eigenes Video mit Ton, Seite still (kein doppelter Ton)' % tag, after[0] and after[1] and after[2] and after[3] and dbl == 0, [after, dbl])
         ctl(pg); pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(1.0)
