@@ -72,9 +72,10 @@ with sync_playwright() as p:
     else:
         browser=p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
         ctx=browser.new_context(viewport={'width':400,'height':800},is_mobile=True,has_touch=True,device_scale_factor=2)
-        ctx.add_init_script(PRE);ctx.add_init_script(OBS);ctx.add_init_script(HLS);ctx.add_init_script(SCRIPT)
+        ctx.add_init_script(PRE+"\n"+OBS+"\n"+HLS+"\n"+SCRIPT)
     page=ctx.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
     page.goto(B+'direct.html');page.wait_for_function('document.getElementById("v").currentTime>1',timeout=20000)
+    page.evaluate('document.getElementById("v").muted=false')
     page.wait_for_selector('button[aria-label="Im Videoplayer öffnen"]',timeout=15000)
     baseline=page.evaluate(SNAP);samples=[{'stage':'before','resources':baseline,'metrics':metric(browser,ctx,page)}]
     for i in range(6):

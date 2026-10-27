@@ -205,6 +205,9 @@ jobs:
           python - <<'PYLOG'
           from pathlib import Path
           for p in sorted(Path('tests/browser/out').glob('*.log')):
+              if p.stem=='test_pip_lifecycle':
+                  print(str(p)+':\n'+p.read_text())
+                  continue
               for line in p.read_text().splitlines():
                   if any(k in line for k in ('FAIL ', 'ERGEBNIS:', 'Error:', 'Traceback', 'Pointer:', 'outside viewport')):
                       print(str(p) + ': ' + line)
