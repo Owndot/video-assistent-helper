@@ -153,7 +153,7 @@ public final class HelperStandIn {
             say("APP_DOWNLOAD url=" + field(json, "u") + " cookie=" + field(json, "c"));
             return Core.hostSealControl(sid, "{\"ok\":true,\"accepted\":true}".getBytes(StandardCharsets.UTF_8), now);
         }
-        if ("media".equals(op)) {
+        if ("media".equals(op) || "dummy".equals(op)) {
             int t = Integer.parseInt(field(json, "transfer"));
             long size = Long.parseLong(field(json, "size"));
             long off = Long.parseLong(field(json, "offset"));

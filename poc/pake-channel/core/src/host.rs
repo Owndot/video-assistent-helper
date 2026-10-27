@@ -212,8 +212,12 @@ impl HelperHost {
     }
 
     /// The initiator has proven its key: make room among established
-    /// sessions (same registration first), confirm the registration and
-    /// retire older registrations of the same Kadri key.
+    /// sessions (same registration first) and confirm the registration.
+    /// Older registrations of the same Kadri key are retired only when an
+    /// *already confirmed* registration is used again (review R4): the first
+    /// session of a new registration is Kadri's confirmation round trip, and
+    /// Kadri may still reject the new pin and keep using the old one. Kadri's
+    /// next session then shows which registration it actually kept.
     fn promote(&mut self, sid: [u8; ID_LEN]) {
         let reg_id = self.sessions[&sid].registration;
         let l = self.limits;
@@ -229,9 +233,10 @@ impl HelperHost {
         }
         self.sessions.get_mut(&sid).unwrap().established = true;
         let key = match self.registrations.iter_mut().find(|r| r.id == reg_id) {
+            Some(r) if r.confirmed => r.kadri_public,
             Some(r) => {
                 r.confirmed = true;
-                r.kadri_public
+                return;
             }
             None => return,
         };

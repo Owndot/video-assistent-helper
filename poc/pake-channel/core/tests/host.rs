@@ -141,12 +141,17 @@ fn first_session_confirms_and_retires_older_registrations_of_same_key() {
     host.add_pending(&Pinned { registration_id: reg2, peer_public: k.public }, 3).unwrap();
     assert_eq!(host.stats().registrations, 2);
     let (mut b, _) = connect(&mut host, &k, &hp, reg2, 4);
-    // Pending registration may handshake but old one stays until promotion.
-    assert_eq!(host.stats().registrations, 2);
     ping(&mut host, &mut b, 5).unwrap();
+    // First session of the new registration is only Kadri's confirmation:
+    // the old registration and its session stay until Kadri commits (R4).
+    assert_eq!(host.stats().registrations, 2);
+    ping(&mut host, &mut a, 6).unwrap();
+    // Kadri committed to reg2: its next session retires the old registration.
+    let (mut c, _) = connect(&mut host, &k, &hp, reg2, 7);
+    ping(&mut host, &mut c, 8).unwrap();
     assert_eq!(host.stats().registrations, 1);
     assert_eq!(host.registrations()[0].id, reg2);
-    assert_eq!(ping(&mut host, &mut a, 6).err(), Some(Error::UnknownSession), "old registration's sessions are gone");
+    assert_eq!(ping(&mut host, &mut a, 9).err(), Some(Error::UnknownSession), "old registration's sessions are gone");
 }
 
 #[test]
@@ -296,4 +301,24 @@ fn r2_known_session_id_allows_termination_but_not_takeover() {
     assert_eq!(ping(&mut host, &mut a, 3).err(), Some(Error::UnknownSession));
     let (mut b, _) = connect(&mut host, &k, &hp, reg, 4);
     ping(&mut host, &mut b, 5).unwrap();
+}
+
+/// R4: Kadri rejected the new pin after the helper already confirmed it
+/// (e.g. the confirmation reply was lost). Kadri keeps using the old
+/// registration, which must keep working; the unused new one is retired.
+#[test]
+fn r4_rejected_new_pin_keeps_the_previous_registration() {
+    let k = Identity::generate().unwrap();
+    let (mut host, hp, reg1, _) = host_with(&k, Limits::default());
+    let (mut a, _) = connect(&mut host, &k, &hp, reg1, 1);
+    ping(&mut host, &mut a, 2).unwrap();
+    let reg2 = [0x42; 16];
+    host.add_pending(&Pinned { registration_id: reg2, peer_public: k.public }, 3).unwrap();
+    let (mut b, _) = connect(&mut host, &k, &hp, reg2, 4);
+    let rec = b.seal_app(&AppRecord::Control(b"{}".to_vec())).unwrap();
+    host.open(&rec, 5).unwrap(); // helper-side confirmation; Kadri never sees the reply
+    let (mut again, _) = connect(&mut host, &k, &hp, reg1, 6);
+    ping(&mut host, &mut again, 7).unwrap();
+    assert_eq!(host.registrations().len(), 1);
+    assert_eq!(host.registrations()[0].id, reg1);
 }

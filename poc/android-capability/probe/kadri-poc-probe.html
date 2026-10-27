@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TEST – Kadri PoC probe page</title>
+<body style="font:15px/1.4 system-ui,sans-serif;margin:12px">
+<p style="background:#b00020;color:#fff;padding:6px;font-weight:bold">TEST-SEITE (Port 47900, fremder Ursprung zum Helper-Port 47899). Enthält keine Daten. Prüft nur, was eine gewöhnliche Webseite und ein Content-Script erreichen.</p>
+<h3>Webseite</h3><pre id="attack">…</pre>
+<h3>Content-Script der Test-Erweiterung</h3><pre id="probe">(kein Content-Script aktiv)</pre>
+<script>
+(async () => {
+  const r = {}, u = 'http://127.0.0.1:47899/p1/pair/m0', body = new Uint8Array(37);
+  try { await fetch(u, { method: 'POST', mode: 'no-cors', body }); r.simple = 'sent'; } catch (e) { r.simple = 'blocked:' + e.name; }
+  try { const x = await fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-Kadri-Helper': '2' }, body }); r.preflighted = 'status:' + x.status; }
+  catch (e) { r.preflighted = 'blocked:' + e.name; }
+  r.extensionGlobals = typeof window.chrome === 'object' && window.chrome.runtime ? 'runtime-visible' : 'none';
+  document.body.setAttribute('data-attack', JSON.stringify(r));
+  document.getElementById('attack').textContent = JSON.stringify(r, null, 2);
+})();
+</script>
+</body>
