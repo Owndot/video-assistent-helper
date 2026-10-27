@@ -97,17 +97,28 @@ with sync_playwright() as p:
             if EXTENSION:
                 # Playwright targets can be separate visible windows. Create an actual
                 # active tab in THIS window, using the installed extension's real API.
-                origin_tab=worker.evaluate('async u => (await chrome.tabs.query({url:u}))[0]',page.url)
+                visibility=ctx.new_cdp_session(page)
+                visibility.send('Emulation.setFocusEmulationEnabled',{'enabled':False})
+                frame=visibility.send('Page.getFrameTree')['frameTree']['frame']['id']
+                native_world=visibility.send('Page.createIsolatedWorld',{'frameId':frame,'worldName':'pip-native-visibility-probe'})['executionContextId']
+                def native_hidden():
+                    return visibility.send('Runtime.evaluate',{'expression':'document.hidden','contextId':native_world,'returnByValue':True})['result']['value']
+                def await_native_hidden(expected):
+                    until=time.monotonic()+5
+                    while native_hidden()!=expected and time.monotonic()<until:time.sleep(.05)
+                    assert native_hidden()==expected, 'native browser visibility did not change'
+                origin_tab=worker.evaluate('async u => (await chrome.tabs.query({})).find(t=>t.url===u)',page.url)
                 assert origin_tab and 'windowId' in origin_tab, 'fixture browser tab not found'
                 background=worker.evaluate('t => chrome.tabs.create({windowId:t.windowId,url:"about:blank",active:true})',origin_tab)
                 print('TAB BACKGROUND:',page.evaluate('({hidden:document.hidden,visibility:document.visibilityState,focus:document.hasFocus()})'),flush=True)
-                page.wait_for_function('document.hidden',timeout=5000)
+                assert not worker.evaluate('id => chrome.tabs.get(id)',origin_tab['id'])['active'], 'fixture tab still active'
+                await_native_hidden(True)
             else:page.evaluate('() => {window.__life.hidden=true;dispatchEvent(new Event("blur"));document.dispatchEvent(new Event("visibilitychange"));}')
             page.wait_for_function('window.__evpRoot.querySelector(".vv").paused')
             check(('Echter Desktop-Tabwechsel' if EXTENSION else 'Simulierter Hintergrund')+' bei pause-Einstellung hält an, Player bleibt',page.evaluate('!!window.__evpRoot.querySelector(".vp")'))
             if EXTENSION:
                 worker.evaluate('id => chrome.tabs.update(id,{active:true})',origin_tab['id'])
-                page.wait_for_function('!document.hidden');worker.evaluate('id => chrome.tabs.remove(id)',background['id'])
+                await_native_hidden(False);worker.evaluate('id => chrome.tabs.remove(id)',background['id']);visibility.detach()
             else:page.evaluate('() => {window.__life.hidden=false;document.dispatchEvent(new Event("visibilitychange"));dispatchEvent(new Event("focus"));}')
             check('Rückkehr behält die Pause bis zur Bedienung',page.evaluate('window.__evpRoot.querySelector(".vv").paused'))
             page.locator('button[aria-label="Wiedergabe"]').click();page.wait_for_function('!window.__evpRoot.querySelector(".vv").paused')
