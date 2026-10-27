@@ -73,13 +73,14 @@ with sync_playwright() as p:
         browser=p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
         ctx=browser.new_context(viewport={'width':400,'height':800},is_mobile=True,has_touch=True,device_scale_factor=2)
         ctx.add_init_script(PRE+"\n"+OBS+"\n"+HLS+"\n"+SCRIPT)
-    page=ctx.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+    page=ctx.new_page();errors=[];page.on('pageerror',lambda e:errors.append({'message':str(e),'stack':getattr(e,'stack',None)}))
     page.goto(B+'direct.html');page.wait_for_function('document.getElementById("v").currentTime>1',timeout=20000)
     page.evaluate('document.getElementById("v").muted=false')
     page.wait_for_selector('button[aria-label="Im Videoplayer öffnen"]',timeout=15000)
     baseline=page.evaluate(SNAP);samples=[{'stage':'before','resources':baseline,'metrics':metric(browser,ctx,page)}]
     for i in range(6):
-        page.evaluate('() => {const v=document.getElementById("v");v.currentTime=2;v.muted=false;v.play();}')
+        page.evaluate('async () => {const v=document.getElementById("v");v.currentTime=2;v.muted=false;await v.play();}')
+        page.wait_for_function('() => {const v=document.getElementById("v");return !v.seeking&&!v.paused&&v.readyState>=2;}')
         page.locator('button[aria-label="Im Videoplayer öffnen"]').click()
         page.wait_for_function('''() => {const r=window.__evpRoot,v=r.querySelector('.vv');return v&&v.readyState>=2&&!v.seeking&&!v.paused&&!r.querySelector('.vbridge');}''',timeout=20000)
         state=page.evaluate(SNAP)
