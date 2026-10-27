@@ -1,29 +1,37 @@
-# Helper #4 — vereinfachte Entscheidungsvorlage
+# Helper #4 — Entscheidung für öffentliches Onboarding
 
-**Keine Implementierungsfreigabe.** Der Eigentümer ist der einzige Nutzer. Keine Fremdinstallation oder alte Kopplung muss migriert werden. [SERVER-AUTH-DESIGN.md](SERVER-AUTH-DESIGN.md) ersetzt die bisherige JWE-Empfehlung in PR #20.
+**Nur Architekturentwurf.** Die öffentliche Kadri-/Helper-Version muss ohne private CA, Vertrauensstoreänderung, PC/ADB, lange Geheimnisse und Sicherheitsausnahmen koppelbar sein. Der private Samsung-/Mac-CA-Vorschlag aus 29652a4 ist dafür **zurückgezogen**. Dass noch keine externe Nutzerbasis existiert, erlaubt den sauberen Protokollschnitt, keine private Speziallösung. Vollständiger Vergleich: [SERVER-AUTH-DESIGN.md](SERVER-AUTH-DESIGN.md).
 
-## Zur Entscheidung vorgeschlagen
+## Drei Kandidaten, noch keine Implementierungsfreigabe
 
-1. **Android 13/API33 als Produktuntergrenze**, noch nicht setzen. Natives TLS 1.3 benötigt technisch nur Android 10/API29; die höhere Grenze ist eine Supportentscheidung, keine erfundene Crypto-Anforderung. Samsung dokumentiert die S26-Ultra-Familie mit Android 16. Konkreter Gerätebuild/Patchstand nicht ausgelesen. Höheres minSdk sichert Clipboard nicht automatisch.
-2. **Normales lokales HTTPS/TLS 1.3 statt JWE bevorzugen**, wenn bewusst eingerichteter privater CA-Trust akzeptiert und der reale Samsung/Vivaldi-Pfad nachgewiesen wird. Serverkey im Android-Keystore, private CA ausschließlich auf eigenem Mac, Blattzertifikat nur IP-SAN 127.0.0.1. Kein APK-Signierschlüssel für TLS.
-3. **Kein Clipboard-Pairing:** öffentliche Zertifikatsdaten unabhängig prüfen/einrichten; danach zehnstelligen Einmalcode aus nativer App manuell in Kadris gebündelte Optionsseite tippen. Erst auf vorab validiertem TLS senden; 180 Sekunden/fünf falsche Versuche/einmalige Nutzung, nur nativ neu öffnen. Langfristiger Clienttoken entsteht und reist nur in TLS, nie in URL/Seiten-HTML/Clipboard.
-4. **Begrenzter Rohtransfer:** 16-KiB-Kontrollnachrichten, 8-KiB-Header, 64-KiB-Binärblöcke, zwei aktive Medientransfers global, ACK-Backpressure, begrenzte Queue/Disk/Timeouts. Echter Hintergrund-Fetch-BYOB statt GM-Vollpuffer; temporäre Dateien, Range-/Validator-/EOF-/Längenprüfung vor Veröffentlichung. 64 KiB begrenzt Blöcke, nicht legitime HLS-/DASH-Segmente.
-5. **Sauberer Reset, kein Legacy:** alte Kopplungen löschen; HTTP-/X-EVP-Key-/Fragmentpairing-/unbeschränkte Upload-Endpunkte vollständig entfernen. Keine automatische Migration, Mischversion oder unsicheren Fallbacks.
-6. **Kadri/Vivaldi + eigener Helper zuerst.** Firefox bleibt nächstes Unterstützungsziel. Userscript-Player bleibt nutzbar; sicherer Helpermodus erst nach realem Manager-TLS-/UI-/Speichernachweis. Keine universelle Managerarchitektur als Voraussetzung.
+| Kandidat | Vorteil | Hauptkosten / offene Voraussetzung |
+| --- | --- | --- |
+| A: eigener DNS-Name + öffentliches TLS-Zertifikat je Gerät | Normale Browser-TLS-Prüfung, kleinster eigener Datenkanalcode, keine Nutzer-CA. | Geräteweise DNS-01-Provisionierung/Renewal/Abuse/Quoten und zentrale Vertrauensabhängigkeit; sicheres Erst-Bootstrap sowie Loopback-DNS/LNA müssen nachgewiesen sein. Kein gemeinsamer oder geräteübergreifender Wildcard-Privatschlüssel. |
+| B: kurzer Code + etabliertes PAKE + geprüfter gebundener Kanal | Einfaches manuelles Code-Onboarding ohne Geräte-PKI; perspektivisch gut für Firefox. | Aktuelle geprüfte Library-/JNI-/WASM-Kombination und vollständiges Key-Confirmation/Kanal-Binding fehlen noch. PAKE-Export-Key ist kein fertiger Medienkanal. Keine eigene KDF-/AEAD-Konstruktion. |
+| C: verifizierte App-/Custom-Tabs-Brücke + gepinnter verschlüsselter Kanal | App bestätigen, keine CA/Codekopie; nur statische Projekt-HTTPS-Infrastruktur, Daten bleiben lokal. | Vivaldi muss Relationship-Validation, authentisierten Rückkanal und eigene Extension im selben Custom Tab/Profil wirklich unterstützen. Kanalbibliothek ebenfalls separat zu prüfen. |
 
-## Warum diese Revision JWE zurückstellt
+**Zuerst C als kleinen Plattform-Machbarkeitsnachweis planen**, noch nicht implementieren. Bei Erfolg ist C die bevorzugte infrastrukturarme Richtung; bei fehlendem Vivaldi-Rückweg stoppen und B neu entscheiden. A ist grundsätzlich möglich, benötigt aber für ein kleines Projekt vergleichsweise viel dauerhaften Zertifikats-/Domainbetrieb. Keine Variante ist heute als fertige sichere Implementierung belegt.
 
-Unbeschränkte AEAD-/Keystore-Entschlüsselung kann vollständige Nachrichten puffern; Spooling davor behebt das nicht. Ein kleines JWE-Blockprotokoll wäre denkbar, bräuchte aber weitere geprüfte Schlüssel-/IV-/Sitzungs-/Replayregeln und Codecs. TLS übernimmt die Kanalkryptografie standardisiert und erlaubt Rohbytes ohne mehrfache Base64-Kopien. Deshalb hier **kein weiterer JWE-Kanalentwurf**, keine eigene Crypto und kein PAKE-/JOSE-Paket.
+## Nutzerablauf und Vertrauen
 
-HTTPS ist im Anwendungscode einfacher, die eigene CA jedoch **nicht kostenlos**: Einrichtungsaufwand und ggf. über Kadri hinaus wirksamer Trust. Root-Schlüsselverlust oder eine andere appkontrollierte bereits vertraute CA kann Browservertrauen unterlaufen. Fetch ist kein exklusiver SPKI-Pin. Kein geteilter CA-Privatschlüssel, keiner in der APK, keine Zertifikatsausnahmen. Der konkrete Samsung-Import mit Fingerabdruckprüfung und echte Vivaldi-Extension-Trust sind **noch nicht nachgewiesen**.
+Ziel: installieren → in Kadri „Verbinden“ → verifizierter Link öffnet echte Helper-App → Nutzer bestätigt → browsergeprüfter Native-Origin-Rückweg zu Kadris tatsächlichem Hintergrundvorgang → Identitäten pinnen → vollständigen privaten Schlüsselbesitz im verschlüsselten Loopback-Kanal prüfen → erst dann Medien/Befehle.
 
-Wenn dieser zusätzliche Trust/Betriebsaufwand nicht akzeptiert oder die Machbarkeit nicht belegt wird, ist **noch keine sichere Erstimplementierung beschlossen**. Alternative separat neu bewerten, nicht heimlich zu HTTP/JWE zurückfallen.
+App Link allein, ein Rück-URL-Parameter, ein neuer selbst signierter Public Key oder eine Origin-Behauptung im Payload genügt **nicht**. Die App-/Origin-Zuordnung ist Android-/browservermittelt, kein unabhängig exportiertes APK-Attest. Der spätere Kanal beweist den Besitz der zugeordneten Schlüssel bei jeder Neuverbindung. Austausch/Widerruf/Replay/Downgrade müssen scheitern; keine automatisch neu akzeptierte Identität.
 
-## Vor Implementierung offen
+C verwendet zunächst nur öffentliche Bootstrapdaten über kontrollierte HTTPS-Ursprünge. Keine Cloud-Medienproxyfunktion, Cookies/URLs/Bodies oder Private Keys auf dem Dienst. Domain/Hosting bleibt ein Trust-Anker für neue Kopplungen, vorhandene Pins werden nicht automatisch ersetzt. Normale Website-Zertifikate sind Betreiberaufgabe; Nutzer verwalten keine CA.
 
-- Eigentümerentscheidung zu API33, privater CA-Vertrauensstellung und begrenztem Erstumfang.
-- Astra-Review des Trust-Bootstraps, der weiteren lokalen CA-Risiken sowie des Code-/Transfermodells.
-- Später separat freigegebener Wegwerfnachweis: tatsächlicher Kadri-Hintergrund-TLS, Falschzertifikate, konkreter Samsung-Import, manuelle Optionsseitenkopplung und echter Fetch-BYOB.
-- Speicher-/Range-/Abbruch-/Parallelitätsprüfungen unter 32 MiB Java-Heap. API-Dokumentation ist keine Gerätegarantie.
+## Medien und Unterstützung
 
-Nur Dokumentation: keine Schlüssel, APKs oder Pairing-Implementierung. minSdk bleibt 26, Produktions-Policy UNAPPROVED. #4 bleibt offen. Die bisher akzeptierte fehlende Serverauthentifizierung bleibt bis zum separat freigegebenen und nachgewiesenen Fix ein Restrisiko; heutiger Zustand/Reset: [HELPER-BETA-SECURITY.md](HELPER-BETA-SECURITY.md). Kein neuer Releasebeschluss.
+Zwei aktive Transfers global, ACK-Backpressure, begrenzte Queues/Reader/Dateispools, keine Vollpuffer. TLS könnte 64-KiB-Rohblöcke verwenden; Noise erlaubt maximal 65535 Bytes inklusive Tag, deshalb **60-KiB-Nutzblöcke** im vorgeschlagenen C-Profil. Große HLS-/DASH-Segmente bestehen aus vielen Blöcken. 16-KiB-Kontrolle, 8-KiB-Header, bestehende Range-/Validator-/Integritäts-/Cleanup-Regeln und spätere echte 32-MiB-Heap-Nachweise bleiben Pflicht. Keine Keystore-AEAD für ganze Medien.
+
+Kein automatisches API33: Vivaldi unterstützt laut Hersteller ab Android10/API29. **API29 als vorläufige öffentliche Zieluntergrenze prüfen**, erst nach tatsächlichem Capability-Nachweis entscheiden. Aktuelles minSdk bleibt26. API31 verbessert App-Link-Verifikation; kein erfundener API33-Crypto-Zwang. Marktanteile/Patchgarantie sind nicht aus unserem einzelnen Samsung oder veralteten Verteilungsdaten ableitbar.
+
+Firefox ist eigenes nächstes Capability-Ziel, nicht gestrichen. Userscript-Player bleibt nutzbar, sichere Helper-Kopplung erst nach realem Manager-/UI-/Transportnachweis. Keine unsichere Parallelverbindung alter Clients.
+
+## Review und klarer Abbruchpunkt
+
+Astra prüft zuerst Dreiervergleich, C-Trust-Kette und den geplanten begrenzten Test. Dieser soll nur öffentliche Dummy-Marker transportieren, **noch keine Kryptobibliothek/Medien/Geheimnisse**: echte verifizierte App Links, tatsächliches Relationship-Ergebnis und Channel-Ready, Vivaldi-Profil/Extension-Rückweg, dieselbe Positivkontrolle plus falsche App/DAL/Origin/JS-Events/Pending-ID/Replay als Negativkontrollen. Nur API=true oder eine erfolgreiche Chrome-Demo zählt nicht.
+
+Ein sauberer Lauf plus höchstens eine begründete Wiederholung pro Fall, äußerer Watchdog zwei Minuten. Keine sichere Extension-/Rückroute → C nicht bestanden, kein URL-/WebView-/Legacy-Ersatz. Erst bei Erfolg separat autorisierten Library-/Kanal-/Speichernachweis planen. Noise ist offen spezifiziert, nicht IETF-TLS; Snow ist ausdrücklich nicht formal auditiert. Der historische opaque-ke-Audit deckt nicht automatisch heutige Versionen und unsere Integration ab. Keine Bibliothek ist durch diese Recherche freigegeben.
+
+Nur SERVER-AUTH-DESIGN.md und dieses Dokument geändert. Keine App-/Pairing-/Transportimplementierung, APKs, echten Zertifikate, Produktions- oder Pairingschlüssel, Releases/Tags. Produktions-Policy UNAPPROVED. #4 bleibt offen; bestehende Exposure-CI ist Nachweis des alten Fehlers, kein Erfolg des neuen Designs. Umsetzung erst nach unabhängigem Review und erneuter Eigentümerfreigabe.
