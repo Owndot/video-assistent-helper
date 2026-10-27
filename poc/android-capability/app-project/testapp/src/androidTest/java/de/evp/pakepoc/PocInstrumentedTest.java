@@ -225,8 +225,8 @@ public class PocInstrumentedTest {
         assertEquals(IdentityStore.State.CREATED, c.state);
         assertFalse(Arrays.equals(a.identity, c.identity));
         Arrays.fill(a.identity, (byte) 0); Arrays.fill(b.identity, (byte) 0); Arrays.fill(c.identity, (byte) 0);
-        s.reset();
         Log.i(TAG, "POC_KEYSTORE " + s.wrappingKeyInfo());
+        s.reset();
     }
 
     @Test public void registryStoreDetectsReboot() throws Exception {
