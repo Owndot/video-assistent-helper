@@ -92,7 +92,7 @@ Dieselben Hashes stehen in der gebauten APK (`lib/<abi>/`). Die APK-Hashes selbs
 | Ebene | Ergebnis |
 | --- | --- |
 | Rust-Kern (`cargo test --locked`) | 39/39 |
-| Mutationsprobe (`tools/mutation_check.py`) | «MUTATION» |
+| Mutationsprobe (`tools/mutation_check.py`) | PASS: 43 Mutanten, 39 getötet, 4 begründet akzeptiert (redundante Schutzprüfungen bzw. Verteidigung in der Tiefe, z. B. Schleifen-Guard hinter `sanitized()`) |
 | Desktop-Chromium-Vorprüfung der Vivaldi-Testerweiterung (`tools/desktop_check.mjs`) | 16/16 |
 | Instrumentierung auf API-34-x86_64-Wegwerf-Emulator | **OK (11 tests)**, danach Logcat-Prüfung ohne Treffer auf Code, Schlüssel oder Session-Material |
 
