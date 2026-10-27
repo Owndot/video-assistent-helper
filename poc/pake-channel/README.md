@@ -76,7 +76,7 @@ REC     "KHC2" 20 | session_id[16]      | Noise-Transportnachricht 16..65 535 B
 | Reduktion | 64 Byte als **Big-Endian**-Ganzzahl (512 bit) modulo der P-256-Gruppenordnung n; Kodierung des Skalars 32 Byte Big-Endian |
 | KAT | 4 Codes, erzeugt mit `argon2-cffi 25.1.0`/`argon2-cffi-bindings 26.1.0` (Referenz-C `libargon2`) und Python-Ganzzahlen, unabhängig von pakery/argon2-rs |
 
-**Abweichungen gegenüber RFC 9382 (präzise, soweit ohne RFC-Volltext prüfbar):** RFC 9382 schreibt `w = MHF(pw) mod p` vor (p dort die Gruppenordnung) und legt die konkrete MHF und ihre Parameter in die Hand der Anwendung. Unsere Festlegungen sind daher Profilentscheidungen, keine Abweichung vom Protokollkern: (a) fester Null-Salt – vertretbar, weil der Code einmalig, zufällig und nirgends gespeichert ist und SPAKE2 keine Offline-Prüfung aus Mitschnitten erlaubt; (b) moderate Kosten (≈21 ms nativ), weil Online-Versuche ohnehin auf einen je Fenster begrenzt sind; (c) 512-bit-Ausgabe mit Reduktion, damit der Bias vernachlässigbar ist; (d) `Ke` ungenutzt; (e) Identitäten tragen Schlüssel, AAD trägt die Pairing-ID. Der genaue RFC-Wortlaut zu MHF-Ausgabelänge und -Wahl konnte hier nicht zitiert werden (siehe §9, RFC-Quellen) und ist im nächsten Review gegen §3.2 zu prüfen.
+**Abweichungen gegenüber RFC 9382 (präzise, soweit ohne RFC-Volltext prüfbar):** RFC 9382 schreibt `w = MHF(pw) mod p` vor (p dort die Gruppenordnung) und legt die konkrete MHF und ihre Parameter in die Hand der Anwendung. Unsere Festlegungen sind daher Profilentscheidungen, keine Abweichung vom Protokollkern: (a) fester Null-Salt – vertretbar, weil der Code einmalig, zufällig und nirgends gespeichert ist und SPAKE2 keine Offline-Prüfung aus Mitschnitten erlaubt; (b) moderate Kosten, weil Online-Versuche ohnehin auf einen je Fenster begrenzt sind (15–21 ms nativ gemessen); (c) 512-bit-Ausgabe mit Reduktion, damit der Bias vernachlässigbar ist; (d) `Ke` ungenutzt; (e) Identitäten tragen Schlüssel, AAD trägt die Pairing-ID. Der genaue RFC-Wortlaut zu MHF-Ausgabelänge und -Wahl konnte hier nicht zitiert werden (siehe §9, RFC-Quellen) und ist im nächsten Review gegen §3.2 zu prüfen.
 
 ## 5. Fehlersemantik
 
@@ -128,7 +128,22 @@ Firefox-Besonderheiten: (1) Content-Script-Match-Patterns erlauben in Firefox ke
 
 ## 9. Nachweise
 
-«TESTS»
+| Bereich | Ergebnis |
+| --- | --- |
+| RFC 9382 Appendix B (4 Vektoren) über die genutzten Bibliothekseinstiege | PASS |
+| Unabhängige Python-Gegenrechnung (inkl. M/N aus Seed regeneriert) | 36/36 PASS |
+| Cacophony-Vektor `Noise_KK_25519_ChaChaPoly_SHA256` | PASS |
+| Argon2-KAT (4 Codes, Referenz-C-Argon2) – Rust-Ergebnis und unabhängige Neuerzeugung identisch | PASS |
+| Rust-Tests gesamt (`cargo test --locked`) | **34/34**: Protokoll 20, Host 9, Record 2, KAT 1, RFC 1, Noise 1 |
+| Mutationsprobe (`tools/mutation_check.py`, 39 Mutanten) | **36 getötet, 3 begründet überlebend, 0 unerklärt** (s. u.) |
+| RustSec (advisory-db `99670cf`, 2026-10-27) | 123 Pakete, kein Treffer; Gegenprobe mit 4 bekannt verwundbaren Versionen meldet alle 4 |
+| E2E Chromium 153.0.8010.12 (MV3) gegen JNI-Helper | **39/39** (mit und ohne `TCP_NODELAY`) |
+| E2E Firefox Desktop 158.0.1 (MV2) gegen JNI-Helper | **39/39** (mit und ohne `TCP_NODELAY`) |
+| Identischer Kern | `kadri_pairing_poc_bg.wasm` SHA-256 `71c66307279ea0f176bcc1dd50d9b63332f073f174ea22cdcc6d44099f1ded50` in beiden Erweiterungen; 274 344 B (gzip 83 909 B); JNI-`.so` x86_64-Linux 826 360 B, **Android-ABIs nicht gebaut** |
+
+E2E-Szenario (je Browser identisch, 39 Prüfungen): A) Webseite und Content-Script (Gate, Preflight, keine Erweiterungsglobals, Pairing/Test-Hooks abgelehnt, `storage.local` leer, Erweiterungs-IndexedDB unerreichbar); B) Kopplung über die Optionsseite, Pin = Helper-Schlüssel, Registrierung durch ersten authentisierten Round-Trip bestätigt; C) Kanal, vertrauliche Marker nur beim echten Helper, zwei parallele Transfers byte-genau mit ≤ 60-KiB-Records, Speicher konstant; D) manipulierter Record → Sitzung tot; E) Helper-Neustart → alte Sitzung 404, nicht wiederverwendet, neuer Handshake; F) nicht-kanonischer Pin lokal abgelehnt, gültiger falscher Pin vom echten Helper abgelehnt; **G) lebende authentisierte Sitzung → echter Helper beendet → fremder Listener auf dem Port → Request scheitert, Sitzung verworfen, kein weiterer Request ohne neuen Handshake, Handshake und Kopplung mit geratenem Code scheitern, Pin unverändert, der Listener erhielt nur Chiffrat (`/p1/ch/rec`) und Handshake-/Pairing-Bytes ohne URL, Cookie, Code, Marker oder Bearer**; H) falscher Code, verbranntes Fenster, Widerruf beendet laufende Sitzung, widerrufene Registrierung kann nicht handshaken, nur ein Kopplungsvorgang gleichzeitig, Neukopplung erzeugt neue Registrierung.
+
+Begründete Mutations-Überlebende: (1) Responder-Prüfung „Handshake-Payload leer“ entfernt – redundant, HS1 hat eine feste Länge ohne Platz für Nutzlast, der äußere Längencheck greift (Test `handshake_payloads_must_be_empty` belegt das); (2) „Initiator einmalig“ – Kontrollmutant ohne Wirkung, `take()` konsumiert bereits; (3) „Widerruf behält Sitzungen“ – `sweep()` entfernt Sitzungen widerrufener Registrierungen vor jeder Recordverarbeitung. Gegenüber Revision 1 neu getötet u. a.: Deadlines je Phase inkl. Off-by-one, Pairing-ID-Bindung, Prologbindung, Schlüsselvalidierung (inkl. Reflexion des eigenen Schlüssels), Argon2-Parameter, Codegrenze, alle Terminalfälle, exakte Recordlängen, Host-Limits und Timeouts.
 
 **RFC-9382-Quellen:** Ein direkter Abgleich mit einer offiziellen Quelle war erneut nicht möglich: rfc-editor.org, www.ietf.org, datatracker.ietf.org und der JPNIC-RFC-Spiegel (ftp.nic.ad.jp) wurden von der Egress-Policy abgelehnt (2026-10-27). Unverändert gilt: Vektoren aus pakery-Repo-Commit 6abbf82, unabhängig nachgerechnet (36/36), M/N aus dem RFC-Seed regeneriert. Der Textabgleich gegen RFC 9382 Appendix B bleibt eine 5-Minuten-Aufgabe für den nächsten Review.
 
@@ -136,9 +151,9 @@ Firefox-Besonderheiten: (1) Content-Script-Match-Patterns erlauben in Firefox ke
 
 | Ebene | Messung | Aussage |
 | --- | --- | --- |
-| 1. Kryptografie allein (nativ, `examples/bench.rs`, opt-level s) | «BENCH» | Nicht der Engpass. Der Review maß isoliert ≈484 MiB/s; unsere Zahl enthält Record-Kodierung und Kopien. |
+| 1. Kryptografie allein (nativ, `examples/bench.rs`, opt-level s) | 60-KiB-Records seal+open ≈170 MiB/s; KK-Handshake beidseitig 0,65 ms; `password_scalar` 15 ms | Nicht der Engpass. Der Review maß isoliert ≈484 MiB/s; unsere Zahl enthält Record-Kodierung und Kopien. |
 | 2. HTTP/Socket | eine neue HTTP/1.1-Verbindung je 60-KiB-Record, ACK vor dem nächsten | Kosten pro Record, aber nicht die Hauptursache der 1,2 MiB/s |
-| 3. JVM-Stand-in | «TPUT» | Der Einbruch kam vom Nagle-/Delayed-ACK-Zusammenspiel im JDK-`HttpServer`; mit `-Dsun.net.httpserver.nodelay=true` ≈10 MiB/s. **Die Aussage in Revision 1 („neue HTTP-Verbindung je Record“) war falsch und ist hiermit korrigiert.** |
+| 3. JVM-Stand-in | E2E-Transfers (8,47 MB, zwei parallel): Chromium 1,1 → 8,0 MiB/s, Firefox 1,1 → 6,1 MiB/s (ohne → mit `TCP_NODELAY`); in Einzelläufen zuvor 9,6/10,0 MiB/s | Der Einbruch kam vom Nagle-/Delayed-ACK-Zusammenspiel im JDK-`HttpServer`; mit `-Dsun.net.httpserver.nodelay=true` 6–10 MiB/s (Streuung zwischen Läufen und Browsern). **Die Aussage in Revision 1 („neue HTTP-Verbindung je Record“) war falsch und ist hiermit korrigiert.** |
 | 4. Echter Android-`MiniServer` | nicht gemessen | Eigener Socket-Code; Nagle-Verhalten, Puffer und Heap sind dort separat zu messen (#5). Keine Übertragung der JVM-Zahlen. |
 
 Speicher: WASM-Linearspeicher 1,06 MiB initial → 9,19 MiB nach Kopplung (Argon2-Hochwasser von 8 MiB; wächst danach nicht), unverändert während zweier paralleler Transfers. JNI: Argon2 belegt transient 8 MiB nativ außerhalb des Java-Heaps (`-Xmx32m` im Stand-in ausreichend).
