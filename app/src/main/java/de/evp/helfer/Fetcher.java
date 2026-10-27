@@ -156,11 +156,14 @@ public interface Fetcher {
             long total = -1, lastProgress = 0;
             IOException failure = null;
             byte[] buffer = new byte[64 << 10];
+            boolean complete = false;
+            try {
             for (int attempt = 0; attempt < 4; attempt++) {
                 if (Thread.currentThread().isInterrupted() || listener != null && listener.cancelled())
                     throw new IOException("abgebrochen");
                 long offset = validator != null && out.isFile() ? out.length() : 0;
-                if (total >= 0 && offset == total) return out;
+                // A failed read/close is never proof of EOF, even at the declared length.
+                if (total >= 0 && offset >= total) { offset = 0; validator = null; }
                 HttpURLConnection connection = null;
                 try {
                     connection = response(url, offset > 0 ? offset : -1, -1, offset > 0 ? validator : null, true);
@@ -168,19 +171,19 @@ public interface Fetcher {
                     if (code >= 400) throw new HttpError(code);
                     String encoding = connection.getHeaderField("Content-Encoding");
                     if (encoding != null && !encoding.equalsIgnoreCase("identity"))
-                        throw new IOException("Unexpected file Content-Encoding");
+                        throw new ResponseError("Unexpected file Content-Encoding");
                     boolean append = code == 206 && offset > 0;
-                    long expectedBody = connection.getContentLengthLong();
+                    long expectedBody = responseLength(connection);
                     if (code == 206) {
                         String range = connection.getHeaderField("Content-Range");
                         java.util.regex.Matcher match = java.util.regex.Pattern.compile(
                             "bytes (\\d+)-(\\d+)/(\\d+)").matcher(range == null ? "" : range);
-                        if (!append || !match.matches()) throw new IOException("Invalid resumed Content-Range");
+                        if (!append || !match.matches()) throw new ResponseError("Invalid resumed Content-Range");
                         long start = Long.parseLong(match.group(1)), end = Long.parseLong(match.group(2));
                         long length = Long.parseLong(match.group(3));
                         if (start != offset || end < start || end >= length ||
                             expectedBody >= 0 && expectedBody != end - start + 1 ||
-                            total >= 0 && length != total) throw new IOException("Mismatched resumed file range");
+                            total >= 0 && length != total) throw new ResponseError("Mismatched resumed file range");
                         expectedBody = end - start + 1;
                         total = length;
                     } else if (code == 200) {
@@ -220,8 +223,12 @@ public interface Fetcher {
                     }
                     if (expectedBody >= 0 && received != expectedBody || total >= 0 && offset != total)
                         throw new IOException("Incomplete file body");
+                    checkCancelled(listener);
                     if (listener != null) listener.progress(1, 1);
+                    complete = true;
                     return out;
+                } catch (ResponseError e) {
+                    throw e; // Permanent framing/range errors must not be retried.
                 } catch (HttpError e) {
                     if (e.code == 401 || e.code == 403 || e.code == 404 || e.code == 410) throw e;
                     failure = e;
@@ -235,6 +242,7 @@ public interface Fetcher {
                 catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("abgebrochen", e); }
             }
             throw failure != null ? failure : new IOException("File download failed");
+            } finally { if (!complete) out.delete(); }
         }
 
         private static void validateRange(long off, long len) throws ResponseError {

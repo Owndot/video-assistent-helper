@@ -1,0 +1,1 @@
+package android.os;public class Handler {public Handler(Looper l){}public boolean post(Runnable r){throw new UnsupportedOperationException("not exercised");}public boolean postDelayed(Runnable r,long n){return true;}public void removeCallbacks(Runnable r){}}
