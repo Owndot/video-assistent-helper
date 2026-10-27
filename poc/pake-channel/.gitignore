@@ -1,2 +1,4 @@
 core/target/
 ext/pkg/
+__pycache__/
+*.pyc
