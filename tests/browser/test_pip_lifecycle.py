@@ -95,12 +95,19 @@ with sync_playwright() as p:
         if i==1:
             background=None
             if EXTENSION:
-                background=ctx.new_page();background.goto('about:blank');background.bring_to_front();page.wait_for_function('document.hidden',timeout=5000)
+                # Playwright targets can be separate visible windows. Create an actual
+                # active tab in THIS window, using the installed extension's real API.
+                origin_tab=worker.evaluate('async u => (await chrome.tabs.query({url:u}))[0]',page.url)
+                assert origin_tab and 'windowId' in origin_tab, 'fixture browser tab not found'
+                background=worker.evaluate('t => chrome.tabs.create({windowId:t.windowId,url:"about:blank",active:true})',origin_tab)
+                print('TAB BACKGROUND:',page.evaluate('({hidden:document.hidden,visibility:document.visibilityState,focus:document.hasFocus()})'),flush=True)
+                page.wait_for_function('document.hidden',timeout=5000)
             else:page.evaluate('() => {window.__life.hidden=true;dispatchEvent(new Event("blur"));document.dispatchEvent(new Event("visibilitychange"));}')
             page.wait_for_function('window.__evpRoot.querySelector(".vv").paused')
             check(('Echter Desktop-Tabwechsel' if EXTENSION else 'Simulierter Hintergrund')+' bei pause-Einstellung hält an, Player bleibt',page.evaluate('!!window.__evpRoot.querySelector(".vp")'))
             if EXTENSION:
-                page.bring_to_front();page.wait_for_function('!document.hidden');background.close()
+                worker.evaluate('id => chrome.tabs.update(id,{active:true})',origin_tab['id'])
+                page.wait_for_function('!document.hidden');worker.evaluate('id => chrome.tabs.remove(id)',background['id'])
             else:page.evaluate('() => {window.__life.hidden=false;document.dispatchEvent(new Event("visibilitychange"));dispatchEvent(new Event("focus"));}')
             check('Rückkehr behält die Pause bis zur Bedienung',page.evaluate('window.__evpRoot.querySelector(".vv").paused'))
             page.locator('button[aria-label="Wiedergabe"]').click();page.wait_for_function('!window.__evpRoot.querySelector(".vv").paused')
