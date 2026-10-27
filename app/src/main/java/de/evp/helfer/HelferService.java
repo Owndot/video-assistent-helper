@@ -67,6 +67,8 @@ public class HelferService extends Service {
         am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         startInForeground();
         startupError = null;
+        try { Downloads.serviceStarted(this); }
+        catch(Exception e) { startupError="Interrupted download cleanup failed: "+e.getMessage();stopSelf();return; }
         if (!startServer()) {
             startupError = Tr.t(
                 "Port 47811 ist belegt oder nicht verfügbar. Stoppe den anderen Helper (Debug/Release) und starte diese App erneut.",
@@ -85,9 +87,7 @@ public class HelferService extends Service {
         if (intent != null && "cancel".equals(intent.getAction())) {
             // "Abbrechen" in der Download-Benachrichtigung
             int cancelledId = intent.getIntExtra("id", -1);
-            Downloads.cancel.put(cancelledId, true);
-            Fetcher.Proxy cancelledProxy = Downloads.proxies.get(cancelledId);
-            if (cancelledProxy != null) cancelledProxy.close();
+            Downloads.cancelJob(cancelledId);
             return START_STICKY;
         }
         if (intent != null && "test".equals(intent.getAction())) {
@@ -107,6 +107,7 @@ public class HelferService extends Service {
         running = false;
         main.removeCallbacks(watchdog);
         if (server != null) server.stop();
+        Downloads.stopAll();
         clearBright();
         super.onDestroy();
     }

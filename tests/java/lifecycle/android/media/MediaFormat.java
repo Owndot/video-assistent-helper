@@ -1,0 +1,1 @@
+package android.media;public class MediaFormat{public static final String KEY_MIME="mime",KEY_MAX_INPUT_SIZE="max";public String getString(String s){throw new UnsupportedOperationException();}public boolean containsKey(String s){return false;}public int getInteger(String s){return 0;}}

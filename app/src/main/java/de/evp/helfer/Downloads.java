@@ -48,7 +48,63 @@ public class Downloads {
         new java.util.concurrent.ThreadPoolExecutor(2, 2, 30, java.util.concurrent.TimeUnit.SECONDS,
             new java.util.concurrent.LinkedBlockingQueue<>());
     static { credentialedFiles.allowCoreThreadTimeOut(true); }
-    static final Map<Integer, Boolean> cancel = new ConcurrentHashMap<>();
+    private static final Map<Integer, Task> active = new ConcurrentHashMap<>();
+    private static final Object fileNames = new Object();
+    private static boolean initialized, stopped;
+    private static final class Task {
+        final int id; volatile boolean cancelled; boolean published; volatile Thread worker;
+        Task(int id) { this.id=id; }
+        void check() throws java.io.IOException {
+            if(cancelled || Thread.currentThread().isInterrupted())throw new java.io.IOException("abgebrochen");
+        }
+        void committed() { published=true; state.put(id,"fertig"); }
+    }
+    static void cancelJob(int id) {
+        Task task=active.get(id); if(task==null)return;
+        synchronized(task) {
+            if(task.published)return;
+            task.cancelled=true; state.put(id,"abgebrochen");
+            if(task.worker!=null)task.worker.interrupt();
+        }
+        Fetcher.Proxy proxy=proxies.get(id);if(proxy!=null)proxy.close();
+    }
+    static synchronized void stopAll() {
+        stopped=true;
+        for(Integer id:active.keySet())cancelJob(id);
+    }
+    static synchronized void serviceStarted(Context c) throws Exception {
+        initialize(c);
+        stopped=false;
+    }
+
+    /** Once per process, before accepting transfers: discard only owned unfinished work.
+     * In-process service restart must not delete still-unwinding worker files.
+     */
+    static synchronized void initialize(Context c) throws Exception {
+        if(initialized)return;
+        File[] old=c.getCacheDir().listFiles();
+        if(old!=null)for(File f:old)if(f.getName().matches("dl-?[0-9]+")) {
+            deleteTree(f); if(f.exists())throw new java.io.IOException("Cannot remove interrupted download work");
+        }
+        File external=c.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+        File[] parts=external==null?null:new File(external,FOLDER).listFiles();
+        if(parts!=null)for(File f:parts)if(f.getName().startsWith(".evp-pending-")&&f.getName().endsWith(".part")) {
+            if(!f.delete()&&f.exists())throw new java.io.IOException("Cannot remove interrupted download staging");
+        }
+        if(Build.VERSION.SDK_INT>=29) {
+            ContentResolver cr=c.getContentResolver();
+            String folder=Environment.DIRECTORY_DOWNLOADS+"/"+FOLDER;
+            try(android.database.Cursor rows=cr.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    new String[]{MediaStore.Downloads._ID},
+                    "owner_package_name=? AND is_pending=1 AND (relative_path=? OR relative_path=?)",
+                    new String[]{c.getPackageName(),folder+"/",folder},null)) {
+                if(rows==null)throw new java.io.IOException("Cannot inspect interrupted pending downloads");
+                while(rows.moveToNext())cr.delete(android.content.ContentUris.withAppendedId(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,rows.getLong(rows.getColumnIndexOrThrow(MediaStore.Downloads._ID))),null,null);
+            }
+        }
+        initialized=true;
+    }
     static final Map<Integer, String> state = new ConcurrentHashMap<>();
     static final Map<Integer, Fetcher.Proxy> proxies = new ConcurrentHashMap<>();
 
@@ -77,8 +133,10 @@ public class Downloads {
      * Startet einen Download; Rückgabe: Kennung (für Fortschritt / Abholen).
      * kind: file | hls | dash | auto · proxy: über den Browser laden (das Skript holt die Daten mit seiner Sitzung)
      */
-    static int start(Context ctx, String url, String referer, String ua, String cookie, String title, String kind, boolean proxy) throws java.io.IOException {
+    static synchronized int start(Context ctx, String url, String referer, String ua, String cookie, String title, String kind, boolean proxy) throws java.io.IOException {
+        if(stopped)throw new java.io.IOException("Helper service is stopping");
         final Context c = ctx.getApplicationContext();
+        try { initialize(c); } catch(Exception e) { throw new java.io.IOException("Interrupted download cleanup failed",e); }
         channel(c);
         final int id = JobIds.reserve(new File(c.getFilesDir(), "download-job-ids-v1"), directory -> {
             // Explicit directory fsync: a read-only FileChannel.force may be a no-op on a provider.
@@ -111,6 +169,7 @@ public class Downloads {
             watch(c, id, dmId);
             return id;
         }
+        active.put(id,new Task(id));
         state.put(id, "startet");
         final String k = kind;
         ExecutorService queue = "file".equals(k) && !proxy ? credentialedFiles : jobs;
@@ -163,36 +222,40 @@ public class Downloads {
 
     // ---------- Stream (HLS/DASH) oder Datei über den Browser: laden, zusammensetzen, speichern ----------
     private static void streamJob(Context c, int id, String url, String title, String kind, Fetcher net) {
+        Task task=active.computeIfAbsent(id,Task::new);task.worker=Thread.currentThread();
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
         File work = new File(c.getCacheDir(), "dl" + id);
         final long[] lastShown = {0};
         String shortTitle = title == null || title.isEmpty() ? "Video" : (title.length() > 60 ? title.substring(0, 60) + "…" : title);
         try {
+            task.check();
             if (!work.exists() && !work.mkdirs()) throw new Exception(Tr.t("Kein Arbeitsordner", "No working folder"));
             progressNote(c, nm, id, shortTitle, 0, 0, net instanceof Fetcher.Proxy ? Tr.t("Lädt über den Browser – Seite offen lassen", "Loading via the browser – keep the page open") : Tr.t("Wird vorbereitet …", "Preparing …"));
             HlsCore.Listener l = new HlsCore.Listener() {
                 @Override public void progress(int done, int total) {
                     long now = System.currentTimeMillis();
-                    state.put(id, done + "/" + total);
+                    synchronized(task) { if(task.cancelled||task.published)return;state.put(id, done + "/" + total); }
                     if (now - lastShown[0] < 700 && done < total) return;
                     lastShown[0] = now;
                     progressNote(c, nm, id, shortTitle, done, total, null);
                 }
-                @Override public boolean cancelled() { return Boolean.TRUE.equals(cancel.get(id)); }
+                @Override public boolean cancelled() { return task.cancelled; }
             };
             if ("file".equals(kind)) {
                 File target = new File(work, "datei." + extOf(url, "mp4"));
                 File f = net instanceof Fetcher.Http ? ((Fetcher.Http) net).streamToFile(url, target, l)
                     : Fetcher.toFile(net, url, target, l);
                 String ext = extOf(url, "mp4");
-                Uri saved = save(c, f, safeName(title, ext), "video/" + ("mov".equals(ext) ? "quicktime" : "mkv".equals(ext) ? "x-matroska" : ext));
+                Uri saved = save(c, f, safeName(title, ext), "video/" + ("mov".equals(ext) ? "quicktime" : "mkv".equals(ext) ? "x-matroska" : ext),task);
                 state.put(id, "fertig");
                 doneNote(c, nm, id, shortTitle, saved, "video/*", null);
                 return;
             }
+            task.check();
             HlsCore.Result r = "dash".equals(kind) ? new DashCore(net, work, 4).run(url, l) : new HlsCore(net, work, 4).run(url, l);
+            task.check();
             progressNote(c, nm, id, shortTitle, 0, 0, Tr.t("Wird zu MP4 zusammengesetzt …", "Joining into MP4 …"));
-            state.put(id, "zusammensetzen");
+            synchronized(task) { task.check();state.put(id,"zusammensetzen"); }
             File mp4 = new File(work, "fertig.mp4");
             File out;
             String mime;
@@ -203,16 +266,17 @@ public class Downloads {
                 mime = r.fmp4 ? "video/mp4" : "video/mp2t";
             }
             String ext = out.getName().endsWith(".ts") ? "ts" : "mp4";
-            Uri saved = save(c, out, safeName(title + (r.quality.isEmpty() ? "" : " (" + r.quality + ")"), ext), mime);
+            Uri saved = save(c, out, safeName(title + (r.quality.isEmpty() ? "" : " (" + r.quality + ")"), ext), mime,task);
             state.put(id, "fertig");
             doneNote(c, nm, id, shortTitle, saved, mime, null);
         } catch (Exception e) {
-            boolean cancelled = Boolean.TRUE.equals(cancel.get(id));
+            if(task.published)return; // notification failure cannot undo an already committed file
+            boolean cancelled = task.cancelled;
             state.put(id, cancelled ? "abgebrochen" : "Fehler: " + e.getMessage());
             if (cancelled) nm.cancel(id);
             else doneNote(c, nm, id, shortTitle, null, null, e.getMessage());
         } finally {
-            cancel.remove(id);
+            task.worker=null;active.remove(id,task);
             Fetcher.Proxy px = proxies.remove(id);
             if (px != null) px.close();
             deleteTree(work);
@@ -322,44 +386,72 @@ public class Downloads {
 
     // ---------- Speichern in Download/Video-Assistent ----------
     static Uri save(Context c, File f, String name, String mime) throws Exception {
-        if (Build.VERSION.SDK_INT >= 29) {
-            ContentResolver cr = c.getContentResolver();
-            ContentValues cv = new ContentValues();
-            cv.put(MediaStore.Downloads.DISPLAY_NAME, name);
-            cv.put(MediaStore.Downloads.MIME_TYPE, mime);
-            cv.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/" + FOLDER);
-            cv.put(MediaStore.Downloads.IS_PENDING, 1);
-            Uri uri = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
-            if (uri == null) throw new Exception(Tr.t("Speichern nicht möglich", "Saving not possible"));
-            try (InputStream in = new FileInputStream(f); OutputStream o = cr.openOutputStream(uri)) {
-                if (o == null) throw new Exception(Tr.t("Speichern nicht möglich", "Saving not possible"));
-                copy(in, o);
-            }
-            cv.clear();
-            cv.put(MediaStore.Downloads.IS_PENDING, 0);
-            cr.update(uri, cv, null, null);
-            return uri;
+        return save(c,f,name,mime,null);
+    }
+    private static void check(Task task) throws java.io.IOException {
+        if(task!=null)task.check();else Fetcher.checkCancelled(null);
+    }
+    private static Uri save(Context c,File f,String name,String mime,Task task) throws Exception {
+        check(task);
+        Object lock=task==null?new Object():task;
+        if(Build.VERSION.SDK_INT>=29) {
+            ContentResolver cr=c.getContentResolver();ContentValues cv=new ContentValues();
+            cv.put(MediaStore.Downloads.DISPLAY_NAME,name);cv.put(MediaStore.Downloads.MIME_TYPE,mime);
+            cv.put(MediaStore.Downloads.RELATIVE_PATH,Environment.DIRECTORY_DOWNLOADS+"/"+FOLDER+"/");
+            cv.put(MediaStore.Downloads.IS_PENDING,1);
+            Uri uri=cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,cv);
+            if(uri==null)throw new java.io.IOException("Saving not possible");
+            boolean committed=false;
+            try {
+                try(InputStream in=new FileInputStream(f);OutputStream out=cr.openOutputStream(uri)) {
+                    if(out==null)throw new java.io.IOException("Saving not possible");
+                    copy(in,out,task);out.flush();
+                }
+                synchronized(lock) {
+                    check(task);cv.clear();cv.put(MediaStore.Downloads.IS_PENDING,0);
+                    if(cr.update(uri,cv,null,null)!=1)throw new java.io.IOException("Pending download was not published");
+                    committed=true;if(task!=null)task.committed();
+                }
+                return uri;
+            } finally { if(!committed)cr.delete(uri,null,null); }
         }
-        // Android 8/9: in den eigenen Ordner der App (Android/data/de.evp.helfer/files/Download)
-        File dir = new File(c.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), FOLDER);
-        //noinspection ResultOfMethodCallIgnored
-        dir.mkdirs();
-        File dst = new File(dir, name);
-        try (InputStream in = new FileInputStream(f); OutputStream o = new FileOutputStream(dst)) { copy(in, o); }
-        return Uri.fromFile(dst);
+        // Stage in the destination directory, close/sync first, then move without replacement.
+        File external=c.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+        if(external==null)throw new java.io.IOException("Download storage unavailable");
+        File dir=new File(external,FOLDER);
+        if(!dir.isDirectory()&&!dir.mkdirs())throw new java.io.IOException("No download directory");
+        File part=File.createTempFile(".evp-pending-",".part",dir);
+        try {
+            try(InputStream in=new FileInputStream(f);FileOutputStream out=new FileOutputStream(part)) {
+                copy(in,out,task);out.getFD().sync();
+            }
+            synchronized(lock) {
+                check(task);
+                synchronized(fileNames) {
+                    for(int n=0;n<10000;n++) {
+                        int dot=name.lastIndexOf('.');String suffix=n==0?"":" ("+n+")";
+                        String candidate=n==0?name:dot>0?name.substring(0,dot)+suffix+name.substring(dot):name+suffix;
+                        File dst=new File(dir,candidate);
+                        try { java.nio.file.Files.move(part.toPath(),dst.toPath()); }
+                        catch(java.nio.file.FileAlreadyExistsException exists) { continue; }
+                        if(task!=null)task.committed();return Uri.fromFile(dst);
+                    }
+                }
+                throw new java.io.IOException("No unused download filename");
+            }
+        } finally { part.delete(); }
     }
-
-    private static void copy(InputStream in, OutputStream o) throws Exception {
-        byte[] b = new byte[256 << 10];
-        int n;
-        while ((n = in.read(b)) > 0) o.write(b, 0, n);
+    private static void copy(InputStream in,OutputStream out,Task task) throws Exception {
+        byte[] buffer=new byte[64<<10];int n;
+        while(true) {
+            check(task);n=in.read(buffer);if(n<0)break;
+            out.write(buffer,0,n);
+        }
+        check(task);
     }
-
     private static void deleteTree(File f) {
-        if (f == null || !f.exists()) return;
-        File[] ch = f.listFiles();
-        if (ch != null) for (File x : ch) deleteTree(x);
-        //noinspection ResultOfMethodCallIgnored
+        if(f==null||!f.exists())return;
+        File[] children=f.listFiles();if(children!=null)for(File x:children)deleteTree(x);
         f.delete();
     }
 }
