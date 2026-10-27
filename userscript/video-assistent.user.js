@@ -3836,7 +3836,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       const onVis = () => {
         if (vp !== st) return;
         if (document.hidden) helper('/end');
-        else if (st.sysBright) helperSend('bright', st.bright);
+        else if (st.sysBright) helperSend('bright', Math.max(0.004, gammaToLin(st.bright)));
       };
       onVisChange(onVis);
       st.cleanup.push(() => { clearInterval(beat); offVisChange(onVis); });
@@ -5196,6 +5196,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       msH('nexttrack', () => seekBy(SKIP()));
       msH('seekto', (d) => { if (d && isFinite(d.seekTime)) { st.userSeekAt = Date.now(); try { M().currentTime = d.seekTime; } catch (e) {} msPos(); } });
       st.cleanup.push(() => {
+        if (vp && vp !== st) return;   // delayed cleanup must not clear the new player's Media Session
         ['play', 'pause', 'stop', 'seekbackward', 'seekforward', 'previoustrack', 'nexttrack', 'seekto'].forEach((a) => msH(a, null));
         try { MS.metadata = null; MS.playbackState = 'none'; } catch (e) {}
       });
@@ -6673,7 +6674,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     });
     // Browser, die von selbst ins kleine Fenster wechseln können (beim Verlassen der App), fragen über die Media Session
     try { if (navigator.mediaSession && document.pictureInPictureEnabled) navigator.mediaSession.setActionHandler('enterpictureinpicture', () => { if (!st.pipOk) return; vid.disablePictureInPicture = false; vid.requestPictureInPicture().catch(() => {}); }); } catch (e) {}
-    st.cleanup.push(() => { try { navigator.mediaSession.setActionHandler('enterpictureinpicture', null); } catch (e) {} });
+    st.cleanup.push(() => { if (vp && vp !== st) return; try { navigator.mediaSession.setActionHandler('enterpictureinpicture', null); } catch (e) {} });
     // ----- Im kleinen Fenster weiterlaufen lassen -----
     // Beim Wischen zum Startbildschirm wechselt der Browser ins kleine Fenster. Kurz davor oder danach halten aber
     // manche Seiten (Facebook: ihr Video, sobald sie verdeckt ist – beim Spiegeln steht dann auch das kleine Fenster),

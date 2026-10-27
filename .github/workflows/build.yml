@@ -10,7 +10,7 @@ permissions:
   contents: read
 jobs:
   privacy:
-    if: github.head_ref != 'codex/download-lifecycle' && github.head_ref != 'codex/firefox-nine' && github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory' && github.head_ref != 'codex/browser-proxy-memory'
+    if: github.head_ref != 'codex/pip-lifecycle' && github.head_ref != 'codex/download-lifecycle' && github.head_ref != 'codex/firefox-nine' && github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory' && github.head_ref != 'codex/browser-proxy-memory'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -99,7 +99,7 @@ jobs:
           path: validation-results/hls-bundle.json
           if-no-files-found: ignore
   download-manager-privacy:
-    if: github.head_ref != 'codex/download-lifecycle' && github.head_ref != 'codex/firefox-nine' && github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory' && github.head_ref != 'codex/browser-proxy-memory'
+    if: github.head_ref != 'codex/pip-lifecycle' && github.head_ref != 'codex/download-lifecycle' && github.head_ref != 'codex/firefox-nine' && github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory' && github.head_ref != 'codex/browser-proxy-memory'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -131,7 +131,7 @@ jobs:
             adb shell am instrument -w de.evp.helfer.debug.test/androidx.test.runner.AndroidJUnitRunner | tee /tmp/download-manager-test.log
             grep -q 'OK (1 test)' /tmp/download-manager-test.log
   validate:
-    if: github.head_ref != 'codex/download-lifecycle' && github.head_ref != 'codex/firefox-nine' && github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory' && github.head_ref != 'codex/browser-proxy-memory'
+    if: github.head_ref != 'codex/pip-lifecycle' && github.head_ref != 'codex/download-lifecycle' && github.head_ref != 'codex/firefox-nine' && github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory' && github.head_ref != 'codex/browser-proxy-memory'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -445,8 +445,15 @@ jobs:
           echo 'PASS: unchanged main reproduces stale-key failure'
       - name: Current Helper key regression tests
         run: node tests/security/helper_repair_check.js
+      - name: PiP/background and overlapping cleanup regression
+        run: node --expose-gc tests/security/pip_lifecycle.js
+      - name: Prove the unchanged stable defects
+        if: github.head_ref == 'codex/pip-lifecycle'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tests/security/prove_pip_baseline.sh
       - name: Focused userscript and existing security checks
-        if: github.head_ref == 'codex/pairing-key-recovery'
+        if: github.head_ref == 'codex/pairing-key-recovery' || github.head_ref == 'codex/pip-lifecycle'
         run: |
           node tools/build.js --check
           node tests/security/hls_license.js
@@ -454,7 +461,7 @@ jobs:
           node tests/security/gm_headers.js
 
   native-media-memory:
-    if: github.head_ref != 'codex/firefox-nine'
+    if: github.head_ref != 'codex/pip-lifecycle' && github.head_ref != 'codex/firefox-nine'
     # Fast JVM regressions remain active for future PRs and main; no APK/SDK.
     runs-on: ubuntu-latest
     timeout-minutes: 12
@@ -605,6 +612,7 @@ jobs:
 
 
   download-lifecycle:
+    if: github.head_ref != 'codex/pip-lifecycle'
     # Permanent focused coverage for future PRs and main; no emulator, Gradle or APK.
     runs-on: ubuntu-latest
     timeout-minutes: 8

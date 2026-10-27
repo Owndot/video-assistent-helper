@@ -1,0 +1,45 @@
+# PiP, background return and repeated player cycles — Helper #7
+
+Source baselines: Helper `a9a779f52269779088dc7b852cfcfadf79bbecec` (reviewed PR18 merge, tree `5d1482aba0e4a42270e027fd12f75af42c270685`) and Kadri `62f7c6eaffcbe895744bd010d9577abe939aa4ee`. No Android/download/authentication/signing changes are part of this work. Issue #6 stays open with its existing real-device limits.
+
+## Which component owns PiP?
+
+| Route | Implementation / supported contract | What is not guaranteed |
+| --- | --- | --- |
+| Android Helper | Loopback receiver, brightness/volume, downloads and foreground notification. Manifest has no PiP activity; no native video player, decoder or browser WebView. | The Helper cannot create PiP, own the browser's video Surface or return a third-party app's playback position. |
+| Kadri Chromium / Vivaldi | Own HTML video in the browser overlay. Standard `requestPictureInPicture`, events and Media Session are used when available. Chromium's extension preserves other Permissions-Policy directives while permitting the already implemented PiP feature. | Vivaldi Android Home/automatic PiP depends on browser version, Android permissions and OS behavior. A button/API being present is not proof that Home will create a pinned task. |
+| Kadri Firefox | Same player source, Firefox adapter. The button can explain the fullscreen/Home route if the standard Web PiP API is absent. | Firefox's native Android/desktop PiP UI is browser-owned. No reliable standard Web PiP availability or observable PiP events are assumed. Fullscreen/Home advice is conditional, not a verified support guarantee. |
+| Userscript | Standard Web PiP button only when `document.pictureInPictureEnabled` is true. Captured/mirrored or disallowed META routes remain restricted by existing player rules. | Manager/browser/Permissions-Policy may omit the API. Desktop synthetic manager tests do not verify an installed Android manager. Automatic Home PiP without that API is not promised. |
+| External Android app via media URL/intent | The receiving app owns playback/PiP. | There is no position-return protocol from arbitrary external apps. `handBack()` restores position for the browser overlay's own media, not for those apps. |
+
+Home/visibility/fullscreen changes should retain the browser player. With `leaveAction=pause` it pauses outside PiP; explicit user pauses and PiP-window close are respected. Fullscreen return may need fresh activation. PiP keeps playing only where the browser exposes/implements that route. Existing bounded automatic-resume logic is not a promise against OS suspension, process death or browser policy.
+
+The Helper client releases brightness with `/end` on hiding, pauses visible-only `/beat` polling while hidden, and reapplies user brightness on returning. A failed heartbeat does not stop the browser video. A previously connected player continues its existing heartbeat after a transient Helper outage; a returned response updates volume. If Helper was absent at initial open, native controls are not rediscovered automatically until reopening. Actual Android service/OS behavior is not verified by the client model.
+
+## Proven product defects and limited fixes
+
+1. **Brightness units after returning:** foreground gestures sent `gammaToLin(st.bright)` but the visibility-return callback sent raw gamma. At slider 0.7 this changed the device request from 0.2061224129836852 to 0.7. Return now uses the same conversion and minimum floor as foreground gestures.
+2. **Old cleanup overwrote successor Media Session:** `closePlayer()` deliberately defers disposal up to the next frame/250 ms (framed route can defer longer). A new player can register global handlers before old cleanup runs. Old callbacks then cleared successor playback metadata/actions and the `enterpictureinpicture` action. Both singleton cleanup callbacks now leave an active successor alone, while local event-listener/resource disposal still runs. No change to the close/handback architecture.
+
+Both are reproduced using actual production function sections on the unchanged source baseline and also stable `b05fd2de60d27d368eda60ff32be8b361a695f45`: all three relevant files are byte-identical there. The fixed common sources remain byte-identical in both repositories. No protocol/version dependency is introduced; either client remains compatible with the current Helper. The generated userscript is rebuilt; vendored hls.js bytes/license stay unchanged.
+
+## Existing Android emulator evidence
+
+[Run 40208810093](https://github.com/Owndot/video-assistent-helper/actions/runs/40208810093), API33 `core`, used a reused test-only Helper APK reported as 1.0.5 and installed Firefox/Kadri. Its report records PASS for pairing, seek 9→19, handback, play/pause, gestures and site source switch. It is historical evidence, not a current-main APK test.
+
+At 15:59:00 UTC the emulator process logged `bad color buffer handle 1133` with `-gpu swiftshader_indirect`. The later Python stack is in `background()` → `wait(reveal, timeout=15)` after Home/Firefox return; it appears at 16:19:02. UI calls inside a polling function can exceed the nominal outer timeout. The route was finally stopped by the 35-minute job step timeout. The later userscript route never completed. A preceding parallel-download assertion also failed; it is outside this PiP work and does not implicate the player in the GPU failure.
+
+The message is emulator graphics-buffer evidence, not a Java Helper exception or a demonstrated causal player defect. Home/Surface transitions can exercise that backend, but these logs do not distinguish emulator graphics, Firefox Surface lifecycle and application timing. No graphics/player workaround is justified. There is no local ADB/emulator or cached browser binary in this workspace; no new Android run is claimed. Reusing the old APK would not validate current Android source, and building a replacement APK is explicitly out of scope. No new emulator image/download/route matrix is introduced. Any later Android attempt must have an external per-scenario/route watchdog, stop on UI-Automator loss and mark remaining cases unexecuted; the nested `wait()` duration alone is not a hard bound.
+
+## Targeted automatic evidence
+
+* `tests/security/pip_lifecycle.js` (Kadri: `tests/pip_lifecycle_check.js`) executes real source sections with explicit API models. Twenty rapid overlapping player cycles check successor playback/PiP handler ownership, correct media target, event-listener removal and final cleanup. A Helper model checks brightness before/after hide, `/end`, transient lost responses/restart and cleanup of the single heartbeat. Model-only heap observations are logged; they are not browser RAM measurements or proof of leak freedom.
+* `test_pip_lifecycle.py` uses the actual full player/caller for six same-document open/play/pause/seek/close cycles. It checks position handback, owned videos, potentially audible elements and (in the injected userscript realm) observed global/original listeners, intervals, MediaSession actions and AudioContexts. Synthetic visibility changes are labelled. Optional installed-Kadri mode uses the actual Chromium extension/test build and a real desktop tab switch; content-script realm resource hooks are explicitly **not** claimed there.
+* Existing `test_pipkeep.py` models PiP state/events: browser-induced pause versus deliberate pause, closing PiP, visibility return and disabled mirror routes. It does not open an Android PiP window. Existing `test_framekey.py` retains isolated activation/focus/key/replay checks. Chromium installed-extension `test_pipall.py` is a separate Web PiP/Permissions-Policy positive control; that is not Android Home.
+* Chromium observations sample CDP heap/process CPU times and `/proc` RSS when available. Firefox reports structural resources and explicitly unavailable CDP metrics. The small finite sample cannot establish general leak freedom, device CPU/power or absence of native decoder/Surface leaks. No performance tuning or arbitrary memory thresholds are added.
+
+Focused CI reuses existing pinned browser versions/caches and strict runners. No APK, signing, Android emulator matrix or release is involved. Node regressions remain active for matching PRs/main; the new browser test is also in normal Helper PR/main coverage. Final run/commit evidence is recorded in the PR descriptions; missing or failed runs are not passes.
+
+## Still open
+
+Issue #7 remains open for current Firefox Android/Vivaldi Home/PiP, actual foreground/background audio, installed Android manager behavior, Helper/OS process loss during playback, repeated real Surfaces and Samsung/OEM resource validation. The historical graphics stall is not reproduced or assigned a player cause. Desktop/source/model evidence and a successful extension build cannot close those criteria. No routine manual Samsung checklist is requested.
