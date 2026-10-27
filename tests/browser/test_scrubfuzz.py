@@ -4,6 +4,7 @@ import pwshim  # BROWSER=firefox → Tests in Firefox
 # sauber sein: nichts hängt (Leiste nicht mehr dick, keine Lupe, kein Abbrechen-Zustand, Zeiten normal), das Video steht
 # an einer gültigen Stelle, keine Fehler. Fester Startwert – ein Fehler lässt sich genau so wiederholen (FUZZ_SEED=…).
 import time, random, os
+from gesture_fixture import observe_bar_pointer, lose_bar_pointer, bounded_mouse
 exec(open('test_extras.py').read().split("with sync_playwright() as p:")[0])
 SEED = int(os.environ.get('FUZZ_SEED', '1911')); N = int(os.environ.get('FUZZ_N', '90'))
 rnd = random.Random(SEED)
@@ -12,7 +13,21 @@ with sync_playwright() as p:
     ctx = b.new_context(viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True, device_scale_factor=2)
     ctx.add_init_script(PRE); ctx.add_init_script(HLS); ctx.add_init_script(SCRIPT)
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
+    # Record what the automation delivers outside the viewport. This is a browser
+    # transport diagnostic, not a replacement for production cancellation tests.
+    pg.goto(B + 'direct.html')
+    pg.evaluate('''() => {
+      window.__inputFacts=[];
+      for(const t of ['pointerdown','pointermove','pointerup','lostpointercapture'])
+        document.documentElement.addEventListener(t,e=>{
+          window.__inputFacts.push([t,e.pointerId,e.clientX,e.clientY,e.buttons]);
+          if(t==='pointerdown') document.documentElement.setPointerCapture(e.pointerId);
+        });
+    }''')
+    pg.mouse.move(10,10);pg.mouse.down();pg.mouse.move(430,830);pg.mouse.up();time.sleep(0.05)
+    print('   automation outside viewport / real pointer IDs:',pg.evaluate('window.__inputFacts'))
     open_player(pg, 'long.html'); time.sleep(0.5)
+    observe_bar_pointer(pg); move = bounded_mouse(pg)
     def clean():
         return pg.evaluate('''() => { const r = %s, w = r.querySelector(".vp"), v = r.querySelector(".vv");
             const bad = ["thick", "scrub", "zoom", "scrubx"].filter(c => w.classList.contains(c));
@@ -27,20 +42,20 @@ with sync_playwright() as p:
         x, y, W = pg.evaluate('() => { const r = %s.querySelector(".vbar").getBoundingClientRect(); return [r.left, r.top + r.height / 2, r.width - 14]; }' % R)
         kind = rnd.choice(['drag'] * 6 + ['tap', 'lost', 'hide', 'swap'])
         log.append(kind)
-        pg.mouse.move(x + 7 + rnd.random() * W, y + rnd.uniform(-8, 8)); pg.mouse.down()
+        move(x + 7 + rnd.random() * W, y + rnd.uniform(-8, 8)); pg.mouse.down()
         if kind != 'tap':
             for i in range(rnd.randint(2, 7)):
                 tx = rnd.choice([x + 7 + rnd.random() * W, x - 20, x + W + 30, x + 7 + rnd.random() * W])
                 ty = y + rnd.choice([0, 0, rnd.uniform(-20, 20), rnd.uniform(25, 140), rnd.uniform(-200, -80)])
-                pg.mouse.move(tx, ty, steps=rnd.randint(1, 8))
+                move(tx, ty, steps=rnd.randint(1, 8))
                 if rnd.random() < 0.3: time.sleep(rnd.uniform(0.05, 0.6))
             if kind == 'lost':
-                pg.evaluate('() => %s.querySelector(".vbarhit").dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 1, bubbles: true }))' % R)
+                lose_bar_pointer(pg)
             elif kind == 'hide':
                 pg.evaluate('() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => true }); document.dispatchEvent(new Event("visibilitychange")); delete document.hidden; document.dispatchEvent(new Event("visibilitychange")); }')
             elif kind == 'swap':   # anderes Video beginnt (gleiche Datei neu – andere Adresse)
                 pg.evaluate('(u) => { const v = %s.querySelector(".vv"); const t = v.currentTime; v.src = u + "?n=" + Math.random(); v.currentTime = t; v.play(); }' % R, B + 'long.webm'); time.sleep(0.6)
-                pg.mouse.move(x + 7 + rnd.random() * W, y, steps=2)
+                move(x + 7 + rnd.random() * W, y, steps=2)
         pg.mouse.up(); time.sleep(0.45)
         c = clean()
         if c: bad.append((k, kind, c))

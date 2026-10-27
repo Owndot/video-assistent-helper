@@ -1,6 +1,6 @@
 import pwshim  # BROWSER=firefox → Tests in Firefox
 # Spul-Vorschau beim Spiegeln (Facebook und Seiten ohne Adresse): keine zweite Quelle → ruhig nur die Zeit.
-import time, json
+import time, json, math
 exec(open('test_v8.py').read().split("results = []")[0])
 SCRIPT = SCRIPT.replace("seekPreview: 'live'", "seekPreview: 'thumb'")   # dieser Test prüft das kleine Vorschaubild
 R = 'window.__evpRoot'; results = []
@@ -67,10 +67,18 @@ def run(cdn_body, tag):
         b.close()
     print('   %s: Spiegeln %s · weit %s · gesehen %s · Abrufe %d' % (tag, mirror, far, seen, len(hits)))
     HITS[0] = len(hits)
-    return mirror, far, seen, dur, errs
-m, far, seen, dur, errs = run(CLIP, 'Seitendaten mit Datei')
+    return mirror, far, seen, dur, errs, dur / max(60, br[2] - 14)
+m, far, seen, dur, errs, seconds_per_pixel = run(CLIP, 'Seitendaten mit Datei')
 check('Spiegeln aktiv (Facebook)', m)
-check('nie gesehene Stelle: nur die Zeit', not far[0] and far[2].split(' · ')[0] == fmt(0.7 * dur), far)
+# Native pointer coordinates may differ by at most one CSS pixel. fmtTime()
+# floors the result: floor(target - pixel) <= displayed <= floor(target + pixel).
+# Comparing displayed seconds directly to the fractional target loses that floor.
+label = far[2].split(' · ')[0]
+displayed = sum(int(n) * f for n, f in zip(label.split(':'), (60, 1)))
+lo = math.floor(max(0, 0.7 * dur - seconds_per_pixel))
+hi = math.floor(min(dur, 0.7 * dur + seconds_per_pixel))
+check('nie gesehene Stelle: nur die Zeit', not far[0] and lo <= displayed <= hi, [far, (lo, hi), seconds_per_pixel])
+check('Zeitprüfung bleibt eng: höchstens benachbarte Sekunden, ±2 s abgelehnt', hi-lo <= 1 and not lo <= displayed-2 <= hi and not lo <= displayed+2 <= hi, (lo, hi))
 check('angeschaute Stelle: ebenso nur die Zeit (gleich aussehend)', not seen[0] and seen[2].split(' · ')[0] in ('0:03', '0:04'), seen)
 check('über Angeschautes und Neues ziehen: kein Flackern (immer gleich)', len(FLICK[0]) == 1 and FLICK[0][0].startswith('false'), FLICK[0])
 check('Datei aus den Seitendaten wird nicht geladen', HITS[0] == 0, HITS)

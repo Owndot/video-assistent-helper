@@ -24,7 +24,11 @@ with sync_playwright() as p:
     check('… Zahlen: Stelle, „/ Länge“, Sprung, kleine Leiste', s1['big'] in (mmss(want), mmss(want + 1), mmss(want - 1)) and s1['rest'] == '/ ' + mmss(D) and s1['delta'].startswith('+') and 'scaleX' in s1['fill'], s1)
     ly = pg.evaluate('''() => { const r = %s, c = r.querySelector(".vlayer"), w = r.querySelector(".vp").getBoundingClientRect(), v = r.querySelector(".vv");
         if (!c) return null; const b = c.getBoundingClientRect(); return [getComputedStyle(c).visibility, Math.round(b.width), Math.round(b.height), Math.round(w.width), Math.round(w.height), c.width && Math.abs(c.width / c.height - v.videoWidth / v.videoHeight) < 0.02]; }''' % R)
-    check('… dabei liegt die Bild-Ebene bildfüllend über dem Video (nie ein kleines Bild in der Mitte)', ly and ly[0] == 'visible' and ly[1] == ly[3] and ly[2] == ly[4] and ly[5], ly)
+    ff_mobile = pg.evaluate(r'() => /Gecko\/\d/.test(navigator.userAgent) && (navigator.maxTouchPoints > 0 || /Android|Mobile/.test(navigator.userAgent) || localStorage.getItem("evp-ffmobile") === "1")')
+    if ff_mobile:
+        check('Firefox-Mobilpfad: echtes Video zeigt die Stelle ohne Canvas-Ebene', ly is None and abs(s1['t'] - want) < 1.5, [ly, s1])
+    else:
+        check('… dabei liegt die Bild-Ebene bildfüllend über dem Video (nie ein kleines Bild in der Mitte)', ly and ly[0] == 'visible' and ly[1] == ly[3] and ly[2] == ly[4] and ly[5], ly)
     pg.mouse.up(); time.sleep(0.7)
     gone = pg.evaluate('() => !%s.querySelector(".vlayer")' % R)
     check('… nach dem Loslassen ist die Bild-Ebene weg', gone, gone)

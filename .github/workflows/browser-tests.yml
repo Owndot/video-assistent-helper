@@ -7,6 +7,8 @@ on:
   push:
     branches: [main, codex/security-phase-1]
     paths: ['src/**', 'tools/build.js', 'userscript/**', 'tests/browser/**']
+  pull_request:
+    paths: ['src/**', 'userscript/**', 'tests/browser/**', '.github/workflows/browser-tests.yml']
   workflow_dispatch:
     inputs:
       tests:
@@ -20,7 +22,83 @@ permissions:
   contents: read
 
 jobs:
+  focused-precheck:
+    # First only the two reviewed files in both engines; gate the eight-file regression.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox-neu]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Deterministic playback counterexamples
+        run: python tests/browser/playback_trace_check.py
+      - name: Reproduce the reviewed false positives
+        if: github.head_ref == 'codex/firefox-nine' && matrix.browser == 'firefox-neu'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api 'repos/Owndot/video-assistent-helper/contents/tests/browser/test_seamless.py?ref=a3cf1a5ed215c48f504c6c826bf99b3b7bf8f2e5' --jq .content | base64 --decode > "$RUNNER_TEMP/reviewed-seamless.py"
+          python tests/browser/playback_trace_check.py --reviewed "$RUNNER_TEMP/reviewed-seamless.py"
+      - name: Userscript passt zu src/
+        run: node tools/build.js --check
+
+      - uses: actions/cache/restore@v4
+        id: browser-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ matrix.browser == 'chromium' && '1.56.0' || '1.64.1' }}
+
+      - name: Werkzeuge
+        timeout-minutes: 8
+        run: |
+          # Avoid the known hanging Azure mirror; retain normal Ubuntu trust.
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+            fi
+          done
+          echo 'Acquire::Retries "1"; Acquire::http::Timeout "20"; Acquire::https::Timeout "20";' | sudo tee /etc/apt/apt.conf.d/99-evp-ci-timeouts > /dev/null
+          # Chromium: gleiche Version wie beim Entwickeln (neuere verweigern Größenänderung im Vollbild)
+          if [ "${{ matrix.browser }}" = firefox-neu ]; then pip install playwright==1.64.1 pillow==13.0.0; else pip install playwright==1.56.0 pillow==13.0.0; fi
+          python -m playwright install --with-deps ${{ matrix.browser == 'chromium' && 'chromium' || 'firefox' }}
+          sudo apt-get install -y ffmpeg
+
+      - uses: actions/cache/save@v4
+        if: steps.browser-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ matrix.browser == 'chromium' && '1.56.0' || '1.64.1' }}
+
+      - name: Only playback and isolated frame-key tests
+        env:
+          BROWSER: ${{ matrix.browser == 'chromium' && 'chromium' || 'firefox' }}
+          TESTS: 'test_seamless.py test_framekey.py'
+        run: tests/browser/run_all.sh
+      - name: Exact precheck logs
+        if: always()
+        run: |
+          python - <<'PYLOG'
+          from pathlib import Path
+          for name in ('test_seamless', 'test_framekey'):
+              p = Path('tests/browser/out') / (name + '.log')
+              if p.exists():
+                  print(p)
+                  print(p.read_text())
+          PYLOG
+
   test:
+    needs: focused-precheck
+    if: ${{ !cancelled() && (needs.focused-precheck.result == 'success' || needs.focused-precheck.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -45,28 +123,61 @@ jobs:
       - name: Userscript passt zu src/
         run: node tools/build.js --check
 
+      - uses: actions/cache/restore@v4
+        id: browser-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ matrix.browser == 'chromium' && '1.56.0' || '1.64.1' }}
+
       - name: Werkzeuge
+        timeout-minutes: 8
         run: |
+          # Avoid the known hanging Azure mirror; retain normal Ubuntu trust.
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+            fi
+          done
+          echo 'Acquire::Retries "1"; Acquire::http::Timeout "20"; Acquire::https::Timeout "20";' | sudo tee /etc/apt/apt.conf.d/99-evp-ci-timeouts > /dev/null
           # Chromium: gleiche Version wie beim Entwickeln (neuere verweigern Größenänderung im Vollbild)
           if [ "${{ matrix.browser }}" = firefox-neu ]; then pip install playwright==1.64.1 pillow==13.0.0; else pip install playwright==1.56.0 pillow==13.0.0; fi
           python -m playwright install --with-deps ${{ matrix.browser == 'chromium' && 'chromium' || 'firefox' }}
           sudo apt-get install -y ffmpeg
 
+      - uses: actions/cache/save@v4
+        if: steps.browser-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ matrix.browser == 'chromium' && '1.56.0' || '1.64.1' }}
+
       - name: Tests (${{ matrix.browser }})
         env:
           BROWSER: ${{ matrix.browser == 'chromium' && 'chromium' || 'firefox' }}
-          TESTS: ${{ github.event.inputs.tests || 'test_*.py' }}
+          TESTS: ${{ github.event.inputs.tests || (github.event_name == 'pull_request' && 'test_dvr.py test_framekey.py test_mirrorprev.py test_prevretry.py test_scrubbar.py test_scrubfuzz.py test_seamless.py test_swipeseek.py') || 'test_*.py' }}
         run: |
           cd tests/browser
           # streng: jede fehlgeschlagene Prüfung / jeder Absturz macht den Lauf rot (Ergebnis steht trotzdem in der Übersicht)
+          set +e
           ./run_all.sh | tee ergebnis-${{ matrix.browser }}.txt; status=${PIPESTATUS[0]}
+          set -e
           # Messung (kein Bestehen/Durchfallen) nur in Chromium – braucht dessen Messwerte (CDP)
-          if [ "$BROWSER" = chromium ] && [ -z "${{ github.event.inputs.tests }}" ]; then TESTS=mess_perf.py ./run_all.sh | tee -a ergebnis-${{ matrix.browser }}.txt; fi
+          if [ "${{ github.event_name }}" != pull_request ] && [ "$BROWSER" = chromium ] && [ -z "${{ github.event.inputs.tests }}" ]; then TESTS=mess_perf.py ./run_all.sh | tee -a ergebnis-${{ matrix.browser }}.txt; fi
           echo '### Ergebnis ${{ matrix.browser }}' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cat ergebnis-${{ matrix.browser }}.txt >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           exit $status
+
+      - name: Exact failed assertions
+        if: always()
+        run: |
+          python - <<'PYLOG'
+          from pathlib import Path
+          for p in sorted(Path('tests/browser/out').glob('*.log')):
+              for line in p.read_text().splitlines():
+                  if any(k in line for k in ('FAIL ', 'ERGEBNIS:', 'Error:', 'Traceback', 'Pointer:', 'outside viewport')):
+                      print(str(p) + ': ' + line)
+          PYLOG
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -75,4 +186,5 @@ jobs:
           path: |
             tests/browser/ergebnis-*.txt
             tests/browser/*.png
+            tests/browser/out/*.log
           if-no-files-found: ignore
