@@ -74,7 +74,7 @@ Nur in diesem Branch: `Limits::sanitized()` und Schleifen-Guards; `import_regist
 
 ## 7. Ergebnisse
 
-Geprüfter Commit: siehe Abschnitt „Stand“ unten. CI-Workflow `PoC Android capability`, Lauf 40596803035 (Commit `61876cc`), Ergebnis **success**.
+CI-Workflow `PoC Android capability`: Lauf 40596803035 (Commit `61876cc`) und Lauf 40597486902 (Commit `625c7c8`), beide **success**; Messwerte unten aus beiden Läufen.
 
 **Toolchain:** rustc 1.97.0 (2d8144b78 2026-07-07) über `rust-toolchain.toml`, `cargo --locked` mit `Cargo.lock`, NDK 27.2.12479018 (r27c), API-Level 29 für den Linker, 16-KB-Seitenausrichtung, `--remap-path-prefix`, `strip = true`; JDK 17, Gradle 8.9, AGP 8.5.2, compile/target SDK 34.
 
@@ -104,8 +104,9 @@ Instrumentierungstests: Keystore-Umhüllung und explizite Fehlerzustände (manip
 | --- | --- |
 | Prozess beim Teststart | Java-Heap 8,4 MiB, Native-Heap 16,3 MiB, PSS 41,8 MiB, RSS 132 MiB |
 | nach 8 MiB Dummy-Transfer | Java-Heap 3,6 MiB, Native-Heap 15,4 MiB, PSS 40,9 MiB, RSS 129 MiB, Spitzen-RSS (VmHWM) 160 MiB |
-| Durchsatz | 8 MiB in 137 Records in 3,99 s ≈ 2,0 MiB/s – ein HTTP-Request je 60-KiB-Record inklusive byteweiser Musterprüfung im Testprozess; Obergrenze für dieses Request-Muster auf dem Emulator, kein Wert für das spätere Streaming |
-| R1 | 2 Replays verdrängen einen frischen Handshake in 9 ms; der nächste legitime Handshake gelingt in 16 ms |
+| Durchsatz | 8 MiB in 137 Records in 3,99 s bzw. 5,23 s ≈ 2,0 bzw. 1,5 MiB/s – ein HTTP-Request je 60-KiB-Record inklusive byteweiser Musterprüfung im Testprozess; Obergrenze für dieses Request-Muster auf dem Emulator, kein Wert für das spätere Streaming |
+| R1 | 2 Replays verdrängen einen frischen Handshake in 9–33 ms; der nächste legitime Handshake gelingt in 16–42 ms |
+| Keystore-Umhüllungsschlüssel | AES-256-GCM, Sicherheitsstufe 0 = `SECURITY_LEVEL_SOFTWARE` auf dem Emulator (erwartet); auf dem Telefon in der Statusanzeige der App („Schutz: …“) ablesen (TEE = 1, StrongBox = 2) |
 
 Die Messwerte enthalten Test-Runner und Instrumentierung im selben Prozess. Auf dem Gerät werden sie über die Taste „Speicher messen“ bzw. `dumpsys meminfo de.evp.pakepoc.test` erhoben (DEVICE-TEST-GUIDE, Schritt 10).
 

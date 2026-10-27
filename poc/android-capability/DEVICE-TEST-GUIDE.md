@@ -62,7 +62,7 @@ Ergebnisse jeweils auf der Selbsttest-Seite der Erweiterung („Ergebnis kopiere
 | 11 | siehe 4 | begrenzte binäre Dummy-Records |
 | 12 | Probe-Seite `http://127.0.0.1:47900/kadri-poc-probe.html` in Vivaldi öffnen | Webseite: `preflighted: blocked…`; Content-Script: `pair`, `selftest`, `status` → `refused`, `storageApi: undefined`, `idb: []`; App-Protokoll zeigt nur `GATE_REJECT` |
 
-Zusätzlich festhalten: Vivaldi-Version (vivaldi://about), Android-Version und Patchstand, Gerätemodell, ob Vivaldi beim Loopback-Zugriff eine Berechtigung (Local Network Access) abgefragt hat.
+Zusätzlich festhalten: Vivaldi-Version (vivaldi://about), Keystore-Sicherheitsstufe aus der App-Statusanzeige („Schutz: …“, 1 = TEE, 2 = StrongBox), Android-Version und Patchstand, Gerätemodell, ob Vivaldi beim Loopback-Zugriff eine Berechtigung (Local Network Access) abgefragt hat.
 
 ## 3. Vollständige Entfernung
 
