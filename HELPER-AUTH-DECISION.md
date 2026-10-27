@@ -1,34 +1,29 @@
-# Helper-Authentifizierung: Entscheidungsvorschlag, keine Implementierung
+# Helper #4 — vereinfachte Entscheidungsvorlage
 
-Aktueller vertiefter Entwurf auf den PiP-Main-Ständen: [SERVER-AUTH-DESIGN.md](SERVER-AUTH-DESIGN.md). Er behandelt insbesondere Listenerwechsel nach einer Challenge, vertrauliche Nutzdaten und ungeprüfte Userscript-/Keystore-Grenzen. Der JWE-Profilvorschlag ist noch nicht angenommen oder implementiert; die folgende Beta-Risikoakzeptanz und Issue #4 bleiben unverändert bestehen.
+**Keine Implementierungsfreigabe.** Der Eigentümer ist der einzige Nutzer. Keine Fremdinstallation oder alte Kopplung muss migriert werden. [SERVER-AUTH-DESIGN.md](SERVER-AUTH-DESIGN.md) ersetzt die bisherige JWE-Empfehlung in PR #20.
 
-## Entscheidung für die erste öffentliche GitHub-Beta
+## Zur Entscheidung vorgeschlagen
 
-Nach Astra-Prüfung der Stände Helper `e8c9584` und Kadri `cc14bcd` akzeptiert die Projektfreigabe die fehlende gegenseitige kryptografische Serverauthentifizierung als begrenztes Restrisiko. [Helper #4](https://github.com/Owndot/video-assistent-helper/issues/4) bleibt offen. Aktuelle Funktionsbeschreibung, Bedrohungsgrenze, Reset-Anleitung und gezielte Nachweise: [HELPER-BETA-SECURITY.md](HELPER-BETA-SECURITY.md). Kein neues Protokoll wird in dieser Beta-Runde eingeführt.
+1. **Android 13/API33 als Produktuntergrenze**, noch nicht setzen. Natives TLS 1.3 benötigt technisch nur Android 10/API29; die höhere Grenze ist eine Supportentscheidung, keine erfundene Crypto-Anforderung. Samsung dokumentiert die S26-Ultra-Familie mit Android 16. Konkreter Gerätebuild/Patchstand nicht ausgelesen. Höheres minSdk sichert Clipboard nicht automatisch.
+2. **Normales lokales HTTPS/TLS 1.3 statt JWE bevorzugen**, wenn bewusst eingerichteter privater CA-Trust akzeptiert und der reale Samsung/Vivaldi-Pfad nachgewiesen wird. Serverkey im Android-Keystore, private CA ausschließlich auf eigenem Mac, Blattzertifikat nur IP-SAN 127.0.0.1. Kein APK-Signierschlüssel für TLS.
+3. **Kein Clipboard-Pairing:** öffentliche Zertifikatsdaten unabhängig prüfen/einrichten; danach zehnstelligen Einmalcode aus nativer App manuell in Kadris gebündelte Optionsseite tippen. Erst auf vorab validiertem TLS senden; 180 Sekunden/fünf falsche Versuche/einmalige Nutzung, nur nativ neu öffnen. Langfristiger Clienttoken entsteht und reist nur in TLS, nie in URL/Seiten-HTML/Clipboard.
+4. **Begrenzter Rohtransfer:** 16-KiB-Kontrollnachrichten, 8-KiB-Header, 64-KiB-Binärblöcke, zwei aktive Medientransfers global, ACK-Backpressure, begrenzte Queue/Disk/Timeouts. Echter Hintergrund-Fetch-BYOB statt GM-Vollpuffer; temporäre Dateien, Range-/Validator-/EOF-/Längenprüfung vor Veröffentlichung. 64 KiB begrenzt Blöcke, nicht legitime HLS-/DASH-Segmente.
+5. **Sauberer Reset, kein Legacy:** alte Kopplungen löschen; HTTP-/X-EVP-Key-/Fragmentpairing-/unbeschränkte Upload-Endpunkte vollständig entfernen. Keine automatische Migration, Mischversion oder unsicheren Fallbacks.
+6. **Kadri/Vivaldi + eigener Helper zuerst.** Firefox bleibt nächstes Unterstützungsziel. Userscript-Player bleibt nutzbar; sicherer Helpermodus erst nach realem Manager-TLS-/UI-/Speichernachweis. Keine universelle Managerarchitektur als Voraussetzung.
 
-## Vorschläge für eine separat freizugebende spätere Phase
+## Warum diese Revision JWE zurückstellt
 
-Die bestehende Authentifizierung bleibt in dieser Runde unverändert. Die Auswahl eines Verfahrens und jedes neue Protokoll benötigen eine separate Freigabe.
+Unbeschränkte AEAD-/Keystore-Entschlüsselung kann vollständige Nachrichten puffern; Spooling davor behebt das nicht. Ein kleines JWE-Blockprotokoll wäre denkbar, bräuchte aber weitere geprüfte Schlüssel-/IV-/Sitzungs-/Replayregeln und Codecs. TLS übernimmt die Kanalkryptografie standardisiert und erlaubt Rohbytes ohne mehrfache Base64-Kopien. Deshalb hier **kein weiterer JWE-Kanalentwurf**, keine eigene Crypto und kein PAKE-/JOSE-Paket.
 
-Geeignete standardisierte Optionen sind TLS zu einem verlässlich authentisierten lokalen Dienst mit zufälligen, widerrufbaren Zugangsdaten oder HTTP Message Signatures ([RFC 9421](https://www.rfc-editor.org/rfc/rfc9421)) mit einer etablierten Implementierung und standardisiertem HMAC-SHA-256 bzw. asymmetrischem Signaturverfahren. Ein Body würde über Content-Digest ([RFC 9530](https://www.rfc-editor.org/rfc/rfc9530)) eingebunden. Keine selbst erfundene Challenge-/Signaturkonstruktion und kein bloßes Hashen eines Tokens. OAuth-Loopback-Codefluss mit PKCE ([RFC 8252](https://www.rfc-editor.org/rfc/rfc8252), [RFC 7636](https://www.rfc-editor.org/rfc/rfc7636)) ist eine weitere Option, falls mehrere Clients und ein separater Autorisierungsdialog gewünscht sind; er ersetzt nicht die Authentisierung des Servers.
+HTTPS ist im Anwendungscode einfacher, die eigene CA jedoch **nicht kostenlos**: Einrichtungsaufwand und ggf. über Kadri hinaus wirksamer Trust. Root-Schlüsselverlust oder eine andere appkontrollierte bereits vertraute CA kann Browservertrauen unterlaufen. Fetch ist kein exklusiver SPKI-Pin. Kein geteilter CA-Privatschlüssel, keiner in der APK, keine Zertifikatsausnahmen. Der konkrete Samsung-Import mit Fingerabdruckprüfung und echte Vivaldi-Extension-Trust sind **noch nicht nachgewiesen**.
 
-## API-Grenzen vor der Auswahl klären
+Wenn dieser zusätzliche Trust/Betriebsaufwand nicht akzeptiert oder die Machbarkeit nicht belegt wird, ist **noch keine sichere Erstimplementierung beschlossen**. Alternative separat neu bewerten, nicht heimlich zu HTTP/JWE zurückfallen.
 
-| Ausführungskontext | HTTP-Seite | Geeignete API |
-| --- | --- | --- |
-| Chromium-/Firefox-Seiten-JavaScript | WebCrypto `subtle` ist auf gewöhnlichem unsicherem HTTP nicht zugesichert/verfügbar; `getRandomValues` ist kein Ersatz für eine Signatur-API | HTTPS/vertrauenswürdiger Kontext für `subtle` |
-| Kadri-Extension-Hintergrund | Herkunft der aufrufenden HTTP-Seite ändert den privilegierten Hintergrundkontext nicht | WebCrypto im Hintergrund; ggf. allowlist-beschränktes Native Messaging |
-| Violentmonkey Chromium/Firefox, `@inject-into content` | GM-Speicher/GM-Netzwerk funktionieren auch auf gematchten HTTP-Seiten; daraus folgt keine zugesicherte `crypto.subtle`-Verfügbarkeit | Konkreten Manager, Browser und Ausführungskontext vor Protokollwahl testen |
-| Tampermonkey | Sandbox-/Browser-/Plattformunterschiede; GM-XHR ist keine allgemeine Kryptografie- oder Native-Messaging-API | Eigenen HTTP-/HTTPS-Kompatibilitätsnachweis verlangen |
-| Greasemonkey | Kein Kompatibilitätsversprechen dieses Projekts | Separate API-/Speicher-/HTTP-Validierung nötig |
+## Vor Implementierung offen
 
-[WebCrypto Secure-Context-Vorgabe](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto) gilt auch bei der Planung eines Userscripts; isolierte Ausführung bedeutet nicht automatisch sicheren Ursprung. Loopback-HTTP kann als potentiell vertrauenswürdig gelten, während die fremde HTTP-Seite es nicht ist. Kein stilles Abschalten der Authentifizierung, wenn eine API fehlt. Keine automatische Kryptografie aus nachgeladenem Fremdcode als Fallback. Vor einer Zusage ist eine Matrix aus Chromium/Firefox, Android/Desktop, Manager-Version, HTTP/HTTPS und tatsächlichem Sandboxmodus erforderlich; diese Matrix ist hier nicht als bestanden behauptet.
+- Eigentümerentscheidung zu API33, privater CA-Vertrauensstellung und begrenztem Erstumfang.
+- Astra-Review des Trust-Bootstraps, der weiteren lokalen CA-Risiken sowie des Code-/Transfermodells.
+- Später separat freigegebener Wegwerfnachweis: tatsächlicher Kadri-Hintergrund-TLS, Falschzertifikate, konkreter Samsung-Import, manuelle Optionsseitenkopplung und echter Fetch-BYOB.
+- Speicher-/Range-/Abbruch-/Parallelitätsprüfungen unter 32 MiB Java-Heap. API-Dokumentation ist keine Gerätegarantie.
 
-## Erforderliche Protokollentscheidungen
-
-Bei Message Signatures müssten Methode, normalisiertes Ziel einschließlich Query, Host/Port, Body-Digest, signierte Zeitgrenzen, `keyid` und ein pro Anfrage eindeutiger Wert verbindlich abgedeckt werden. Der Server muss Replay-Zustand atomar und begrenzt speichern, zulässige Zeitabweichung festlegen und Wiederholungen/Parallelität eindeutig behandeln. Ein kleiner Gültigkeitszeitraum allein verhindert Replay nicht. Änderungen am signierten Ziel durch Redirects dürfen nicht automatisch neu signiert werden.
-
-Pairing braucht eine ausdrücklich bestätigte, gegen Mitlesen und Austauschen geschützte Erstübertragung oder einen separat überprüften Fingerabdruck. Fragmente vermeiden das Senden an den HTTP-Server, sind aber kein eigenständiger sicherer Schlüsseltransport: Seitenskripte, History, Zwischenablage und manipuliertes HTTP bleiben zu betrachten. Schlüssel gehören ausschließlich in privilegierten Managerspeicher/OS-Schlüsselspeicher, niemals in DOM, URL-Query oder Seiten-LocalStorage. Pairing-Codes müssen kurzlebig, einmalig und gegen Versuche begrenzt sein; Widerruf und getrennte Schlüssel pro Client sind vorzusehen.
-
-Serverwechsel muss neu bestätigt werden. Host, Schema, Port, authentisierte Serveridentität und Schlüsselkontext müssen zusammenpassen; gleicher Port ist kein Identitätsnachweis. Kein Schlüsseltransfer an neue Endpunkte über Redirects, keine automatische Wiederverwendung eines Vertrauensentscheids beim Austausch des Servers. Rotation und Gerätewechsel benötigen ein separat spezifiziertes Re-Pairing-/Widerrufsverfahren.
-
+Nur Dokumentation: keine Schlüssel, APKs oder Pairing-Implementierung. minSdk bleibt 26, Produktions-Policy UNAPPROVED. #4 bleibt offen. Die bisher akzeptierte fehlende Serverauthentifizierung bleibt bis zum separat freigegebenen und nachgewiesenen Fix ein Restrisiko; heutiger Zustand/Reset: [HELPER-BETA-SECURITY.md](HELPER-BETA-SECURITY.md). Kein neuer Releasebeschluss.
