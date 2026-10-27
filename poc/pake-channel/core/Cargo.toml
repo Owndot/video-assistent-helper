@@ -13,6 +13,8 @@ crate-type = ["rlib", "cdylib"]
 default = []
 wasm = ["dep:wasm-bindgen", "getrandom03/wasm_js", "getrandom04/wasm_js"]
 jni = ["dep:jni"]
+# Android test app instrumentation only (Kadri side over JNI); never in a product.
+jni-test-initiator = ["jni"]
 
 # Exact pins: this PoC evaluates these specific releases, nothing newer.
 [dependencies]
@@ -40,6 +42,7 @@ pakery-spake2 = { version = "=0.6.2", features = ["test-utils"] }
 p256 = "=0.14.0"
 
 [profile.release]
+strip = true
 opt-level = "s"
 lto = true
 codegen-units = 1

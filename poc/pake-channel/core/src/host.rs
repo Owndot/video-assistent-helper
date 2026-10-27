@@ -32,6 +32,25 @@ pub struct Limits {
     pub max_session_ms: u64,
 }
 
+impl Limits {
+    /// Every count at least 1 and every duration at least 1 ms: a zero limit
+    /// would otherwise make the eviction loops below spin forever or make
+    /// every session expire instantly.
+    pub fn sanitized(self) -> Self {
+        Self {
+            max_registrations: self.max_registrations.max(1),
+            pending_ttl_ms: self.pending_ttl_ms.max(1),
+            max_half_open: self.max_half_open.max(1),
+            max_half_open_per_registration: self.max_half_open_per_registration.max(1),
+            handshake_ttl_ms: self.handshake_ttl_ms.max(1),
+            max_established: self.max_established.max(1),
+            max_established_per_registration: self.max_established_per_registration.max(1),
+            idle_ttl_ms: self.idle_ttl_ms.max(1),
+            max_session_ms: self.max_session_ms.max(1),
+        }
+    }
+}
+
 impl Default for Limits {
     fn default() -> Self {
         Self {
@@ -80,7 +99,7 @@ pub struct HelperHost {
 
 impl HelperHost {
     pub fn new(identity: Identity, limits: Limits) -> Self {
-        Self { identity, limits, registrations: Vec::new(), sessions: HashMap::new() }
+        Self { identity, limits: limits.sanitized(), registrations: Vec::new(), sessions: HashMap::new() }
     }
 
     pub fn public(&self) -> [u8; KEY_LEN] {
@@ -144,9 +163,11 @@ impl HelperHost {
         self.sessions.clear();
     }
 
-    fn evict_oldest(&mut self, pred: impl Fn(&Session) -> bool) {
-        if let Some(k) = self.sessions.iter().filter(|(_, s)| pred(s)).min_by_key(|(_, s)| s.last_ms).map(|(k, _)| *k) {
-            self.sessions.remove(&k);
+    /// Removes the least recently used matching session; false if none matched.
+    fn evict_oldest(&mut self, pred: impl Fn(&Session) -> bool) -> bool {
+        match self.sessions.iter().filter(|(_, s)| pred(s)).min_by_key(|(_, s)| s.last_ms).map(|(k, _)| *k) {
+            Some(k) => self.sessions.remove(&k).is_some(),
+            None => false,
         }
     }
 
@@ -158,10 +179,14 @@ impl HelperHost {
         let (ch, hs2) = channel::respond(&self.identity, hs1, |_| reg)?;
         let l = self.limits;
         while self.sessions.values().filter(|s| !s.established && s.registration == reg_id).count() >= l.max_half_open_per_registration {
-            self.evict_oldest(|s| !s.established && s.registration == reg_id);
+            if !self.evict_oldest(|s| !s.established && s.registration == reg_id) {
+                break;
+            }
         }
         while self.sessions.values().filter(|s| !s.established).count() >= l.max_half_open {
-            self.evict_oldest(|s| !s.established);
+            if !self.evict_oldest(|s| !s.established) {
+                break;
+            }
         }
         self.sessions.insert(ch.session_id(), Session { registration: reg_id, channel: ch, established: false, created_ms: now, last_ms: now });
         Ok(hs2)
@@ -193,10 +218,14 @@ impl HelperHost {
         let reg_id = self.sessions[&sid].registration;
         let l = self.limits;
         while self.sessions.values().filter(|s| s.established && s.registration == reg_id).count() >= l.max_established_per_registration {
-            self.evict_oldest(|s| s.established && s.registration == reg_id);
+            if !self.evict_oldest(|s| s.established && s.registration == reg_id) {
+                break;
+            }
         }
         while self.sessions.values().filter(|s| s.established).count() >= l.max_established {
-            self.evict_oldest(|s| s.established);
+            if !self.evict_oldest(|s| s.established) {
+                break;
+            }
         }
         self.sessions.get_mut(&sid).unwrap().established = true;
         let key = match self.registrations.iter_mut().find(|r| r.id == reg_id) {
@@ -238,7 +267,12 @@ impl HelperHost {
         out
     }
 
-    pub fn import_registrations(&mut self, b: &[u8]) -> Result<(), Error> {
+    /// Loads persisted registrations. `now` is on the caller's monotonic
+    /// clock (Android: elapsedRealtime). After a reboot (`same_boot == false`)
+    /// that clock restarted, so stored times are meaningless: pending
+    /// registrations are dropped and confirmed ones restart their clock.
+    /// Within the same boot, times from the future are clamped to `now`.
+    pub fn import_registrations(&mut self, b: &[u8], now: u64, same_boot: bool) -> Result<(), Error> {
         if b.len() % 57 != 0 || b.len() / 57 > self.limits.max_registrations {
             return Err(Error::Malformed);
         }
@@ -253,6 +287,14 @@ impl HelperHost {
                 return Err(Error::Malformed);
             }
             regs.push(Registration { id, kadri_public: key, confirmed: row[48] == 1, created_ms: u64::from_be_bytes(row[49..57].try_into().unwrap()) });
+        }
+        if !same_boot {
+            regs.retain(|r| r.confirmed);
+        }
+        for r in regs.iter_mut() {
+            if !same_boot || r.created_ms > now {
+                r.created_ms = now;
+            }
         }
         self.registrations = regs;
         self.sessions.clear();

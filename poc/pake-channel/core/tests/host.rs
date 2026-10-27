@@ -184,12 +184,12 @@ fn registrations_round_trip_and_import_validates() {
     let blob = host.export_registrations();
     assert_eq!(blob.len(), 57);
     let mut restarted = HelperHost::new(Identity::generate().unwrap(), Limits::default());
-    restarted.import_registrations(&blob).unwrap();
+    restarted.import_registrations(&blob, 3, true).unwrap();
     assert_eq!(restarted.registrations(), host.registrations());
     let mut bad = blob.clone();
     bad[16..48].copy_from_slice(&hex32(BAD_KEYS[2]));
-    assert_eq!(restarted.import_registrations(&bad).err(), Some(Error::InvalidKey));
-    assert!(restarted.import_registrations(&blob[..56]).is_err());
+    assert_eq!(restarted.import_registrations(&bad, 3, true).err(), Some(Error::InvalidKey));
+    assert!(restarted.import_registrations(&blob[..56], 3, true).is_err());
 }
 
 /// Global half-open pressure from other registrations never evicts an
@@ -220,4 +220,80 @@ fn global_half_open_pressure_spares_established_sessions() {
     assert!(st.half_open <= l.max_half_open, "{st:?}");
     assert_eq!(st.established, 1);
     ping(&mut host, &mut a, t).unwrap();
+}
+
+/// Limits = 0 must neither hang the eviction loops nor disable sessions.
+#[test]
+fn zero_limits_are_clamped_and_cannot_hang() {
+    let k = Identity::generate().unwrap();
+    let zero = Limits {
+        max_registrations: 0, pending_ttl_ms: 0, max_half_open: 0, max_half_open_per_registration: 0, handshake_ttl_ms: 0,
+        max_established: 0, max_established_per_registration: 0, idle_ttl_ms: 0, max_session_ms: 0,
+    };
+    let s = zero.sanitized();
+    assert!(s.max_registrations == 1 && s.max_half_open == 1 && s.max_established_per_registration == 1 && s.handshake_ttl_ms == 1);
+    let (mut host, hp, reg, _) = host_with(&k, zero);
+    let (mut a, _) = connect(&mut host, &k, &hp, reg, 0);
+    ping(&mut host, &mut a, 1).unwrap();
+    let (mut b, _) = connect(&mut host, &k, &hp, reg, 1);
+    ping(&mut host, &mut b, 2).unwrap();
+    assert_eq!(host.stats().established, 1);
+}
+
+/// R3: after a reboot the monotonic clock restarts; stored times must not
+/// keep pending registrations alive or make confirmed ones look ancient.
+#[test]
+fn import_after_reboot_drops_pending_and_rebases_confirmed() {
+    let k = Identity::generate().unwrap();
+    let l = Limits::default();
+    let (mut host, hp, reg, _) = host_with(&k, l);
+    let (mut a, _) = connect(&mut host, &k, &hp, reg, 50_000);
+    ping(&mut host, &mut a, 50_001).unwrap();
+    host.add_pending(&Pinned { registration_id: [0x61; 16], peer_public: Identity::generate().unwrap().public }, 50_002).unwrap();
+    let blob = host.export_registrations();
+    // Same boot, clock moved on: pending keeps its time; future times are clamped.
+    let mut same = HelperHost::new(Identity::generate().unwrap(), l);
+    same.import_registrations(&blob, 40_000, true).unwrap();
+    assert_eq!(same.registrations().len(), 2);
+    assert!(same.registrations().iter().all(|r| r.created_ms <= 40_000));
+    // Reboot: clock restarted at a small value.
+    let mut rebooted = HelperHost::new(Identity::generate().unwrap(), l);
+    rebooted.import_registrations(&blob, 1_000, false).unwrap();
+    assert_eq!(rebooted.registrations().len(), 1);
+    assert!(rebooted.registrations()[0].confirmed && rebooted.registrations()[0].created_ms == 1_000);
+}
+
+/// R1 (known availability risk, NOT fixed): replayed HS1 messages can evict a
+/// legitimate half-open session before its first record arrives, so the
+/// legitimate client must handshake again. No confidentiality impact.
+#[test]
+fn r1_hs1_replay_can_evict_a_fresh_legitimate_handshake() {
+    let k = Identity::generate().unwrap();
+    let (mut host, hp, reg, _) = host_with(&k, Limits::default());
+    let (_, recorded_hs1) = connect(&mut host, &k, &hp, reg, 0); // attacker records this HS1
+    let (mut legit, _) = connect(&mut host, &k, &hp, reg, 100); // fresh legitimate handshake
+    for t in 0..Limits::default().max_half_open_per_registration as u64 {
+        host.handshake(&recorded_hs1, 101 + t).unwrap();
+    }
+    assert_eq!(ping(&mut host, &mut legit, 200).err(), Some(Error::UnknownSession), "legitimate half-open evicted");
+    let (mut again, _) = connect(&mut host, &k, &hp, reg, 300); // retry succeeds once the flood stops
+    ping(&mut host, &mut again, 301).unwrap();
+}
+
+/// R2 (known availability risk, NOT fixed): anyone who knows a session id
+/// can end that session with one garbage record. Authentication is not
+/// weakened to keep it alive; the client re-handshakes.
+#[test]
+fn r2_known_session_id_allows_termination_but_not_takeover() {
+    let k = Identity::generate().unwrap();
+    let (mut host, hp, reg, _) = host_with(&k, Limits::default());
+    let (mut a, _) = connect(&mut host, &k, &hp, reg, 0);
+    ping(&mut host, &mut a, 1).unwrap();
+    let mut garbage = b"KHC2\x20".to_vec();
+    garbage.extend_from_slice(&a.session_id());
+    garbage.extend_from_slice(&[0u8; 40]);
+    assert_eq!(host.open(&garbage, 2).err(), Some(Error::AuthFailed));
+    assert_eq!(ping(&mut host, &mut a, 3).err(), Some(Error::UnknownSession));
+    let (mut b, _) = connect(&mut host, &k, &hp, reg, 4);
+    ping(&mut host, &mut b, 5).unwrap();
 }

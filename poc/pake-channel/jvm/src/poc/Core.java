@@ -6,8 +6,8 @@ final class Core {
     private Core() {}
 
     static native byte[] identityGenerate();
-    /** Returns the helper public key as hex. */
-    static native String hostInit(byte[] identity, byte[] registrations);
+    /** Returns the helper public key as hex. nowMs is the monotonic clock of the caller. */
+    static native String hostInit(byte[] identity, byte[] registrations, long nowMs, boolean sameBoot);
     /** code == null: generate a fresh code. Returns the code for display. */
     static native String windowOpen(String code, long nowMs, long ttlMs);
     static native byte[] windowOnM0(byte[] m0, long nowMs);

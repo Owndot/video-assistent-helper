@@ -7,7 +7,7 @@ use crate::pairing::HelperPairingWindow;
 use crate::record::AppRecord;
 use crate::{Error, Identity, ID_LEN, KEY_LEN};
 use jni::objects::{JByteArray, JClass, JString};
-use jni::sys::{jbyteArray, jint, jlong, jstring};
+use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring};
 use jni::JNIEnv;
 use std::sync::Mutex;
 
@@ -61,9 +61,11 @@ pub extern "system" fn Java_poc_Core_identityGenerate(mut env: JNIEnv, _: JClass
     ret(&mut env, r)
 }
 
-/// Loads the helper identity (private||public, 64 B) and persisted registrations.
+/// Loads the helper identity (private||public, 64 B) and persisted
+/// registrations. `now` is the caller's monotonic clock; `same_boot` is false
+/// when the persisted data predates the current boot (see HelperHost).
 #[no_mangle]
-pub extern "system" fn Java_poc_Core_hostInit(mut env: JNIEnv, _: JClass, identity: JByteArray, registrations: JByteArray) -> jstring {
+pub extern "system" fn Java_poc_Core_hostInit(mut env: JNIEnv, _: JClass, identity: JByteArray, registrations: JByteArray, now: jlong, same_boot: jboolean) -> jstring {
     let r = (|| {
         let id = bytes(&env, &identity)?;
         if id.len() != 2 * KEY_LEN {
@@ -74,7 +76,7 @@ pub extern "system" fn Java_poc_Core_hostInit(mut env: JNIEnv, _: JClass, identi
             return Err(Error::Malformed);
         }
         let mut host = HelperHost::new(me, Limits::default());
-        host.import_registrations(&bytes(&env, &registrations)?)?;
+        host.import_registrations(&bytes(&env, &registrations)?, now as u64, same_boot != 0)?;
         let public: String = host.public().iter().map(|b| format!("{b:02x}")).collect();
         *STATE.lock().map_err(|_| Error::Crypto)? = Some(State { host, window: None });
         Ok(public)

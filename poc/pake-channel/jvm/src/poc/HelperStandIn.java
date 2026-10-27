@@ -46,7 +46,7 @@ public final class HelperStandIn {
         else { identity = Core.identityGenerate(); Files.write(idFile, identity); }
         Path regs = stateDir.resolve("registrations.bin");
         byte[] stored = !rogue && Files.exists(regs) ? Files.readAllBytes(regs) : new byte[0];
-        say("READY " + (rogue ? "rogue" : "genuine") + " " + port + " pub=" + Core.hostInit(identity, stored));
+        say("READY " + (rogue ? "rogue" : "genuine") + " " + port + " pub=" + Core.hostInit(identity, stored, System.currentTimeMillis(), true));
     }
 
     static void say(String s) { synchronized (System.out) { System.out.println(s); System.out.flush(); } }

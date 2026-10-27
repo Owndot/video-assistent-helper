@@ -21,6 +21,8 @@ pub mod record;
 
 #[cfg(feature = "jni")]
 pub mod jni_api;
+#[cfg(feature = "jni-test-initiator")]
+pub mod jni_test_initiator;
 #[cfg(feature = "wasm")]
 pub mod wasm_api;
 
