@@ -24,6 +24,8 @@ The exact baseline is merge `044784068b4b74621f0b45dbbf203780d17ebefe`.
 * On API 26–28 saving directly into an existing same-name destination overwrote it and exposed partial bytes. A same-directory `.evp-pending-*.part` file is now copied, closed and synced before a no-replacement move; colliding names get a suffix. Failed staging is removed. The directory belongs to the app; no claim is made about arbitrary external writers racing on an unreliable filesystem or power-loss atomicity.
 * The native credentialed reader could treat the declared length reached before a read failure as successful completion on the next attempt. It now requires a successfully validated end/close, retries from zero if a failed attempt already reached that length, and deletes its output after final error. This path now also uses the existing strict response-framing validation; contradictory TE/CL and invalid resumed range metadata are permanent errors, without retries.
 
+The new SDK-only check also exposed a pre-existing compile failure: `OsConstants.O_DIRECTORY` is not a public Android SDK symbol. The ID-journal directory sync now uses public `Os.open(O_RDONLY)`, `Os.fstat`/`S_ISDIR`, and `Os.fsync`, preserving descriptor type checking and sync before an ID is returned. The durable ID format and protocol are unchanged.
+
 For known HTTP lengths/ranges, completion requires the exact validated size. Unknown-size responses require a clean stream end; without a trusted length or independent digest no implementation can detect a server intentionally ending an otherwise valid unknown-length representation early. Content is not published before the transport/core and save checks finish.
 
 ## Hard process death and next start

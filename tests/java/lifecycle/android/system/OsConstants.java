@@ -1,1 +1,1 @@
-package android.system;public class OsConstants{public static final int O_RDONLY=0,O_DIRECTORY=1; }
+package android.system;public class OsConstants{public static final int O_RDONLY=0,O_DIRECTORY=1; /* Historical baseline compilation only. */ public static boolean S_ISDIR(int mode){return mode==1;} }

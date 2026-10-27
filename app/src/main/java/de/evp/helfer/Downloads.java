@@ -143,7 +143,10 @@ public class Downloads {
             java.io.FileDescriptor descriptor = null;
             try {
                 descriptor = android.system.Os.open(directory.getAbsolutePath(),
-                    android.system.OsConstants.O_RDONLY | android.system.OsConstants.O_DIRECTORY, 0);
+                    android.system.OsConstants.O_RDONLY, 0);
+                // O_DIRECTORY is hidden from the public Android SDK. Check the opened descriptor instead.
+                if (!android.system.OsConstants.S_ISDIR(android.system.Os.fstat(descriptor).st_mode))
+                    throw new java.io.IOException("Job ID sync target is not a directory");
                 android.system.Os.fsync(descriptor);
             } catch (android.system.ErrnoException e) { throw new java.io.IOException("Job ID directory sync failed", e); }
             finally {
