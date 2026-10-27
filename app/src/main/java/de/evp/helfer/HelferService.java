@@ -106,8 +106,8 @@ public class HelferService extends Service {
     public void onDestroy() {
         running = false;
         main.removeCallbacks(watchdog);
-        if (server != null) server.stop();
         Downloads.stopAll();
+        if (server != null) server.stop();
         clearBright();
         super.onDestroy();
     }

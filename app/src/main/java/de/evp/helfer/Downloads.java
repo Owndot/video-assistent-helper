@@ -50,9 +50,12 @@ public class Downloads {
     static { credentialedFiles.allowCoreThreadTimeOut(true); }
     private static final Map<Integer, Task> active = new ConcurrentHashMap<>();
     private static final Object fileNames = new Object();
-    private static boolean initialized, stopped;
+    private static boolean initialized;
+    private static final Object admission = new Object();
+    private static boolean stopped;
+    private static Object generation = new Object();
     private static final class Task {
-        final int id; volatile boolean cancelled; boolean published; volatile Thread worker;
+        final int id; volatile boolean cancelled; boolean published, finished; volatile Thread worker;
         Task(int id) { this.id=id; }
         void check() throws java.io.IOException {
             if(cancelled || Thread.currentThread().isInterrupted())throw new java.io.IOException("abgebrochen");
@@ -61,20 +64,26 @@ public class Downloads {
     }
     static void cancelJob(int id) {
         Task task=active.get(id); if(task==null)return;
+        Thread worker;
         synchronized(task) {
-            if(task.published)return;
-            task.cancelled=true; state.put(id,"abgebrochen");
-            if(task.worker!=null)task.worker.interrupt();
+            if(task.published||task.finished)return;
+            task.cancelled=true; state.put(id,"abgebrochen");worker=task.worker;
         }
-        Fetcher.Proxy proxy=proxies.get(id);if(proxy!=null)proxy.close();
+        // No provider/file/proxy cleanup on the service main thread. The interrupted
+        // owner unwinds requests and closes its proxy in streamJob's finally block.
+        if(worker!=null)worker.interrupt();
     }
-    static synchronized void stopAll() {
-        stopped=true;
-        for(Integer id:active.keySet())cancelJob(id);
+    static void stopAll() {
+        List<Integer> snapshot;
+        synchronized(admission) { stopped=true;snapshot=new ArrayList<>(active.keySet()); }
+        for(Integer id:snapshot)cancelJob(id);
     }
-    static synchronized void serviceStarted(Context c) throws Exception {
+    static void serviceStarted(Context c) throws Exception {
         initialize(c);
-        stopped=false;
+        synchronized(admission) { generation=new Object();stopped=false; }
+    }
+    private static void admitted(Object epoch) throws java.io.IOException {
+        if(stopped||generation!=epoch)throw new java.io.IOException("Helper service is stopping or restarted");
     }
 
     /** Once per process, before accepting transfers: discard only owned unfinished work.
@@ -93,15 +102,36 @@ public class Downloads {
         }
         if(Build.VERSION.SDK_INT>=29) {
             ContentResolver cr=c.getContentResolver();
+            File proofs=new File(c.getFilesDir(),"download-pending-v1");
+            File[] markers=proofs.exists()?proofs.listFiles():new File[0];
+            if(markers==null)throw new java.io.IOException("Cannot read pending download ownership");
+            java.util.Set<String> owned=new java.util.HashSet<>();
+            for(File f:markers)if(f.isFile()&&f.getName().matches("evp-publish-[0-9]+\\.pending"))owned.add(f.getName());
             String folder=Environment.DIRECTORY_DOWNLOADS+"/"+FOLDER;
-            try(android.database.Cursor rows=cr.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                    new String[]{MediaStore.Downloads._ID},
-                    "owner_package_name=? AND is_pending=1 AND (relative_path=? OR relative_path=?)",
-                    new String[]{c.getPackageName(),folder+"/",folder},null)) {
+            String selection="owner_package_name=? AND is_pending=1 AND (relative_path=? OR relative_path=?)";
+            String[] scope={c.getPackageName(),folder+"/",folder};
+            // Q's normal collection query adds is_pending=0. This public API includes
+            // pending rows on API 29 and later (deprecated, still honored on API 30+).
+            try(android.database.Cursor rows=cr.query(MediaStore.setIncludePending(MediaStore.Downloads.EXTERNAL_CONTENT_URI),
+                    new String[]{MediaStore.Downloads._ID,MediaStore.Downloads.DISPLAY_NAME,MediaStore.Downloads.DOWNLOAD_URI},selection,scope,null)) {
                 if(rows==null)throw new java.io.IOException("Cannot inspect interrupted pending downloads");
-                while(rows.moveToNext())cr.delete(android.content.ContentUris.withAppendedId(
-                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,rows.getLong(rows.getColumnIndexOrThrow(MediaStore.Downloads._ID))),null,null);
+                while(rows.moveToNext()) {
+                    String name=rows.getString(rows.getColumnIndexOrThrow(MediaStore.Downloads.DISPLAY_NAME));
+                    String source=rows.getString(rows.getColumnIndexOrThrow(MediaStore.Downloads.DOWNLOAD_URI));
+                    // Only our pre-insert private token prefix proves direct ownership.
+                    // Providers may normalize the trailing extension/collision suffix.
+                    // A package/folder match alone also includes DM and old unproved rows.
+                    String proofName=name!=null&&name.contains("--")?name.substring(0,name.indexOf("--")):null;
+                    if(!owned.contains(proofName)||source!=null&&!source.isEmpty())continue;
+                    Uri uri=android.content.ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        rows.getLong(rows.getColumnIndexOrThrow(MediaStore.Downloads._ID)));
+                    if(cr.delete(uri,selection+" AND "+MediaStore.Downloads.DISPLAY_NAME+"=? AND (download_uri IS NULL OR download_uri='')",
+                            new String[]{scope[0],scope[1],scope[2],name})!=1)
+                        throw new java.io.IOException("Interrupted pending download was not removed");
+                }
             }
+            // Keep every proof on query/delete failure; retry remains safe after partial cleanup.
+            for(File f:markers)if(owned.contains(f.getName()))removeProof(f);
         }
         initialized=true;
     }
@@ -133,8 +163,9 @@ public class Downloads {
      * Startet einen Download; Rückgabe: Kennung (für Fortschritt / Abholen).
      * kind: file | hls | dash | auto · proxy: über den Browser laden (das Skript holt die Daten mit seiner Sitzung)
      */
-    static synchronized int start(Context ctx, String url, String referer, String ua, String cookie, String title, String kind, boolean proxy) throws java.io.IOException {
-        if(stopped)throw new java.io.IOException("Helper service is stopping");
+    static int start(Context ctx, String url, String referer, String ua, String cookie, String title, String kind, boolean proxy) throws java.io.IOException {
+        final Object epoch;
+        synchronized(admission) { admitted(generation);epoch=generation; }
         final Context c = ctx.getApplicationContext();
         try { initialize(c); } catch(Exception e) { throw new java.io.IOException("Interrupted download cleanup failed",e); }
         channel(c);
@@ -159,7 +190,6 @@ public class Downloads {
         final Fetcher net;
         if (proxy) {
             Fetcher.Proxy px = new Fetcher.Proxy(new File(c.getCacheDir(), "dl" + id));
-            proxies.put(id, px);
             net = px;
         } else net = new Fetcher.Http(referer, ua, cookie);
         // DownloadManager replays manual headers across origin redirects.
@@ -167,13 +197,16 @@ public class Downloads {
         boolean carriesCookie = !proxy && ((Fetcher.Http) net).cookieFor(url);
         boolean carriesReferrer = !proxy && Fetcher.Http.referrerFor(referer, url) != null;
         if ("file".equals(kind) && !proxy && !carriesCookie && !carriesReferrer) {
-            state.put(id, "Download-Manager");
+            synchronized(admission) { admitted(epoch);state.put(id,"Download-Manager"); }
             long dmId = fileDownload(c, url, referer, ua, title);
             watch(c, id, dmId);
             return id;
         }
-        active.put(id,new Task(id));
-        state.put(id, "startet");
+        synchronized(admission) {
+            admitted(epoch);
+            if(net instanceof Fetcher.Proxy)proxies.put(id,(Fetcher.Proxy)net);
+            active.put(id,new Task(id));state.put(id,"startet");
+        }
         final String k = kind;
         ExecutorService queue = "file".equals(k) && !proxy ? credentialedFiles : jobs;
         queue.execute(() -> streamJob(c, id, url, title, k, net));
@@ -232,12 +265,12 @@ public class Downloads {
         String shortTitle = title == null || title.isEmpty() ? "Video" : (title.length() > 60 ? title.substring(0, 60) + "…" : title);
         try {
             task.check();
-            if (!work.exists() && !work.mkdirs()) throw new Exception(Tr.t("Kein Arbeitsordner", "No working folder"));
+            if (!work.isDirectory() && !work.mkdirs() && !work.isDirectory()) throw new Exception(Tr.t("Kein Arbeitsordner", "No working folder"));
             progressNote(c, nm, id, shortTitle, 0, 0, net instanceof Fetcher.Proxy ? Tr.t("Lädt über den Browser – Seite offen lassen", "Loading via the browser – keep the page open") : Tr.t("Wird vorbereitet …", "Preparing …"));
             HlsCore.Listener l = new HlsCore.Listener() {
                 @Override public void progress(int done, int total) {
                     long now = System.currentTimeMillis();
-                    synchronized(task) { if(task.cancelled||task.published)return;state.put(id, done + "/" + total); }
+                    synchronized(task) { if(task.cancelled||task.published||task.finished)return;state.put(id, done + "/" + total); }
                     if (now - lastShown[0] < 700 && done < total) return;
                     lastShown[0] = now;
                     progressNote(c, nm, id, shortTitle, done, total, null);
@@ -273,9 +306,12 @@ public class Downloads {
             state.put(id, "fertig");
             doneNote(c, nm, id, shortTitle, saved, mime, null);
         } catch (Exception e) {
-            if(task.published)return; // notification failure cannot undo an already committed file
-            boolean cancelled = task.cancelled;
-            state.put(id, cancelled ? "abgebrochen" : "Fehler: " + e.getMessage());
+            boolean cancelled;
+            synchronized(task) {
+                if(task.published)return; // notification failure cannot undo an already committed file
+                cancelled=task.cancelled;task.finished=true;
+                state.put(id,cancelled?"abgebrochen":"Fehler: "+e.getMessage());
+            }
             if (cancelled) nm.cancel(id);
             else doneNote(c, nm, id, shortTitle, null, null, e.getMessage());
         } finally {
@@ -394,56 +430,80 @@ public class Downloads {
     private static void check(Task task) throws java.io.IOException {
         if(task!=null)task.check();else Fetcher.checkCancelled(null);
     }
+    private static File pendingProof(Context c) throws Exception {
+        File dir=new File(c.getFilesDir(),"download-pending-v1");
+        if(!dir.isDirectory()&&!dir.mkdirs()&&!dir.isDirectory())throw new java.io.IOException("No pending ownership directory");
+        File proof=File.createTempFile("evp-publish-",".pending",dir);
+        try(FileOutputStream out=new FileOutputStream(proof)) { out.getFD().sync(); }
+        return proof; // Created and synced BEFORE insert: an insert/return process kill retains proof.
+    }
+    private static void removeProof(File proof) throws java.io.IOException {
+        if(!proof.delete()&&proof.exists())throw new java.io.IOException("Cannot remove pending download ownership");
+    }
     private static Uri save(Context c,File f,String name,String mime,Task task) throws Exception {
         check(task);
         Object lock=task==null?new Object():task;
         if(Build.VERSION.SDK_INT>=29) {
             ContentResolver cr=c.getContentResolver();ContentValues cv=new ContentValues();
-            cv.put(MediaStore.Downloads.DISPLAY_NAME,name);cv.put(MediaStore.Downloads.MIME_TYPE,mime);
+            File proof=pendingProof(c);
+            cv.put(MediaStore.Downloads.DISPLAY_NAME,proof.getName()+"--"+name);cv.put(MediaStore.Downloads.MIME_TYPE,mime);
             cv.put(MediaStore.Downloads.RELATIVE_PATH,Environment.DIRECTORY_DOWNLOADS+"/"+FOLDER+"/");
             cv.put(MediaStore.Downloads.IS_PENDING,1);
-            Uri uri=cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,cv);
-            if(uri==null)throw new java.io.IOException("Saving not possible");
+            Uri uri=null;
             boolean committed=false;
             try {
+                uri=cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,cv);
+                if(uri==null)throw new java.io.IOException("Saving not possible");
                 try(InputStream in=new FileInputStream(f);OutputStream out=cr.openOutputStream(uri)) {
                     if(out==null)throw new java.io.IOException("Saving not possible");
                     copy(in,out,task);out.flush();
                 }
+                check(task);cv.clear();cv.put(MediaStore.Downloads.IS_PENDING,0);cv.put(MediaStore.Downloads.DISPLAY_NAME,name);
+                if(cr.update(uri,cv,null,null)!=1)throw new java.io.IOException("Pending download was not published");
                 synchronized(lock) {
-                    check(task);cv.clear();cv.put(MediaStore.Downloads.IS_PENDING,0);
-                    if(cr.update(uri,cv,null,null)!=1)throw new java.io.IOException("Pending download was not published");
-                    committed=true;if(task!=null)task.committed();
+                    // Linearization point after the provider returns. Cancellation while
+                    // Binder is blocked wins here and rolls the row back, never reports success.
+                    check(task);committed=true;if(task!=null)task.committed();
                 }
                 return uri;
-            } finally { if(!committed)cr.delete(uri,null,null); }
+            } finally {
+                if(committed)removeProof(proof);
+                else if(uri!=null) {
+                    if(cr.delete(uri,null,null)!=1)throw new java.io.IOException("Pending download rollback failed");
+                    removeProof(proof);
+                }
+            }
         }
         // Stage in the destination directory, close/sync first, then move without replacement.
         File external=c.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
         if(external==null)throw new java.io.IOException("Download storage unavailable");
         File dir=new File(external,FOLDER);
-        if(!dir.isDirectory()&&!dir.mkdirs())throw new java.io.IOException("No download directory");
+        if(!dir.isDirectory()&&!dir.mkdirs()&&!dir.isDirectory())throw new java.io.IOException("No download directory");
         File part=File.createTempFile(".evp-pending-",".part",dir);
+        File moved=null;boolean committed=false;
         try {
             try(InputStream in=new FileInputStream(f);FileOutputStream out=new FileOutputStream(part)) {
                 copy(in,out,task);out.getFD().sync();
             }
-            synchronized(lock) {
+            synchronized(fileNames) {
                 check(task);
-                synchronized(fileNames) {
-                    for(int n=0;n<10000;n++) {
-                        int dot=name.lastIndexOf('.');String suffix=n==0?"":" ("+n+")";
-                        String candidate=n==0?name:dot>0?name.substring(0,dot)+suffix+name.substring(dot):name+suffix;
-                        File dst=new File(dir,candidate);
-                        try { java.nio.file.Files.move(part.toPath(),dst.toPath()); }
-                        catch(java.nio.file.FileAlreadyExistsException exists) { continue; }
-                        if(task!=null)task.committed();return Uri.fromFile(dst);
+                for(int n=0;n<10000;n++) {
+                    int dot=name.lastIndexOf('.');String suffix=n==0?"":" ("+n+")";
+                    String candidate=n==0?name:dot>0?name.substring(0,dot)+suffix+name.substring(dot):name+suffix;
+                    File dst=new File(dir,candidate);
+                    try { java.nio.file.Files.move(part.toPath(),dst.toPath()); }
+                    catch(java.nio.file.FileAlreadyExistsException exists) { continue; }
+                    moved=dst;
+                    synchronized(lock) {
+                        check(task);committed=true;if(task!=null)task.committed();
                     }
+                    return Uri.fromFile(dst);
                 }
                 throw new java.io.IOException("No unused download filename");
             }
-        } finally { part.delete(); }
+        } finally { part.delete();if(!committed&&moved!=null)moved.delete(); }
     }
+
     private static void copy(InputStream in,OutputStream out,Task task) throws Exception {
         byte[] buffer=new byte[64<<10];int n;
         while(true) {

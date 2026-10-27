@@ -1,0 +1,1 @@
+package de.evp.helfer;final class Keys{static void applyLang(android.content.Context c){throw new UnsupportedOperationException("not exercised");}static String key(android.content.Context c){throw new UnsupportedOperationException("not exercised");}static void markPaired(android.content.Context c){throw new UnsupportedOperationException("not exercised");}}

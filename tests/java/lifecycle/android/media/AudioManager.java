@@ -1,0 +1,1 @@
+package android.media;public class AudioManager{public static final int STREAM_MUSIC=3;public int getStreamMaxVolume(int n){throw new UnsupportedOperationException();}public int getStreamVolume(int n){throw new UnsupportedOperationException();}public void setStreamVolume(int a,int b,int c){throw new UnsupportedOperationException();}}

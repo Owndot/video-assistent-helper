@@ -11,23 +11,33 @@ public class TestDownloadPublication {
   File dir(String s){File f=root.resolve(s).toFile();f.mkdirs();return f;}public File getFilesDir(){return dir("files");}public File getCacheDir(){return dir("cache");}public File getExternalFilesDir(String s){return dir("external");}public ContentResolver getContentResolver(){return store;}
  }
  static class Store extends ContentResolver {
-  final Path root;volatile boolean failWrite,failClose,nullOutput,zeroUpdate;volatile Consumer<Uri> writing;int deletes,updates;
+  final Path root;volatile boolean failWrite,failClose,nullOutput,zeroUpdate,failQuery,nullQuery,failDelete;volatile Consumer<Uri> writing,updating,updated;int deletes,updates;
   Store(Path p)throws IOException{root=p;Files.createDirectories(p);}
-  Path meta(Uri u){return root.resolve(u.toString().substring(u.toString().lastIndexOf('/')+1)+".meta");}
+  Path meta(Uri u){return root.resolve(u.toString().split("\\?")[0].substring(u.toString().split("\\?")[0].lastIndexOf('/')+1)+".meta");}
   Path data(Uri u){return Path.of(meta(u).toString().replace(".meta",".data"));}
   Properties props(Uri u){try{Properties p=new Properties();try(InputStream in=Files.newInputStream(meta(u))){p.load(in);}return p;}catch(IOException e){throw new UncheckedIOException(e);}}
   void write(Uri u,Properties p){try(OutputStream out=Files.newOutputStream(meta(u))){p.store(out,"synthetic provider model");}catch(IOException e){throw new UncheckedIOException(e);}}
-  long nextId(){return rows().stream().mapToLong(u->Long.parseLong(u.toString().substring(u.toString().lastIndexOf('/')+1))).max().orElse(0)+1;}
+  long nextId(){return rows().stream().mapToLong(u->Long.parseLong(u.toString().split("\\?")[0].substring(u.toString().split("\\?")[0].lastIndexOf('/')+1))).max().orElse(0)+1;}
   public synchronized Uri insert(Uri collection,ContentValues v){Uri u=Uri.parse(collection+"/"+nextId());Properties p=new Properties();v.forEach((k,x)->p.setProperty(k,String.valueOf(x)));p.setProperty("owner_package_name","de.evp.helfer");write(u,p);return u;}
   public OutputStream openOutputStream(Uri u)throws IOException{if(nullOutput)return null;return new FilterOutputStream(Files.newOutputStream(data(u))){public void write(byte[] b,int o,int n)throws IOException{if(failWrite){out.write(b,o,Math.min(3,n));throw new IOException("synthetic disk full");}out.write(b,o,n);Consumer<Uri> cb=writing;if(cb!=null)cb.accept(u);}public void close()throws IOException{super.close();if(failClose)throw new IOException("synthetic close failure");}};}
-  public synchronized int update(Uri u,ContentValues v,String q,String[] a){updates++;if(zeroUpdate)return 0;Properties p=props(u);v.forEach((k,x)->p.setProperty(k,String.valueOf(x)));write(u,p);return 1;}
-  public synchronized int delete(Uri u,String q,String[] a){deletes++;try{boolean had=Files.deleteIfExists(meta(u));Files.deleteIfExists(data(u));return had?1:0;}catch(IOException e){throw new UncheckedIOException(e);}}
+  public int update(Uri u,ContentValues v,String q,String[] a){Consumer<Uri> cb=updating;if(cb!=null)cb.accept(u);updates++;if(zeroUpdate)return 0;Properties p=props(u);v.forEach((k,x)->p.setProperty(k,String.valueOf(x)));write(u,p);cb=updated;if(cb!=null)cb.accept(u);return 1;}
+  public synchronized int delete(Uri u,String q,String[] a){if(failDelete)return 0;if(q!=null&&!matches(props(u),q,a))return 0;deletes++;try{boolean had=Files.deleteIfExists(meta(u));Files.deleteIfExists(data(u));return had?1:0;}catch(IOException e){throw new UncheckedIOException(e);}}
   List<Uri> rows(){try(var s=Files.list(root)){return s.filter(p->p.toString().endsWith(".meta")).map(p->Uri.parse("content://downloads/"+p.getFileName().toString().replace(".meta",""))).toList();}catch(IOException e){throw new UncheckedIOException(e);}}
+  boolean matches(Properties p,String where,String[] args){
+   boolean scoped=args[0].equals(p.getProperty("owner_package_name"))&&"1".equals(p.getProperty("is_pending"))&&Arrays.asList(args).subList(1,3).contains(p.getProperty("relative_path"));
+   if(args.length>3)scoped&=args[3].equals(p.getProperty(MediaStore.Downloads.DISPLAY_NAME))&&p.getProperty("download_uri","").isEmpty();
+   return scoped;
+  }
   public Cursor query(Uri u,String[] cols,String where,String[] args,String order){
-   // Match ONLY the actual owner/pending/folder selection. Never silently return foreign rows.
+   if(failQuery)throw new IllegalStateException("synthetic provider query failure");if(nullQuery)return null;
    check(where.contains("owner_package_name")&&where.contains("is_pending")&&where.contains("relative_path"),"unsafe recovery selection");
-   List<Uri> selected=rows().stream().filter(x->{Properties p=props(x);return args[0].equals(p.getProperty("owner_package_name"))&&"1".equals(p.getProperty("is_pending"))&&Arrays.asList(args).subList(1,args.length).contains(p.getProperty("relative_path"));}).toList();
-   return new Cursor(){int i=-1;public boolean moveToFirst(){i=0;return i<selected.size();}public boolean moveToNext(){return ++i<selected.size();}public int getColumnIndexOrThrow(String n){return 0;}public long getLong(int c){return Long.parseLong(selected.get(i).toString().substring(selected.get(i).toString().lastIndexOf('/')+1));}public String getString(int c){return selected.get(i).toString();}public int getInt(int c){return 0;}public void close(){}};
+   // Android Q collection queries hide pending rows unless setIncludePending was requested.
+   boolean include=u.toString().contains("includePending=1");
+   List<Uri> selected=rows().stream().filter(x->{Properties p=props(x);return (include||!"1".equals(p.getProperty("is_pending")))&&matches(p,where,args);}).toList();
+   return new Cursor(){int i=-1;public boolean moveToFirst(){i=0;return i<selected.size();}public boolean moveToNext(){return ++i<selected.size();}
+    public int getColumnIndexOrThrow(String n){for(int k=0;k<cols.length;k++)if(cols[k].equals(n))return k;throw new IllegalArgumentException(n);}
+    public long getLong(int c){check(cols[c].equals("_id"),"wrong numeric column");return Long.parseLong(selected.get(i).toString().substring(selected.get(i).toString().lastIndexOf('/')+1));}
+    public String getString(int c){return props(selected.get(i)).getProperty(cols[c]);}public int getInt(int c){return Integer.parseInt(getString(c));}public void close(){}};
   }
  }
  static void cancel(int id)throws Exception{try{Downloads.class.getDeclaredMethod("cancelJob",int.class).invoke(null,id);}catch(NoSuchMethodException old){Downloads.class.getDeclaredField("cancel").getType();@SuppressWarnings("unchecked")Map<Integer,Boolean> flags=(Map<Integer,Boolean>)Downloads.class.getDeclaredField("cancel").get(null);flags.put(id,true);}}

@@ -1,0 +1,1 @@
+package android.widget;public class Toast{public static final int LENGTH_LONG=1;public static Toast makeText(android.content.Context c,String s,int n){throw new UnsupportedOperationException();}public void show(){throw new UnsupportedOperationException();}}
