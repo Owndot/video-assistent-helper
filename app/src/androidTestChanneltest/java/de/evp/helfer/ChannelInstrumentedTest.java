@@ -512,10 +512,15 @@ public class ChannelInstrumentedTest {
     @Test public void packageScreenAndBackupHardening() throws Exception {
         assertEquals("de.evp.helfer.channeltest", ctx.getPackageName());
         assertEquals("allowBackup=false", 0, ctx.getApplicationInfo().flags & ApplicationInfo.FLAG_ALLOW_BACKUP);
-        InstrumentationRegistry.getInstrumentation().runOnMainSync(activity::showCode);
-        waitFor(() -> activity.codeDialog != null && activity.codeDialog.isShowing(), 5000);
-        assertTrue("FLAG_SECURE", (activity.codeDialog.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) != 0);
+        // Frische, sichtbare Activity (die vom Testbeginn ist nach den Dienst-Neustarts nicht mehr im Vordergrund).
+        Instrumentation ins = InstrumentationRegistry.getInstrumentation();
+        MainActivity a = (MainActivity) ins.startActivitySync(new Intent(ctx, MainActivity.class)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP));
+        ins.waitForIdleSync();
+        ins.runOnMainSync(a::showCode);
+        waitFor(() -> a.codeDialog != null && a.codeDialog.isShowing(), 5000);
+        assertTrue("FLAG_SECURE", (a.codeDialog.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) != 0);
         SECRETS.add(HelferService.instance.code);
-        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> activity.codeDialog.dismiss());
+        ins.runOnMainSync(() -> a.codeDialog.dismiss());
     }
 }
