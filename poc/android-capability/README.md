@@ -88,7 +88,7 @@ Nur in diesem Branch: `Limits::sanitized()` und Schleifen-Guards; `import_regist
 
 ## 7. Ergebnisse
 
-Stand nach den Korrekturen: Code-Commit `70dcd826f109830f39b7145a0e9198f3c4820e3d`, CI-Lauf [40649090099](https://github.com/Owndot/video-assistent-helper/actions/runs/40649090099) **success**. Spätere Commits ändern nur Dokumentation und die Gerätesperre in `run-instrumentation.sh` (siehe „Stand“). Frühere Läufe vor den Korrekturen: 40596803035, 40597486902.
+Stand nach den Korrekturen: Code-Commit `70dcd826f109830f39b7145a0e9198f3c4820e3d`, CI-Lauf [40649090099](https://github.com/Owndot/video-assistent-helper/actions/runs/40649090099) **success**; Commit `63314d0b1dc0f2da7264b4602650e40e28d56770` (zusätzlich Gerätesperre in `run-instrumentation.sh` und Dokumentation), CI-Lauf [40650608324](https://github.com/Owndot/video-assistent-helper/actions/runs/40650608324) **success** mit denselben `.so`-Hashes. Messwerte unten aus beiden Läufen. Frühere Läufe vor den Korrekturen: 40596803035, 40597486902.
 
 **Toolchain:** rustc 1.97.0 (2d8144b78 2026-07-07) über `rust-toolchain.toml`, `cargo --locked` mit `Cargo.lock`, NDK 27.2.12479018 (r27c), API-Level 29 für den Linker, 16-KB-Seitenausrichtung, `--remap-path-prefix`, `strip = true`; JDK 17, Gradle 8.9 (Wrapper, Distribution-SHA-256 `d725d707bfabd4dfdc958c624003b3c80accc03f7037b5122c4b1d0ef15cecab`, in CI gegen den veröffentlichten Wert geprüft), AGP 8.5.2, compile/target SDK 34. Build-Host in CI: Linux x86_64.
 
@@ -124,9 +124,9 @@ Instrumentierungstests: Identitäts-Zustandsmaschine (F2); verlorene Identitäts
 | --- | --- |
 | Prozess beim Teststart | Java-Heap 8,3 MiB, Native-Heap 16,3 MiB, PSS 41,2 MiB, RSS 134 MiB |
 | nach 8 MiB Dummy-Transfer | Java-Heap 8,3 MiB, Native-Heap 11,4 MiB, PSS 38,9 MiB, RSS 133 MiB, Spitzen-RSS (VmHWM) 154 MiB |
-| Durchsatz nach F4 | 8 MiB in 137 Records in 2,15 s ≈ **3,7 MiB/s** (vorher 1,5–2,0 MiB/s mit einem atomaren Schreibvorgang je Record; enthält auch das gepufferte Einlesen aus F3). Weiterhin ein HTTP-Request je 60-KiB-Record inkl. byteweiser Musterprüfung im Testprozess – kein Wert für späteres Streaming |
-| F3 Slow-Client | 24 Angreifer, Budget 3 000 ms: alle spätestens nach 3 616 ms getrennt; legitimer Handshake + Ping nach 3 435 ms bedient (24 Versuche im 100-ms-Takt, abgewiesene Versuche während der Last) |
-| R1 | 2 Replays verdrängen einen frischen Handshake in 12 ms; der nächste legitime Handshake gelingt in 60 ms (frühere Läufe 9–33 / 16–42 ms) |
+| Durchsatz nach F4 | 8 MiB in 137 Records in 2,15 s bzw. 3,08 s ≈ **3,7 bzw. 2,6 MiB/s** (vorher 1,5–2,0 MiB/s mit einem atomaren Schreibvorgang je Record; enthält auch das gepufferte Einlesen aus F3). Weiterhin ein HTTP-Request je 60-KiB-Record inkl. byteweiser Musterprüfung im Testprozess – kein Wert für späteres Streaming |
+| F3 Slow-Client | 24 Angreifer, Budget 3 000 ms: alle spätestens nach 3 616 bzw. 3 452 ms getrennt; legitimer Handshake + Ping nach 3 435 bzw. 3 214 ms bedient (24 bzw. 23 Versuche im 100-ms-Takt; die Versuche während der Last werden abgewiesen) |
+| R1 | 2 Replays verdrängen einen frischen Handshake in 12–18 ms; der nächste legitime Handshake gelingt in 36–60 ms (frühere Läufe 9–33 / 16–42 ms) |
 | Keystore-Umhüllungsschlüssel | AES-256-GCM, Sicherheitsstufe 0 = `SECURITY_LEVEL_SOFTWARE` auf dem Emulator (erwartet); auf dem Telefon in der Statusanzeige der App („Schutz: …“) ablesen (TEE = 1, StrongBox = 2) |
 
 Die Messwerte enthalten Test-Runner und Instrumentierung im selben Prozess. Auf dem Gerät werden sie über die Taste „Speicher messen“ bzw. `dumpsys meminfo de.evp.pakepoc.test` erhoben (DEVICE-TEST-GUIDE, Schritt 10).
