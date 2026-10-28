@@ -2,7 +2,7 @@
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const arg=process.argv.slice(2),root=path.resolve(arg.find(x=>!x.startsWith('--'))||process.cwd()),which=(arg.find(x=>x.startsWith('--case='))||'').slice(7);
 const source=fs.readFileSync(path.join(root,'src/080-helper-app.js'),'utf8');
-const a=source.indexOf('  function gmGet('),b=source.indexOf('  // Koppel-Seite',a);assert(a>=0&&b>a);
+const a=source.indexOf('  function gmGet('),b=source.indexOf('  // Beim Wischen nicht jede Bewegung',a);assert(a>=0&&b>a);
 function api(xhr,helper,clock){return new Function('gmXhr','mediaReferrer','helper','baseDomain','hostOf','setTimeout','clearTimeout',source.slice(a,b)+'return {gmGet,proxyLoop};')(()=>xhr,()=>'',helper,x=>x,()=> 'fixture.test',clock?clock.set:setTimeout,clock?clock.clear:clearTimeout);}
 const tick=async()=>{for(let i=0;i<25;i++)await Promise.resolve();};
 async function size(){
@@ -91,13 +91,7 @@ async function queue(){
  {
   const h=harness();try{const signed=h.start(-2);await tick();assert(h.started.includes('http://fixture/-2-0'),'signed job ID was rejected');h.handles[0].finish();await signed;}finally{await h.clean();}
  }
- // Actual helper() upload abort handle, including late completion after cancellation.
- {
-  const start=source.indexOf('  const HELPER ='),end=source.indexOf('  // ---------- Laden über den Browser',start),time=clock();let options,aborted=0;
-  const helper=new Function('CONFIG','gmXhr','GM_getValue','setTimeout','clearTimeout',source.slice(start,end)+'return helper;')({systemHelper:true},()=>o=>{options=o;return {abort(){aborted++;o.onabort();}};},()=> '0123456789abcdef0123456789abcdef',time.set,time.clear);
-  const state={cancelled:false,aborters:new Set()},pending=helper('/push?job=1',60000,new ArrayBuffer(2),null,state);await tick();
-  state.cancelled=true;for(const abort of [...state.aborters])abort();assert.equal(await pending,null);assert.equal(aborted,1);options.onload({status:200,responseText:'{"ok":true}'});assert.equal(state.aborters.size,0);
- }
+ // helper() itself is disabled in the userscript (D2, tests/security/helper_disabled.js); its upload abort handle is gone.
  console.log('PASS: actual rejected-upload/status cancellation drops queued batch, aborts active GET/POST, frees slots exactly once; independent jobs/errors/timeouts/late callbacks settle');
 }
 let finished=false;
