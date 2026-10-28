@@ -7,6 +7,11 @@ def releaseCode = project.findProperty('releaseVersionCode')
 def releaseName = project.findProperty('releaseVersionName')
 def fixtureVersion = project.findProperty('migrationFixtureVersion')
 def fixtureMinSdk = project.findProperty('migrationFixtureMinSdk')
+// Secure channel (Rust core over JNI): libraries built by tools/build-channel-native.sh, never committed.
+def channelJniLibs = project.findProperty('channelJniLibs') ?: "$buildDir/channel-jni/jniLibs"
+def channelJniLibsTest = project.findProperty('channelJniLibsTest') ?: "$buildDir/channel-jni/jniLibs-test"
+// Test variant de.evp.helfer.channeltest only: throwaway key supplied at build time, never committed, never production.
+def channelKeystore = project.findProperty('channelKeystore')
 def debugCode = releaseCode != null ? 1 : (fixtureVersion ?: System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int
 if (releaseCode != null && !(releaseCode.toString() ==~ /[1-9][0-9]{0,9}/ && releaseCode.toString().toLong() <= 2100000000L)) {
     throw new GradleException('Explicit releaseVersionCode must be in 1..2100000000.')
@@ -24,6 +29,18 @@ android {
         versionCode releaseCode != null ? releaseCode.toString().toInteger() : debugCode
         versionName releaseName != null ? releaseName.toString() : '1.0.' + debugCode
     }
+    signingConfigs {
+        channeltest {
+            if (channelKeystore != null) {
+                storeFile file(channelKeystore)
+                storePassword project.findProperty('channelKeystorePass')
+                keyAlias 'helper-channel-throwaway'
+                keyPassword project.findProperty('channelKeystorePass')
+            }
+        }
+    }
+    // Channel instrumentation (androidTestChanneltest) runs against the channeltest variant on request.
+    testBuildType project.hasProperty('channelTests') ? 'channeltest' : 'debug'
     buildTypes {
         release {
             minifyEnabled false
@@ -33,6 +50,22 @@ android {
         debug {
             applicationIdSuffix '.debug'
         }
+        // Separate test package for device and emulator tests of the secure channel; installs next to (never over)
+        // the production app de.evp.helfer. Unsigned unless a throwaway key is supplied.
+        channeltest {
+            initWith debug
+            applicationIdSuffix '.channeltest'
+            versionNameSuffix '-channeltest'
+            signingConfig channelKeystore != null ? signingConfigs.channeltest : null
+            matchingFallbacks = ['debug']
+        }
+    }
+    sourceSets {
+        main { jniLibs.srcDirs = [channelJniLibs] }
+        androidTestChanneltest { jniLibs.srcDirs = [channelJniLibsTest] }
+    }
+    packaging {
+        jniLibs { useLegacyPackaging false }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -57,6 +90,20 @@ def verifyReleaseInputs = tasks.register('verifyReleaseInputs') {
 }
 tasks.configureEach {
     if (name != 'verifyReleaseInputs' && name.contains('Release')) dependsOn verifyReleaseInputs
+}
+
+// The channel test variant must carry the channel library for both ABIs (no APK without the secure channel).
+def verifyChannelLibs = tasks.register('verifyChannelLibs') {
+    doLast {
+        ['arm64-v8a', 'x86_64'].each { abi ->
+            if (!file("$channelJniLibs/$abi/libkadri_pairing_poc.so").isFile()) {
+                throw new GradleException("Channel library missing for $abi: run tools/build-channel-native.sh first.")
+            }
+        }
+    }
+}
+tasks.configureEach {
+    if (name.startsWith('pre') && name.contains('Channeltest')) dependsOn verifyChannelLibs
 }
 
 // Instrumentation only; debug and disposable fixtures retain their existing separation.

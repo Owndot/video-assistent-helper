@@ -16,5 +16,7 @@ final class MainActivity {} // Only the notification's Intent class literal; nev
 JAVA
 src=app/src/main/java/de/evp/helfer
 javac -cp "$sdk:tests/java/classes" -d "$work/classes" \
-  "$src/Downloads.java" "$src/HelferService.java" "$src/Keys.java" "$work/R.java" "$work/MainActivity.java"
-echo "PASS: actual Downloads/HelferService/Keys compile against $sdk; no APK built"
+  "$src/Downloads.java" "$src/HelferService.java" "$src/Keys.java" "$work/R.java" "$work/MainActivity.java" \
+  app/src/main/java/poc/Core.java "$src/ChannelServer.java" "$src/ControlCommands.java" "$src/HttpRequestReader.java" \
+  "$src/SnapshotWriter.java" "$src/IdentityStore.java" "$src/RegistryStore.java"
+echo "PASS: actual Downloads/HelferService/Keys and channel classes compile against $sdk; no APK built"

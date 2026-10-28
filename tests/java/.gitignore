@@ -6,3 +6,5 @@ src.mp4
 src.webm
 *.log
 gm_log.txt
+lifecycle-classes/
+channel/build/

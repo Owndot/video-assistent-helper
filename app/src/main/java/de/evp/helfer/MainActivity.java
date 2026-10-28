@@ -67,6 +67,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         Keys.applyLang(this);
+        Keys.dropLegacyKey(this);
         sv = new ScrollView(this);
         sv.setFillViewport(true);
         palette();
@@ -104,7 +105,9 @@ public class MainActivity extends Activity {
         boolean bat = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
         boolean needNotif = Build.VERSION.SDK_INT >= 33;
         boolean notif = !needNotif || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
-        boolean paired = Keys.paired(this);
+        HelferService svc = HelferService.instance;
+        boolean paired = false;
+        if (svc != null) for (HelferService.Registration r : svc.registrations()) paired |= r.confirmed;
         boolean on = HelferService.running;
 
         // Kopf: Symbol, Name, Status, Start/Stopp
@@ -163,12 +166,14 @@ public class MainActivity extends Activity {
                 Tr.t("Android verlangt für Hintergrund-Helfer eine stille Benachrichtigung. Du kannst sie danach in den Android-Einstellungen ausblenden.",
                      "Android requires a silent notification for background helpers. You can hide it afterwards in the Android settings."),
                 Tr.t("Erlauben", "Allow"), v -> requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1), null);
-        step(needNotif ? 4 : 3, Tr.t("Mit dem Browser verbinden", "Connect to the browser"), paired, Tr.t("Verbunden", "Connected"),
-                Tr.t("Öffnet eine kleine Seite im Browser mit Violentmonkey. Das Skript merkt sich dort den geheimen Schlüssel dieser App – danach kann nur dein Skript den Helper benutzen.",
-                     "Opens a small page in the browser with Violentmonkey. The script remembers this app's secret key there – afterwards only your script can use the helper."),
-                Tr.t("Verbinden", "Connect"), v -> pair(),
-                // erledigt: weiteren Browser verbinden (z. B. Firefox) · lange drücken = neuer Schlüssel
-                pill(Tr.t("Weiterer Browser", "Another browser"), false, v -> pair()));
+        step(needNotif ? 4 : 3, Tr.t("Mit Kadri koppeln", "Pair with Kadri"), paired, Tr.t("Gekoppelt (verschlüsselt)", "Paired (encrypted)"),
+                Tr.t("Zeigt einen 8-stelligen Code (2 Minuten gültig, ein Versuch). Gib ihn in Kadri unter Einstellungen → „Helfer koppeln“ ein. "
+                        + "Danach ist die Verbindung verschlüsselt, und der Helper nimmt nur gekoppelte Browser an.",
+                     "Shows an 8-digit code (valid for 2 minutes, one attempt). Enter it in Kadri under Settings → “Pair helper”. "
+                        + "The connection is then encrypted and the helper only accepts paired browsers."),
+                Tr.t("Code anzeigen", "Show code"), v -> showCode(),
+                // erledigt: Browser verwalten (weiteren koppeln, einzeln trennen) · lange drücken = Identität zurücksetzen
+                pill(Tr.t("Browser verwalten", "Manage browsers"), false, v -> manageBrowsers()));
 
         // Einstellungen
         LinearLayout set = card();
@@ -217,17 +222,17 @@ public class MainActivity extends Activity {
             Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("text/*").addCategory(Intent.CATEGORY_OPENABLE);
             startActivityForResult(i,1002);
         }));
-        set.addView(text(Tr.t("Die Datei enthält Sprache, Design und Autostart. Nach einer Neuinstallation den Browser erneut verbinden.",
+        set.addView(text(Tr.t("Die Datei enthält Sprache, Design und Autostart. Nach einer Neuinstallation den Browser erneut koppeln.",
             "The file contains language, theme and autostart. Pair the browser again after reinstalling."),13,false,SUB));
         addCard(set);
 
         // Hinweis unten
-        TextView foot = text(Tr.t("Im Userscript ist nichts einzustellen: Sobald der Helper läuft, steuern die Wischgesten links (Helligkeit) und rechts (Lautstärke) das Handy selbst. "
-                        + "Läuft er nicht, regelt der Player wie bisher nur das Video.\n\nDownloads: Der Knopf ⬇ im Player schickt Videos hierher – Dateien über Androids Download-Manager, "
-                        + "Streams werden Stück für Stück geladen und zu MP4 zusammengesetzt. Gespeichert in Download/Video-Assistent.",
-                "Nothing to set up in the userscript: as soon as the helper runs, swiping on the left (brightness) and right (volume) controls the phone itself. "
-                        + "If it doesn't run, the player only adjusts the video as before.\n\nDownloads: the ⬇ button in the player sends videos here – files via Android's download manager, "
-                        + "streams are loaded piece by piece and joined into an MP4. Saved in Download/Video-Assistent."), 13, false, SUB);
+        TextView foot = text(Tr.t("Sobald der Helper läuft und gekoppelt ist, steuern die Wischgesten im Kadri-Player links (Helligkeit) und rechts (Lautstärke) das Handy selbst. "
+                        + "Läuft er nicht, regelt der Player wie bisher nur das Video.\n\nDownloads über den Helper sind in dieser Testversion vorübergehend aus; "
+                        + "die Download-Wege des Browsers im Player bleiben.",
+                "As soon as the helper runs and is paired, swiping in the Kadri player on the left (brightness) and right (volume) controls the phone itself. "
+                        + "If it doesn't run, the player only adjusts the video as before.\n\nDownloads via the helper are temporarily off in this test version; "
+                        + "the browser's download options in the player remain."), 13, false, SUB);
         foot.setAlpha(0.8f);
         foot.setPadding(dp(4), dp(10), dp(4), 0);
         root.addView(foot);
@@ -258,13 +263,8 @@ public class MainActivity extends Activity {
             c.addView(d);
             c.addView(pill(btn, true, act), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
-        if (extra != null) {   // Verbinden-Karte: lange drücken = neuer Schlüssel
-            c.setOnLongClickListener(v -> {
-                Keys.reset(this);
-                Toast.makeText(this, Tr.t("Neuer Schlüssel – bitte neu verbinden", "New key – please connect again"), Toast.LENGTH_LONG).show();
-                build();
-                return true;
-            });
+        if (extra != null) {   // Kopplungs-Karte: lange drücken = Helper-Identität zurücksetzen (mit Rückfrage)
+            c.setOnLongClickListener(v -> { confirmResetIdentity(); return true; });
         }
         addCard(c);
     }
@@ -289,25 +289,109 @@ public class MainActivity extends Activity {
         return s;
     }
 
-    private void pair() {
-        if (!HelferService.running) HelferService.start(this);
-        pairWhenReady(0);
-    }
-
-    private void pairWhenReady(int attempt) {
-        if (!HelferService.running) {
+    // ---------- Kopplung (sicherer Kanal) ----------
+    /** Dienst starten (falls nötig) und warten, bis der Kanal bereit ist; dann act ausführen. */
+    private void whenReady(int attempt, Runnable act) {
+        if (attempt == 0 && !HelferService.running) HelferService.start(this);
+        if (HelferService.instance == null) {
             if (HelferService.startupError != null || attempt >= 20) {
                 Toast.makeText(this, HelferService.startupError != null ? HelferService.startupError :
                     Tr.t("Helper nicht bereit. Bitte erneut starten.", "Helper not ready. Please restart."), Toast.LENGTH_LONG).show();
                 build();
                 return;
             }
-            root.postDelayed(() -> pairWhenReady(attempt + 1), 100);
+            root.postDelayed(() -> whenReady(attempt + 1, act), 100);
             return;
         }
-        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:" + HelferService.PORT + "/pair#" + Keys.key(this)));
-        i.addCategory(Intent.CATEGORY_BROWSABLE);
-        try { startActivity(Intent.createChooser(i, Tr.t("Browser mit Violentmonkey wählen", "Choose the browser with Violentmonkey"))); } catch (Exception e) { startActivity(i); }
+        act.run();
+    }
+
+    android.app.AlertDialog codeDialog;   // offenes Code-Fenster (ein neuer Code ersetzt es)
+
+    /** Kopplungscode groß anzeigen; das Fenster ist vor Bildschirmfotos und der App-Übersicht geschützt. */
+    void showCode() {
+        whenReady(0, () -> {
+            HelferService svc = HelferService.instance;
+            String code = svc == null ? null : svc.openPairingWindow();
+            if (code == null) { Toast.makeText(this, Tr.t("Kanal nicht bereit.", "Channel not ready."), Toast.LENGTH_LONG).show(); return; }
+            TextView big = text(code.substring(0, 4) + " " + code.substring(4), 40, true, TXT);
+            big.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+            big.setGravity(Gravity.CENTER);
+            TextView left = text("", 14, false, SUB);
+            left.setGravity(Gravity.CENTER);
+            LinearLayout box = col();
+            box.setPadding(dp(20), dp(16), dp(20), dp(8));
+            box.addView(big);
+            box.addView(left);
+            box.addView(text(Tr.t("In Kadri: Einstellungen → „Helfer koppeln“ → Code eingeben.", "In Kadri: Settings → “Pair helper” → enter the code."), 14, false, SUB));
+            android.app.AlertDialog d = new android.app.AlertDialog.Builder(this)
+                .setTitle(Tr.t("Kopplungscode", "Pairing code")).setView(box)
+                .setPositiveButton(Tr.t("Fertig", "Done"), (x, y) -> build()).create();
+            d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+            if (codeDialog != null) codeDialog.dismiss();
+            codeDialog = d;
+            Runnable tick = new Runnable() {
+                @Override public void run() {
+                    long s = (svc.codeExpiresAt - android.os.SystemClock.elapsedRealtime()) / 1000;
+                    if (!d.isShowing()) return;
+                    if (s <= 0) { big.setText("— —"); left.setText(Tr.t("Abgelaufen – bei Bedarf neuen Code anzeigen.", "Expired – show a new code if needed.")); return; }
+                    left.setText(Tr.t("noch " + s + " s gültig", "valid for " + s + " s"));
+                    root.postDelayed(this, 1000);
+                }
+            };
+            d.show();
+            tick.run();
+        });
+    }
+
+    /** Gekoppelte Browser: einzeln trennen, alle trennen oder einen weiteren koppeln. */
+    private void manageBrowsers() {
+        whenReady(0, () -> {
+            HelferService svc = HelferService.instance;
+            if (svc == null) return;
+            java.util.List<HelferService.Registration> regs = svc.registrations();
+            LinearLayout box = col();
+            box.setPadding(dp(20), dp(12), dp(20), dp(4));
+            if (regs.isEmpty()) box.addView(text(Tr.t("Kein Browser gekoppelt.", "No browser paired."), 15, false, SUB));
+            android.app.AlertDialog[] dlg = new android.app.AlertDialog[1];
+            for (HelferService.Registration r : regs) {
+                LinearLayout line = row();
+                line.setPadding(0, dp(6), 0, dp(6));
+                line.addView(text(Tr.t("Browser ", "Browser ") + r.shortId() + (r.confirmed ? "" : Tr.t("  (Kopplung noch nicht bestätigt)", "  (pairing not yet confirmed)")), 15, false, TXT),
+                    new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                line.addView(pill(Tr.t("Trennen", "Disconnect"), false, v -> {
+                    boolean ok = svc.revoke(r.id);
+                    Toast.makeText(this, ok ? Tr.t("Getrennt – dieser Browser muss neu koppeln.", "Disconnected – this browser must pair again.")
+                        : Tr.t("Trennen fehlgeschlagen.", "Disconnect failed."), Toast.LENGTH_LONG).show();
+                    if (dlg[0] != null) dlg[0].dismiss();
+                    build();
+                }));
+                box.addView(line);
+            }
+            dlg[0] = new android.app.AlertDialog.Builder(this)
+                .setTitle(Tr.t("Gekoppelte Browser", "Paired browsers")).setView(box)
+                .setPositiveButton(Tr.t("Weiteren koppeln", "Pair another"), (x, y) -> showCode())
+                .setNeutralButton(Tr.t("Alle trennen", "Disconnect all"), (x, y) -> {
+                    boolean ok = svc.revoke(null);
+                    Toast.makeText(this, ok ? Tr.t("Alle Browser getrennt.", "All browsers disconnected.") : Tr.t("Trennen fehlgeschlagen.", "Disconnect failed."), Toast.LENGTH_LONG).show();
+                    build();
+                })
+                .setNegativeButton(Tr.t("Schließen", "Close"), null).create();
+            dlg[0].show();
+        });
+    }
+
+    private void confirmResetIdentity() {
+        new android.app.AlertDialog.Builder(this)
+            .setMessage(Tr.t("Neue Helper-Identität erzeugen und alle Kopplungen löschen? Alle Browser müssen danach neu koppeln.",
+                "Create a new helper identity and delete all pairings? All browsers must pair again afterwards."))
+            .setPositiveButton(Tr.t("Zurücksetzen", "Reset"), (d, w) -> whenReady(0, () -> {
+                HelferService svc = HelferService.instance;
+                String problem = svc == null ? Tr.t("Helper nicht bereit.", "Helper not ready.") : svc.resetIdentity();
+                Toast.makeText(this, problem == null ? Tr.t("Identität zurückgesetzt – bitte neu koppeln.", "Identity reset – please pair again.") : problem, Toast.LENGTH_LONG).show();
+                build();
+            }))
+            .setNegativeButton(Tr.t("Abbrechen", "Cancel"), null).show();
     }
 
     @Override
