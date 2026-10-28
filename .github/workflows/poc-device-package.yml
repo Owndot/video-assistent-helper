@@ -1,0 +1,139 @@
+name: PoC device package (isolated test app only, upload gated)
+
+# Builds ONLY the isolated test app de.evp.pakepoc.test from the reviewed helper
+# commit below, signs it with a throwaway key generated in this job (deleted
+# after the build), verifies package, signer and native libraries, runs the
+# instrumentation tests against exactly these APKs on a disposable emulator and
+# prints SHA-256 hashes.
+#
+# The repository is PUBLIC: any GitHub artifact of this workflow could be
+# downloaded by others. The APK is therefore uploaded only if the owner has
+# approved it by committing poc/android-capability/DEVICE-ARTIFACTS-APPROVED
+# (see that file's rules in DEVICE-PACKAGE.md). Without it, nothing installable
+# leaves the runner. Never builds or signs de.evp.helfer. No release, no tag.
+on:
+  push:
+    branches: [feature/helper-channel-dummy]
+    paths: ['.github/workflows/poc-device-package.yml', 'poc/android-capability/DEVICE-ARTIFACTS-APPROVED']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: poc-device-package
+  cancel-in-progress: true
+
+env:
+  # Reviewed helper commit (independent review of Kadri PR #7, decision A).
+  PINNED: 15fed6d52b6b4b7de6658910ac2d71e9be10e519
+  NDK_VERSION: 27.2.12479018
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PINNED }}
+          path: pinned
+          persist-credentials: false
+      - name: Pinned sources are the reviewed commit and contain no production app change
+        run: |
+          set -euo pipefail
+          test "$(git -C pinned rev-parse HEAD)" = "$PINNED"
+          grep -q '"status": "UNAPPROVED"' pinned/release/production-policy.json
+          echo "production policy: UNAPPROVED"
+      - uses: gradle/actions/wrapper-validation@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Pinned toolchains (Rust from rust-toolchain.toml, NDK r27c, SDK 34, build-tools 34.0.0)
+        run: |
+          set -euo pipefail
+          (cd pinned/poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "platforms;android-34" "build-tools;34.0.0" < <(yes 2>/dev/null) > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Build native libraries and test APKs from the pinned commit (throwaway signer)
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/out"
+          bash pinned/poc/android-capability/tools/build-native.sh "$OUT"
+          bash pinned/poc/android-capability/tools/build-apk.sh "$OUT"
+      - name: Verify package, signer and native libraries
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/out"; APK="$OUT/apk/pake-poc-testapp.apk"; BT="$ANDROID_HOME/build-tools/34.0.0"
+          badging="$("$BT/aapt2" dump badging "$APK")"
+          echo "$badging" | grep -E "^package:|sdkVersion|targetSdkVersion|native-code"
+          echo "$badging" | grep -q "^package: name='de.evp.pakepoc.test'" || { echo "wrong package"; exit 1; }
+          if "$BT/aapt2" dump badging "$APK" | grep -q "de.evp.helfer"; then echo "production package name found"; exit 1; fi
+          echo "$badging" | grep -q "native-code: 'arm64-v8a' 'x86_64'" || { echo "unexpected ABIs"; exit 1; }
+          certs="$("$BT/apksigner" verify --verbose --print-certs "$APK")"
+          echo "$certs" | grep -E "Verified using|Signer #|Number of signers"
+          test "$(echo "$certs" | grep -c '^Signer #[0-9]* certificate DN')" = 1
+          echo "$certs" | grep -q "Signer #1 certificate DN: CN=PAKE PoC TEST ONLY - throwaway" || { echo "not the throwaway signer"; exit 1; }
+          # The key exists only in this job (build-apk.sh deletes it); its certificate is valid for 3 days.
+          "$BT/apksigner" verify --print-certs-pem "$APK" | sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' > "$RUNNER_TEMP/cert.pem"
+          keytool -printcert -file "$RUNNER_TEMP/cert.pem" | grep -E "Owner:|Valid from"
+          python3 - "$RUNNER_TEMP/cert.pem" <<'PY'
+          import subprocess, sys, datetime
+          out = subprocess.check_output(["openssl", "x509", "-in", sys.argv[1], "-noout", "-startdate", "-enddate"], text=True)
+          d = dict(l.split("=", 1) for l in out.strip().splitlines())
+          f = "%b %d %H:%M:%S %Y %Z"
+          days = (datetime.datetime.strptime(d["notAfter"], f) - datetime.datetime.strptime(d["notBefore"], f)).days
+          print("certificate validity days:", days)
+          assert days <= 3, "not a throwaway certificate"
+          PY
+          libs="$(unzip -Z1 "$APK" | grep '^lib/' | sort)"
+          echo "$libs"
+          test "$libs" = "$(printf 'lib/arm64-v8a/libkadri_pairing_poc.so\nlib/x86_64/libkadri_pairing_poc.so')"
+          TC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          for abi in arm64-v8a x86_64; do
+            unzip -p "$APK" "lib/$abi/libkadri_pairing_poc.so" > "$RUNNER_TEMP/$abi.so"
+            machine="$("$TC/llvm-readelf" -h "$RUNNER_TEMP/$abi.so" | sed -n 's/^ *Machine: *//p')"
+            echo "$abi: $machine"
+            case "$abi:$machine" in arm64-v8a:AArch64|x86_64:*X86-64*) ;; *) echo "architecture mismatch"; exit 1 ;; esac
+            if "$TC/llvm-nm" -D --defined-only "$RUNNER_TEMP/$abi.so" | grep -q Java_poc_TestInitiator_; then echo "test initiator in app library"; exit 1; fi
+          done
+          echo "PASS: de.evp.pakepoc.test, single throwaway signer, arm64-v8a + x86_64 helper library only"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Instrumentation against exactly these APKs (disposable API 34 emulator)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash pinned/poc/android-capability/tools/run-instrumentation.sh "$RUNNER_TEMP/out"
+      - name: SHA-256 of the files
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/out"; mkdir -p "$RUNNER_TEMP/deliver"
+          cp "$OUT/apk/pake-poc-testapp.apk" "$RUNNER_TEMP/deliver/"
+          (cd "$RUNNER_TEMP/deliver" && sha256sum pake-poc-testapp.apk > SHA256SUMS)
+          (cd "$OUT" && sha256sum jniLibs/*/*.so) >> "$RUNNER_TEMP/deliver/SHA256SUMS"
+          printf 'helper_commit=%s\nworkflow_run=%s\n' "$PINNED" "${{ github.run_id }}" >> "$RUNNER_TEMP/deliver/SHA256SUMS"
+          cp "$OUT/report/summary.txt" "$RUNNER_TEMP/deliver/instrumentation-summary.txt"
+          cat "$RUNNER_TEMP/deliver/SHA256SUMS" "$RUNNER_TEMP/deliver/instrumentation-summary.txt"
+      - name: Upload is gated
+        if: hashFiles('poc/android-capability/DEVICE-ARTIFACTS-APPROVED') == ''
+        run: |
+          echo "Not uploaded: no owner approval (poc/android-capability/DEVICE-ARTIFACTS-APPROVED). Nothing installable leaves the runner."
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('poc/android-capability/DEVICE-ARTIFACTS-APPROVED') != ''
+        with:
+          name: pake-poc-testapp-${{ github.run_id }}
+          path: ${{ runner.temp }}/deliver
+          retention-days: 1
+          if-no-files-found: error
