@@ -363,7 +363,8 @@ jobs:
         id: debug_artifact_verified
         run: bash .github/scripts/verify-debug-artifact.sh
       - uses: actions/upload-artifact@v4
-        if: success() && steps.debug_artifact_verified.outcome == 'success'
+        # Kanal-Integrationszweig: keine installierbare APK veröffentlichen (Freigabe des Eigentümers fehlt).
+        if: success() && steps.debug_artifact_verified.outcome == 'success' && github.head_ref != 'feature/helper-channel-control'
         with:
           name: helper-debug-NOT-production
           path: |
@@ -443,8 +444,10 @@ jobs:
           if node tests/security/helper_repair_check.js /tmp/helper-old > /tmp/old-key.log 2>&1; then echo 'Baseline unexpectedly recovered'; exit 1; fi
           grep -q 'userscript kept stale key' /tmp/old-key.log
           echo 'PASS: unchanged main reproduces stale-key failure'
-      - name: Current Helper key regression tests
-        run: node tests/security/helper_repair_check.js
+      # Der alte Schlüssel-Client des Userscripts ist entfernt (D2: Helfer-Funktionen aus, bis der sichere Kanal da ist);
+      # helper_repair_check.js bleibt nur als Nachweis für den historischen Zweig oben.
+      - name: Userscript helper disabled (no legacy port, no key, no pairing page)
+        run: node tests/security/helper_disabled.js
       - name: PiP/background and overlapping cleanup regression
         run: node --expose-gc tests/security/pip_lifecycle.js
       - name: Prove the unchanged stable defects
