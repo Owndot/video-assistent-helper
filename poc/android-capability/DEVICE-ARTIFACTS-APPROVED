@@ -1,8 +1,7 @@
-# VORLAGE – noch KEINE Freigabe. Erst nach ausdrücklicher Bestätigung des Eigentümers umbenennen in
-# poc/android-capability/DEVICE-ARTIFACTS-APPROVED (git mv) und committen; das löst einen Lauf mit Upload aus.
-# Nach dem Herunterladen die Datei wieder entfernen (Commit), damit spätere Läufe nichts hochladen.
+# FREIGABE durch den Eigentümer (ausdrücklich im Auftrag vom 2026-10-28 erteilt).
+# Nach dem Herunterladen wieder entfernen (Commit), damit spätere Läufe nichts hochladen.
 approved_by: Owndot (Eigentümer)
-approved_on: <Datum der Bestätigung>
+approved_on: 2026-10-28
 option: B – öffentliches GitHub-Actions-Artefakt, Aufbewahrung 1 Tag
 scope: nur pake-poc-testapp.apk (de.evp.pakepoc.test, Wegwerf-Signierer), SHA256SUMS, Testzusammenfassung
 purpose: isolierter Dummy-Gerätetest, Samsung Galaxy S26 Ultra
