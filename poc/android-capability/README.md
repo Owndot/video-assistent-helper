@@ -110,7 +110,7 @@ Die Hashes der App-Bibliothek haben sich gegenüber dem ersten Bericht geändert
 | Ebene | Ergebnis |
 | --- | --- |
 | Rust-Kern (`cargo test --locked`) | 39/39 (lokal und CI) |
-| Kern-Mutationsprobe (`poc/pake-channel/tools/mutation_check.py`) | «MUTATION» |
+| Kern-Mutationsprobe (`poc/pake-channel/tools/mutation_check.py`) | PASS: 43 Mutanten, 39 getötet, 4 begründet akzeptiert (unverändert gegenüber dem ersten Bericht; der Kern wurde für F1–F6 nur im Cargo-Feature geändert) |
 | JVM-Prüfungen (`tools/run-jvm-checks.sh`) | 9/9 (lokal und CI) |
 | Java-Mutationsprobe (`tools/java_mutation_check.py`) | PASS: 10/10 Mutanten erkannt (lokal und CI) |
 | Desktop-Chromium-Vorprüfung der Vivaldi-Testerweiterung (`tools/desktop_check.mjs`) | 16/16 (lokal, Chromium 153) |
