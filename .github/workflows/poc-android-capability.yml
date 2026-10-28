@@ -31,9 +31,26 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # Gradle 8.9 via the checked-in wrapper; its jar is checked against the
+      # published Gradle checksums, the distribution SHA-256 against Gradle's.
+      - uses: gradle/actions/wrapper-validation@v4
+
       - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
+
+      - name: Cross-check pinned Gradle distribution checksum
+        run: |
+          set -euo pipefail
+          props=poc/android-capability/app-project/gradle/wrapper/gradle-wrapper.properties
+          grep -q 'gradle-8.9-bin.zip' "$props"
+          pinned=$(sed -n 's/^distributionSha256Sum=//p' "$props")
+          published=$(curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip.sha256)
+          echo "pinned=$pinned published=$published"
+          test "$pinned" = "$published"
+
+      - name: JVM checks and Java mutation probe (F1, F3, F4)
+        run: |
+          bash poc/android-capability/tools/run-jvm-checks.sh
+          python3 -I poc/android-capability/tools/java_mutation_check.py
 
       - name: Pinned toolchains (Rust from rust-toolchain.toml, NDK r27c, SDK 34)
         run: |
@@ -52,8 +69,8 @@ jobs:
           bash poc/android-capability/tools/build-native.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/native-a.txt"
           mkdir -p "$RUNNER_TEMP/src2" && git archive HEAD | tar -x -C "$RUNNER_TEMP/src2"
           (cd "$RUNNER_TEMP/src2" && bash poc/android-capability/tools/build-native.sh "$RUNNER_TEMP/b") | tee "$RUNNER_TEMP/native-b.txt"
-          (cd "$RUNNER_TEMP/a" && sha256sum jniLibs/*/*.so) > "$RUNNER_TEMP/a.sha"
-          (cd "$RUNNER_TEMP/b" && sha256sum jniLibs/*/*.so) > "$RUNNER_TEMP/b.sha"
+          (cd "$RUNNER_TEMP/a" && sha256sum jniLibs/*/*.so jniLibs-test/*/*.so) > "$RUNNER_TEMP/a.sha"
+          (cd "$RUNNER_TEMP/b" && sha256sum jniLibs/*/*.so jniLibs-test/*/*.so) > "$RUNNER_TEMP/b.sha"
           diff "$RUNNER_TEMP/a.sha" "$RUNNER_TEMP/b.sha"
           echo "REPRODUCIBLE native libraries:"; cat "$RUNNER_TEMP/a.sha"
 

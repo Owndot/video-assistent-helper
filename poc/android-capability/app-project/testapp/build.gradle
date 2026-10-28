@@ -40,6 +40,10 @@ android {
             jniLibs.srcDirs = [project.findProperty('pocJniLibs') ?: "$buildDir/rust-jni"]
             assets.srcDirs = ['../../probe']
         }
+        // Kadri-side test library: instrumentation APK only, never the app.
+        androidTest {
+            jniLibs.srcDirs = [project.findProperty('pocJniLibsTest') ?: "$buildDir/rust-jni-test"]
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

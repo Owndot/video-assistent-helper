@@ -14,7 +14,9 @@ default = []
 wasm = ["dep:wasm-bindgen", "getrandom03/wasm_js", "getrandom04/wasm_js"]
 jni = ["dep:jni"]
 # Android test app instrumentation only (Kadri side over JNI); never in a product.
-jni-test-initiator = ["jni"]
+# Built as its own library (libkadri_pairing_poc_testinit.so) that ships only in
+# the instrumentation APK, so the installable test app does not contain it.
+jni-test-initiator = ["dep:jni"]
 
 # Exact pins: this PoC evaluates these specific releases, nothing newer.
 [dependencies]

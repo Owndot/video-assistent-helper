@@ -1,7 +1,5 @@
 package de.evp.pakepoc;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -33,24 +31,29 @@ import poc.Core;
  * Rogue mode simulates a foreign listener on the same port for a manual
  * device test: it records sizes and plaintext hits, forges replies, and
  * holds only an ephemeral identity.
+ *
+ * The Rust host is process-global. {@link #coreOwner} names the server whose
+ * host is currently loaded; a request still running on a stopped or replaced
+ * server is refused before it touches the core (e.g. a late rogue request
+ * must not open a pairing window on the genuine host).
  */
 final class PocServer {
     interface Host {
         long now();
         void event(String line);
-        void persist();
+        /** Durably saves registry changes made by {@code from}; throws if that failed. */
+        void persist(PocServer from) throws Exception;
     }
 
     static final int PORT = 47899;
     static final int PROBE_PORT = 47900;
-    static final int MAX_BODY = 65535 + 21;
-    static final int MAX_HEADER = 8 * 1024;
     static final long PAIR_TTL_MS = 120_000;
     static final Pattern EXT_ORIGIN = Pattern.compile("(chrome-extension|moz-extension)://[a-z0-9-]{1,64}");
     static final Object CORE = new Object();   // the Rust host is process-global
+    static PocServer coreOwner;                 // guarded by CORE
 
     private final Host host;
-    private final boolean rogue;
+    final boolean rogue;
     private final byte[] probeHtml;
     private final ThreadPoolExecutor pool = new ThreadPoolExecutor(4, 4, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(16));
     private ServerSocket server, probe;
@@ -88,7 +91,8 @@ final class PocServer {
             while (!ss.isClosed()) {
                 try {
                     Socket s = ss.accept();
-                    try { pool.execute(() -> handle(s, isProbe)); }
+                    long acceptedAt = host.now();   // the read budget starts here, not when a worker is free
+                    try { pool.execute(() -> handle(s, isProbe, acceptedAt)); }
                     catch (RejectedExecutionException full) { close(s); }
                 } catch (Exception closed) { return; }
             }
@@ -107,49 +111,9 @@ final class PocServer {
 
     // ------------------------------------------------------------ HTTP
 
-    private static final class Req {
-        String method, path;
-        final Map<String, String> headers = new HashMap<>();
-        byte[] body = new byte[0];
-    }
-
-    private static Req read(InputStream in) throws Exception {
-        ByteArrayOutputStream hb = new ByteArrayOutputStream(512);
-        int b, last4 = 0;
-        while (last4 != 0x0d0a0d0a) {   // "\r\n\r\n"
-            if ((b = in.read()) < 0) throw new SecurityException("Truncated");
-            hb.write(b);
-            if (hb.size() > MAX_HEADER) throw new SecurityException("HeaderTooLarge");
-            last4 = (last4 << 8) | b;
-        }
-        String[] lines = hb.toString(StandardCharsets.ISO_8859_1.name()).split("\r\n");
-        String[] first = lines[0].split(" ");
-        if (first.length != 3) throw new SecurityException("RequestLine");
-        Req r = new Req();
-        r.method = first[0];
-        r.path = first[1];
-        for (int i = 1; i < lines.length; i++) {
-            int c = lines[i].indexOf(':');
-            if (c <= 0) continue;
-            String k = lines[i].substring(0, c).trim().toLowerCase(Locale.ROOT);
-            if (r.headers.containsKey(k)) throw new SecurityException("DuplicateHeader");
-            r.headers.put(k, lines[i].substring(c + 1).trim());
-        }
-        if (r.headers.containsKey("transfer-encoding")) throw new SecurityException("Framing");
-        if ("POST".equals(r.method)) {
-            String cl = r.headers.get("content-length");
-            if (cl == null || !cl.matches("[0-9]{1,6}")) throw new SecurityException("Framing");
-            int n = Integer.parseInt(cl);
-            if (n > MAX_BODY) throw new SecurityException("TooLarge");
-            r.body = new byte[n];
-            int at = 0;
-            while (at < n) {
-                int k = in.read(r.body, at, n - at);
-                if (k < 0) throw new SecurityException("Truncated");
-                at += k;
-            }
-        }
-        return r;
+    /** Must be called with CORE held. */
+    private void owned() {
+        if (coreOwner != this) throw new SecurityException("StaleServer");
     }
 
     private static void reply(Socket s, int code, String type, byte[] body) throws Exception {
@@ -165,7 +129,7 @@ final class PocServer {
     }
 
     /** Browser-facing gate: DoS guard against web pages, NOT authentication. */
-    private String gate(Req r) {
+    private String gate(HttpRequestReader.Req r) {
         if ("OPTIONS".equals(r.method)) return "preflight";
         if (!"POST".equals(r.method)) return "method";
         if (!("127.0.0.1:" + PORT).equals(r.headers.get("host"))) return "host";
@@ -176,12 +140,11 @@ final class PocServer {
         return null;
     }
 
-    private void handle(Socket s, boolean isProbe) {
+    private void handle(Socket s, boolean isProbe, long acceptedAt) {
         String path = "?";
         try {
-            s.setSoTimeout(10_000);
             s.setTcpNoDelay(true);   // avoid Nagle/delayed-ACK stalls on small replies
-            Req r = read(s.getInputStream());
+            HttpRequestReader.Req r = HttpRequestReader.read(s, acceptedAt, host::now);
             path = r.path;
             if (isProbe) {
                 boolean ok = "GET".equals(r.method) && "/kadri-poc-probe.html".equals(r.path);
@@ -214,28 +177,34 @@ final class PocServer {
         return sb.toString();
     }
 
-    private byte[] route(String path, byte[] body) {
+    /**
+     * Every route persists before it replies: a new pending registration
+     * (M2), a first confirmation or retirement (record) or an expiry is on
+     * disk before the client learns of it. The writer skips unchanged state.
+     */
+    private byte[] route(String path, byte[] body) throws Exception {
         long now = host.now();
         switch (path) {
             case "/p1/pair/m0":
-                synchronized (CORE) { return Core.windowOnM0(body, now); }
+                synchronized (CORE) { owned(); return Core.windowOnM0(body, now); }
             case "/p1/pair/m2": {
                 byte[] r;
-                synchronized (CORE) { r = Core.windowOnM2(body, now); }
-                host.persist();
+                synchronized (CORE) { owned(); r = Core.windowOnM2(body, now); }
+                host.persist(this);   // no M3 (and so no pin on the Kadri side) unless saved
                 host.event("PAIRED_PENDING reg=" + hex8(r, 0) + "…");
                 return Arrays.copyOfRange(r, 16, r.length);
             }
             case "/p1/ch/hs": {
                 byte[] hs2;
-                synchronized (CORE) { hs2 = Core.hostHandshake(body, now); }
+                synchronized (CORE) { owned(); hs2 = Core.hostHandshake(body, now); }
+                host.persist(this);
                 host.event("HS_HALF_OPEN reg=" + hex8(body, 5) + "…");
                 return hs2;
             }
             case "/p1/ch/rec": {
                 byte[] r;
-                synchronized (CORE) { r = Core.hostOpen(body, now); }
-                host.persist();
+                synchronized (CORE) { owned(); r = Core.hostOpen(body, now); }
+                host.persist(this);
                 byte[] sid = Arrays.copyOfRange(r, 0, 16);
                 return dispatch(sid, new String(r, 17, r.length - 17, StandardCharsets.UTF_8), now);
             }
@@ -253,6 +222,7 @@ final class PocServer {
     private byte[] dispatch(byte[] sid, String json, long now) {
         String op = field(json, "op");
         synchronized (CORE) {
+            owned();
             if ("ping".equals(op)) {
                 host.event("REC op=ping");
                 return Core.hostSealControl(sid, "{\"ok\":true,\"helper\":\"android-test-app\"}".getBytes(StandardCharsets.UTF_8), now);
@@ -276,7 +246,7 @@ final class PocServer {
 
     private static final String[] PLAINTEXT_MARKERS = {"\"op\"", "ping", "dummy", "X-EVP-Key"};
 
-    private void rogue(Socket s, Req r) throws Exception {
+    private void rogue(Socket s, HttpRequestReader.Req r) throws Exception {
         synchronized (rogueSeen) { rogueSeen.merge(r.method + " " + r.path, 1, Integer::sum); }
         String text = new String(r.body, StandardCharsets.ISO_8859_1) + r.headers.toString();
         for (String m : PLAINTEXT_MARKERS) if (text.contains(m)) roguePlaintextHits++;
@@ -287,7 +257,7 @@ final class PocServer {
         byte[] out;
         switch (r.path) {
             case "/p1/pair/m0":   // play the helper role with a guessed code
-                synchronized (CORE) { Core.windowOpen("00000000", now, PAIR_TTL_MS); out = Core.windowOnM0(r.body, now); }
+                synchronized (CORE) { owned(); Core.windowOpen("00000000", now, PAIR_TTL_MS); out = Core.windowOnM0(r.body, now); }
                 break;
             case "/p1/pair/m2":   // cannot verify cA; forge cB
                 out = new byte[53];

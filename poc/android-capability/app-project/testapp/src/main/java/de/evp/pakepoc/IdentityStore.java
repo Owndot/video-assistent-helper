@@ -31,10 +31,21 @@ import poc.Core;
  *
  * File: {@code identity.v1} = "KPI1" | iv(12) | ciphertext(64 + 16 tag), written
  * atomically. GCM AAD binds the format version and the package name.
- * Failures are explicit states; nothing is regenerated silently.
+ *
+ * States (review F2); nothing is regenerated or deleted implicitly:
+ * <pre>
+ *  file    | Keystore key | result
+ *  missing | missing      | CREATED (new identity) – only if the caller allows a first start
+ *  missing | missing      | ERROR_INCONSISTENT     – if it does not (registrations exist)
+ *  present | present      | OK (GCM authenticated) or ERROR_CORRUPT
+ *  present | missing      | ERROR_KEY_MISSING
+ *  missing | present      | ERROR_INCONSISTENT
+ *  bad format / GCM fail  | ERROR_CORRUPT
+ * </pre>
+ * A new identity otherwise only comes from the explicit {@link #reset()}.
  */
 public final class IdentityStore {
-    public enum State { OK, CREATED, ERROR_KEY_MISSING, ERROR_CORRUPT }
+    public enum State { OK, CREATED, ERROR_KEY_MISSING, ERROR_INCONSISTENT, ERROR_CORRUPT }
 
     public static final class Result {
         public final State state;
@@ -76,14 +87,20 @@ public final class IdentityStore {
         return kg.generateKey();
     }
 
-    /** Loads the identity, or creates one if neither file nor key exists. */
-    public synchronized Result load() {
+    /**
+     * Loads the identity. {@code allowFirstStart}: whether a missing file and
+     * missing key may be treated as a first installation (the caller says no
+     * when registrations are stored, because they belong to a lost identity).
+     */
+    public synchronized Result load(boolean allowFirstStart) {
         try {
             SecretKey key = existingKey();
-            if (!file.exists()) {
-                if (key != null) keystore().deleteEntry(alias); // stale key without data: nothing lost
+            boolean present = file.exists() || new File(file.getPath() + ".bak").exists();
+            if (!present && key == null) {
+                if (!allowFirstStart) return new Result(State.ERROR_INCONSISTENT, null, "registrations present but no identity");
                 return create();
             }
+            if (!present) return new Result(State.ERROR_INCONSISTENT, null, "Keystore key present but identity file missing");
             if (key == null) return new Result(State.ERROR_KEY_MISSING, null, "identity file present but Keystore key missing");
             byte[] blob = new AtomicFile(file).readFully();
             if (blob.length != 4 + 12 + 64 + 16 || !Arrays.equals(Arrays.copyOf(blob, 4), MAGIC)) {

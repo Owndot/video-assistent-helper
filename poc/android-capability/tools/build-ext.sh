@@ -3,6 +3,8 @@
 # Output: OUT/ext-vivaldi (folder for "Load unpacked") and OUT/ext-vivaldi.zip.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
+. "$HERE/tools/lib-checks.sh"
+check_rust
 CORE="$HERE/../pake-channel/core"
 OUT="${1:?usage: build-ext.sh OUT}"
 cd "$CORE"
@@ -14,4 +16,4 @@ wasm-bindgen --target web --out-dir "$OUT/wasm-bindgen" target/wasm32-unknown-un
 cp "$OUT"/wasm-bindgen/kadri_pairing_poc.js "$OUT"/wasm-bindgen/kadri_pairing_poc_bg.wasm "$OUT/ext-vivaldi/pkg/"
 cp "$HERE"/ext-vivaldi/* "$OUT/ext-vivaldi/"
 (cd "$OUT/ext-vivaldi" && zip -qr -X "$OUT/ext-vivaldi.zip" .)
-sha256sum "$OUT/ext-vivaldi/pkg/kadri_pairing_poc_bg.wasm" "$OUT/ext-vivaldi.zip" | sed "s#$OUT/##"
+(cd "$OUT" && sha256 ext-vivaldi/pkg/kadri_pairing_poc_bg.wasm)

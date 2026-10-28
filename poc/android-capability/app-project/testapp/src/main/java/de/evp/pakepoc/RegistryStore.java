@@ -4,6 +4,7 @@ import android.util.AtomicFile;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -48,7 +49,13 @@ public final class RegistryStore {
         IdentityStore.writeAtomically(file, bb.array());
     }
 
-    public synchronized void delete() {
+    /** True if a registry file (or AtomicFile's backup of one) is present. */
+    public synchronized boolean exists() {
+        return file.exists() || new File(file.getPath() + ".bak").exists();
+    }
+
+    public synchronized void delete() throws IOException {
         new AtomicFile(file).delete();
+        if (exists()) throw new IOException("registrations file could not be deleted");
     }
 }
