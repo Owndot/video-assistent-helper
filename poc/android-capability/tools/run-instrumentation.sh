@@ -8,6 +8,14 @@ OUT="$(cd "${1:?usage: run-instrumentation.sh OUT}" && pwd)"
 REPORT="$OUT/report"; mkdir -p "$REPORT"
 PKG=de.evp.pakepoc.test
 adb wait-for-device
+# Emulators only. A phone (even the owner's, connected for something else)
+# is refused unless explicitly allowed for a separately approved device test.
+if [ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" != "1" ] && [ "$(adb shell getprop ro.boot.qemu | tr -d '\r')" != "1" ]; then
+  if [ "${POC_ALLOW_REAL_DEVICE:-}" != "yes-separately-approved" ]; then
+    echo "refusing: the connected device is not an emulator (set POC_ALLOW_REAL_DEVICE=yes-separately-approved only after approval)" >&2
+    exit 2
+  fi
+fi
 adb shell getprop ro.build.version.release > "$REPORT/device.txt"
 adb shell getprop ro.build.version.sdk >> "$REPORT/device.txt"
 adb shell getprop ro.product.cpu.abi >> "$REPORT/device.txt"
