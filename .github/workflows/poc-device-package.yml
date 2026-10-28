@@ -6,11 +6,18 @@ name: PoC device package (isolated test app only, upload gated)
 # instrumentation tests against exactly these APKs on a disposable emulator and
 # prints SHA-256 hashes.
 #
+# Integrity (review N2): every action is pinned to a full commit SHA (the SHAs
+# that ran in this repository's earlier green runs). The APK hash is recorded
+# right after the build and verification, the files are made read-only, and
+# after the emulator action the same file is hashed and fully re-verified; any
+# difference aborts the job. SHA256SUMS is written only after that comparison,
+# and the uploaded file is that same file (hash checked again after copying).
+#
 # The repository is PUBLIC: any GitHub artifact of this workflow could be
 # downloaded by others. The APK is therefore uploaded only if the owner has
 # approved it by committing poc/android-capability/DEVICE-ARTIFACTS-APPROVED
-# (see that file's rules in DEVICE-PACKAGE.md). Without it, nothing installable
-# leaves the runner. Never builds or signs de.evp.helfer. No release, no tag.
+# (see DEVICE-PACKAGE.md). Without it, nothing installable leaves the runner.
+# Never builds or signs de.evp.helfer. No release, no tag.
 on:
   push:
     branches: [feature/helper-channel-dummy]
@@ -34,22 +41,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ env.PINNED }}
           path: pinned
           persist-credentials: false
-      - name: Pinned sources are the reviewed commit and contain no production app change
+      - name: Pinned sources are the reviewed commit; production policy UNAPPROVED
         run: |
           set -euo pipefail
           test "$(git -C pinned rev-parse HEAD)" = "$PINNED"
           grep -q '"status": "UNAPPROVED"' pinned/release/production-policy.json
+          grep -q '"status": "UNAPPROVED"' release/production-policy.json
           echo "production policy: UNAPPROVED"
-      - uses: gradle/actions/wrapper-validation@v4
-      - uses: actions/setup-java@v4
+      - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: '17'
@@ -65,41 +73,52 @@ jobs:
           OUT="$RUNNER_TEMP/out"
           bash pinned/poc/android-capability/tools/build-native.sh "$OUT"
           bash pinned/poc/android-capability/tools/build-apk.sh "$OUT"
-      - name: Verify package, signer and native libraries
+      - name: Verification script (used before and after the emulator)
         run: |
           set -euo pipefail
-          OUT="$RUNNER_TEMP/out"; APK="$OUT/apk/pake-poc-testapp.apk"; BT="$ANDROID_HOME/build-tools/34.0.0"
+          cat > "$RUNNER_TEMP/verify-apk.sh" <<'SH'
+          #!/usr/bin/env bash
+          # verify-apk.sh APK -> prints the facts that must stay identical; exits non-zero on any violation.
+          set -euo pipefail
+          APK="$1"; BT="$ANDROID_HOME/build-tools/34.0.0"; TC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
           badging="$("$BT/aapt2" dump badging "$APK")"
-          echo "$badging" | grep -E "^package:|sdkVersion|targetSdkVersion|native-code"
-          echo "$badging" | grep -q "^package: name='de.evp.pakepoc.test'" || { echo "wrong package"; exit 1; }
-          if "$BT/aapt2" dump badging "$APK" | grep -q "de.evp.helfer"; then echo "production package name found"; exit 1; fi
-          echo "$badging" | grep -q "native-code: 'arm64-v8a' 'x86_64'" || { echo "unexpected ABIs"; exit 1; }
+          echo "$badging" | grep -q "^package: name='de.evp.pakepoc.test'" || { echo "wrong package" >&2; exit 1; }
+          if echo "$badging" | grep -q "de.evp.helfer"; then echo "production package name found" >&2; exit 1; fi
+          echo "$badging" | grep -q "native-code: 'arm64-v8a' 'x86_64'" || { echo "unexpected ABIs" >&2; exit 1; }
           certs="$("$BT/apksigner" verify --verbose --print-certs "$APK")"
-          echo "$certs" | grep -E "Verified using|Signer #|Number of signers"
-          test "$(echo "$certs" | grep -c '^Signer #[0-9]* certificate DN')" = 1
-          echo "$certs" | grep -q "Signer #1 certificate DN: CN=PAKE PoC TEST ONLY - throwaway" || { echo "not the throwaway signer"; exit 1; }
-          # The key exists only in this job (build-apk.sh deletes it); its certificate is valid for 3 days.
-          "$BT/apksigner" verify --print-certs-pem "$APK" | sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' > "$RUNNER_TEMP/cert.pem"
-          keytool -printcert -file "$RUNNER_TEMP/cert.pem" | grep -E "Owner:|Valid from"
-          python3 - "$RUNNER_TEMP/cert.pem" <<'PY'
-          import subprocess, sys, datetime
-          out = subprocess.check_output(["openssl", "x509", "-in", sys.argv[1], "-noout", "-startdate", "-enddate"], text=True)
-          d = dict(l.split("=", 1) for l in out.strip().splitlines())
-          f = "%b %d %H:%M:%S %Y %Z"
-          days = (datetime.datetime.strptime(d["notAfter"], f) - datetime.datetime.strptime(d["notBefore"], f)).days
-          print("certificate validity days:", days)
-          assert days <= 3, "not a throwaway certificate"
-          PY
+          test "$(echo "$certs" | grep -c '^Signer #[0-9]* certificate DN')" = 1 || { echo "not exactly one signer" >&2; exit 1; }
+          echo "$certs" | grep -q "Signer #1 certificate DN: CN=PAKE PoC TEST ONLY - throwaway" || { echo "not the throwaway signer" >&2; exit 1; }
+          "$BT/apksigner" verify --print-certs-pem "$APK" | sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' > "$W/cert.pem"
+          start="$(openssl x509 -in "$W/cert.pem" -noout -startdate | cut -d= -f2)"; end="$(openssl x509 -in "$W/cert.pem" -noout -enddate | cut -d= -f2)"
+          days=$(( ( $(date -d "$end" +%s) - $(date -d "$start" +%s) ) / 86400 ))
+          [ "$days" -le 3 ] || { echo "certificate valid $days days: not a throwaway certificate" >&2; exit 1; }
           libs="$(unzip -Z1 "$APK" | grep '^lib/' | sort)"
-          echo "$libs"
-          test "$libs" = "$(printf 'lib/arm64-v8a/libkadri_pairing_poc.so\nlib/x86_64/libkadri_pairing_poc.so')"
-          TC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          [ "$libs" = "$(printf 'lib/arm64-v8a/libkadri_pairing_poc.so\nlib/x86_64/libkadri_pairing_poc.so')" ] || { echo "unexpected native libraries: $libs" >&2; exit 1; }
           for abi in arm64-v8a x86_64; do
-            unzip -p "$APK" "lib/$abi/libkadri_pairing_poc.so" > "$RUNNER_TEMP/$abi.so"
-            machine="$("$TC/llvm-readelf" -h "$RUNNER_TEMP/$abi.so" | sed -n 's/^ *Machine: *//p')"
-            echo "$abi: $machine"
-            case "$abi:$machine" in arm64-v8a:AArch64|x86_64:*X86-64*) ;; *) echo "architecture mismatch"; exit 1 ;; esac
-            if "$TC/llvm-nm" -D --defined-only "$RUNNER_TEMP/$abi.so" | grep -q Java_poc_TestInitiator_; then echo "test initiator in app library"; exit 1; fi
+            unzip -p "$APK" "lib/$abi/libkadri_pairing_poc.so" > "$W/$abi.so"
+            machine="$("$TC/llvm-readelf" -h "$W/$abi.so" | sed -n 's/^ *Machine: *//p')"
+            case "$abi:$machine" in arm64-v8a:AArch64|x86_64:*X86-64*) ;; *) echo "architecture mismatch $abi:$machine" >&2; exit 1 ;; esac
+            if "$TC/llvm-nm" -D --defined-only "$W/$abi.so" | grep -q Java_poc_TestInitiator_; then echo "test initiator in app library" >&2; exit 1; fi
+          done
+          # Facts that must be identical before and after the emulator:
+          echo "apk_sha256=$(sha256sum < "$APK" | cut -d' ' -f1)"
+          echo "$badging" | grep -E "^package:|^sdkVersion|^targetSdkVersion|^native-code"
+          echo "$certs" | grep -E "Number of signers|Signer #1 certificate (DN|SHA-256 digest)"
+          echo "cert_validity_days=$days"
+          for abi in arm64-v8a x86_64; do echo "lib/$abi/libkadri_pairing_poc.so sha256=$(sha256sum < "$W/$abi.so" | cut -d' ' -f1) machine=$("$TC/llvm-readelf" -h "$W/$abi.so" | sed -n 's/^ *Machine: *//p')"; done
+          SH
+          chmod +x "$RUNNER_TEMP/verify-apk.sh"
+      - name: Verify the APK and record its hash BEFORE the emulator
+        run: |
+          set -euo pipefail
+          APK="$RUNNER_TEMP/out/apk/pake-poc-testapp.apk"
+          chmod a-w "$RUNNER_TEMP/out/apk/"*.apk
+          "$RUNNER_TEMP/verify-apk.sh" "$APK" | tee "$RUNNER_TEMP/before.txt"
+          sha256sum "$RUNNER_TEMP/out/apk/"*.apk | tee "$RUNNER_TEMP/apks-before.sha256"
+          # The jniLibs build output must match the libraries inside the APK.
+          for abi in arm64-v8a x86_64; do
+            grep -q "lib/$abi/libkadri_pairing_poc.so sha256=$(sha256sum < "$RUNNER_TEMP/out/jniLibs/$abi/libkadri_pairing_poc.so" | cut -d' ' -f1)" "$RUNNER_TEMP/before.txt"
           done
           echo "PASS: de.evp.pakepoc.test, single throwaway signer, arm64-v8a + x86_64 helper library only"
       - name: Enable KVM
@@ -108,7 +127,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Instrumentation against exactly these APKs (disposable API 34 emulator)
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: 34
           arch: x86_64
@@ -116,21 +135,43 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: bash pinned/poc/android-capability/tools/run-instrumentation.sh "$RUNNER_TEMP/out"
-      - name: SHA-256 of the files
+      - name: AFTER the emulator - same file, same hash, same package, signer and libraries
         run: |
           set -euo pipefail
-          OUT="$RUNNER_TEMP/out"; mkdir -p "$RUNNER_TEMP/deliver"
-          cp "$OUT/apk/pake-poc-testapp.apk" "$RUNNER_TEMP/deliver/"
-          (cd "$RUNNER_TEMP/deliver" && sha256sum pake-poc-testapp.apk > SHA256SUMS)
-          (cd "$OUT" && sha256sum jniLibs/*/*.so) >> "$RUNNER_TEMP/deliver/SHA256SUMS"
-          printf 'helper_commit=%s\nworkflow_run=%s\n' "$PINNED" "${{ github.run_id }}" >> "$RUNNER_TEMP/deliver/SHA256SUMS"
-          cp "$OUT/report/summary.txt" "$RUNNER_TEMP/deliver/instrumentation-summary.txt"
-          cat "$RUNNER_TEMP/deliver/SHA256SUMS" "$RUNNER_TEMP/deliver/instrumentation-summary.txt"
+          APK="$RUNNER_TEMP/out/apk/pake-poc-testapp.apk"
+          sha256sum -c "$RUNNER_TEMP/apks-before.sha256"
+          "$RUNNER_TEMP/verify-apk.sh" "$APK" > "$RUNNER_TEMP/after.txt"
+          diff -u "$RUNNER_TEMP/before.txt" "$RUNNER_TEMP/after.txt"
+          echo "PASS: APK unchanged by the emulator step (hash and full verification identical)"
+      - name: SHA256SUMS (only after the comparison) and the exact file for delivery
+        run: |
+          set -euo pipefail
+          APK="$RUNNER_TEMP/out/apk/pake-poc-testapp.apk"; D="$RUNNER_TEMP/deliver"
+          mkdir -p "$D"
+          cp "$APK" "$D/pake-poc-testapp.apk"
+          tested="$(sed -n 's/^apk_sha256=//p' "$RUNNER_TEMP/after.txt")"
+          test "$(sha256sum < "$D/pake-poc-testapp.apk" | cut -d' ' -f1)" = "$tested"
+          (cd "$D" && sha256sum pake-poc-testapp.apk > SHA256SUMS)
+          grep -E "^lib/" "$RUNNER_TEMP/after.txt" >> "$D/SHA256SUMS"
+          grep -E "certificate SHA-256 digest" "$RUNNER_TEMP/after.txt" >> "$D/SHA256SUMS"
+          printf 'helper_commit=%s\nworkflow_run=%s\n' "$PINNED" "${{ github.run_id }}" >> "$D/SHA256SUMS"
+          cp "$RUNNER_TEMP/out/report/summary.txt" "$D/instrumentation-summary.txt"
+          grep -q '^OK (' "$RUNNER_TEMP/out/report/instrumentation.txt"
+          chmod a-w "$D"/*
+          cat "$D/SHA256SUMS" "$D/instrumentation-summary.txt"
       - name: Upload is gated
         if: hashFiles('poc/android-capability/DEVICE-ARTIFACTS-APPROVED') == ''
         run: |
           echo "Not uploaded: no owner approval (poc/android-capability/DEVICE-ARTIFACTS-APPROVED). Nothing installable leaves the runner."
-      - uses: actions/upload-artifact@v4
+      - name: Last check before upload - the delivery file is the tested file
+        if: hashFiles('poc/android-capability/DEVICE-ARTIFACTS-APPROVED') != ''
+        run: |
+          set -euo pipefail
+          D="$RUNNER_TEMP/deliver"
+          (cd "$D" && sha256sum -c <(head -1 SHA256SUMS))
+          test "$(head -1 "$D/SHA256SUMS" | cut -d' ' -f1)" = "$(sed -n 's/^apk_sha256=//p' "$RUNNER_TEMP/before.txt")"
+          ls -l "$D"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: hashFiles('poc/android-capability/DEVICE-ARTIFACTS-APPROVED') != ''
         with:
           name: pake-poc-testapp-${{ github.run_id }}
