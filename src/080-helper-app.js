@@ -1,8 +1,13 @@
   // ---------- Helfer-App: echte Helligkeit und Lautstärke des Handys ----------
-  // Vorübergehend aus: Die Helfer-App spricht nur noch über den gekoppelten, verschlüsselten Kanal (127.0.0.1:47899,
-  // SPAKE2 + Noise KK), den dieses Userscript noch nicht hat. Bewusst kein Rückfall auf den alten Klartext-Port:
-  // helper() sendet nichts und meldet „kein Helfer“ – der Player läuft wie ohne App, Browser-Downloads wie bisher.
-  async function helper() { return null; }
+  // Nur noch über den gekoppelten, verschlüsselten Kanal (127.0.0.1:47899, SPAKE2 + Noise KK). Den hat nur die
+  // Erweiterung Kadri für Chrome/Vivaldi: ihr Hintergrund führt die Steuerbefehle aus (KADRI_HELPER, nur Pfad, keine
+  // Daten). Userscript und Firefox haben ihn noch nicht – dort sendet helper() nichts und meldet „kein Helfer“, der
+  // Player läuft wie ohne App. Bewusst kein Rückfall auf den alten Klartext-Port; Downloads über den Helfer sind
+  // vorübergehend aus (Browser-Downloads wie bisher).
+  async function helper(path) {
+    if (typeof KADRI_HELPER !== 'function') return null;
+    try { return await KADRI_HELPER(String(path)); } catch (e) { return null; }
+  }
   // Einen früher gespeicherten Kopplungsschlüssel des alten Ports nicht weiter aufbewahren.
   try { if (typeof GM_getValue === 'function' && typeof GM_setValue === 'function' && GM_getValue('helperKey', '')) GM_setValue('helperKey', ''); } catch (e) {}
   // ---------- Laden über den Browser (für Server, die nur dem eingeloggten Browser etwas geben) ----------

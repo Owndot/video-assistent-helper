@@ -52,10 +52,17 @@ function listener(port) {
       ['/push?job=1&id=1&st=200', 60000, new ArrayBuffer(4), null, job], ['/ping', 2500, null, '0123456789abcdef0123456789abcdef'],
     ];
     for (const args of calls) assert.equal(await context.helper(...args), null, 'helper answered ' + args[0]);
+    // Kadri (Chrome) routes through its own channel: only the path leaves helper(), never a body, key or job.
+    const routed = [];
+    const kadri = Object.assign({}, context, { KADRI_HELPER: async (...a) => { routed.push(a); return a[0] === '/ping' ? { ok: true } : null; } });
+    vm.runInNewContext(source.slice(a, b) + '\nglobalThis.helper = helper;', kadri);
+    assert.deepEqual(await kadri.helper('/ping', 2500, null, 'SYNTHETIC-KEY'), { ok: true });
+    await kadri.helper('/push?job=1', 60000, new ArrayBuffer(4), null, job);
+    assert.deepEqual(routed, [['/ping'], ['/push?job=1']], 'helper passed more than the path');
     await new Promise(r => setTimeout(r, 300));
     assert.deepEqual(requests, [], 'helper issued a request');
     assert.deepEqual(reads.filter(k => k !== 'helperKey'), [], 'unexpected settings read');
-    assert.equal(reads.length, 1, 'legacy key read more than once (only to wipe it)');
+    assert.equal(reads.length, 2, 'legacy key read other than once per load (only to wipe it)');
     assert.deepEqual(servers.map(s => s.hits), [0, 0], 'a local listener was contacted');
     assert.equal(job.aborters.size, 0, 'abort handles left behind');
     console.log('PASS: userscript helper disabled (D2): no request to 47811/47899, no key read or sent, stored key wiped, no pairing page');
