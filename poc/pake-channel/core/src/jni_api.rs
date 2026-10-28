@@ -172,6 +172,20 @@ pub extern "system" fn Java_poc_Core_hostExportRegistrations(mut env: JNIEnv, _:
     ret(&mut env, r)
 }
 
+/// Revokes one registration (16-byte id) and ends its sessions, using the
+/// host's existing `revoke`. Unknown ids are a no-op; malformed ids throw.
+#[no_mangle]
+pub extern "system" fn Java_poc_Core_hostRevoke(mut env: JNIEnv, _: JClass, id: JByteArray) {
+    if let Err(e) = bytes(&env, &id).and_then(|b| sid(&b)).and_then(|id| {
+        with(|s| {
+            s.host.revoke(&id);
+            Ok(())
+        })
+    }) {
+        throw(&mut env, e);
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_poc_Core_hostRevokeAll(mut env: JNIEnv, _: JClass) {
     if let Err(e) = with(|s| {
