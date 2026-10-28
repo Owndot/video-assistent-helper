@@ -59,6 +59,9 @@ function listener(port) {
     assert.deepEqual(await kadri.helper('/ping', 2500, null, 'SYNTHETIC-KEY'), { ok: true });
     await kadri.helper('/push?job=1', 60000, new ArrayBuffer(4), null, job);
     assert.deepEqual(routed, [['/ping'], ['/push?job=1']], 'helper passed more than the path');
+    kadri.CONFIG.systemHelper = false;   // setting "Helper app" off: nothing is routed
+    assert.equal(await kadri.helper('/ping'), null);
+    assert.equal(routed.length, 2, 'helper routed although switched off');
     await new Promise(r => setTimeout(r, 300));
     assert.deepEqual(requests, [], 'helper issued a request');
     assert.deepEqual(reads.filter(k => k !== 'helperKey'), [], 'unexpected settings read');

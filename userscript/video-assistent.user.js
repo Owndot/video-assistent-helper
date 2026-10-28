@@ -2214,7 +2214,7 @@ const buildPslBase = () => {
   // Player läuft wie ohne App. Bewusst kein Rückfall auf den alten Klartext-Port; Downloads über den Helfer sind
   // vorübergehend aus (Browser-Downloads wie bisher).
   async function helper(path) {
-    if (typeof KADRI_HELPER !== 'function') return null;
+    if (CONFIG.systemHelper === false || typeof KADRI_HELPER !== 'function') return null;
     try { return await KADRI_HELPER(String(path)); } catch (e) { return null; }
   }
   // Einen früher gespeicherten Kopplungsschlüssel des alten Ports nicht weiter aufbewahren.
