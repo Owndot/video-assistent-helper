@@ -217,7 +217,15 @@ public final class ChannelHarness implements ChannelServer.Host {
                         synchronized (seen) { seen.merge(line, 1, Integer::sum); }
                         String lower = text.toLowerCase(Locale.ROOT);
                         for (String m : MARKERS) if (lower.contains(m)) plaintextHits++;
-                        byte[] forged = "{\"ok\":true,\"bright\":1}".getBytes(StandardCharsets.UTF_8);
+                        // Wie der Fremd-Dienst des PoC: Handshake-Antwort in gültiger Form (Kennung KHC2, Zufallsinhalt),
+                        // sonst eine gefälschte Erfolgsmeldung im Klartext.
+                        byte[] forged;
+                        if (line.contains(" /p1/ch/hs ")) {
+                            forged = new byte[69];
+                            new java.security.SecureRandom().nextBytes(forged);
+                            System.arraycopy("KHC2".getBytes(StandardCharsets.US_ASCII), 0, forged, 0, 4);
+                            forged[4] = 0x11;
+                        } else forged = "{\"ok\":true,\"bright\":1}".getBytes(StandardCharsets.UTF_8);
                         OutputStream o = s.getOutputStream();
                         o.write(("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: " + forged.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
                         o.write(forged);
