@@ -14,7 +14,10 @@ OUT="$(mkdir -p "${1:?usage: build-wasm-kadri.sh OUT}" && cd "$1" && pwd)"
 check_rust
 wasm-bindgen --version | grep -qx 'wasm-bindgen 0.2.104' || { echo "wasm-bindgen 0.2.104 required" >&2; exit 1; }
 cd "$CORE"
-RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --locked --release --target wasm32-unknown-unknown --features wasm --target-dir "$OUT/target-wasm"
+# Paths of the build machine are remapped (as in build-native.sh); otherwise panic location strings embed the
+# checkout and cargo-home paths and the .wasm differs from machine to machine.
+CORE_ABS="$(pwd)"
+RUSTFLAGS="--cfg getrandom_backend=\"wasm_js\" --remap-path-prefix=$CORE_ABS=/kadri-core --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo-home" cargo build --locked --release --target wasm32-unknown-unknown --features wasm --target-dir "$OUT/target-wasm"
 rm -rf "$OUT/kadri-wasm"
 wasm-bindgen --target no-modules --out-dir "$OUT/kadri-wasm" "$OUT/target-wasm/wasm32-unknown-unknown/release/kadri_pairing_poc.wasm"
 rm -f "$OUT"/kadri-wasm/*.d.ts

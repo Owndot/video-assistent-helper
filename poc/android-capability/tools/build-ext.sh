@@ -8,7 +8,10 @@ check_rust
 CORE="$HERE/../pake-channel/core"
 OUT="${1:?usage: build-ext.sh OUT}"
 cd "$CORE"
-RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --locked --release --target wasm32-unknown-unknown --features wasm
+# Paths of the build machine are remapped (as in build-native.sh); otherwise panic location strings embed the
+# checkout and cargo-home paths and the .wasm differs from machine to machine.
+CORE_ABS="$(pwd)"
+RUSTFLAGS="--cfg getrandom_backend=\"wasm_js\" --remap-path-prefix=$CORE_ABS=/kadri-core --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo-home" cargo build --locked --release --target wasm32-unknown-unknown --features wasm
 wasm-bindgen --version | grep -qx 'wasm-bindgen 0.2.104'
 rm -rf "$OUT/ext-vivaldi" "$OUT/ext-vivaldi.zip"
 mkdir -p "$OUT/ext-vivaldi/pkg"

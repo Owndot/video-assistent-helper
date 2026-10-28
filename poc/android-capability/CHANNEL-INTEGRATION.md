@@ -10,8 +10,12 @@ Die Kadri-Seite (isolierter Test-Build, Architektur, Tests, Restrisiken, Review-
 | --- | --- |
 | `app-project/testapp/src/jvmTest/java/de/evp/pakepoc/DesktopHelperHost.java` | Hostet den **unveränderten** `PocServer`, `HttpRequestReader` und `SnapshotWriter` der Test-App auf einem Desktop-JVM (Kern über JNI). Ersetzt nur `PocService` (Android-Lebenszyklus, Keystore) und bildet dessen Logik nach: Kopplungsfenster, Widerruf mit Speicherung vor Erfolgsmeldung, Neustart, Identitäts-Reset, Fremd-Listener, injizierbarer Speicherfehler. Identität im Klartext in einem Temp-Ordner – **nur Testwerkzeug**, nie in einer APK (`jvmTest` gehört zu keinem Android-Source-Set). |
 | `tools/build-desktop-helper.sh` | baut Kern (Feature `jni`, Host-Plattform) und die obigen Klassen |
-| `tools/build-wasm-kadri.sh` | baut den Kadri-seitigen WASM-Kern mit wasm-bindgen `--target no-modules` für Kadris klassischen Service Worker. Die `.wasm` ist bitgleich mit der im Gerätetest geladenen (`18d07767…`). |
+| `tools/build-wasm-kadri.sh` | baut den Kadri-seitigen WASM-Kern mit wasm-bindgen `--target no-modules` für Kadris klassischen Service Worker, aus unverändertem Kern-Quelltext. Seit diesem Branch mit `--remap-path-prefix` (auch in `build-ext.sh`), damit die `.wasm` unabhängig von Pfad und Rechner gleich ist (`d84e09bb…`, in CI und lokal aus verschiedenen Pfaden bestätigt). |
 | `.github/workflows/poc-android-capability.yml` | läuft zusätzlich auf diesem Branch (JVM-Prüfungen, NDK-Build, Emulator-Instrumentierung) |
+
+## Korrektur: WASM-Bitgleichheit mit dem Gerätetest war nicht belegt
+
+Frühere Angaben (Commit-Text von `cf76ed1`, erste Fassung dieses Dokuments), die Kadri-WASM sei „bitgleich mit der im Gerätetest geladenen“, waren falsch. Bitgleich war sie nur mit der im Container gebauten Datei `18d07767…`. Die WASM-Builds vor diesem Branch enthielten absolute Pfade des Bau-Rechners (Cargo-Home, Checkout) in Panic-Meldungen; die auf dem S26 geladene Datei wurde lokal auf einem anderen Rechner gebaut und ihr Hash ist nicht dokumentiert. Belegt ist: gleicher Kern-Quelltext (`bf84258`), gleiche Toolchain und Abhängigkeiten. Seit diesem Branch sind die Pfade umgeschrieben und der Build ist rechnerunabhängig reproduzierbar.
 
 ## Befund aus den Integrationstests
 
