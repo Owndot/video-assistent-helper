@@ -71,6 +71,23 @@ public final class DesktopHelperHost implements PocServer.Host {
         server = null;
     }
 
+    /**
+     * Starts {@code first}; if the port is still held, retries with fresh instances for up to 3 s. On the JDK a
+     * listening socket closed while another thread blocks in accept() is released asynchronously, so an immediate
+     * rebind after stop() can fail (observed: about 3 in 150 restarts). PocServer itself is left unchanged.
+     */
+    private PocServer startServer(PocServer first, boolean rogue) throws InterruptedException {
+        PocServer s = first;
+        for (int i = 0; i < 30; i++) {
+            if (s.start()) return s;
+            Thread.sleep(100);
+            PocServer n = new PocServer(this, rogue, null);
+            synchronized (PocServer.CORE) { if (PocServer.coreOwner == s) PocServer.coreOwner = n; }
+            s = n;
+        }
+        return null;
+    }
+
     private synchronized String startGenuine() throws Exception {
         stopServer();
         byte[] id;
@@ -89,11 +106,11 @@ public final class DesktopHelperHost implements PocServer.Host {
             Arrays.fill(id, (byte) 0);
         }
         persist(s);
-        server = s;
-        return server.start() ? "READY " + pub.substring(0, 8) : "PORT_BUSY";
+        server = startServer(s, false);
+        return server != null ? "READY " + pub.substring(0, 8) : "PORT_BUSY";
     }
 
-    private synchronized String rogueOn() {
+    private synchronized String rogueOn() throws InterruptedException {
         stopServer();
         byte[] eph = Core.identityGenerate();
         PocServer s = new PocServer(this, true, null);
@@ -102,8 +119,8 @@ public final class DesktopHelperHost implements PocServer.Host {
             PocServer.coreOwner = s;
         }
         Arrays.fill(eph, (byte) 0);
-        server = s;
-        return server.start() ? "ROGUE" : "PORT_BUSY";
+        server = startServer(s, true);
+        return server != null ? "ROGUE" : "PORT_BUSY";
     }
 
     private synchronized String rogueOff() throws Exception {

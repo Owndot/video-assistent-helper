@@ -6,7 +6,7 @@ name: PoC Android capability (isolated test app, nothing published)
 # be a publication). Only text reports and hashes leave the job.
 on:
   push:
-    branches: [poc/android-vivaldi-capability]
+    branches: [poc/android-vivaldi-capability, feature/helper-channel-dummy]
     paths: ['poc/**', '.github/workflows/poc-android-capability.yml']
   workflow_dispatch:
 
