@@ -85,22 +85,34 @@ jobs:
           diff "$RUNNER_TEMP/a.libs" "$RUNNER_TEMP/b.libs"
           cat > "$RUNNER_TEMP/dexcmp.py" <<'PY'
           # dexcmp.py A.dex B.dex A.dump B.dump -> exit 0 only if A and B differ solely in D8 lambda checksums.
-          import json, re, sys
-          from collections import Counter
+          # Zeichenketten kommen aus der String-Tabelle der dex (string_ids), nicht aus Rohbytes: Kopf-Prüfsummen und
+          # verschobene Offsets sind keine Zeichenketten.
+          import json, struct, sys
           a, b = (open(f, 'rb').read() for f in sys.argv[1:3])
           da, db = (open(f, encoding='utf-8', errors='replace').read().splitlines()[2:] for f in sys.argv[3:5])
           if da != db: sys.exit('disassembly differs')
-          MARK = re.compile(rb'~~~\{"L[^\x00]*?\}(?=\x00)')
-          ma, mb = MARK.findall(a), MARK.findall(b)
-          if len(ma) != 1 or len(mb) != 1: sys.exit('expected exactly one D8 checksum table per dex')
-          strs = lambda x: Counter(re.findall(rb'[\x20-\x7e]{4,}', MARK.sub(b'', x)))
-          if strs(a) != strs(b): sys.exit('strings outside the D8 checksum table differ')
-          ta, tb = json.loads(ma[0][3:]), json.loads(mb[0][3:])
+          def strings(d):
+              if d[:4] != b'dex\n': sys.exit('not a dex file')
+              n, off = struct.unpack_from('<II', d, 0x38)
+              out = []
+              for i in range(n):
+                  p = struct.unpack_from('<I', d, off + 4 * i)[0]
+                  while d[p] & 0x80: p += 1          # ULEB128-Länge überspringen
+                  p += 1
+                  out.append(d[p:d.index(b'\x00', p)])
+              return out
+          sa, sb = strings(a), strings(b)
+          ia = [i for i, x in enumerate(sa) if x.startswith(b'~~~{')]
+          ib = [i for i, x in enumerate(sb) if x.startswith(b'~~~{')]
+          if len(ia) != 1 or ia != ib or len(sa) != len(sb): sys.exit('expected exactly one D8 checksum table at the same index')
+          if [x for i, x in enumerate(sa) if i != ia[0]] != [x for i, x in enumerate(sb) if i != ib[0]]:
+              sys.exit('strings outside the D8 checksum table differ')
+          ta, tb = json.loads(sa[ia[0]][3:]), json.loads(sb[ib[0]][3:])
           if ta.keys() != tb.keys(): sys.exit('checksum table lists different classes')
           diff = sorted(k for k in ta if ta[k] != tb[k])
           bad = [k for k in diff if '$$ExternalSynthetic' not in k]
           if bad: sys.exit('non-synthetic class checksums differ: ' + ', '.join(bad))
-          print(f'only D8 checksums of {len(diff)} synthetic lambda classes differ; {len(ta) - len(diff)} classes identical')
+          print(f'only D8 checksums of {len(diff)} synthetic lambda classes differ; {len(sa) - 1} other strings and {len(ta) - len(diff)} class checksums identical')
           PY
           entries() { python3 - "$1" <<'PY'
           import hashlib, sys, zipfile

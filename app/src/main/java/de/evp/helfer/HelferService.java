@@ -108,11 +108,11 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
 
     @Override
     public void onDestroy() {
+        stopChannel();   // zuerst: Port frei, bevor „beendet“ sichtbar wird (sonst „Port belegt“ beim schnellen Neustart)
         running = false;
         instance = null;
         main.removeCallbacks(watchdog);
         Downloads.stopAll();
-        stopChannel();
         clearBright();
         super.onDestroy();
     }
