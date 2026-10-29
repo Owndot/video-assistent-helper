@@ -177,14 +177,15 @@ Mögliche Gegenmaßnahmen (nicht umgesetzt, bewusst ohne Architekturänderung; n
 
 ## 8. Testpakete für den Gerätetest (vorbereitet, nichts hochgeladen)
 
-- Helper: `.github/workflows/channel-device-package.yml` baut `de.evp.helfer.channeltest` zweimal (native
-  Bibliotheken aus zwei verschiedenen Pfaden byte-identisch; APK-Inhalt ohne Signaturdateien identisch bei sauberem
-  Neubau im selben Pfad mit leerem Gradle-Cache; Signatur je Bau mit Wegwerf-Schlüssel), prüft
-  Paket/Name/Signierer/Sicherungsregeln/Bibliotheken, testet genau diese APK im Emulator.
-  Einschränkung: Aus einem *anderen* Pfad gebaut weicht `classes2.dex` ab – nur in der Prüfsummen-Tabelle, die D8 in
-  Debug-abgeleitete Builds für synthetische Lambda-Klassen (`$$ExternalSyntheticLambdaN`) schreibt; alle übrigen
-  Klassen, Zeichenketten und Befehle sind gleich (Lauf 40794748343). Wer nachbaut, baut daher im Pfad
-  `/home/runner/work/video-assistent-helper/video-assistent-helper` (bzw. vergleicht ohne diese Tabelle).
+- Helper: `.github/workflows/channel-device-package.yml` baut `de.evp.helfer.channeltest` zweimal aus verschiedenen
+  Pfaden: native Bibliotheken byte-identisch; alle APK-Einträge außer Signaturdateien byte-identisch – mit einer eng
+  geprüften Ausnahme: D8 schreibt in debugfähige Builds eine Prüfsummen-Tabelle (`~~~{…}`), deren Werte für
+  synthetische Lambda-Klassen (`$$ExternalSyntheticLambdaN`) nicht deterministisch sind, auch beim sauberen Neubau im
+  selben Pfad (Läufe 40794748343, 40795292501). Der Workflow akzeptiert eine abweichende `.dex` nur, wenn die
+  Disassemblierung identisch ist, sich keine andere Zeichenkette unterscheidet und in der Tabelle nur Werte von
+  `$$ExternalSynthetic`-Klassen abweichen; alles andere bleibt rot. Signatur je Bau mit Wegwerf-Schlüssel. Danach
+  Prüfung von Paket/Name/Signierer/Sicherungsregeln/Bibliotheken und Emulatortest gegen genau diese APK.
+  (Alternative ohne Ausnahme: Testvariante nicht debugfähig bauen – kleine Build-Änderung, nur nach Rücksprache.)
 - Kadri: `.github/workflows/channel-device-package.yml` baut `dist/chrome` mit Testnamen „Kadri TEST – Helfer-Kanal“
   zweimal als deterministisches ZIP (byte-identisch), prüft, dass nur der Name abweicht, und führt den Kanal-Browsertest
   gegen genau dieses Paket aus.

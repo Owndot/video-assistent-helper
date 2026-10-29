@@ -1,7 +1,7 @@
 name: Helper channel device package (test package only, upload gated twice)
 
 # Baut AUSSCHLIESSLICH die Testvariante de.evp.helfer.channeltest („TEST Helper-Kanal“) für den Gerätetest auf dem
-# Samsung Galaxy S26 Ultra: zweimal unabhängig gebaut (Reproduzierbarkeit, Einzelheiten am Bau-Schritt), signiert mit je einem in diesem
+# Samsung Galaxy S26 Ultra: zweimal aus verschiedenen Pfaden (Reproduzierbarkeit), signiert mit je einem in diesem
 # Job erzeugten und danach gelöschten Wegwerf-Schlüssel, prüft Paket, Signierer, Sicherungsregeln und Bibliotheken,
 # führt die Instrumentierungstests gegen GENAU diese APK auf einem Wegwerf-Emulator aus und schreibt SHA-256-Werte.
 #
@@ -64,25 +64,44 @@ jobs:
           (cd poc/pake-channel/core && rustup show active-toolchain && rustc -V)
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "platforms;android-34" "build-tools;34.0.0" < <(yes 2>/dev/null) > /dev/null
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
-      # Nativbibliotheken: B aus einem anderen Pfad (pfadunabhängig). APK: B im selben Pfad, aber vollständig sauber
-      # (app/build, .gradle, eigenes GRADLE_USER_HOME, kein Cache aus A). Grund: D8 schreibt in Debug-abgeleitete
-      # Builds eine Prüfsummen-Tabelle der synthetischen Lambda-Klassen ("~~~{…ExternalSyntheticLambdaN…}"), die vom
-      # Build-Pfad abhängt; Klassen und Befehle sind identisch (Lauf 40794748343). Der Vergleich bleibt streng.
-      - name: Build A (checkout) and build B (native from another path; APK clean in the same path), each with its own throwaway signer
+      - name: Build A (checkout) and build B (copy in another path), each with its own throwaway signer
         run: |
           set -euo pipefail
           bash tools/build-channel-native.sh "$RUNNER_TEMP/a"
           bash tools/build-channel-apk.sh "$RUNNER_TEMP/a"
           mkdir -p "$RUNNER_TEMP/src-b" && git archive HEAD | tar -x -C "$RUNNER_TEMP/src-b"
-          (cd "$RUNNER_TEMP/src-b" && bash tools/build-channel-native.sh "$RUNNER_TEMP/b")
-          rm -rf app/build build .gradle
-          test ! -e app/build && test ! -e .gradle
-          GRADLE_USER_HOME="$RUNNER_TEMP/gradle-home-b" bash tools/build-channel-apk.sh "$RUNNER_TEMP/b"
-      - name: Reproducibility - native libraries byte-identical, APK contents identical apart from the signature
+          (cd "$RUNNER_TEMP/src-b" && bash tools/build-channel-native.sh "$RUNNER_TEMP/b" && bash tools/build-channel-apk.sh "$RUNNER_TEMP/b")
+      # Bekannte, eng eingegrenzte Ausnahme: D8 schreibt in debugfähige Builds eine Prüfsummen-Tabelle
+      # "~~~{"<Klasse>":"<Prüfsumme>",…}"; die Werte der synthetischen Lambda-Klassen ($$ExternalSyntheticLambdaN)
+      # sind nicht deterministisch – auch beim sauberen Neubau im selben Pfad (Läufe 40794748343, 40795292501).
+      # Eine abweichende .dex wird nur akzeptiert, wenn die Disassemblierung identisch ist, sich sonst keine
+      # Zeichenkette unterscheidet und in der Tabelle nur Werte von $$ExternalSynthetic-Klassen abweichen
+      # (gleiche Schlüssel). Alles andere – jede andere Datei, jede andere Abweichung – bleibt ein Fehler.
+      - name: Reproducibility - native libraries byte-identical, APK contents identical apart from the signature (and D8 lambda checksums)
         run: |
           set -euo pipefail
+          export LC_ALL=C
           for d in a b; do (cd "$RUNNER_TEMP/$d" && sha256sum jniLibs/*/*.so jniLibs-test/*/*.so) > "$RUNNER_TEMP/$d.libs"; done
           diff "$RUNNER_TEMP/a.libs" "$RUNNER_TEMP/b.libs"
+          cat > "$RUNNER_TEMP/dexcmp.py" <<'PY'
+          # dexcmp.py A.dex B.dex A.dump B.dump -> exit 0 only if A and B differ solely in D8 lambda checksums.
+          import json, re, sys
+          from collections import Counter
+          a, b = (open(f, 'rb').read() for f in sys.argv[1:3])
+          da, db = (open(f, encoding='utf-8', errors='replace').read().splitlines()[2:] for f in sys.argv[3:5])
+          if da != db: sys.exit('disassembly differs')
+          MARK = re.compile(rb'~~~\{"L[^\x00]*?\}(?=\x00)')
+          ma, mb = MARK.findall(a), MARK.findall(b)
+          if len(ma) != 1 or len(mb) != 1: sys.exit('expected exactly one D8 checksum table per dex')
+          strs = lambda x: Counter(re.findall(rb'[\x20-\x7e]{4,}', MARK.sub(b'', x)))
+          if strs(a) != strs(b): sys.exit('strings outside the D8 checksum table differ')
+          ta, tb = json.loads(ma[0][3:]), json.loads(mb[0][3:])
+          if ta.keys() != tb.keys(): sys.exit('checksum table lists different classes')
+          diff = sorted(k for k in ta if ta[k] != tb[k])
+          bad = [k for k in diff if '$$ExternalSynthetic' not in k]
+          if bad: sys.exit('non-synthetic class checksums differ: ' + ', '.join(bad))
+          print(f'only D8 checksums of {len(diff)} synthetic lambda classes differ; {len(ta) - len(diff)} classes identical')
+          PY
           entries() { python3 - "$1" <<'PY'
           import hashlib, sys, zipfile
           with zipfile.ZipFile(sys.argv[1]) as z:
@@ -91,22 +110,22 @@ jobs:
                   print(hashlib.sha256(z.read(n)).hexdigest(), n)
           PY
           }
+          BT="$ANDROID_HOME/build-tools/34.0.0"
           for apk in helper-channeltest.apk helper-channeltest-androidTest.apk; do
             entries "$RUNNER_TEMP/a/apk/$apk" > "$RUNNER_TEMP/a.$apk.entries"
             entries "$RUNNER_TEMP/b/apk/$apk" > "$RUNNER_TEMP/b.$apk.entries"
-            if ! diff "$RUNNER_TEMP/a.$apk.entries" "$RUNNER_TEMP/b.$apk.entries"; then
-              # Diagnose: welche Klassen/Methoden unterscheiden sich? (Der Schritt bleibt rot.)
-              BT="$ANDROID_HOME/build-tools/34.0.0"
-              for f in $(diff <(cut -d' ' -f1,2 "$RUNNER_TEMP/a.$apk.entries") <(cut -d' ' -f1,2 "$RUNNER_TEMP/b.$apk.entries") | sed -n 's/^< [0-9a-f]* //p' | grep '\.dex$'); do
-                for d in a b; do mkdir -p "$RUNNER_TEMP/dex-$d"; unzip -p "$RUNNER_TEMP/$d/apk/$apk" "$f" > "$RUNNER_TEMP/dex-$d/$f"; "$BT/dexdump" -d "$RUNNER_TEMP/dex-$d/$f" > "$RUNNER_TEMP/dex-$d/$f.txt" 2>&1 || true; done
-                echo "== $apk:$f – Klassen nur in A/B:"; diff <(grep -E "Class descriptor" "$RUNNER_TEMP/dex-a/$f.txt" | sort) <(grep -E "Class descriptor" "$RUNNER_TEMP/dex-b/$f.txt" | sort) | head -40 || true
-                echo "== $apk:$f – erste Unterschiede im Inhalt:"; diff <(tail -n +3 "$RUNNER_TEMP/dex-a/$f.txt") <(tail -n +3 "$RUNNER_TEMP/dex-b/$f.txt") | head -80 || true
-                echo "== $apk:$f – abweichende Zeichenketten und Bytes:"; diff <(strings -n 6 "$RUNNER_TEMP/dex-a/$f") <(strings -n 6 "$RUNNER_TEMP/dex-b/$f") | head -40 || true
-                cmp -l "$RUNNER_TEMP/dex-a/$f" "$RUNNER_TEMP/dex-b/$f" | wc -l; cmp -l "$RUNNER_TEMP/dex-a/$f" "$RUNNER_TEMP/dex-b/$f" | head -10 || true
-              done
-              exit 1
-            fi
-            echo "REPRODUCIBLE content of $apk: $(wc -l < "$RUNNER_TEMP/a.$apk.entries") entries; content hash $(sha256sum < "$RUNNER_TEMP/a.$apk.entries" | cut -c1-16)"
+            diff <(cut -d' ' -f2- "$RUNNER_TEMP/a.$apk.entries") <(cut -d' ' -f2- "$RUNNER_TEMP/b.$apk.entries")   # gleiche Einträge
+            for f in $(join -j 2 <(sort -k2 "$RUNNER_TEMP/a.$apk.entries") <(sort -k2 "$RUNNER_TEMP/b.$apk.entries") | awk '$2 != $3 {print $1}'); do
+              case "$f" in *.dex) ;; *) echo "MISMATCH $apk:$f (not a dex file)" >&2; exit 1 ;; esac
+              for d in a b; do mkdir -p "$RUNNER_TEMP/dex-$d"; unzip -p "$RUNNER_TEMP/$d/apk/$apk" "$f" > "$RUNNER_TEMP/dex-$d/$f"; "$BT/dexdump" -d "$RUNNER_TEMP/dex-$d/$f" > "$RUNNER_TEMP/dex-$d/$f.txt"; done
+              if ! out="$(python3 "$RUNNER_TEMP/dexcmp.py" "$RUNNER_TEMP/dex-a/$f" "$RUNNER_TEMP/dex-b/$f" "$RUNNER_TEMP/dex-a/$f.txt" "$RUNNER_TEMP/dex-b/$f.txt" 2>&1)"; then
+                echo "MISMATCH $apk:$f: $out" >&2
+                diff <(tail -n +3 "$RUNNER_TEMP/dex-a/$f.txt") <(tail -n +3 "$RUNNER_TEMP/dex-b/$f.txt") | head -80 || true
+                exit 1
+              fi
+              echo "ACCEPTED $apk:$f – $out"
+            done
+            echo "REPRODUCIBLE content of $apk: $(wc -l < "$RUNNER_TEMP/a.$apk.entries") entries (all byte-identical except the D8 lambda checksums listed above)"
           done
           cat "$RUNNER_TEMP/a.libs"
       - name: Verification script (used before and after the emulator)
