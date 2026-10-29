@@ -93,7 +93,9 @@ jobs:
               for f in $(diff <(cut -d' ' -f1,2 "$RUNNER_TEMP/a.$apk.entries") <(cut -d' ' -f1,2 "$RUNNER_TEMP/b.$apk.entries") | sed -n 's/^< [0-9a-f]* //p' | grep '\.dex$'); do
                 for d in a b; do mkdir -p "$RUNNER_TEMP/dex-$d"; unzip -p "$RUNNER_TEMP/$d/apk/$apk" "$f" > "$RUNNER_TEMP/dex-$d/$f"; "$BT/dexdump" -d "$RUNNER_TEMP/dex-$d/$f" > "$RUNNER_TEMP/dex-$d/$f.txt" 2>&1 || true; done
                 echo "== $apk:$f – Klassen nur in A/B:"; diff <(grep -E "Class descriptor" "$RUNNER_TEMP/dex-a/$f.txt" | sort) <(grep -E "Class descriptor" "$RUNNER_TEMP/dex-b/$f.txt" | sort) | head -40 || true
-                echo "== $apk:$f – erste Unterschiede im Inhalt:"; diff "$RUNNER_TEMP/dex-a/$f.txt" "$RUNNER_TEMP/dex-b/$f.txt" | head -80 || true
+                echo "== $apk:$f – erste Unterschiede im Inhalt:"; diff <(tail -n +3 "$RUNNER_TEMP/dex-a/$f.txt") <(tail -n +3 "$RUNNER_TEMP/dex-b/$f.txt") | head -80 || true
+                echo "== $apk:$f – abweichende Zeichenketten und Bytes:"; diff <(strings -n 6 "$RUNNER_TEMP/dex-a/$f") <(strings -n 6 "$RUNNER_TEMP/dex-b/$f") | head -40 || true
+                cmp -l "$RUNNER_TEMP/dex-a/$f" "$RUNNER_TEMP/dex-b/$f" | wc -l; cmp -l "$RUNNER_TEMP/dex-a/$f" "$RUNNER_TEMP/dex-b/$f" | head -10 || true
               done
               exit 1
             fi
