@@ -35,6 +35,7 @@ grep -q 'package="de.evp.helfer.channeltest"' <<<"$manifest" || { echo "unexpect
 grep -q 'dataExtractionRules' <<<"$manifest" || { echo "dataExtractionRules missing" >&2; exit 1; }
 grep -q 'fullBackupContent' <<<"$manifest" || { echo "fullBackupContent missing" >&2; exit 1; }
 grep -q 'allowBackup.*=false' <<<"$manifest" || { echo "allowBackup not false" >&2; exit 1; }
+if grep -q 'debuggable.*=true' <<<"$manifest"; then echo "test APK is debuggable" >&2; exit 1; fi
 for abi in arm64-v8a x86_64; do
   unzip -l "$APP" | grep -q "lib/$abi/libkadri_pairing_poc.so" || { echo "channel library missing for $abi" >&2; exit 1; }
 done

@@ -54,6 +54,8 @@ android {
         // the production app de.evp.helfer. Unsigned unless a throwaway key is supplied.
         channeltest {
             initWith debug
+            // Nicht debugfähig: kein run-as/JDWP auf die Kanaldaten am Gerät; D8 baut dann deterministisch.
+            debuggable false
             applicationIdSuffix '.channeltest'
             versionNameSuffix '-channeltest'
             signingConfig channelKeystore != null ? signingConfigs.channeltest : null
