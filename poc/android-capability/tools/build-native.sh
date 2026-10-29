@@ -16,7 +16,7 @@ CORE="$(cd "$HERE/../pake-channel/core" && pwd)"
 OUT="${1:?usage: build-native.sh OUT}"
 NDK="${ANDROID_NDK_HOME:?set ANDROID_NDK_HOME}"
 ABIS="${ABIS:-arm64-v8a x86_64}"
-API=29
+API="${API:-29}"   # linker API level; the helper app (minSdk 26) builds with API=26
 . "$HERE/tools/lib-checks.sh"
 check_rust
 check_ndk "$NDK"

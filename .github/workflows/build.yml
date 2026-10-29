@@ -362,8 +362,15 @@ jobs:
       - name: Verify final debug artifact immediately before upload
         id: debug_artifact_verified
         run: bash .github/scripts/verify-debug-artifact.sh
+      # Kanal-Integration: keine installierbare APK veröffentlichen (Freigabe des Eigentümers fehlt). Die Sperre gilt für
+      # jedes Ereignis (pull_request, push, workflow_dispatch …): Markierungsdatei im Stand ODER head_ref/ref_name.
+      - name: Debug APK upload gate (all event types)
+        id: debug_upload_gate
+        run: |
+          bash tests/security/debug_upload_gate_check.sh
+          bash .github/scripts/debug-apk-upload-gate.sh
       - uses: actions/upload-artifact@v4
-        if: success() && steps.debug_artifact_verified.outcome == 'success'
+        if: success() && steps.debug_artifact_verified.outcome == 'success' && steps.debug_upload_gate.outputs.allow == 'yes'
         with:
           name: helper-debug-NOT-production
           path: |
@@ -443,8 +450,10 @@ jobs:
           if node tests/security/helper_repair_check.js /tmp/helper-old > /tmp/old-key.log 2>&1; then echo 'Baseline unexpectedly recovered'; exit 1; fi
           grep -q 'userscript kept stale key' /tmp/old-key.log
           echo 'PASS: unchanged main reproduces stale-key failure'
-      - name: Current Helper key regression tests
-        run: node tests/security/helper_repair_check.js
+      # Der alte Schlüssel-Client des Userscripts ist entfernt (D2: Helfer-Funktionen aus, bis der sichere Kanal da ist);
+      # helper_repair_check.js bleibt nur als Nachweis für den historischen Zweig oben.
+      - name: Userscript helper disabled (no legacy port, no key, no pairing page)
+        run: node tests/security/helper_disabled.js
       - name: PiP/background and overlapping cleanup regression
         run: node --expose-gc tests/security/pip_lifecycle.js
       - name: Prove the unchanged stable defects

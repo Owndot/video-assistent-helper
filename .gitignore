@@ -10,3 +10,4 @@ local.properties
 *.keystore
 # Never track signing material
 *.p12
+__pycache__/

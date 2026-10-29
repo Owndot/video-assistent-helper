@@ -3,7 +3,7 @@
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),crypto=require('node:crypto');
 const root=path.resolve(process.argv[2]||process.cwd());
 const src=fs.readFileSync(path.join(root,'src/080-helper-app.js'),'utf8');
-const a=src.indexOf('  function gmGet('),b=src.indexOf('  // Koppel-Seite',a);assert(a>=0&&b>a);
+const a=src.indexOf('  function gmGet('),b=src.indexOf('  // Beim Wischen nicht jede Bewegung',a);assert(a>=0&&b>a);
 function api(xhr,helper=async()=>null){return new Function('gmXhr','mediaReferrer','helper','baseDomain','hostOf',src.slice(a,b)+'return {gmGet,proxyLoop};')(()=>xhr,()=>'',helper,x=>x,()=> 'fixture.test');}
 let allocate=0,aborts=0,last;
 function response(status,headers,bytes=10,head=false){

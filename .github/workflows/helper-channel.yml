@@ -1,0 +1,120 @@
+name: Helper secure channel (test package only, nothing published)
+
+# Steuerkanal der Helper-App (SPAKE2-Kopplung, Noise KK, Rust-Kern über JNI). Baut ausschließlich die Testvariante
+# de.evp.helfer.channeltest mit einem Wegwerf-Signierer, installiert sie auf einem Wegwerf-Emulator und
+# deinstalliert sie im selben Job. Keine APK verlässt den Job (das Repository ist öffentlich; ein Artefakt wäre
+# eine Veröffentlichung) – nur Text-Berichte und Hashes.
+on:
+  pull_request:
+    paths: ['app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', '.github/workflows/helper-channel.yml']
+  push:
+    branches: [feature/helper-channel-control]
+    paths: ['app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', '.github/workflows/helper-channel.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: helper-channel-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  jvm:
+    name: Core, JVM channel checks, mutation probes, WASM unchanged
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Toolchains (Rust 1.97.0 from rust-toolchain.toml, wasm-bindgen-cli 0.2.104)
+        run: |
+          set -euo pipefail
+          (cd poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+          cargo install wasm-bindgen-cli --version 0.2.104 --locked
+      - name: Core tests (unchanged protocol, existing revocation)
+        run: cd poc/pake-channel/core && cargo test --locked
+      - name: Channel checks against the real ChannelServer/ControlCommands and the Rust core (JNI)
+        run: bash tests/java/channel/run.sh "$RUNNER_TEMP/desk"
+      - name: Mutation probes (each weakened copy must fail the checks)
+        run: python3 -I tests/java/channel/mutation.py "$RUNNER_TEMP/desk"
+      - name: Reviewed JVM checks (F1, F3, F4) against the app copies of SnapshotWriter and HttpRequestReader
+        run: |
+          set -euo pipefail
+          copy="$RUNNER_TEMP/jvmchecks"; mkdir -p "$copy"
+          for f in SnapshotWriter HttpRequestReader; do
+            sed 's/^package de\.evp\.helfer;$/package de.evp.pakepoc;/' "app/src/main/java/de/evp/helfer/$f.java" > "$copy/$f.java"
+            grep -q '^package de.evp.pakepoc;$' "$copy/$f.java"
+          done
+          bash poc/android-capability/tools/run-jvm-checks.sh "$copy"
+      - name: Kadri's vendored WASM is byte-identical (the JNI binding does not change the browser side)
+        run: |
+          set -euo pipefail
+          bash poc/android-capability/tools/build-wasm-kadri.sh "$RUNNER_TEMP/wasm" | tee "$RUNNER_TEMP/wasm.txt"
+          grep -q '^bda8018d18c08ae01b4a935e5761f1ce7d13e67928636ce3e3f7261451bde874  kadri_pairing_poc.js$' "$RUNNER_TEMP/wasm.txt"
+          grep -q '^d84e09bbfd365f69f50de99491705ba80a8ee85174dad220c6f5ed94c8fb79a4  kadri_pairing_poc_bg.wasm$' "$RUNNER_TEMP/wasm.txt"
+
+  emulator:
+    name: Test package de.evp.helfer.channeltest on a disposable API 34 emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - name: Pinned toolchains (Rust from rust-toolchain.toml, NDK r27c, SDK 34)
+        run: |
+          set -euo pipefail
+          (cd poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018" "platforms;android-34" "build-tools;34.0.0" < <(yes 2>/dev/null) > /dev/null
+          test -f "$ANDROID_HOME/ndk/27.2.12479018/source.properties"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Native channel libraries (API 26 linker, arm64-v8a + x86_64)
+        run: bash tools/build-channel-native.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/native.txt"
+      - name: Test APKs with a throwaway signer (deleted after the build)
+        run: bash tools/build-channel-apk.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/apk.txt"
+      - name: Only the test variant was built (no release or debug APK of de.evp.helfer)
+        run: |
+          set -euo pipefail
+          ls app/build/outputs/apk
+          test ! -e app/build/outputs/apk/release
+          test ! -e app/build/outputs/apk/debug
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Instrumentation on a disposable API 34 x86_64 emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash tools/run-channel-instrumentation.sh "$RUNNER_TEMP/a"
+      - name: Collect text-only report (no APK, no keys)
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          cp "$RUNNER_TEMP"/native.txt "$RUNNER_TEMP"/apk.txt "$RUNNER_TEMP/out/" 2>/dev/null || true
+          cp -r "$RUNNER_TEMP/a/report" "$RUNNER_TEMP/out/" 2>/dev/null || true
+          find "$RUNNER_TEMP/out" \( -name '*.apk' -o -name '*.so' -o -name '*.p12' -o -name '*.jks' \) -delete
+          ls -R "$RUNNER_TEMP/out"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: helper-channel-report-text-only
+          path: ${{ runner.temp }}/out
+          retention-days: 7
+          if-no-files-found: warn

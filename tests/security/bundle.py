@@ -10,7 +10,7 @@ assert '// @require ' not in script
 assert 'eval(' not in (ROOT/'tools/build.js').read_text()
 subprocess.run(['node',str(ROOT/'tools/build.js'),'--check'],check=True)
 # ParseScript installs the same namespace/name; explicit version bump enables manager update detection.
-assert '// @version      19.29' in script
+assert '// @version      19.30' in script
 # Former execution downloaded both the userscript and the same HLS library.
 old=pathlib.Path('/tmp/previous-userscript.js').read_text()
 baseline_bytes=len(old.encode())+len(vendor)

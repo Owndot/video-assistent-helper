@@ -1,17 +1,17 @@
 'use strict';
-// Execute the actual helper() and proxyLoop(), including GM timeout/error callbacks.
+// Execute the actual proxyLoop() with a stand-in for the helper transport (the userscript's helper() is disabled
+// until it has the secure channel, D2); timeout/error callbacks behave like the former GM transport.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const root=path.resolve(process.argv[2]||process.cwd()),source=fs.readFileSync(path.join(root,'src/080-helper-app.js'),'utf8');
-const a=source.indexOf('  const HELPER ='),b=source.indexOf('  // Koppel-Seite',a);assert(a>=0&&b>a);
+const a=source.indexOf('  function gmGet('),b=source.indexOf('  // Beim Wischen nicht jede Bewegung',a);assert(a>=0&&b>a);
 const tick=async()=>{for(let i=0;i<80;i++)await Promise.resolve();};
 function clock(){let next=0,now=0;const timers=new Map();return {set(fn,ms){timers.set(++next,{fn,at:now+ms});return next;},clear(id){timers.delete(id);},async advance(ms){now+=ms;for(;;){const entry=[...timers].find(([,v])=>v.at<=now);if(!entry)break;timers.delete(entry[0]);entry[1].fn();await tick();}},timers};}
 function harness(){
  const time=clock(),calls=[],media=[],uploads=[],states=new Map(),pulled=new Set(),running=[];let cleaning=false;
  const xhr=o=>{
-  const u=new URL(o.url),local=u.origin==='http://127.0.0.1:47811',job=+(u.searchParams.get('job')||u.searchParams.get('id')||u.pathname.slice(1));let finished=false;
+  const u=new URL(o.url),local=u.origin==='http://helper.test',job=+(u.searchParams.get('job')||u.searchParams.get('id')||u.pathname.slice(1));let finished=false;
   const abort=()=>{if(finished)return;finished=true;o.onabort&&o.onabort();};
   calls.push({local,path:u.pathname,job});
-  if(local)assert.equal(o.headers['X-EVP-Key'],'0123456789abcdef0123456789abcdef');
   queueMicrotask(()=>{
    if(finished||cleaning)return;
    if(!local){finished=true;media.push(job);o.onload({status:200,responseHeaders:'Content-Length: 1',response:new ArrayBuffer(1)});return;}
@@ -28,7 +28,8 @@ function harness(){
    finished=true;o.onload({status:200,responseText:JSON.stringify(reply)});
   });return {abort};
  };
- const api=new Function('CONFIG','GM_getValue','gmXhr','mediaReferrer','baseDomain','hostOf','setTimeout','clearTimeout',source.slice(a,b)+'return {proxyLoop,cancelProxyJob,proxyJobs,stats:()=>({active:proxyActive,queued:proxyWaiting.length,jobs:proxyJobs.size})};')({systemHelper:true},()=> '0123456789abcdef0123456789abcdef',()=>xhr,()=>'',x=>x,()=> 'media.test',time.set,time.clear);
+ const helper=(p,to,body,_key,job)=>{if(job&&job.cancelled)return Promise.resolve(null);to=to||1200;return new Promise(res=>{let done=false,request;const fin=v=>{if(!done){done=true;time.clear(timer);if(job)job.aborters.delete(abort);res(v);}};const abort=()=>{fin(null);try{if(request)request.abort();}catch(e){}};const timer=time.set(abort,to+400);if(job)job.aborters.add(abort);request=xhr({method:body?'POST':'GET',url:'http://helper.test'+p,headers:{},timeout:to,data:body||undefined,onload:r=>{try{fin(r.status===200?JSON.parse(r.responseText):null);}catch(e){fin(null);}},onerror:()=>fin(null),ontimeout:()=>fin(null),onabort:()=>fin(null)});});};
+ const api=new Function('gmXhr','mediaReferrer','helper','baseDomain','hostOf','setTimeout','clearTimeout',source.slice(a,b)+'return {proxyLoop,cancelProxyJob,proxyJobs,stats:()=>({active:proxyActive,queued:proxyWaiting.length,jobs:proxyJobs.size})};')(()=>xhr,()=>'',helper,x=>x,()=> 'media.test',time.set,time.clear);
  return {api,time,calls,media,uploads,start(job,status){states.set(job,[...status]);const f=api.proxyLoop(job,['media.test']);running.push(f);return f;},count(job,path){return calls.filter(c=>c.local&&c.job===job&&c.path===path).length;},async clean(){cleaning=true;for(const state of api.proxyJobs.values())api.cancelProxyJob(state);await Promise.allSettled(running);assert.deepEqual(api.stats(),{active:0,queued:0,jobs:0});assert.equal(time.timers.size,0,'Leaked timer/abort wait');}};
 }
 (async()=>{
@@ -60,7 +61,7 @@ function harness(){
    await h.time.advance(2000);await first;assert.deepEqual(h.media,[2,1]);assert.deepEqual(h.uploads,[2,1]);assert.equal(h.count(2,'/dlstate'),1,'healthy job made extra status queries');
   }finally{await h.clean();}
  }
- console.log('PASS: actual helper/proxyLoop retry initial timeout/error without re-pull, duplicate GET/upload or slot leak; confirmed terminals and three-error limit stop; other jobs proceed');
+ console.log('PASS: actual proxyLoop retry initial timeout/error without re-pull, duplicate GET/upload or slot leak; confirmed terminals and three-error limit stop; other jobs proceed');
 })().then(()=>{finished=true;}).catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>clearTimeout(deadline));
 let finished=false;const deadline=setTimeout(()=>{console.error('Initial status regression did not settle');process.exitCode=1;},8000);
 process.on('beforeExit',()=>{if(!finished&&!process.exitCode)process.exitCode=1;});
