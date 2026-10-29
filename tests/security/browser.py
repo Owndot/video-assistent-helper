@@ -108,13 +108,13 @@ def main():
                     print('VM ParseScript:',json.dumps(result)[:900],flush=True)
                     assert result is not None and not result.get('error'),result
                     return result
-                first=install(code.replace('// @version      19.29','// @version      19.28'))
+                first=install(code.replace('// @version      19.30','// @version      19.29'))
                 assert first.get('isNew') and first.get('where'),first
                 script_id=first['where']['id']
                 options.evaluate("async id=>await chrome.runtime.sendMessage({cmd:'CheckUpdate',data:{ids:[id]}})",script_id)
                 state=options.evaluate("async id=>await chrome.runtime.sendMessage({cmd:'GetData',data:{ids:[id]}})",script_id)
                 scripts=state['scripts'];assert len(scripts)==1 and scripts[0]['props']['id']==script_id,state
-                assert scripts[0]['meta']['version']=='19.29',scripts[0]['meta']
+                assert scripts[0]['meta']['version']=='19.30',scripts[0]['meta']
                 assert any(h['url']=='/script.user.js' for h in HITS),'Manager did not request the update fixture'
                 print('PASS: real Violentmonkey installs and updates the bundled userscript',flush=True)
             page=context.new_page();page.on('pageerror', lambda e: print('PAGE ERROR:',e,flush=True));page.goto(https+'/PRIVATE_PATH_SECRET?token=QUERY_SECRET#FRAGMENT_SECRET');page.wait_for_timeout(700)
