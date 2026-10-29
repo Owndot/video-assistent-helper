@@ -22,7 +22,8 @@ keytool -genkeypair -storetype PKCS12 -keystore "$KEYDIR/throwaway.p12" -alias h
   -storepass:env ORG_GRADLE_PROJECT_channelKeystorePass -keypass:env ORG_GRADLE_PROJECT_channelKeystorePass >/dev/null 2>&1
 "$ROOT/poc/android-capability/app-project/gradlew" --no-daemon -q -p "$ROOT" \
   :app:assembleChanneltest :app:assembleChanneltestAndroidTest -PchannelTests -Pandroid.useAndroidX=true \
-  -PchannelJniLibs="$OUT/jniLibs" -PchannelJniLibsTest="$OUT/jniLibs-test" -PchannelKeystore="$KEYDIR/throwaway.p12"
+  -PchannelJniLibs="$OUT/jniLibs" -PchannelJniLibsTest="$OUT/jniLibs-test" -PchannelKeystore="$KEYDIR/throwaway.p12" \
+  ${CHANNEL_SIZE_ARGS:-}
 mkdir -p "$OUT/apk"
 APP="$OUT/apk/helper-channeltest.apk"
 TEST="$OUT/apk/helper-channeltest-androidTest.apk"

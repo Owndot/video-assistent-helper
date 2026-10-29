@@ -113,3 +113,16 @@ dependencies {
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 }
+
+// NUR GRÖSSENTEST (temporärer Zweig tmp/okhttp-size-test, nie mergen): betrifft ausschließlich die Testvariante.
+// -PsizeOkhttp: OkHttp (Android-Artefakt) + nie aufgerufene Probe-Klasse, die die Härtungs-API nutzt.
+// -PsizeR8:     R8 (shrink/optimize/obfuscate) für die Bibliotheken; App-Code bleibt vollständig erhalten.
+if (project.hasProperty('sizeOkhttp')) {
+    android.sourceSets.channeltest.java.srcDirs += 'src/sizeprobe/java'
+    dependencies { channeltestImplementation 'com.squareup.okhttp3:okhttp-android:5.5.1' }
+}
+if (project.hasProperty('sizeR8')) {
+    android.buildTypes.channeltest.minifyEnabled true
+    android.buildTypes.channeltest.proguardFiles android.getDefaultProguardFile('proguard-android-optimize.txt'), 'size-test-r8.pro'
+    android.buildTypes.channeltest.testProguardFiles 'size-test-r8-androidtest.pro'
+}
