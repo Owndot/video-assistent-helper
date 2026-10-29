@@ -373,7 +373,13 @@ public class ChannelInstrumentedTest {
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         try (ServerSocket rogue = new ServerSocket()) {
             rogue.setReuseAddress(true);
-            rogue.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 47899));
+            // Der echte Dienst ist beendet; höchstens 3 s darauf warten, dass das System den Port freigibt (Wartezeit im Bericht).
+            long bindStart = now();
+            for (;;) {
+                try { rogue.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 47899)); break; }
+                catch (java.net.BindException busy) { if (now() - bindStart > 3000) throw busy; Thread.sleep(50); }
+            }
+            Log.i(TAG, String.format(Locale.ROOT, "CHANNEL_ROGUE_BIND waitedMs=%d", now() - bindStart));
             Thread t = new Thread(() -> {
                 try (Socket s = rogue.accept()) {
                     s.setSoTimeout(3000);

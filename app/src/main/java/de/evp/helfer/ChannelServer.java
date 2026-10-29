@@ -47,6 +47,7 @@ public final class ChannelServer {
     private final ControlCommands.Device device;
     private final ThreadPoolExecutor pool = new ThreadPoolExecutor(4, 4, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(16));
     private ServerSocket server;
+    private Thread acceptThread;
 
     public ChannelServer(Host host, ControlCommands.Device device) {
         this.host = host;
@@ -75,13 +76,20 @@ public final class ChannelServer {
                 } catch (Exception closed) { return; }
             }
         }, "evp-kanal");
+        acceptThread = t;
         t.start();
         return true;
     }
 
+    /** Erst zurück, wenn der Annahme-Thread beendet ist: Android gibt den Port erst dann wirklich frei. */
     public synchronized void stop() {
         try { if (server != null) server.close(); } catch (Exception ignored) {}
         pool.shutdownNow();
+        Thread t = acceptThread;
+        acceptThread = null;
+        if (t != null && t != Thread.currentThread()) {
+            try { t.join(2000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
     }
 
     private static void close(Socket s) { try { s.close(); } catch (Exception ignored) {} }
