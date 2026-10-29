@@ -115,11 +115,17 @@ dependencies {
 }
 
 // NUR GRÖSSENTEST (temporärer Zweig tmp/okhttp-size-test, nie mergen): betrifft ausschließlich die Testvariante.
-// -PsizeOkhttp: OkHttp (Android-Artefakt) + nie aufgerufene Probe-Klasse, die die Härtungs-API nutzt.
-// -PsizeR8:     R8 (shrink/optimize/obfuscate) für die Bibliotheken; App-Code bleibt vollständig erhalten.
+// -PsizeOkhttp=VERSION: OkHttp (Android-Artefakt) + nie aufgerufene Probe-Klasse, die die Härtungs-API nutzt.
+// -PsizeSkipAarCheck:   NUR zur Größenmessung von Versionen, die compileSdk > 34 verlangen (nicht auslieferbar).
+// -PsizeR8:             R8 (shrink/optimize/obfuscate) für die Bibliotheken; App-Code bleibt vollständig erhalten.
 if (project.hasProperty('sizeOkhttp')) {
+    def okVersion = project.property('sizeOkhttp').toString()
+    if (!(okVersion ==~ /5\.[0-9]+\.[0-9]+/)) throw new GradleException('sizeOkhttp needs an explicit 5.x.y version')
     android.sourceSets.channeltest.java.srcDirs += 'src/sizeprobe/java'
-    dependencies { channeltestImplementation 'com.squareup.okhttp3:okhttp-android:5.5.1' }
+    dependencies { channeltestImplementation "com.squareup.okhttp3:okhttp-android:$okVersion" }
+}
+if (project.hasProperty('sizeSkipAarCheck')) {
+    tasks.configureEach { if (name == 'checkChanneltestAarMetadata') enabled = false }
 }
 if (project.hasProperty('sizeR8')) {
     android.buildTypes.channeltest.minifyEnabled true

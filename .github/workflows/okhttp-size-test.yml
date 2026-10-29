@@ -1,7 +1,7 @@
 name: OkHttp size test (temporary branch, text report only)
 
 # NUR GRÖSSENTEST für Entscheidung D1 (Zweig tmp/okhttp-size-test, nie mergen, danach löschen).
-# Baut die Testvariante de.evp.helfer.channeltest in vier Varianten (ohne/mit OkHttp 5.5.1, ohne/mit R8), misst
+# Baut die Testvariante de.evp.helfer.channeltest in sechs Varianten (ohne OkHttp, OkHttp 5.3.2, OkHttp 5.5.1; je ohne/mit R8), misst
 # APK- und installierte Größe auf einem Wegwerf-Emulator, prüft Reproduzierbarkeit und führt die 15 Kanal-
 # Instrumentierungstests gegen jede Variante aus. Keine Download-Funktion; die Probe-Klasse wird nie aufgerufen.
 # Es wird NIE eine APK hochgeladen: das Artefakt enthält nur Text (Größen, Hashes, Abhängigkeiten, Testergebnisse).
@@ -43,7 +43,7 @@ jobs:
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
       - name: Native channel library (once, shared by all variants)
         run: bash tools/build-channel-native.sh "$RUNNER_TEMP/native"
-      - name: Build four variants (base, r8, ok, okr8)
+      - name: Build six variants (base, r8, ok532, ok532r8, ok551, ok551r8)
         run: |
           set -euo pipefail
           R="$RUNNER_TEMP/v"; mkdir -p "$R/text"
@@ -55,14 +55,19 @@ jobs:
             (cd "$src" && CHANNEL_SIZE_ARGS="$*" bash tools/build-channel-apk.sh "$out") 2>&1 | tee "$R/text/build-$v.log"
             echo "::endgroup::"
           }
-          build base "$GITHUB_WORKSPACE" "$R/base"
-          build r8   "$GITHUB_WORKSPACE" "$R/r8"   -PsizeR8
-          build ok   "$GITHUB_WORKSPACE" "$R/ok"   -PsizeOkhttp
-          build okr8 "$GITHUB_WORKSPACE" "$R/okr8" -PsizeOkhttp -PsizeR8
-          # Reproduzierbarkeit: OkHttp-Varianten ein zweites Mal aus einer Kopie in einem anderen Pfad.
+          build base     "$GITHUB_WORKSPACE" "$R/base"
+          build r8       "$GITHUB_WORKSPACE" "$R/r8"       -PsizeR8
+          # 5.3.2: neueste Version, die mit compileSdk 34 / AGP 8.5.2 baut (5.4.0 verlangt 36, 5.5.x verlangt 37).
+          build ok532    "$GITHUB_WORKSPACE" "$R/ok532"    -PsizeOkhttp=5.3.2
+          build ok532r8  "$GITHUB_WORKSPACE" "$R/ok532r8"  -PsizeOkhttp=5.3.2 -PsizeR8
+          # 5.5.1 (aktuell): NUR Größenmessung, AAR-Prüfung abgeschaltet; mit diesem Toolchain nicht auslieferbar.
+          #        Ein Fehlschlag hier wird berichtet, bricht den Lauf aber nicht ab.
+          build ok551    "$GITHUB_WORKSPACE" "$R/ok551"    -PsizeOkhttp=5.5.1 -PsizeSkipAarCheck || echo "BUILD FAILED ok551" | tee -a "$R/text/build-failures.txt"
+          build ok551r8  "$GITHUB_WORKSPACE" "$R/ok551r8"  -PsizeOkhttp=5.5.1 -PsizeSkipAarCheck -PsizeR8 || echo "BUILD FAILED ok551r8" | tee -a "$R/text/build-failures.txt"
+          # Reproduzierbarkeit: baubare OkHttp-Varianten ein zweites Mal aus einer Kopie in einem anderen Pfad.
           mkdir -p "$RUNNER_TEMP/src-b" && git archive HEAD | tar -x -C "$RUNNER_TEMP/src-b"
-          build ok-b   "$RUNNER_TEMP/src-b" "$R/ok-b"   -PsizeOkhttp
-          build okr8-b "$RUNNER_TEMP/src-b" "$R/okr8-b" -PsizeOkhttp -PsizeR8
+          build ok532-b   "$RUNNER_TEMP/src-b" "$R/ok532-b"   -PsizeOkhttp=5.3.2
+          build ok532r8-b "$RUNNER_TEMP/src-b" "$R/ok532r8-b" -PsizeOkhttp=5.3.2 -PsizeR8
       - name: Reproducibility (all entries except META-INF signature files byte-identical)
         run: |
           set -euo pipefail
@@ -73,7 +78,7 @@ jobs:
           for n in sorted(z.namelist()):
               if n.startswith("META-INF/") and n.split("/")[-1].split(".")[-1] in ("SF", "RSA", "MF"): continue
               print(hashlib.sha256(z.read(n)).hexdigest(), n)' "$1"; }
-          for v in ok okr8; do
+          for v in ok532 ok532r8; do
             for apk in helper-channeltest.apk helper-channeltest-androidTest.apk; do
               entries "$R/$v/apk/$apk" > "$R/$v.$apk.e"; entries "$R/$v-b/apk/$apk" > "$R/$v-b.$apk.e"
               diff "$R/$v.$apk.e" "$R/$v-b.$apk.e"
@@ -84,17 +89,19 @@ jobs:
         run: |
           set -euo pipefail
           R="$RUNNER_TEMP/v"; BT="$ANDROID_HOME/build-tools/34.0.0"
-          python3 tools/size-report.py base="$R/base/apk/helper-channeltest.apk" r8="$R/r8/apk/helper-channeltest.apk" \
-            ok="$R/ok/apk/helper-channeltest.apk" okr8="$R/okr8/apk/helper-channeltest.apk" | tee "$R/text/size-report.txt"
-          for v in base r8 ok okr8; do
+          python3 tools/size-report.py $(for v in base r8 ok532 ok532r8 ok551 ok551r8; do [ -f "$R/$v/apk/helper-channeltest.apk" ] && printf '%s=%s ' $v "$R/$v/apk/helper-channeltest.apk"; done) | tee "$R/text/size-report.txt"
+          for v in base r8 ok532 ok532r8 ok551 ok551r8; do
+            [ -f "$R/$v/apk/helper-channeltest.apk" ] || continue
             echo "$v $(sha256sum < "$R/$v/apk/helper-channeltest.apk" | cut -c1-64) $(wc -c < "$R/$v/apk/helper-channeltest.apk")" >> "$R/text/apk-hashes.txt"
             "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$R/$v/apk/helper-channeltest.apk" > "$R/text/manifest-$v.txt"
             "$BT/aapt2" dump permissions "$R/$v/apk/helper-channeltest.apk" > "$R/text/permissions-$v.txt"
           done
-          echo "== merged manifest: base -> ok"; diff "$R/text/manifest-base.txt" "$R/text/manifest-ok.txt" | tee "$R/text/manifest-diff.txt" || true
-          echo "== permissions: base -> ok"; diff "$R/text/permissions-base.txt" "$R/text/permissions-ok.txt" | tee "$R/text/permissions-diff.txt" || true
+          echo "== merged manifest: base -> ok532"; diff "$R/text/manifest-base.txt" "$R/text/manifest-ok532.txt" | tee "$R/text/manifest-diff.txt" || true
+          echo "== permissions: base -> ok532"; diff "$R/text/permissions-base.txt" "$R/text/permissions-ok532.txt" | tee "$R/text/permissions-diff.txt" || true
           poc/android-capability/app-project/gradlew --no-daemon -q -p . :app:dependencies --configuration channeltestRuntimeClasspath \
-            -PsizeOkhttp -PchannelTests -Pandroid.useAndroidX=true | tee "$R/text/dependencies.txt"
+            -PsizeOkhttp=5.3.2 -PchannelTests -Pandroid.useAndroidX=true | tee "$R/text/dependencies-5.3.2.txt"
+          poc/android-capability/app-project/gradlew --no-daemon -q -p . :app:dependencies --configuration channeltestRuntimeClasspath \
+            -PsizeOkhttp=5.5.1 -PchannelTests -Pandroid.useAndroidX=true | tee "$R/text/dependencies-5.5.1.txt"
           find ~/.gradle/caches/modules-2/files-2.1 \( -path '*com.squareup.okhttp3*' -o -path '*com.squareup.okio*' -o -path '*org.jetbrains.kotlin/kotlin-stdlib*' \
             -o -path '*org.jetbrains/annotations*' -o -path '*androidx.startup*' -o -path '*androidx.annotation*' -o -path '*androidx.tracing*' \) \
             \( -name '*.jar' -o -name '*.aar' \) ! -name '*sources*' -exec sha256sum {} + | sed "s|$HOME/.gradle/caches/modules-2/files-2.1/||" | sort -k2 \
@@ -113,14 +120,14 @@ jobs:
           target: google_apis
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
-          script: bash tools/size-emulator.sh "$RUNNER_TEMP/v" base r8 ok okr8
+          script: bash tools/size-emulator.sh "$RUNNER_TEMP/v" base r8 ok532 ok532r8 ok551 ok551r8
       - name: Collect text report (never an APK)
         if: always()
         run: |
           set -euo pipefail
           R="$RUNNER_TEMP/v"; mkdir -p "$R/text"
           cp "$R/installed.txt" "$R/text/" 2>/dev/null || true
-          for v in base r8 ok okr8; do [ -f "$R/$v/report/summary.txt" ] && cp "$R/$v/report/summary.txt" "$R/text/instrumentation-$v.txt" || true; done
+          for v in base r8 ok532 ok532r8 ok551 ok551r8; do [ -f "$R/$v/report/summary.txt" ] && cp "$R/$v/report/summary.txt" "$R/text/instrumentation-$v.txt" || true; done
           cat "$R/text/installed.txt" 2>/dev/null || true
           if find "$R/text" -type f \( -name '*.apk' -o -name '*.aab' -o -name '*.so' -o -name '*.dex' -o -name '*.zip' \) | grep -q .; then echo "installable file in report" >&2; exit 1; fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

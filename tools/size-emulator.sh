@@ -24,6 +24,7 @@ measure() {  # $1 = label
   sed 's/^/    /' "$R/$v.$1.files"
 }
 for v in "$@"; do
+  [ -f "$R/$v/apk/helper-channeltest.apk" ] || { echo "SKIPPED $v (not built)" | tee -a "$R/installed.txt"; continue; }
   adb uninstall $PKG > /dev/null 2>&1 || true
   adb install -t "$R/$v/apk/helper-channeltest.apk" > /dev/null || { echo "install failed $v"; status=1; continue; }
   measure install
