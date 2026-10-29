@@ -39,8 +39,13 @@ Rust-Kern als JNI/WASM, Protokoll-IDs unverändert) auf `127.0.0.1:47899`, und d
 | `f7e89e3`, `5694f6a` | gemeinsames `src/080`: `helper()` gibt nur den Pfad an `KADRI_HELPER` (nur Kadri-Chrome), Einstellung „Helper-App“ bleibt wirksam |
 | `d6d60d8` | Test-Harness: fremder Dienst fälscht formal gültige Handshake-Antworten |
 | `0a02402` | Emulator-Test FLAG_SECURE auf frischer Activity |
-| `3cbc063` | `bundle.py` erwartet die aktuelle Userscript-Version 19.30 |
-| (dieser Commit) | Review-Unterlage, Gerätepaket-Workflow mit doppelter Upload-Sperre |
+| `3cbc063`, `212ca25` | `bundle.py`/`browser.py` erwarten die aktuelle Userscript-Version 19.30 (echter Violentmonkey-Test) |
+| `bfe3772` | Review-Unterlage, Gerätepaket-Workflow mit doppelter Upload-Sperre |
+| `4257e15` … `07c6dae` | Gerätepaket: Diagnose und Behandlung der D8-Prüfsummen (durch `2447db7` überholt) |
+| `df68b42` | `onDestroy` gibt den Port frei, bevor der Dienst als beendet gilt |
+| `2447db7` | Testvariante **nicht debugfähig** (Entscheidung des Eigentümers); APK-Vergleich wieder streng byte-identisch; Prüfung „nicht debugfähig“ |
+| `d9f7914` | `ChannelServer.stop()` wartet auf das Ende des Annahme-Threads (Port wirklich frei) |
+| (dieser Commit) | Review-Unterlage: Entscheidungen des Eigentümers, Einstufung, Entscheidungsvorlage |
 
 **Kadri #10** (gegen Stufe 1 `feature/helper-channel-dummy`; erster Elternteil):
 
@@ -51,7 +56,9 @@ Rust-Kern als JNI/WASM, Protokoll-IDs unverändert) auf `127.0.0.1:47899`, und d
 | `a064d18` | Tests gegen den echten Server, Ersatz der Alt-Tests, CI |
 | `7ca4459` | Dokumentation |
 | `0ba5537`, `94462b0` | Testreihenfolge/Anzahl (CI) |
-| (dieser Commit) | Review-Unterlage, Gerätepaket-Workflow mit doppelter Upload-Sperre |
+| `4003d7a` | Review-Unterlage, Gerätepaket-Workflow mit doppelter Upload-Sperre |
+| `93832f6`, `d415d3f` | Browsertest wartet, bis `background.js` geladen ist; Doku |
+| (dieser Commit) | Review-Unterlage: Entscheidungen des Eigentümers, Einstufung, Entscheidungsvorlage |
 
 Stufe 1 (Kadri #7, schon unabhängig geprüft, Entscheidung A): `439df7c` … `5845abb`.
 
@@ -141,18 +148,24 @@ Pfade; die Sperrregeln 51–58/70 (Prio 5) sperren alles übrige im eigenen Netz
 Fremde Service Worker sind von keiner Kadri-Regel betroffen (#9). Kadris Einstellungsseite/Menü (eigener Tab) stellen
 selbst keine Anfragen an den Helper – das tut nur der Hintergrund.
 
-## 6. Verbleibende Risiken
+## 6. Verbleibende Risiken (eingestuft)
 
-| # | Risiko | Bewertung |
-| --- | --- | --- |
-| 1 | Verfügbarkeit: langsame lokale Clients (§7) | mittel (nur Verfügbarkeit) |
-| 2 | R1/R2 aus dem PoC: wiederholtes HS1 verdrängt eine frische Sitzung; bekannte Sitzungs-ID erlaubt Abbruch | gering (nur Verfügbarkeit) |
-| 3 | Kompromittierter Renderer kann gültige Steuerbefehle senden (§5) | gering |
-| 4 | Seite löst über `kadri-vis` erneutes Senden bestehender Werte aus (§5) | gering |
-| 5 | Kadris bestehende Ausnahme „Seite im eigenen Netz“: Seite auf `127.0.0.1` darf über Kadri GET an denselben Rechner | gering für den Kanal (GET → Gate 403); bestehendes Verhalten |
-| 6 | Kopplung per 8-stelligem Code: Schulterblick/Mitlesen innerhalb von 120 s | gering (FLAG_SECURE, ein Versuch, Einzelwiderruf) |
-| 7 | Kein unabhängiger Audit des Protokolls/der Bibliotheken | offen |
-| 8 | Issue #3 (Signatur) / #4 offen; Testvariante nur wegwerf-signiert | Release-Blocker |
+Einstufung: **S** = Sicherheitsrisiko (Vertraulichkeit/Integrität/unberechtigte Aktion), **V** = Verfügbarkeit,
+**B** = Verbesserungsmöglichkeit, **P** = Prozess/Freigabe. Bekannt nachgewiesene Sicherheitsprobleme: keine – das
+muss der Reviewer bestätigen oder widerlegen.
+
+| # | Befund | Art | Bewertung des Autors |
+| --- | --- | --- | --- |
+| 1 | Langsame lokale Clients belegen die 4 Worker (§7) | V | mittel; vom Eigentümer für den isolierten Gerätetest vorläufig akzeptiert |
+| 2 | R1/R2 aus dem PoC: wiederholtes HS1 verdrängt eine frische Sitzung; bekannte Sitzungs-ID erlaubt Abbruch | V | gering |
+| 3 | Kompromittierter Renderer kann gültige Steuerbefehle senden (§5) | S | gering (Helligkeit/Lautstärke, keine Daten, keine Verwaltung) |
+| 4 | Seite löst über `kadri-vis` erneutes Senden bereits gewählter Werte aus (§5) | B | gering (keine neue Wirkung) |
+| 5 | Bestehende Ausnahme „Seite im eigenen Netz“: Seite auf `127.0.0.1` darf über Kadri GET an denselben Rechner | S | gering für den Kanal (GET → Gate 403); bestehendes Verhalten |
+| 6 | Kopplung per 8-stelligem Code: Mitlesen innerhalb von 120 s | S | gering (FLAG_SECURE, ein Versuch, Einzelwiderruf) |
+| 7 | Kein unabhängiger Audit des Protokolls/der Bibliotheken | P | offen |
+| 8 | Issue #3 (Signatur) / #4 offen; Testvariante nur wegwerf-signiert | P | Release-Blocker, kein Blocker für den isolierten Gerätetest |
+| 9 | Schneller Dienst-Neustart konnte „Port belegt“ melden (behoben in `df68b42`, `d9f7914`; fail-closed) | V | behoben, Wirkung im Emulator-Bericht `CHANNEL_ROGUE_BIND` |
+| 10 | CI-Test `download-manager-privacy` (aus `main`, nicht Teil dieser PRs) hängt sporadisch | B | separat zu behandeln (§10) |
 
 ## 7. Verfügbarkeit: langsame lokale Clients (dokumentiert, nicht geändert)
 
@@ -169,6 +182,9 @@ fallen auf den Normalzustand zurück (der Helper gibt die Helligkeit nach 30 s o
 **Keine** Auswirkungen auf Vertraulichkeit oder Integrität: Ohne Schlüssel kann die App keinen Befehl ausführen und
 keine Registrierung anlegen. Voraussetzung ist bereits laufender fremder Code auf dem Gerät.
 
+**Entscheidung des Eigentümers:** Risiko vorläufig akzeptiert für einen **isolierten** Gerätetest; keine größere
+Serverarchitektur. Der Reviewer beurteilt, ob die kleine Gegenmaßnahme vor dem Test nötig ist.
+
 Mögliche Gegenmaßnahmen (nicht umgesetzt, bewusst ohne Architekturänderung; nur nach Rücksprache):
 - kleiner Eingriff: kürzere Lesefrist für den Anfragekopf (z. B. 1 s) und Begrenzung gleichzeitiger halboffener
   Verbindungen;
@@ -177,18 +193,15 @@ Mögliche Gegenmaßnahmen (nicht umgesetzt, bewusst ohne Architekturänderung; n
 
 ## 8. Testpakete für den Gerätetest (vorbereitet, nichts hochgeladen)
 
-- Helper: `.github/workflows/channel-device-package.yml` baut `de.evp.helfer.channeltest` zweimal aus verschiedenen
-  Pfaden: native Bibliotheken byte-identisch; alle APK-Einträge außer Signaturdateien byte-identisch – mit einer eng
-  geprüften Ausnahme: D8 schreibt in debugfähige Builds eine Prüfsummen-Tabelle (`~~~{…}`), deren Werte für
-  synthetische Lambda-Klassen (`$$ExternalSyntheticLambdaN`) nicht deterministisch sind, auch beim sauberen Neubau im
-  selben Pfad (Läufe 40794748343, 40795292501). Der Workflow akzeptiert eine abweichende `.dex` nur, wenn die
-  Disassemblierung identisch ist, sich keine andere Zeichenkette unterscheidet und in der Tabelle nur Werte von
-  `$$ExternalSynthetic`-Klassen abweichen; alles andere bleibt rot. Signatur je Bau mit Wegwerf-Schlüssel. Danach
-  Prüfung von Paket/Name/Signierer/Sicherungsregeln/Bibliotheken und Emulatortest gegen genau diese APK.
-  (Alternative ohne Ausnahme: Testvariante nicht debugfähig bauen – kleine Build-Änderung, nur nach Rücksprache.)
+- Helper: `.github/workflows/channel-device-package.yml` baut `de.evp.helfer.channeltest` (nicht debugfähig, Prüfung
+  im Workflow) zweimal aus verschiedenen Pfaden: native Bibliotheken und alle APK-Einträge außer den Signaturdateien
+  byte-identisch (die frühere D8-Ausnahme entfiel mit „nicht debugfähig“). Signatur je Bau mit Wegwerf-Schlüssel
+  (deshalb ändert sich der Hash der fertigen APK bei jedem Bau). Danach Prüfung von Paket/Name/Signierer/
+  Sicherungsregeln/Bibliotheken und Emulatortest gegen genau diese APK.
 - Kadri: `.github/workflows/channel-device-package.yml` baut `dist/chrome` mit Testnamen „Kadri TEST – Helfer-Kanal“
   zweimal als deterministisches ZIP (byte-identisch), prüft, dass nur der Name abweicht, und führt den Kanal-Browsertest
   gegen genau dieses Paket aus.
+- **Noch keine Upload-Freigabe** (Eigentümer): erst nach dem unabhängigen Review.
 - Upload in beiden nur mit **zwei** Freigaben: committete Datei `.github/CHANNEL-DEVICE-ARTIFACTS-APPROVED` **und**
   Handstart mit Bestätigungswort. Sonst nur Textbericht.
 - Auswirkungen auf bestehende Installationen: eigenes Paket bzw. eigene Erweiterungs-ID; überschreibt weder
@@ -196,9 +209,65 @@ Mögliche Gegenmaßnahmen (nicht umgesetzt, bewusst ohne Architekturänderung; n
   `de.evp.pakepoc.test` vorher deinstallieren (gleicher Port 47899 → sonst „Port belegt“ bzw. fremde Identität);
   eine vorhandene Kadri-Installation während des Tests deaktivieren (sonst zwei Player auf jeder Seite).
 
-## 9. Bitte an den Reviewer
+## 9. Auftrag an den unabhängigen Reviewer
 
-1. Abschnitte 4–5 gegen den Code prüfen, insbesondere `channel-service.js` (Absender- und Formprüfung), `prelude.js`
-   (`KADRI_HELPER`), `ChannelServer.route/gate`, `ControlCommands.parse`, `HelferService.revoke/startChannel`, Regel 40.
-2. Bewertung der Risiken 1–6, besonders §7 (ob die Lesefrist vor dem Gerätetest gekürzt werden soll).
-3. Prüfen, dass keine Spur des Klartext-Wegs übrig ist (App, Userscript, Kadri Chrome/Firefox).
+Die Änderungen des Autors gelten bis zum Abschluss dieses Reviews **nicht** als unabhängig geprüft.
+
+**Umfang:** Helper #22 und Kadri #10 zusammen, Stand der im Kopf der PRs genannten Commits. Schwerpunkte:
+1. Abschnitte 4–5 gegen den Code: `channel/channel-service.js` (Absender- und Formprüfung), `chrome/prelude.js`
+   (`KADRI_HELPER`), `ChannelServer.route/gate`, `ControlCommands.parse`, `HelferService.revoke/startChannel/onDestroy`,
+   DNR-Regel 40 in `chrome/background.js`.
+2. Kopplung, Einzelwiderruf, Identitätspinning, Neustarts (§5) – inklusive der Frage, ob ein Inhaltsskript, eine
+   Webseite, eine andere Erweiterung oder eine lokale App eine Aktion ohne Nutzer auslösen kann.
+3. Kein Rest des Klartext-Wegs (App, Userscript, Kadri Chrome/Firefox): `47811`, `X-EVP-Key`, `/pair`.
+4. §7: Ist die kleine Gegenmaßnahme vor dem isolierten Gerätetest **erforderlich**?
+5. Testpakete (§8): Wirkung auf bestehende Installationen, Upload-Sperre.
+
+**Nachvollziehen (ohne Gerät):**
+```sh
+# Helper
+tests/java/channel/run.sh                      # echter Server + Rust-Kern, 10 Prüfgruppen
+python3 tests/java/channel/mutation.py OUT     # 11 Mutanten müssen scheitern
+# Kadri (HELPER_HOST_DIR = Build aus helper/tests/java/channel/build.sh)
+node tools/build.js --test && node tests/channel/channel_integration_check.js
+node tests/channel/channel_browser_check.js && node tests/channel/channel_netguard_failure_check.js
+```
+CI: Helper `helper-channel.yml` (Emulator API 34), `channel-device-package.yml`; Kadri `ci.yml`, `channel-device-package.yml`.
+
+**Regeln für die Einstufung:** Als **Blocker** gilt nur ein **nachgewiesenes** Problem (Code-Stelle plus
+nachvollziehbarer Weg oder Test), das im isolierten Gerätetest Vertraulichkeit, Integrität oder unberechtigte Aktionen
+betrifft. Verfügbarkeitsprobleme und Verbesserungen werden getrennt aufgeführt und blockieren nur, wenn der Reviewer
+begründet, dass der Test sonst nicht aussagekräftig oder nicht sicher durchführbar ist.
+
+## 10. Separat behandelt (nicht Teil dieser PRs)
+
+- `download-manager-privacy` (`ReferrerDownloadTest` aus `main`): Grüne Läufe brauchen **0,2 s**, rote warten die vollen
+  15 s, obwohl der Android-DownloadManager Weiterleitung und Ziel erreicht hat. Das ist **kein** bloß knappes Timing,
+  sondern ein hängender Download; die Ursache (z. B. Wiederholung/Pause des DownloadManagers kurz nach dem Booten) ist
+  aus den Logs nicht belegbar, weil der Test Status und Grund nicht ausgibt. Eine längere Frist wäre geraten; vorgesehen
+  ist zunächst nur eine Diagnose (Status/Grund bei Zeitablauf), in einem eigenen PR gegen `main` und nur nach Freigabe.
+
+## 11. Entscheidungsvorlage (vom Reviewer auszufüllen)
+
+```
+Reviewer:            <Name>            Datum: <JJJJ-MM-TT>
+Geprüfte Commits:    Helper <sha>      Kadri <sha>
+
+Entscheidung:        [ ] A – Bereit für isolierten Samsung-Gerätetest
+                     [ ] B – Vorher müssen konkrete Sicherheitsprobleme behoben werden
+
+Nachgewiesene Sicherheitsprobleme (nur diese sind Blocker):
+  1. <Befund> – <Code-Stelle> – <Weg/Test> – <Schwere>
+
+Verfügbarkeitsprobleme (kein Blocker, außer begründet):
+  - §7 langsame Clients: Gegenmaßnahme vor dem Test erforderlich?  [ ] ja  [ ] nein  Begründung:
+
+Verbesserungsmöglichkeiten (kein Blocker):
+  - …
+
+Auflagen für den Gerätetest (falls A):
+  - z. B. de.evp.pakepoc.test vorher deinstallieren, bestehendes Kadri deaktivieren, nur Testpaket, Upload erst nach Freigabe
+```
+
+Unabhängig von A/B bleiben: Produktionsstatus `UNAPPROVED`, keine Releases, keine produktiven APKs, keine Beta,
+Issues #3 und #4 offen.

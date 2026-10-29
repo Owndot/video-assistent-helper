@@ -41,7 +41,8 @@ oder ungültiges UTF-8 → `{"ok":false}`, ohne das Gerät zu berühren. Die Ant
 ## Testvariante
 
 `de.evp.helfer.channeltest` („TEST Helper-Kanal“) installiert sich neben, nie über `de.evp.helfer`. Nur sie trägt die
-native Bibliothek; Debug- und Release-Builds ohne Bibliothek starten den Kanal nicht.
+native Bibliothek; Debug- und Release-Builds ohne Bibliothek starten den Kanal nicht. Sie ist **nicht debugfähig**
+(kein `run-as`/Debugger auf die Kanaldaten); die Instrumentierung braucht nur denselben Wegwerf-Signierer.
 
 ```sh
 ANDROID_NDK_HOME=… tools/build-channel-native.sh OUT     # Rust → JNI, arm64-v8a + x86_64, API 26
