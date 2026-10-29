@@ -450,6 +450,29 @@ public class ChannelInstrumentedTest {
     }
 
     /** Zurücksetzen: neue Identität, alte Pins passen nicht mehr (keine stille Annahme). */
+    /** F3: Widerruf nicht gespeichert → Meldung sagt, dass die Kopplung nach einem Neustart weiter bestehen kann – und so ist es. */
+    @Test public void failedRevokeWarnsThatThePairingMaySurviveARestart() throws Exception {
+        byte[] id = kadriIdentity();
+        TestInitiator.free(pairAndConfirm(id, pair(id, openWindow())));
+        int before = HelferService.instance.registrations().size();
+        assertEquals(1, before);
+        File dir = ctx.getFilesDir();
+        boolean ok;
+        assertTrue("files dir read-only", dir.setWritable(false, false));
+        try { ok = HelferService.instance.revoke(null); }
+        finally { assertTrue("files dir writable again", dir.setWritable(true, true)); }
+        assertFalse("revoke must report failure when it cannot be saved", ok);
+        assertEquals(HelferService.revokeFailedText(), HelferService.startupError);
+        assertTrue(HelferService.startupError, HelferService.startupError.contains("nach einem Neustart weiterhin bestehen")
+            || HelferService.startupError.contains("may still exist after a restart"));
+        restartService();
+        assertEquals("the unsaved revocation is lost: the pairing still exists after the restart", before,
+            HelferService.instance.registrations().size());
+        assertTrue("disconnecting again succeeds", HelferService.instance.revoke(null));
+        restartService();
+        assertEquals(0, HelferService.instance.registrations().size());
+    }
+
     @Test public void resetIdentityInvalidatesOldPins() throws Exception {
         byte[] id = kadriIdentity();
         byte[] pin = pair(id, openWindow());

@@ -241,10 +241,16 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
         try { persist(s); }
         catch (Exception e) {
             stopChannel();
-            startupError = Tr.t("Widerruf nicht gespeichert – Kanal angehalten. Bitte App neu starten.", "Revocation not saved – channel stopped. Please restart the app.");
+            startupError = revokeFailedText();
             return false;
         }
         return true;
+    }
+
+    /** Fehlgeschlagener Widerruf: die gespeicherte Registrierung kann nach einem Neustart weiter gelten. */
+    static String revokeFailedText() {
+        return Tr.t("Trennen fehlgeschlagen. Die bisherige Kopplung kann nach einem Neustart weiterhin bestehen. Bitte erneut trennen und den Erfolg überprüfen.",
+            "Disconnect failed. The previous pairing may still exist after a restart. Please disconnect again and check that it worked.");
     }
 
     /** Ausdrückliche Nutzeraktion: neue Helper-Identität, alle Registrierungen gelöscht; alle Browser koppeln neu. */

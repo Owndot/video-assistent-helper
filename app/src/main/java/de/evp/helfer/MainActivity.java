@@ -362,7 +362,7 @@ public class MainActivity extends Activity {
                 line.addView(pill(Tr.t("Trennen", "Disconnect"), false, v -> {
                     boolean ok = svc.revoke(r.id);
                     Toast.makeText(this, ok ? Tr.t("Getrennt – dieser Browser muss neu koppeln.", "Disconnected – this browser must pair again.")
-                        : Tr.t("Trennen fehlgeschlagen.", "Disconnect failed."), Toast.LENGTH_LONG).show();
+                        : HelferService.revokeFailedText(), Toast.LENGTH_LONG).show();
                     if (dlg[0] != null) dlg[0].dismiss();
                     build();
                 }));
@@ -373,7 +373,7 @@ public class MainActivity extends Activity {
                 .setPositiveButton(Tr.t("Weiteren koppeln", "Pair another"), (x, y) -> showCode())
                 .setNeutralButton(Tr.t("Alle trennen", "Disconnect all"), (x, y) -> {
                     boolean ok = svc.revoke(null);
-                    Toast.makeText(this, ok ? Tr.t("Alle Browser getrennt.", "All browsers disconnected.") : Tr.t("Trennen fehlgeschlagen.", "Disconnect failed."), Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, ok ? Tr.t("Alle Browser getrennt.", "All browsers disconnected.") : HelferService.revokeFailedText(), Toast.LENGTH_LONG).show();
                     build();
                 })
                 .setNegativeButton(Tr.t("Schließen", "Close"), null).create();
