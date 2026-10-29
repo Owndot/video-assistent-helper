@@ -58,6 +58,12 @@ CI: `.github/workflows/helper-channel.yml` (Kern-Tests, JVM-Prüfungen, Mutation
 Emulator API 34). Es wird keine APK hochgeladen, nur Text-Berichte. Der bestehende Debug-APK-Upload in `build.yml`
 ist für diesen Zweig abgeschaltet.
 
+## Verfügbarkeit (langsame lokale Clients)
+
+4 Worker, Warteschlange 16, 3 s Lesefrist. Eine bösartige App auf dem Gerät kann durch fortlaufend neue langsame
+Verbindungen die Worker belegen; Kadri meldet dann „Helfer nicht erreichbar“. Nur Verfügbarkeit, keine Befehle ohne
+Schlüssel. Messwerte und mögliche Gegenmaßnahmen (nicht umgesetzt): `SECURITY-REVIEW-CHANNEL.md` §7.
+
 ## Offen
 
 - Unabhängiger Security-Review vor dem Gerätetest (Samsung).
