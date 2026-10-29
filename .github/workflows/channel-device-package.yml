@@ -87,7 +87,16 @@ jobs:
           for apk in helper-channeltest.apk helper-channeltest-androidTest.apk; do
             entries "$RUNNER_TEMP/a/apk/$apk" > "$RUNNER_TEMP/a.$apk.entries"
             entries "$RUNNER_TEMP/b/apk/$apk" > "$RUNNER_TEMP/b.$apk.entries"
-            diff "$RUNNER_TEMP/a.$apk.entries" "$RUNNER_TEMP/b.$apk.entries"
+            if ! diff "$RUNNER_TEMP/a.$apk.entries" "$RUNNER_TEMP/b.$apk.entries"; then
+              # Diagnose: welche Klassen/Methoden unterscheiden sich? (Der Schritt bleibt rot.)
+              BT="$ANDROID_HOME/build-tools/34.0.0"
+              for f in $(diff <(cut -d' ' -f1,2 "$RUNNER_TEMP/a.$apk.entries") <(cut -d' ' -f1,2 "$RUNNER_TEMP/b.$apk.entries") | sed -n 's/^< [0-9a-f]* //p' | grep '\.dex$'); do
+                for d in a b; do mkdir -p "$RUNNER_TEMP/dex-$d"; unzip -p "$RUNNER_TEMP/$d/apk/$apk" "$f" > "$RUNNER_TEMP/dex-$d/$f"; "$BT/dexdump" -d "$RUNNER_TEMP/dex-$d/$f" > "$RUNNER_TEMP/dex-$d/$f.txt" 2>&1 || true; done
+                echo "== $apk:$f – Klassen nur in A/B:"; diff <(grep -E "Class descriptor" "$RUNNER_TEMP/dex-a/$f.txt" | sort) <(grep -E "Class descriptor" "$RUNNER_TEMP/dex-b/$f.txt" | sort) | head -40 || true
+                echo "== $apk:$f – erste Unterschiede im Inhalt:"; diff "$RUNNER_TEMP/dex-a/$f.txt" "$RUNNER_TEMP/dex-b/$f.txt" | head -80 || true
+              done
+              exit 1
+            fi
             echo "REPRODUCIBLE content of $apk: $(wc -l < "$RUNNER_TEMP/a.$apk.entries") entries; content hash $(sha256sum < "$RUNNER_TEMP/a.$apk.entries" | cut -c1-16)"
           done
           cat "$RUNNER_TEMP/a.libs"
