@@ -362,9 +362,15 @@ jobs:
       - name: Verify final debug artifact immediately before upload
         id: debug_artifact_verified
         run: bash .github/scripts/verify-debug-artifact.sh
+      # Kanal-Integration: keine installierbare APK veröffentlichen (Freigabe des Eigentümers fehlt). Die Sperre gilt für
+      # jedes Ereignis (pull_request, push, workflow_dispatch …): Markierungsdatei im Stand ODER head_ref/ref_name.
+      - name: Debug APK upload gate (all event types)
+        id: debug_upload_gate
+        run: |
+          bash tests/security/debug_upload_gate_check.sh
+          bash .github/scripts/debug-apk-upload-gate.sh
       - uses: actions/upload-artifact@v4
-        # Kanal-Integrationszweig: keine installierbare APK veröffentlichen (Freigabe des Eigentümers fehlt).
-        if: success() && steps.debug_artifact_verified.outcome == 'success' && github.head_ref != 'feature/helper-channel-control'
+        if: success() && steps.debug_artifact_verified.outcome == 'success' && steps.debug_upload_gate.outputs.allow == 'yes'
         with:
           name: helper-debug-NOT-production
           path: |

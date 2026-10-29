@@ -201,7 +201,28 @@ Mögliche Gegenmaßnahmen (nicht umgesetzt, bewusst ohne Architekturänderung; n
 - Kadri: `.github/workflows/channel-device-package.yml` baut `dist/chrome` mit Testnamen „Kadri TEST – Helfer-Kanal“
   zweimal als deterministisches ZIP (byte-identisch), prüft, dass nur der Name abweicht, und führt den Kanal-Browsertest
   gegen genau dieses Paket aus.
-- **Noch keine Upload-Freigabe** (Eigentümer): erst nach dem unabhängigen Review.
+- **Noch keine Upload-Freigabe** (Eigentümer): erst nach dem unabhängigen Review und einer gesonderten Freigabe.
+- **Bereitstellungsweg (F1):** Die Paket-Workflows liegen nur auf `feature/helper-channel-control`, nicht auf dem
+  Default-Branch. Deshalb fehlt in der GitHub-Oberfläche die Schaltfläche „Run workflow“. Der Start über die REST-API
+  (`POST /repos/Owndot/<repo>/actions/workflows/channel-device-package.yml/dispatches` mit `ref`, gleichbedeutend
+  `gh workflow run channel-device-package.yml --ref feature/helper-channel-control -f confirm_upload=…`) funktioniert:
+  Helper-Lauf 40818637080 und Kadri-Lauf 40834476574, beide `event: workflow_dispatch` auf diesem Zweig, ohne
+  Bestätigungswort, nur Textbericht. Vorgesehener Ablauf nach der gesonderten Freigabe:
+  1. Freigabedatei aus der Vorlage auf `feature/helper-channel-control` committen (`git mv …APPROVED.template
+     …APPROVED`, ausfüllen). Der dadurch ausgelöste Push-Lauf lädt nichts hoch (Ereignis ist nicht `workflow_dispatch`).
+  2. Start per API mit `confirm_upload=UPLOAD-TEST-APK` (Helper) bzw. `UPLOAD-TEST-ZIP` (Kadri). Nur wenn Datei,
+     Ereignis und Bestätigungswort zusammenkommen, wird hochgeladen (1 Tag Aufbewahrung, öffentlich).
+  3. Herunterladen, Hash mit `SHA256SUMS` aus demselben Lauf vergleichen.
+  4. Freigabedatei wieder entfernen (Commit), damit spätere Läufe nichts hochladen.
+  Keine Workflow-Datei auf `main` nötig; die doppelte Sperre bleibt unverändert.
+- **Andere Upload-Wege gesperrt (B3):** `build.yml` (Helper, Debug-APK) und `ci.yml` (Kadri, Erweiterungs-ZIP) prüften
+  bisher nur `github.head_ref`. Das ist nur bei `pull_request` gesetzt, bei `workflow_dispatch` oder `push` hätte die
+  Sperre nicht gegriffen. Jetzt entscheidet ein Gate-Skript (`.github/scripts/debug-apk-upload-gate.sh` bzw.
+  `package-upload-gate.sh`): gesperrt bei Markierungsdatei im Stand (`.github/DEBUG-APK-UPLOAD-BLOCKED` bzw.
+  `.github/PACKAGE-UPLOAD-BLOCKED`, gilt auch nach einem Merge) **oder** `head_ref`/`ref_name` =
+  `feature/helper-channel-control`. Hochgeladen wird nur bei `allow == 'yes'`; fehlt die Ausgabe, nichts. Geprüft in
+  jedem Lauf gegen 14 Fälle (pull_request, push, workflow_dispatch, schedule; mit/ohne Markierung; Zweignamen) und
+  durch zwei Mutanten (nur `head_ref`; Markierung ignoriert), die beide erkannt werden.
 - Upload in beiden nur mit **zwei** Freigaben: committete Datei `.github/CHANNEL-DEVICE-ARTIFACTS-APPROVED` **und**
   Handstart mit Bestätigungswort. Sonst nur Textbericht.
 - Auswirkungen auf bestehende Installationen: eigenes Paket bzw. eigene Erweiterungs-ID; überschreibt weder
