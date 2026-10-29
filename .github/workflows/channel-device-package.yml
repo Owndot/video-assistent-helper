@@ -1,7 +1,7 @@
 name: Helper channel device package (test package only, upload gated twice)
 
 # Baut AUSSCHLIESSLICH die Testvariante de.evp.helfer.channeltest („TEST Helper-Kanal“) für den Gerätetest auf dem
-# Samsung Galaxy S26 Ultra: zweimal aus verschiedenen Pfaden (Reproduzierbarkeit), signiert mit je einem in diesem
+# Samsung Galaxy S26 Ultra: zweimal unabhängig gebaut (Reproduzierbarkeit, Einzelheiten am Bau-Schritt), signiert mit je einem in diesem
 # Job erzeugten und danach gelöschten Wegwerf-Schlüssel, prüft Paket, Signierer, Sicherungsregeln und Bibliotheken,
 # führt die Instrumentierungstests gegen GENAU diese APK auf einem Wegwerf-Emulator aus und schreibt SHA-256-Werte.
 #
@@ -64,13 +64,20 @@ jobs:
           (cd poc/pake-channel/core && rustup show active-toolchain && rustc -V)
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "platforms;android-34" "build-tools;34.0.0" < <(yes 2>/dev/null) > /dev/null
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
-      - name: Build A (checkout) and build B (copy in another path), each with its own throwaway signer
+      # Nativbibliotheken: B aus einem anderen Pfad (pfadunabhängig). APK: B im selben Pfad, aber vollständig sauber
+      # (app/build, .gradle, eigenes GRADLE_USER_HOME, kein Cache aus A). Grund: D8 schreibt in Debug-abgeleitete
+      # Builds eine Prüfsummen-Tabelle der synthetischen Lambda-Klassen ("~~~{…ExternalSyntheticLambdaN…}"), die vom
+      # Build-Pfad abhängt; Klassen und Befehle sind identisch (Lauf 40794748343). Der Vergleich bleibt streng.
+      - name: Build A (checkout) and build B (native from another path; APK clean in the same path), each with its own throwaway signer
         run: |
           set -euo pipefail
           bash tools/build-channel-native.sh "$RUNNER_TEMP/a"
           bash tools/build-channel-apk.sh "$RUNNER_TEMP/a"
           mkdir -p "$RUNNER_TEMP/src-b" && git archive HEAD | tar -x -C "$RUNNER_TEMP/src-b"
-          (cd "$RUNNER_TEMP/src-b" && bash tools/build-channel-native.sh "$RUNNER_TEMP/b" && bash tools/build-channel-apk.sh "$RUNNER_TEMP/b")
+          (cd "$RUNNER_TEMP/src-b" && bash tools/build-channel-native.sh "$RUNNER_TEMP/b")
+          rm -rf app/build build .gradle
+          test ! -e app/build && test ! -e .gradle
+          GRADLE_USER_HOME="$RUNNER_TEMP/gradle-home-b" bash tools/build-channel-apk.sh "$RUNNER_TEMP/b"
       - name: Reproducibility - native libraries byte-identical, APK contents identical apart from the signature
         run: |
           set -euo pipefail
