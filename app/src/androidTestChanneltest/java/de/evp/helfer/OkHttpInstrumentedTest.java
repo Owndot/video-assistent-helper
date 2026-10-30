@@ -293,9 +293,11 @@ public class OkHttpInstrumentedTest {
         Context c = ctx();
         assertEquals(0, c.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE);
         ClassLoader cl = c.getClassLoader();
+        // Entfernt: die Startkomponente (nicht mehr im Manifest) und unbenutzter OkHttp-Code (WebSocket).
+        // okhttp3.internal.platform.PlatformInitializer bleibt: androidx.startup behält per eigener R8-Regel jede
+        // Initializer-Implementierung; ohne Provider ruft sie niemand auf (siehe startupComponentRemoved…).
         for (String removed : new String[] {
             "androidx.startup.InitializationProvider",
-            "okhttp3.internal.platform.PlatformInitializer",
             "okhttp3.internal.ws.RealWebSocket",
         }) {
             try {
@@ -309,6 +311,6 @@ public class OkHttpInstrumentedTest {
             "de.evp.helfer.HelferService", "de.evp.helfer.HttpClients"}) {
             assertEquals(kept, Class.forName(kept, false, cl).getName());
         }
-        Log.i(TAG, "OKHTTP_R8 debuggable=false removed=3 kept=5");
+        Log.i(TAG, "OKHTTP_R8 debuggable=false removed=2 kept=5");
     }
 }
