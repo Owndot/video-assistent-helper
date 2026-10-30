@@ -22,8 +22,16 @@ keytool -genkeypair -storetype PKCS12 -keystore "$KEYDIR/throwaway.p12" -alias h
   -keyalg RSA -keysize 3072 -validity 3 -dname "CN=Helper channel TEST ONLY - throwaway" \
   -storepass:env ORG_GRADLE_PROJECT_channelKeystorePass -keypass:env ORG_GRADLE_PROJECT_channelKeystorePass >/dev/null 2>&1
 "$ROOT/gradlew" --no-daemon -q -p "$ROOT" \
-  :app:assembleChanneltest :app:assembleChanneltestAndroidTest -PchannelTests -Pandroid.useAndroidX=true \
+  :app:assembleChanneltest :app:assembleChanneltestAndroidTest :app:traceTestKeepRules -PchannelTests -Pandroid.useAndroidX=true \
   -PchannelJniLibs="$OUT/jniLibs" -PchannelJniLibsTest="$OUT/jniLibs-test" -PchannelKeystore="$KEYDIR/throwaway.p12"
+# R8: die App ist geschrumpft (Mapping vorhanden), und die eingecheckten Test-Keep-Regeln entsprechen dem, was die
+# Instrumentierungs-APK tatsächlich aus der App nutzt (sonst NoClassDefFoundError im Testrunner).
+test -s "$ROOT/app/build/outputs/mapping/channeltest/mapping.txt" || { echo "channeltest APK was not processed by R8" >&2; exit 1; }
+if ! diff -u <(grep -v '^#' "$ROOT/app/r8-test-references.pro") "$ROOT/app/build/test-keep/r8-test-references.pro" > "$OUT/r8-test-references.diff"; then
+  echo "app/r8-test-references.pro is out of date: copy app/build/test-keep/r8-test-references.pro (keep the header)" >&2
+  cat "$OUT/r8-test-references.diff" >&2
+  exit 1
+fi
 mkdir -p "$OUT/apk"
 APP="$OUT/apk/helper-channeltest.apk"
 TEST="$OUT/apk/helper-channeltest-androidTest.apk"

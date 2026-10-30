@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- lokaler Empfänger: sicherer Kanal nur auf 127.0.0.1:47899 (von außen nicht erreichbar) -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -50,5 +51,13 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- OkHttp registriert über AndroidX Startup einen Initializer, der bei jedem Prozessstart läuft und nur den
+             Anwendungs-Context setzt. Entfernt (offiziell unterstützt: androidx.startup „Disable automatic
+             initialization“); den Context setzt HttpClients über OkHttp.initialize. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            tools:node="remove" />
     </application>
 </manifest>
