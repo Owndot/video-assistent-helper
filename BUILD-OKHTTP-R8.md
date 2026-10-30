@@ -1,5 +1,7 @@
 # OkHttp 5.5.1 und R8 im Helper (Phase B)
 
+> **Phase C1:** `HttpClients` (ungehärteter Standardclient) ist entfernt; OkHttp ist nur noch über `de.evp.helfer.net` erreichbar – siehe `NETWORK-SECURITY-C1.md`.
+
 Stand: PR „OkHttp 5.5.1 with R8“ auf Basis von Phase A (AGP 9.1.1, Gradle 9.3.1, compileSdk 37, targetSdk 34).
 Noch **keine** neue Download-Funktion und **kein** SSRF-Schutz – das folgt in Phase C. Produktionsstatus: UNAPPROVED.
 

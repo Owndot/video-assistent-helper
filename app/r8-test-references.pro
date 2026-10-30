@@ -508,59 +508,9 @@
   kotlin.time.DurationUnit MILLISECONDS;
   kotlin.time.DurationUnit SECONDS;
 }
--keep interface okhttp3.Call {
-  public okhttp3.Response execute();
-}
--keep class okhttp3.CipherSuite {
-  public java.lang.String javaName();
-}
--keep class okhttp3.Handshake {
-  public okhttp3.CipherSuite cipherSuite();
-  public java.util.List peerCertificates();
-  public okhttp3.TlsVersion tlsVersion();
-}
 -keep class okhttp3.HttpUrl {
   public static okhttp3.HttpUrl get(java.lang.String);
   public java.lang.String topPrivateDomain();
-}
--keep class okhttp3.OkHttp {
-  java.lang.String VERSION;
-}
--keep class okhttp3.OkHttpClient$Builder {
-  public okhttp3.OkHttpClient build();
-  public okhttp3.OkHttpClient$Builder hostnameVerifier(javax.net.ssl.HostnameVerifier);
-  public okhttp3.OkHttpClient$Builder sslSocketFactory(javax.net.ssl.SSLSocketFactory, javax.net.ssl.X509TrustManager);
-}
--keep class okhttp3.OkHttpClient {
-  public okhttp3.OkHttpClient$Builder newBuilder();
-  public okhttp3.Call newCall(okhttp3.Request);
-}
--keep enum okhttp3.Protocol {
-  okhttp3.Protocol HTTP_1_1;
-}
--keep class okhttp3.Request$Builder {
-  public <init>();
-  public okhttp3.Request build();
-  public okhttp3.Request$Builder url(java.lang.String);
-}
--keep class okhttp3.Request {
-}
--keep class okhttp3.Response {
-  public okhttp3.ResponseBody body();
-  public void close();
-  public int code();
-  public okhttp3.Handshake handshake();
-  public okhttp3.Response priorResponse();
-  public okhttp3.Protocol protocol();
-}
--keep class okhttp3.ResponseBody {
-  public java.io.InputStream byteStream();
-  public java.lang.String string();
-}
--keep enum okhttp3.TlsVersion {
-  public java.lang.String javaName();
-  okhttp3.TlsVersion TLS_1_2;
-  okhttp3.TlsVersion TLS_1_3;
 }
 -keep @interface org.jetbrains.annotations.NotNull {
 }

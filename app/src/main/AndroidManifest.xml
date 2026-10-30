@@ -4,6 +4,8 @@
 
     <!-- lokaler Empfänger: sicherer Kanal nur auf 127.0.0.1:47899 (von außen nicht erreichbar) -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Netzwerkschicht: NAT64-Präfix des aktiven Netzes für die Zieladressprüfung (normale Berechtigung) -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

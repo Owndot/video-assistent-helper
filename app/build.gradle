@@ -128,13 +128,27 @@ dependencies {
 // TraceReferences (Teil von R8) erzeugt die Regeln; eingecheckt in r8-test-references.pro und für alle geschrumpften
 // Varianten gleich, damit die getestete APK dieselben Regeln hat wie die ausgelieferte. Prüfung auf Abweichung:
 // tools/build-channel-apk.sh.
+// Fehlerbehandlung: TraceReferences meldet fehlende Definitionen als Fehler; sie werden zu Warnungen herabgestuft, die
+// Ausgabe aber streng geprüft. Zulässig sind nur fehlende Definitionen mit bekanntem Ursprung (TRACE_ALLOWED_MISSING);
+// jede andere Meldung, jede unerwartete Zeile und jeder Abbruch lassen die Aufgabe fehlschlagen.
+def TRACE_ALLOWED_MISSING = [
+    'de.evp.helfer.', 'poc.',                       // App-Code: bleibt per -keep vollständig erhalten
+    'android.test.',                                // JUnit-3-Pfad des Testrunners (keine Bibliothek im SDK-Klassenpfad)
+    'androidx.test.',                               // interne/desugarte Lambdas der Testbibliothek
+    'com.google.errorprone.annotations.', 'org.codehaus.mojo.animal_sniffer.',   // nur zur Übersetzung
+    'java.lang.instrument.', 'sun.misc.',           // JVM-only-APIs in Testbibliotheken (kotlinx.coroutines.debug)
+    'androidx.tracing.Trace',                       // Testrunner erwartet tracing 1.1 (forceEnableAppTracing), App liefert 1.0.0
+]
 tasks.register('traceTestKeepRules', JavaExec) {
     dependsOn 'assembleChanneltestAndroidTest'
     def testApk = layout.buildDirectory.file('outputs/apk/androidTest/channeltest/app-channeltest-androidTest.apk')
     def rules = layout.buildDirectory.file('test-keep/r8-test-references.pro')
+    def report = layout.buildDirectory.file('test-keep/missing-definitions.txt')
     def bootClasspath = androidComponents.sdkComponents.bootClasspath
+    def stderr = new ByteArrayOutputStream()
     classpath = files(new File(Class.forName('com.android.tools.r8.R8').protectionDomain.codeSource.location.toURI()))
     mainClass = 'com.android.tools.r8.tracereferences.TraceReferences'
+    errorOutput = stderr
     outputs.file(rules)
     outputs.upToDateWhen { false }
     doFirst {
@@ -144,8 +158,6 @@ tasks.register('traceTestKeepRules', JavaExec) {
         ['okhttp', 'okio', 'kotlin-stdlib', 'tracing'].each { lib ->
             if (!jars.any { it.path.contains(lib) }) throw new GradleException("traceTestKeepRules: $lib missing from the target jars")
         }
-        // Fehlende Definitionen (App-Klassen, nur zur Übersetzung genutzte Annotationen, JUnit-3-Altlasten der
-        // Testbibliothek) sind hier kein Fehler: App-Code bleibt ohnehin vollständig erhalten.
         def a = ['--keep-rules', '--map-diagnostics', 'error', 'warning']
         bootClasspath.get().each { a += ['--lib', it.asFile.path] }
         jars.each { a += ['--target', it.path] }
@@ -153,5 +165,26 @@ tasks.register('traceTestKeepRules', JavaExec) {
         rules.get().asFile.parentFile.mkdirs()
         args(a)
         logger.lifecycle("traceTestKeepRules: ${jars.size()} target jars: " + jars.collect { it.parentFile.parentFile.name + "/" + it.name }.join(", "))
+    }
+    doLast {
+        def owners = new TreeMap<String, Integer>()
+        def unexpected = []
+        def patterns = [
+            'Missing class ([\\w.$]+) \\(',
+            'Missing method \\S+ ([\\w.$]+)\\.[^.(]+\\(',
+            'Missing field \\S+ ([\\w.$]+)\\.[\\w$]+ \\(',
+        ].collect { java.util.regex.Pattern.compile('^(?:Warning: )?' + it) }
+        stderr.toString('UTF-8').readLines().each { line ->
+            if (line.trim().isEmpty()) return
+            def owner = patterns.collect { it.matcher(line) }.find { it.find() }?.group(1)
+            if (owner != null && TRACE_ALLOWED_MISSING.any { owner == it || owner.startsWith(it) }) owners[owner] = (owners[owner] ?: 0) + 1
+            else unexpected << line
+        }
+        report.get().asFile.text = owners.collect { k, v -> "$v $k" }.join('\n') + '\n'
+        if (!rules.get().asFile.isFile() || rules.get().asFile.length() == 0) throw new GradleException('traceTestKeepRules: no keep rules written')
+        if (!unexpected.isEmpty()) {
+            throw new GradleException("traceTestKeepRules: unexpected TraceReferences diagnostics (not ignored):\n  " + unexpected.take(40).join('\n  '))
+        }
+        logger.lifecycle("traceTestKeepRules: tolerated missing definitions in ${owners.size()} classes (see ${report.get().asFile})")
     }
 }
