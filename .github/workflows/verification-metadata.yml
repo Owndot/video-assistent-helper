@@ -2,8 +2,7 @@ name: Generate Gradle verification metadata (temporary branch, text only)
 # NUR WERKZEUG (Zweig tmp/okhttp-size-test, nie mergen): erzeugt gradle/verification-metadata.xml für den C1-Zweig,
 # prüft danach dieselben Builds MIT aktiver Prüfung und gibt die Datei als gzip+base64 im Log aus (kein Artefakt).
 on:
-  push:
-    branches: [tmp/okhttp-size-test]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
