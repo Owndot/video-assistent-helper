@@ -112,7 +112,7 @@ jobs:
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '9.3.1'
       - name: Build isolated instrumentation APKs only
         run: gradle :app:assembleDebug :app:assembleDebugAndroidTest -Pandroid.useAndroidX=true --no-daemon
       - name: Enable KVM on the disposable runner
@@ -163,7 +163,7 @@ jobs:
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '9.3.1'
       - name: Host security tests
         run: |
           python3 -m unittest discover -s tests/security -v
