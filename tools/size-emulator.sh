@@ -5,14 +5,18 @@
 # Aufruf: tools/size-emulator.sh ROOT VARIANTE...   (ROOT/VARIANTE/apk aus tools/build-channel-apk.sh)
 set -uo pipefail
 R="$1"; shift
-mkdir -p "$R/text"; exec > >(tee -a "$R/text/emulator.txt") 2>&1
+mkdir -p "$R/text"
+# Ausgabe nur in eine Datei: ein von adb neu gestarteter Server würde sonst die Ausgabe-Pipe des Runners offen halten.
+LOG="$R/text/emulator.txt"
+exec < /dev/null >> "$LOG" 2>&1
 PKG=de.evp.helfer.channeltest
 adb wait-for-device
 if [ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" != "1" ] && [ "$(adb shell getprop ro.boot.qemu | tr -d '\r')" != "1" ]; then
   echo "refusing: not an emulator" >&2; exit 2
 fi
-adb root > /dev/null; adb wait-for-device
-until [ "$(adb shell id -u | tr -d '\r')" = 0 ]; do adb wait-for-device; done
+adb root < /dev/null > /dev/null 2>&1; adb wait-for-device
+for i in $(seq 1 30); do [ "$(adb shell id -u | tr -d '\r')" = 0 ] && break; sleep 2; adb wait-for-device; done
+[ "$(adb shell id -u | tr -d '\r')" = 0 ] || { echo "adb root unavailable" | tee -a "$LOG"; exit 3; }
 status=0
 measure() {  # $1 = label
   local dir; dir="$(adb shell pm path $PKG | sed -n 's/^package://p' | tr -d '\r' | head -1)"; dir="${dir%/*}"

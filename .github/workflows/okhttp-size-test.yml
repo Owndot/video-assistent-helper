@@ -116,6 +116,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Installed size and channel instrumentation per variant (disposable API 34 emulator)
+        timeout-minutes: 45
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: 34
@@ -123,7 +124,7 @@ jobs:
           target: google_apis
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
-          script: bash tools/size-emulator.sh "$RUNNER_TEMP/v" base r8 ok532 ok532r8 ok551 ok551r8
+          script: bash tools/size-emulator.sh "$RUNNER_TEMP/v" base r8 ok532 ok532r8 ok551 ok551r8 < /dev/null > /dev/null 2>&1
       - name: Collect text report (never an APK)
         if: always()
         run: |
@@ -131,6 +132,7 @@ jobs:
           R="$RUNNER_TEMP/v"; mkdir -p "$R/text"
           cp "$R/installed.txt" "$R/text/" 2>/dev/null || true
           for v in base r8 ok532 ok532r8 ok551 ok551r8; do [ -f "$R/$v/report/summary.txt" ] && cp "$R/$v/report/summary.txt" "$R/text/instrumentation-$v.txt" || true; done
+          cat "$R/text/emulator.txt" 2>/dev/null || true
           cat "$R/text/installed.txt" 2>/dev/null || true
           if find "$R/text" -type f \( -name '*.apk' -o -name '*.aab' -o -name '*.so' -o -name '*.dex' -o -name '*.zip' \) | grep -q .; then echo "installable file in report" >&2; exit 1; fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
