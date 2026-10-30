@@ -77,11 +77,14 @@ jobs:
           z = zipfile.ZipFile(sys.argv[1])
           for n in sorted(z.namelist()):
               if n.startswith("META-INF/") and n.split("/")[-1].split(".")[-1] in ("SF", "RSA", "MF"): continue
+              if n == "META-INF/version-control-info.textproto": continue   # AGP: Git-Stand (B stammt aus git archive)
               print(hashlib.sha256(z.read(n)).hexdigest(), n)' "$1"; }
           for v in ok532 ok532r8; do
             for apk in helper-channeltest.apk helper-channeltest-androidTest.apk; do
               entries "$R/$v/apk/$apk" > "$R/$v.$apk.e"; entries "$R/$v-b/apk/$apk" > "$R/$v-b.$apk.e"
               diff "$R/$v.$apk.e" "$R/$v-b.$apk.e"
+              unzip -p "$R/$v/apk/$apk" META-INF/version-control-info.textproto 2>/dev/null | head -5 | sed "s/^/  $v A vcs: /" || true
+              unzip -p "$R/$v-b/apk/$apk" META-INF/version-control-info.textproto 2>/dev/null | head -5 | sed "s/^/  $v B vcs: /" || true
               echo "REPRODUCIBLE $v $apk: $(wc -l < "$R/$v.$apk.e") entries byte-identical" | tee -a "$R/text/reproducibility.txt"
             done
           done
