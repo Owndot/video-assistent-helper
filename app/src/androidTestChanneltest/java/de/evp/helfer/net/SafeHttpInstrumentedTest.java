@@ -411,6 +411,14 @@ public class SafeHttpInstrumentedTest {
         }
     }
 
+    /** NAT64-Präfix des aktiven Netzes ist abfragbar (Berechtigung vorhanden); ohne NAT64 im Emulator: leer. */
+    @Test
+    public void networkNat64PrefixLookupWorks() {
+        List<AddressPolicy.Nat64Prefix> p = SafeHttp.networkNat64(ctx().getApplicationContext());
+        assertNotNull(p);
+        Log.i(TAG, "OKHTTP_NAT64 sdk=" + Build.VERSION.SDK_INT + " prefixes=" + p.size());
+    }
+
     /** Die AndroidX-Startkomponente ist entfernt; OkHttp hat den Context trotzdem (über SafeHttp). */
     @SuppressWarnings("deprecation")
     @Test

@@ -44,6 +44,8 @@ public final class SafeHttp {
             InetAddress a = p.getAddress();
             if (!(a instanceof Inet6Address)) return Collections.emptyList();
             return Collections.singletonList(new AddressPolicy.Nat64Prefix(a.getAddress(), p.getPrefixLength()));
+        } catch (SecurityException e) {
+            throw e;   // fehlende Berechtigung ACCESS_NETWORK_STATE ist ein Fehler, kein stiller Verzicht auf die Prüfung
         } catch (RuntimeException e) {
             // Ohne Präfix gilt nur 64:ff9b::/96 als NAT64; netzspezifische Präfixe bleiben dann gewöhnliche IPv6-Adressen.
             return Collections.emptyList();
