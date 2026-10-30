@@ -6,8 +6,7 @@ name: OkHttp size test (temporary branch, text report only)
 # Instrumentierungstests gegen jede Variante aus. Keine Download-Funktion; die Probe-Klasse wird nie aufgerufen.
 # Es wird NIE eine APK hochgeladen: das Artefakt enthält nur Text (Größen, Hashes, Abhängigkeiten, Testergebnisse).
 on:
-  push:
-    branches: [tmp/okhttp-size-test]
+  workflow_dispatch:
 
 permissions:
   contents: read
