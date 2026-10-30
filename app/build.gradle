@@ -138,16 +138,18 @@ tasks.register('traceTestKeepRules', JavaExec) {
     outputs.file(rules)
     outputs.upToDateWhen { false }
     doFirst {
-        def runtime = configurations.getByName('channeltestRuntimeClasspath').incoming
-        def jars = ['android-classes-jar', 'jar'].collect { type ->
-            runtime.artifactView { lenient = true; attributes { attribute(Attribute.of('artifactType', String), type) } }.files.files
-        }.flatten().findAll { it.name.endsWith('.jar') }.unique().sort { it.path }
+        def jars = configurations.getByName('channeltestRuntimeClasspath').incoming.artifactView {
+            attributes { attribute(Attribute.of('artifactType', String), 'android-classes-jar') }
+        }.files.files.sort { it.path }
+        ['okhttp', 'okio', 'kotlin-stdlib', 'tracing'].each { lib ->
+            if (!jars.any { it.path.contains(lib) }) throw new GradleException("traceTestKeepRules: $lib missing from the target jars")
+        }
         def a = ['--keep-rules']
         bootClasspath.get().each { a += ['--lib', it.asFile.path] }
         jars.each { a += ['--target', it.path] }
         a += ['--source', testApk.get().asFile.path, '--output', rules.get().asFile.path]
         rules.get().asFile.parentFile.mkdirs()
         args(a)
-        logger.lifecycle("traceTestKeepRules: ${jars.size()} target jars")
+        logger.lifecycle("traceTestKeepRules: ${jars.size()} target jars: " + jars.collect { it.parentFile.parentFile.name + "/" + it.name }.join(", "))
     }
 }
