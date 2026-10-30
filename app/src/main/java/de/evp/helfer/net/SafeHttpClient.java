@@ -152,9 +152,34 @@ public final class SafeHttpClient {
         };
     }
 
+    /**
+     * Abbruch eines laufenden Aufrufs von einem anderen Thread aus (Verbindungsaufbau, Header und Rumpf). Ein einmal
+     * abgebrochenes Token bricht auch jeden späteren Aufruf mit diesem Token sofort ab.
+     */
+    public static final class Cancellation {
+        private Call call;
+        private boolean cancelled;
+
+        public synchronized void cancel() {
+            cancelled = true;
+            if (call != null) call.cancel();
+        }
+
+        public synchronized boolean isCancelled() { return cancelled; }
+
+        synchronized void attach(Call c) throws IOException {
+            if (cancelled) throw new java.io.InterruptedIOException("cancelled");
+            call = c;
+        }
+    }
+
     /** GET der ganzen Ressource. */
     public SafeResponse get(String url, long maxBodyBytes, long timeoutMs) throws IOException {
         return get(url, -1, -1, maxBodyBytes, timeoutMs);
+    }
+
+    public SafeResponse get(String url, long rangeStart, long rangeEnd, long maxBodyBytes, long timeoutMs) throws IOException {
+        return get(url, rangeStart, rangeEnd, maxBodyBytes, timeoutMs, null);
     }
 
     /**
@@ -163,7 +188,7 @@ public final class SafeHttpClient {
      * auf {@code maxBodyBytes} begrenzt; {@code timeoutMs} begrenzt die gesamte Dauer einschließlich Weiterleitungen
      * und Rumpf. Wiederholt nie selbst.
      */
-    public SafeResponse get(String url, long rangeStart, long rangeEnd, long maxBodyBytes, long timeoutMs) throws IOException {
+    public SafeResponse get(String url, long rangeStart, long rangeEnd, long maxBodyBytes, long timeoutMs, Cancellation cancellation) throws IOException {
         if (maxBodyBytes <= 0 || timeoutMs <= 0 || timeoutMs > MAX_CALL_TIMEOUT_MS || (rangeStart < 0 && rangeEnd >= 0)
             || (rangeStart >= 0 && rangeEnd >= 0 && rangeEnd < rangeStart)) {
             throw new NetBlockedException(NetBlockedException.Reason.BAD_ARGUMENT, "limits");
@@ -182,6 +207,7 @@ public final class SafeHttpClient {
             long remaining = deadline - System.nanoTime();
             if (remaining <= 0) throw new java.io.InterruptedIOException("timeout");
             call.timeout().timeout(remaining, TimeUnit.NANOSECONDS);
+            if (cancellation != null) cancellation.attach(call);
             Response response;
             try {
                 response = call.execute();

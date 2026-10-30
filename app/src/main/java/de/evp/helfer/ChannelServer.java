@@ -21,7 +21,8 @@ import poc.Core;
  *
  * Endpunkte (nur POST): /p1/pair/m0, /p1/pair/m2 (Kopplung, SPAKE2), /p1/ch/hs (Noise-KK-Handshake),
  * /p1/ch/rec (verschlüsselter Record). Inhalt eines Records sind ausschließlich die Steuerbefehle aus
- * {@link ControlCommands}; es gibt keinen Klartext-Weg, keinen festen Schlüssel und keine Downloads.
+ * {@link ControlCommands} (Steuerung; ab Phase C2 optional Start/Status/Abbruch direkter Downloads); es gibt keinen
+ * Klartext-Weg und keinen festen Schlüssel. Mediendaten laufen nie durch diesen Kanal.
  *
  * Der Rust-Kern ist prozessweit; {@link #CORE} schützt ihn. Unter dieser Sperre laufen nur Kernaufrufe – das
  * Ausführen eines Befehls (Helligkeit, Lautstärke) geschieht außerhalb. {@link #coreOwner} nennt den Server,
@@ -45,13 +46,18 @@ public final class ChannelServer {
 
     private final Host host;
     private final ControlCommands.Device device;
+    private final ControlCommands.DownloadControl downloads;   // null: Download-Befehle werden abgelehnt
     private final ThreadPoolExecutor pool = new ThreadPoolExecutor(4, 4, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(16));
     private ServerSocket server;
     private Thread acceptThread;
 
-    public ChannelServer(Host host, ControlCommands.Device device) {
+    public ChannelServer(Host host, ControlCommands.Device device) { this(host, device, null); }
+
+    /** Phase C2: zusätzlich Download-Befehle (dlstart/dlstatus/dlcancel) über denselben verschlüsselten Kanal. */
+    public ChannelServer(Host host, ControlCommands.Device device, ControlCommands.DownloadControl downloads) {
         this.host = host;
         this.device = device;
+        this.downloads = downloads;
     }
 
     /** Bindet vor der Bereitschaftsmeldung; ein belegter Port meldet false (kein Ausweichen). */
@@ -174,7 +180,7 @@ public final class ChannelServer {
                 byte[] sid = Arrays.copyOfRange(opened, 0, 16);
                 // Nur Steuer-Records (Art 1); Medien- oder Ende-Records gibt es in diesem Kanal nicht.
                 String answer = opened.length > 17 && opened[16] == 1
-                    ? ControlCommands.handle(Arrays.copyOfRange(opened, 17, opened.length), device)
+                    ? ControlCommands.handle(Arrays.copyOfRange(opened, 17, opened.length), device, downloads)
                     : ControlCommands.REJECTED;
                 host.event(ControlCommands.REJECTED.equals(answer) ? "REC_REJECTED" : "REC");
                 synchronized (CORE) {
