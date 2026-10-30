@@ -17,7 +17,10 @@ public interface DownloadStore {
     /** Unveröffentlichtes Ziel: entweder {@link #commit()} oder {@link #abort()} (räumt vollständig auf). */
     interface Target {
         OutputStream out() throws IOException;
-        /** Schließt und veröffentlicht die Datei; liefert den Verweis der Ablage (Android: Uri). Danach kein abort mehr. */
+        /**
+         * Veröffentlicht die Datei; liefert den Verweis der Ablage (Android: Uri). Danach kein abort mehr. Die Engine hat
+         * {@link #out()} vorher geschlossen: was beim Schließen geschehen muss (z. B. fsync), gehört in dessen close().
+         */
         Object commit() throws IOException;
         /** Schließt den Stream und entfernt alles Unfertige; darf mehrfach und nach Fehlern aufgerufen werden. */
         void abort();

@@ -150,7 +150,8 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     private final class PartFile implements Target {
         private final String name, mime;
         private final File dir, part;
-        private final FileOutputStream out;
+        private final FileOutputStream file;
+        private final OutputStream out;
         private boolean finished;
 
         PartFile(String name, String mime) throws IOException {
@@ -161,13 +162,22 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
             dir = new File(external, Downloads.FOLDER);
             if (!dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory()) throw new IOException("mkdir");
             part = File.createTempFile(".evp-pending-", ".part", dir);
-            out = new FileOutputStream(part);
+            file = new FileOutputStream(part);
+            // Die Engine schließt den Stream vor commit(): fsync gehört deshalb in close() (einmalig), nicht in commit().
+            out = new java.io.FilterOutputStream(file) {
+                private boolean closed;
+                @Override public void write(byte[] b, int off, int len) throws IOException { file.write(b, off, len); }
+                @Override public synchronized void close() throws IOException {
+                    if (closed) return;
+                    closed = true;
+                    try { file.getFD().sync(); } finally { file.close(); }
+                }
+            };
         }
 
         @Override public OutputStream out() { return out; }
 
         @Override public synchronized Object commit() throws IOException {
-            out.getFD().sync();
             out.close();
             File dst = null;
             synchronized (Downloads.fileNames) {
@@ -196,7 +206,7 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         @Override public synchronized void abort() {
             if (finished) return;
             finished = true;
-            try { out.close(); } catch (IOException ignored) { }
+            try { file.close(); } catch (IOException ignored) { }
             part.delete();
         }
     }
