@@ -41,6 +41,7 @@ if [ "${1:-}" = "--self-test" ]; then
   probe "old Downloads.start from control commands" de/evp/helfer/ControlCommands.java '// Downloads.start(null, null, null, null, null, null, null, false);'
   probe "old Downloads.start from service" de/evp/helfer/HelferService.java '// Downloads.start(this, u, null, null, null, null, null, false);'
   probe "old Downloads.start inside Downloads" de/evp/helfer/Downloads.java '// int x = start(null, null, null, null, null, null, null, false);'
+  probe "Mp4Downloads with another client" de/evp/helfer/HelferService.java '// new Mp4Downloads(this, "x", null);'
   probe "android types in dl" de/evp/helfer/dl/DirectDownloads.java '// android.util.Log.i("x", "y");'
   probe "cookie manager in Mp4Downloads" de/evp/helfer/Mp4Downloads.java '// android.webkit.CookieManager.getInstance();'
   [ "$fails" = 0 ] && echo "RESULT network-layer-guard self-test PASS" || { echo "RESULT network-layer-guard self-test FAIL"; exit 1; }
@@ -68,6 +69,9 @@ for f in "${C2_FILES[@]}"; do
   [ "${f##*/}" = ChannelServer.java ] && pattern='HttpURLConnection|URLConnection|openConnection|openStream|java\.net\.(URL|HttpCookie|CookieHandler)\b|new URL\(|DownloadManager|Fetcher|Downloads\.start|HlsCore|DashCore|WebView|CookieManager'
   if grep -qE "$pattern" "$f"; then add "unprotected network path in ${f#$MAIN/}: $(grep -noE "$pattern" "$f" | head -1)"; fi
 done
+while IFS= read -r f; do add "Mp4Downloads constructed outside Mp4Downloads.get: ${f#$MAIN/}"; done < <(grep -rl 'new Mp4Downloads(' "$MAIN" --include=*.java | grep -v '/de/evp/helfer/Mp4Downloads\.java$' || true)
+[ "$(grep -c 'new Mp4Downloads(' "$MAIN/de/evp/helfer/Mp4Downloads.java")" = 1 ] && grep -q 'new Mp4Downloads(app, "mp4-jobs-v1", SafeHttp.client(app))' "$MAIN/de/evp/helfer/Mp4Downloads.java" \
+  || add "Mp4Downloads must be created only with SafeHttp.client"
 while IFS= read -r f; do add "Android types in de.evp.helfer.dl: ${f#$MAIN/}"; done < <(grep -rlE '(^|[^A-Za-z0-9_])android\.' "$MAIN/de/evp/helfer/dl" --include=*.java || true)
 while IFS= read -r f; do add "old Downloads.start called: ${f#$MAIN/}"; done < <(grep -rlE 'Downloads\.start[[:space:]]*\(' "$MAIN" --include=*.java || true)
 if grep -nE '(^|[^A-Za-z0-9_.])start[[:space:]]*\(' "$MAIN/de/evp/helfer/Downloads.java" | grep -vq 'static int start('; then add "old Downloads.start called inside Downloads.java"; fi

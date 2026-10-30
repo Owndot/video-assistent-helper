@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import de.evp.helfer.dl.DirectDownloads;
 import de.evp.helfer.dl.DownloadStore;
 import de.evp.helfer.net.SafeHttp;
+import de.evp.helfer.net.SafeHttpClient;
 
 /**
  * Android-Ablage der direkten MP4-Downloads (Phase C2): Netzwerk nur über {@link SafeHttp} (in
@@ -56,16 +57,20 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     private final Context app;
     private final File journal;
 
-    private Mp4Downloads(Context app) throws IOException {
+    /** {@code http}: produktiv immer {@link SafeHttp#client}; Gerätetests geben einen Client mit Testregeln (eigenes Journal). */
+    Mp4Downloads(Context app, String journalName, SafeHttpClient http) throws IOException {
         this.app = app;
-        this.journal = new File(app.getFilesDir(), "mp4-jobs-v1");
+        this.journal = new File(app.getFilesDir(), journalName);
         Downloads.channel(app);
-        this.engine = new DirectDownloads(SafeHttp.client(app), this, this);
+        this.engine = new DirectDownloads(http, this, this);
     }
 
     /** Eine Instanz je Prozess (Journal und laufende Aufträge überdauern einen Dienst-Neustart im selben Prozess). */
     static synchronized Mp4Downloads get(Context c) throws IOException {
-        if (instance == null) instance = new Mp4Downloads(c.getApplicationContext());
+        if (instance == null) {
+            Context app = c.getApplicationContext();
+            instance = new Mp4Downloads(app, "mp4-jobs-v1", SafeHttp.client(app));
+        }
         return instance;
     }
 

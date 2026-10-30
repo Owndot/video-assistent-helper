@@ -724,7 +724,7 @@ public final class TestSafeHttp {
             List<AddressPolicy.Nat64Prefix> odd = Nat64Discovery.decide(true, Arrays.asList(ip("2a01:4f8::1")));
             expect(!AddressPolicy.allowed(ip("2606:4700::1111"), odd), "unexplained AAAA");
             // "u"-Oktett gesetzt: keine gültige Einbettung für Längen < 96.
-            expect(Nat64Discovery.prefixOf(ip("2a01:4f8:64c0:0:ff00:aa00::").getAddress()) == null, "u octet");
+            expect(Nat64Discovery.prefixOf(ip("2a01:4f8:c0:0:ffaa::").getAddress()) == null, "u octet");
             // IPv4-mapped Antworten zählen als IPv4.
             expect(Nat64Discovery.decide(true, Arrays.asList(ip("::ffff:192.0.0.170"))).isEmpty(), "mapped");
         });
