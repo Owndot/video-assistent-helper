@@ -57,6 +57,7 @@ jobs:
             cp "$S/app/build/outputs/apk/release/app-release-unsigned.apk" "$O/apk/release-unsigned.apk"
           done
       - name: Compare old vs new (text report)
+        shell: bash +e {0}
         run: |
           set -uo pipefail
           BT="$ANDROID_HOME/build-tools/36.0.0"; R="$RUNNER_TEMP/report"; mkdir -p "$R"
@@ -77,7 +78,7 @@ jobs:
             echo "================ $apk: size old=$(wc -c < "$RUNNER_TEMP/out-old/apk/$apk") new=$(wc -c < "$RUNNER_TEMP/out-new/apk/$apk")" | tee -a "$R/summary.txt"
             for k in manifest badging permissions resources entries metainf dexapi; do
               if diff -q "$R/old.$apk.$k.txt" "$R/new.$apk.$k.txt" > /dev/null; then echo "  $k: IDENTICAL" | tee -a "$R/summary.txt"
-              else echo "  $k: DIFFERENT" | tee -a "$R/summary.txt"; diff "$R/old.$apk.$k.txt" "$R/new.$apk.$k.txt" | head -60 | tee -a "$R/summary.txt"; fi
+              else echo "  $k: DIFFERENT" | tee -a "$R/summary.txt"; { diff "$R/old.$apk.$k.txt" "$R/new.$apk.$k.txt" | head -60 | tee -a "$R/summary.txt"; } || true; fi
             done
           done
           rm -rf "$R"/*.dex
