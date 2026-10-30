@@ -457,10 +457,18 @@ public class ChannelInstrumentedTest {
         int before = HelferService.instance.registrations().size();
         assertEquals(1, before);
         File dir = ctx.getFilesDir();
+        // Verzeichnis UND Registry-Datei sperren: android.util.AtomicFile schreibt bis API 29 an Ort und Stelle weiter,
+        // wenn das Umbenennen in .bak scheitert – ein schreibgeschütztes Verzeichnis allein verhindert dort kein Speichern.
+        File registry = new File(dir, "registrations.v1");
+        assertTrue("registry file present", registry.isFile());
         boolean ok;
+        assertTrue("registry file read-only", registry.setWritable(false, false));
         assertTrue("files dir read-only", dir.setWritable(false, false));
         try { ok = HelferService.instance.revoke(null); }
-        finally { assertTrue("files dir writable again", dir.setWritable(true, true)); }
+        finally {
+            assertTrue("files dir writable again", dir.setWritable(true, true));
+            assertTrue("registry file writable again", registry.setWritable(true, true));
+        }
         assertFalse("revoke must report failure when it cannot be saved", ok);
         assertEquals(HelferService.revokeFailedText(), HelferService.startupError);
         assertTrue(HelferService.startupError, HelferService.startupError.contains("nach einem Neustart weiterhin bestehen")
