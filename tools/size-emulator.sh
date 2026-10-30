@@ -36,9 +36,13 @@ for v in "$@"; do
   measure speed
   adb uninstall $PKG > /dev/null
   echo "== instrumentation $v"
-  if bash tools/run-channel-instrumentation.sh "$R/$v"; then echo "INSTRUMENTATION $v OK $(grep -m1 '^OK (' "$R/$v/report/instrumentation.txt")" | tee -a "$R/installed.txt"
+  adb logcat -c || true
+  if timeout -k 15 300 bash tools/run-channel-instrumentation.sh "$R/$v"; then echo "INSTRUMENTATION $v OK $(grep -m1 '^OK (' "$R/$v/report/instrumentation.txt")" | tee -a "$R/installed.txt"
   else echo "INSTRUMENTATION $v FAILED" | tee -a "$R/installed.txt"; status=1; fi
   adb logcat -d -b crash > "$R/$v/report/crash.txt" 2>&1 || true
+  adb logcat -d -s AndroidRuntime:E TestRunner:E > "$R/$v/report/runtime-errors.txt" 2>&1 || true
+  grep -E 'FATAL|NoClassDef|ClassNotFound|Exception' "$R/$v/report/runtime-errors.txt" | head -20 || true
+  adb shell am force-stop $PKG || true; adb uninstall "$PKG.test" > /dev/null 2>&1 || true; adb uninstall $PKG > /dev/null 2>&1 || true
   if [ -s "$R/$v/report/crash.txt" ]; then echo "CRASH LOG $v:"; head -40 "$R/$v/report/crash.txt"; status=1; fi
   adb logcat -b crash -c || true
 done
