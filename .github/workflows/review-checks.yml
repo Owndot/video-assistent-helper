@@ -4,8 +4,7 @@ name: Review checks PR 23/24 (temporary branch, text only)
 #  2. Lint NewApi gegen minSdk 26 auf dem Phase-A-Stand
 #  3. classes.dex der Testvariante vs. Release-APK (PR 24): gleiche R8-Ausgabe?
 on:
-  push:
-    branches: [tmp/okhttp-size-test]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:

@@ -1,0 +1,63 @@
+name: Generate Gradle verification metadata (temporary branch, text only)
+# NUR WERKZEUG (Zweig tmp/okhttp-size-test, nie mergen): erzeugt gradle/verification-metadata.xml für den C1-Zweig,
+# prüft danach dieselben Builds MIT aktiver Prüfung und gibt die Datei als gzip+base64 im Log aus (kein Artefakt).
+on:
+  push:
+    branches: [tmp/okhttp-size-test]
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: feature/c1-secure-network
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Toolchains and native library
+        run: |
+          set -euo pipefail
+          echo "commit $(git rev-parse HEAD)"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018" "platforms;android-37.0" "build-tools;36.0.0" "build-tools;34.0.0" < <(yes 2>/dev/null) > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Generate
+        run: |
+          set -euo pipefail
+          bash tools/build-channel-native.sh "$RUNNER_TEMP/n" > /dev/null
+          bash tools/update-verification-metadata.sh "$RUNNER_TEMP/n"
+      - name: Verify with the generated metadata (fresh Gradle home, same tasks as CI)
+        run: |
+          set -euo pipefail
+          export GRADLE_USER_HOME="$RUNNER_TEMP/fresh-gradle-home"
+          ./gradlew --no-daemon -q -PchannelTests -Pandroid.useAndroidX=true -PchannelJniLibs="$RUNNER_TEMP/n/jniLibs" -PchannelJniLibsTest="$RUNNER_TEMP/n/jniLibs-test" :app:assembleChanneltest :app:assembleChanneltestAndroidTest :app:traceTestKeepRules
+          ./gradlew --no-daemon -q -PreleaseVersionCode=200 -PreleaseVersionName=2.0.0 :app:assembleRelease :app:assembleDebug :app:assembleDebugAndroidTest -Pandroid.useAndroidX=true
+          echo "VERIFIED: builds pass with dependency verification from an empty Gradle cache"
+      - name: Tamper check - a changed hash must fail the build
+        run: |
+          set -uo pipefail
+          export GRADLE_USER_HOME="$RUNNER_TEMP/tamper-gradle-home"
+          cp gradle/verification-metadata.xml "$RUNNER_TEMP/meta.bak"
+          python3 - <<'PY'
+          import re
+          p = 'gradle/verification-metadata.xml'
+          s = open(p).read()
+          m = re.search(r'(<component group="com\.squareup\.okhttp3" name="okhttp-android" version="5\.5\.1">.*?<sha256 value=")([0-9a-f])', s, re.S)
+          s = s[:m.end(1)] + ('0' if m.group(2) != '0' else '1') + s[m.end(2):]
+          open(p, 'w').write(s)
+          PY
+          if ./gradlew --no-daemon -q -PreleaseVersionCode=200 -PreleaseVersionName=2.0.0 :app:assembleRelease > "$RUNNER_TEMP/tamper.log" 2>&1; then echo "TAMPER NOT DETECTED"; exit 1; fi
+          grep -m3 -iE 'verification|checksum|sha256' "$RUNNER_TEMP/tamper.log" || true
+          echo "TAMPER DETECTED: build fails on a wrong okhttp-android checksum"
+          cp "$RUNNER_TEMP/meta.bak" gradle/verification-metadata.xml
+      - name: Output (gzip + base64, text only)
+        run: |
+          set -euo pipefail
+          sha256sum gradle/verification-metadata.xml
+          echo "-----BEGIN VERIFICATION METADATA-----"
+          gzip -9 -c gradle/verification-metadata.xml | base64 -w 120
+          echo "-----END VERIFICATION METADATA-----"
