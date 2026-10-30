@@ -1,4 +1,4 @@
-name: Size comparison Phase B vs C1 (temporary branch, text only)
+name: Size comparison C1 vs C2 (temporary branch, text only)
 # NUR MESSUNG (Zweig tmp/okhttp-size-test, nie mergen): APK-Größe und installierte Größe der Testvariante
 # (Phase A 1372b24 vs Phase B), dazu unsignierte Release-APKs: Phase A, Phase B, Phase B mit Umbenennung (ohne
 # -dontobfuscate) und Phase B ohne Test-Keep-Regeln. Nur Text wird hochgeladen, nie eine APK.
@@ -8,8 +8,8 @@ on:
 permissions:
   contents: read
 env:
-  A: 15a0817
-  B: feature/c1-secure-network
+  A: 60b947a
+  B: feature/c2-mp4-downloads
 jobs:
   size:
     runs-on: ubuntu-latest
