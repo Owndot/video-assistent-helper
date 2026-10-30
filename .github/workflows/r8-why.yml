@@ -1,8 +1,7 @@
 name: R8 keep reasons (temporary branch, text only)
 # NUR DIAGNOSE (Zweig tmp/okhttp-size-test, nie mergen): warum R8 bestimmte Klassen behält.
 on:
-  push:
-    branches: [tmp/okhttp-size-test]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
