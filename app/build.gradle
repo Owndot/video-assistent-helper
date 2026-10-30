@@ -131,4 +131,5 @@ if (project.hasProperty('sizeR8')) {
     android.buildTypes.channeltest.minifyEnabled true
     android.buildTypes.channeltest.proguardFiles android.getDefaultProguardFile('proguard-android-optimize.txt'), 'size-test-r8.pro'
     android.buildTypes.channeltest.testProguardFiles 'size-test-r8-androidtest.pro'
+    if (project.hasProperty('sizeR8Instrumented')) android.buildTypes.channeltest.proguardFiles 'size-test-r8-instrumented.pro'
 }

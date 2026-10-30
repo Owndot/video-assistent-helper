@@ -60,6 +60,8 @@ jobs:
           # 5.3.2: neueste Version, die mit compileSdk 34 / AGP 8.5.2 baut (5.4.0 verlangt 36, 5.5.x verlangt 37).
           build ok532    "$GITHUB_WORKSPACE" "$R/ok532"    -PsizeOkhttp=5.3.2
           build ok532r8  "$GITHUB_WORKSPACE" "$R/ok532r8"  -PsizeOkhttp=5.3.2 -PsizeR8
+          # Gleiche R8-Konfiguration + Kotlin/AndroidX behalten: nur damit der Testrunner gegen die R8-APK laufen kann.
+          build ok532r8t "$GITHUB_WORKSPACE" "$R/ok532r8t" -PsizeOkhttp=5.3.2 -PsizeR8 -PsizeR8Instrumented
           # 5.5.1 (aktuell): NUR Größenmessung, AAR-Prüfung abgeschaltet; mit diesem Toolchain nicht auslieferbar.
           #        Ein Fehlschlag hier wird berichtet, bricht den Lauf aber nicht ab.
           build ok551    "$GITHUB_WORKSPACE" "$R/ok551"    -PsizeOkhttp=5.5.1 -PsizeSkipAarCheck || echo "BUILD FAILED ok551" | tee -a "$R/text/build-failures.txt"
@@ -92,8 +94,8 @@ jobs:
         run: |
           set -euo pipefail
           R="$RUNNER_TEMP/v"; BT="$ANDROID_HOME/build-tools/34.0.0"
-          python3 tools/size-report.py $(for v in base r8 ok532 ok532r8 ok551 ok551r8; do [ -f "$R/$v/apk/helper-channeltest.apk" ] && printf '%s=%s ' $v "$R/$v/apk/helper-channeltest.apk"; done) | tee "$R/text/size-report.txt"
-          for v in base r8 ok532 ok532r8 ok551 ok551r8; do
+          python3 tools/size-report.py $(for v in base r8 ok532 ok532r8 ok532r8t ok551 ok551r8; do [ -f "$R/$v/apk/helper-channeltest.apk" ] && printf '%s=%s ' $v "$R/$v/apk/helper-channeltest.apk"; done) | tee "$R/text/size-report.txt"
+          for v in base r8 ok532 ok532r8 ok532r8t ok551 ok551r8; do
             [ -f "$R/$v/apk/helper-channeltest.apk" ] || continue
             echo "$v $(sha256sum < "$R/$v/apk/helper-channeltest.apk" | cut -c1-64) $(wc -c < "$R/$v/apk/helper-channeltest.apk")" >> "$R/text/apk-hashes.txt"
             "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$R/$v/apk/helper-channeltest.apk" > "$R/text/manifest-$v.txt"
@@ -124,14 +126,14 @@ jobs:
           target: google_apis
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
-          script: bash tools/size-emulator.sh "$RUNNER_TEMP/v" base r8 ok532 ok532r8 ok551 ok551r8 < /dev/null > /dev/null 2>&1
+          script: bash tools/size-emulator.sh "$RUNNER_TEMP/v" base r8 ok532 ok532r8 ok532r8t ok551 ok551r8 < /dev/null > /dev/null 2>&1
       - name: Collect text report (never an APK)
         if: always()
         run: |
           set -euo pipefail
           R="$RUNNER_TEMP/v"; mkdir -p "$R/text"
           cp "$R/installed.txt" "$R/text/" 2>/dev/null || true
-          for v in base r8 ok532 ok532r8 ok551 ok551r8; do [ -f "$R/$v/report/summary.txt" ] && cp "$R/$v/report/summary.txt" "$R/text/instrumentation-$v.txt" || true; done
+          for v in base r8 ok532 ok532r8 ok532r8t ok551 ok551r8; do [ -f "$R/$v/report/summary.txt" ] && cp "$R/$v/report/summary.txt" "$R/text/instrumentation-$v.txt" || true; done
           cat "$R/text/emulator.txt" 2>/dev/null || true
           cat "$R/text/installed.txt" 2>/dev/null || true
           if find "$R/text" -type f \( -name '*.apk' -o -name '*.aab' -o -name '*.so' -o -name '*.dex' -o -name '*.zip' \) | grep -q .; then echo "installable file in report" >&2; exit 1; fi
