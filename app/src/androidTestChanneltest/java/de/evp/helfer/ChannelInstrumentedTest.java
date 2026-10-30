@@ -345,7 +345,8 @@ public class ChannelInstrumentedTest {
                 {"http://2130706433/v.mp4?sig=" + token, "blocked_"},
                 {"https://user:pw@example.com/v.mp4?sig=" + token, "blocked_credentials_in_url"},
             };
-            for (String[] c : cases) {
+            for (int k = 0; k < cases.length; k++) {
+                String[] c = cases[k];
                 String job = hex(Core.identityGenerate()).substring(0, 32);
                 String r = request(h, "{\"op\":\"dlstart\",\"id\":\"" + job + "\",\"url\":\"" + c[0] + "\",\"name\":\"C2 Kanal\"}");
                 assertTrue(r, r.startsWith("{\"ok\":true,\"id\":\"" + job + "\""));
@@ -353,7 +354,7 @@ public class ChannelInstrumentedTest {
                 String st = r;
                 long end = now() + 15_000;
                 while (st.contains("\"state\":\"running\"") && now() < end) { Thread.sleep(50); st = request(h, "{\"op\":\"dlstatus\",\"id\":\"" + job + "\"}"); }
-                assertTrue(c[0] + " -> " + st, st.contains("\"state\":\"failed\"") && st.contains("\"reason\":\"" + c[1]));
+                assertTrue("case " + k + " (" + c[1] + ") -> " + st, st.contains("\"state\":\"failed\"") && st.contains("\"reason\":\"" + c[1]));
                 assertFalse(st, st.contains(token));
                 // Wiederholter Start derselben Kennung: bekannter Zustand, kein neuer Versuch.
                 assertTrue(request(h, "{\"op\":\"dlstart\",\"id\":\"" + job + "\",\"url\":\"https://example.com/v.mp4\"}").contains("\"state\":\"failed\""));

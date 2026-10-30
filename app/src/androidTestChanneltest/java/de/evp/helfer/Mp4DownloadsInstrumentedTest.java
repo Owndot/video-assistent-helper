@@ -344,10 +344,16 @@ public class Mp4DownloadsInstrumentedTest {
             }
             assertEquals(0, leftovers(t));
             assertEquals(1, srv.requests.get());
-            Log.i(TAG, String.format(Locale.ROOT, "MP4_MEASURE sdk=%d MiB=%d ms=%d MiBps=%.1f cpuMs=%d heapPeakGrowthKiB=%d pssGrowthKiB=%d",
-                Build.VERSION.SDK_INT, total >> 20, ms, (total / 1048576.0) / (ms / 1000.0), cpuMs, (peakHeap[0] - heap0) / 1024,
+            // Bleibender Heap nach GC (wie OKHTTP_RAM in C1); die Spitze enthält noch nicht eingesammelte Okio-Segmente
+            // und wird nur protokolliert.
+            System.gc();
+            Runtime.getRuntime().runFinalization();
+            System.gc();
+            long heapGrowth = (rt.totalMemory() - rt.freeMemory()) - heap0;
+            Log.i(TAG, String.format(Locale.ROOT, "MP4_MEASURE sdk=%d MiB=%d ms=%d MiBps=%.1f cpuMs=%d heapGrowthAfterGcKiB=%d heapPeakGrowthKiB=%d pssGrowthKiB=%d",
+                Build.VERSION.SDK_INT, total >> 20, ms, (total / 1048576.0) / (ms / 1000.0), cpuMs, heapGrowth / 1024, (peakHeap[0] - heap0) / 1024,
                 m1.getTotalPss() - m0.getTotalPss()));
-            assertTrue("heap grew by " + (peakHeap[0] - heap0) / 1024 + " KiB", peakHeap[0] - heap0 < 16L << 20);
+            assertTrue("heap grew by " + heapGrowth / 1024 + " KiB", heapGrowth < 8L << 20);
             // Benachrichtigung: Titel und Text ohne URL, Host oder Token.
             NotificationManager nm = ctx.getSystemService(NotificationManager.class);
             boolean seen = false;
