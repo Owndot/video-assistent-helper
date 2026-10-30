@@ -3,8 +3,7 @@ name: Size comparison Phase A vs Phase B (temporary branch, text only)
 # (Phase A 1372b24 vs Phase B), dazu unsignierte Release-APKs: Phase A, Phase B, Phase B mit Umbenennung (ohne
 # -dontobfuscate) und Phase B ohne Test-Keep-Regeln. Nur Text wird hochgeladen, nie eine APK.
 on:
-  push:
-    branches: [tmp/okhttp-size-test]
+  workflow_dispatch:
 permissions:
   contents: read
 env:

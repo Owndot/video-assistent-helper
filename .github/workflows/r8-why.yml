@@ -1,0 +1,32 @@
+name: R8 keep reasons (temporary branch, text only)
+# NUR DIAGNOSE (Zweig tmp/okhttp-size-test, nie mergen): warum R8 bestimmte Klassen behält.
+on:
+  push:
+    branches: [tmp/okhttp-size-test]
+permissions:
+  contents: read
+jobs:
+  why:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Release build of Phase B with -whyareyoukeeping
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-37.0" "build-tools;36.0.0" < <(yes 2>/dev/null) > /dev/null
+          git fetch -q origin feature/okhttp-r8
+          git worktree add -q "$RUNNER_TEMP/b" origin/feature/okhttp-r8
+          cd "$RUNNER_TEMP/b"
+          printf '%s\n' '-whyareyoukeeping class okhttp3.internal.platform.PlatformInitializer' '-whyareyoukeeping class kotlin.coroutines.Continuation' '-whyareyoukeeping class okhttp3.internal.ws.RealWebSocket' >> app/proguard-rules.pro
+          ./gradlew --no-daemon :app:assembleRelease -PreleaseVersionCode=200 -PreleaseVersionName=2.0.0 2>&1 | grep -v -E '^> Task|^$' | tail -80
+          echo "== rules mentioning Initializer / startup in the merged R8 configuration"
+          grep -n -i -E 'initializer|startup' app/build/outputs/mapping/release/configuration.txt | head -40
+          echo "== consumer rule files"; grep -n '^# The proguard configuration file' app/build/outputs/mapping/release/configuration.txt | cut -c1-220 | head -30
