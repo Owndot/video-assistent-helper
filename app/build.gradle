@@ -144,7 +144,9 @@ tasks.register('traceTestKeepRules', JavaExec) {
         ['okhttp', 'okio', 'kotlin-stdlib', 'tracing'].each { lib ->
             if (!jars.any { it.path.contains(lib) }) throw new GradleException("traceTestKeepRules: $lib missing from the target jars")
         }
-        def a = ['--keep-rules']
+        // Fehlende Definitionen (App-Klassen, nur zur Übersetzung genutzte Annotationen, JUnit-3-Altlasten der
+        // Testbibliothek) sind hier kein Fehler: App-Code bleibt ohnehin vollständig erhalten.
+        def a = ['--keep-rules', '--map-diagnostics', 'error', 'warning']
         bootClasspath.get().each { a += ['--lib', it.asFile.path] }
         jars.each { a += ['--target', it.path] }
         a += ['--source', testApk.get().asFile.path, '--output', rules.get().asFile.path]

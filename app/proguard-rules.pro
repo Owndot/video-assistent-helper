@@ -6,3 +6,7 @@
 
 # Rust-Kern über JNI: native Methoden werden über Klassen- und Methodennamen (Java_poc_Core_*) gebunden.
 -keep class poc.** { *; }
+
+# Keine Umbenennung (auch nicht in Bibliotheken): Stacktraces bleiben ohne Mapping-Datei lesbar, und die
+# Instrumentierungs-APK verweist auf dieselben Namen wie die App (Grundlage für r8-test-references.pro).
+-dontobfuscate
