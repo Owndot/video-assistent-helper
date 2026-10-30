@@ -80,9 +80,11 @@ jobs:
           test -f "$ANDROID_HOME/ndk/27.2.12479018/source.properties"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
       - name: Native channel libraries (API 26 linker, arm64-v8a + x86_64)
-        run: bash tools/build-channel-native.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/native.txt"
+        # pipefail: ein Fehler im Skript darf nicht hinter tee verschwinden.
+        run: set -o pipefail; bash tools/build-channel-native.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/native.txt"
       - name: Test APKs with a throwaway signer (deleted after the build)
-        run: bash tools/build-channel-apk.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/apk.txt"
+        # pipefail: ein Fehler im Skript darf nicht hinter tee verschwinden.
+        run: set -o pipefail; bash tools/build-channel-apk.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/apk.txt"
       - name: Only the test variant was built (no release or debug APK of de.evp.helfer)
         run: |
           set -euo pipefail

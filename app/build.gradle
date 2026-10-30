@@ -42,8 +42,11 @@ android {
     // Channel instrumentation (androidTestChanneltest) runs against the channeltest variant on request.
     testBuildType project.hasProperty('channelTests') ? 'channeltest' : 'debug'
     buildTypes {
+        // R8 nur für die ausgelieferten bzw. auf dem Gerät getesteten Varianten (release, channeltest), mit denselben
+        // Regeln: App- und JNI-Code bleiben vollständig erhalten, gekürzt werden nur Bibliotheken (OkHttp, Okio, Kotlin).
         release {
-            minifyEnabled false
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro', 'r8-test-references.pro'
             debuggable false
             signingConfig null
         }
@@ -56,6 +59,9 @@ android {
             initWith debug
             // Nicht debugfähig: kein run-as/JDWP auf die Kanaldaten am Gerät; D8 baut dann deterministisch.
             debuggable false
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro', 'r8-test-references.pro'
+            testProguardFiles 'proguard-test-rules.pro'
             applicationIdSuffix '.channeltest'
             versionNameSuffix '-channeltest'
             signingConfig channelKeystore != null ? signingConfigs.channeltest : null
@@ -108,8 +114,44 @@ tasks.configureEach {
     if (name.startsWith('pre') && name.contains('Channeltest')) dependsOn verifyChannelLibs
 }
 
+// HTTP-Client (Phase B: eingebunden und auf dem Gerät getestet, noch von keiner Funktion genutzt; siehe HttpClients).
 // Instrumentation only; debug and disposable fixtures retain their existing separation.
 dependencies {
+    implementation 'com.squareup.okhttp3:okhttp-android:5.5.1'
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}
+
+// Keep-Regeln für das, was die Instrumentierungs-APK aus dem Laufzeit-Klassenpfad der App nutzt. AGP berücksichtigt
+// androidTest-Verwendungen beim Schrumpfen nicht, und die Test-APK enthält mit der App geteilte Bibliotheken
+// (Kotlin, androidx.tracing, OkHttp …) nicht selbst – ohne diese Regeln: NoClassDefFoundError im Testrunner.
+// TraceReferences (Teil von R8) erzeugt die Regeln; eingecheckt in r8-test-references.pro und für alle geschrumpften
+// Varianten gleich, damit die getestete APK dieselben Regeln hat wie die ausgelieferte. Prüfung auf Abweichung:
+// tools/build-channel-apk.sh.
+tasks.register('traceTestKeepRules', JavaExec) {
+    dependsOn 'assembleChanneltestAndroidTest'
+    def testApk = layout.buildDirectory.file('outputs/apk/androidTest/channeltest/app-channeltest-androidTest.apk')
+    def rules = layout.buildDirectory.file('test-keep/r8-test-references.pro')
+    def bootClasspath = androidComponents.sdkComponents.bootClasspath
+    classpath = files(new File(Class.forName('com.android.tools.r8.R8').protectionDomain.codeSource.location.toURI()))
+    mainClass = 'com.android.tools.r8.tracereferences.TraceReferences'
+    outputs.file(rules)
+    outputs.upToDateWhen { false }
+    doFirst {
+        def jars = configurations.getByName('channeltestRuntimeClasspath').incoming.artifactView {
+            attributes { attribute(Attribute.of('artifactType', String), 'android-classes-jar') }
+        }.files.files.sort { it.path }
+        ['okhttp', 'okio', 'kotlin-stdlib', 'tracing'].each { lib ->
+            if (!jars.any { it.path.contains(lib) }) throw new GradleException("traceTestKeepRules: $lib missing from the target jars")
+        }
+        // Fehlende Definitionen (App-Klassen, nur zur Übersetzung genutzte Annotationen, JUnit-3-Altlasten der
+        // Testbibliothek) sind hier kein Fehler: App-Code bleibt ohnehin vollständig erhalten.
+        def a = ['--keep-rules', '--map-diagnostics', 'error', 'warning']
+        bootClasspath.get().each { a += ['--lib', it.asFile.path] }
+        jars.each { a += ['--target', it.path] }
+        a += ['--source', testApk.get().asFile.path, '--output', rules.get().asFile.path]
+        rules.get().asFile.parentFile.mkdirs()
+        args(a)
+        logger.lifecycle("traceTestKeepRules: ${jars.size()} target jars: " + jars.collect { it.parentFile.parentFile.name + "/" + it.name }.join(", "))
+    }
 }

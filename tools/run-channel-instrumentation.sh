@@ -20,13 +20,13 @@ adb logcat -c
 adb install -r -t "$OUT/apk/helper-channeltest.apk" > /dev/null
 adb install -r -t "$OUT/apk/helper-channeltest-androidTest.apk" > /dev/null
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS 2>/dev/null || true
-adb shell am instrument -w -r -e class de.evp.helfer.ChannelInstrumentedTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$REPORT/instrumentation.txt" 2>&1
+adb shell am instrument -w -r -e class de.evp.helfer.ChannelInstrumentedTest,de.evp.helfer.OkHttpInstrumentedTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$REPORT/instrumentation.txt" 2>&1
 status=0
 grep -q '^OK (' "$REPORT/instrumentation.txt" || status=1
 grep -E 'INSTRUMENTATION_STATUS: (test|class)=|INSTRUMENTATION_STATUS_CODE|^OK \(|FAILURES|Tests run|AssertionError|Exception' "$REPORT/instrumentation.txt" > "$REPORT/summary.txt"
 adb shell dumpsys meminfo $PKG > "$REPORT/meminfo.txt" 2>&1 || true
 adb shell top -b -n 1 -p "$(adb shell pidof $PKG | tr -d '\r')" > "$REPORT/top.txt" 2>&1 || true
-adb logcat -d -s CHANNEL_TEST:I > "$REPORT/measurements.txt"
+adb logcat -d -s CHANNEL_TEST:I OKHTTP_TEST:I > "$REPORT/measurements.txt"
 # Nichts lauscht mehr auf dem alten Port, solange der Dienst läuft.
 adb shell 'cat /proc/net/tcp /proc/net/tcp6 2>/dev/null' | awk '$4=="0A"{print $2}' > "$REPORT/listeners.txt"
 if grep -qi ':BA43$' "$REPORT/listeners.txt"; then echo "LISTENER ON 47811" >> "$REPORT/summary.txt"; status=1; fi
@@ -36,6 +36,6 @@ adb uninstall "$PKG" > /dev/null || true
 adb shell pm list packages de.evp.helfer > "$REPORT/packages-after.txt"
 diff -q "$REPORT/packages-before.txt" "$REPORT/packages-after.txt" > /dev/null || { echo "package list changed" >> "$REPORT/summary.txt"; status=1; }
 tail -5 "$REPORT/summary.txt"
-grep -E 'CHANNEL_' "$REPORT/measurements.txt" || true
+grep -E 'CHANNEL_|OKHTTP_' "$REPORT/measurements.txt" || true
 grep -E 'TOTAL PSS|TOTAL:|Native Heap|Java Heap' "$REPORT/meminfo.txt" | head -5 || true
 exit $status
