@@ -2,9 +2,10 @@
 # NUR TESTS. Baut die Testvariante de.evp.helfer.channeltest (App + Instrumentierungs-APK) mit einem
 # Wegwerf-Signierer, der hier erzeugt und danach gelöscht wird. Nie das Produktionspaket de.evp.helfer, nie ein
 # produktiver oder früherer Signierschlüssel. Nichts wird veröffentlicht; die APKs bleiben in OUT/apk.
-# Gradle 8.9 kommt aus dem eingecheckten Wrapper des PoC (Distributions-SHA-256 dort festgelegt).
+# Gradle 9.3.1 kommt aus dem eingecheckten Wrapper im Wurzelverzeichnis (Distributions-SHA-256 dort festgelegt).
 # Aufruf: tools/build-channel-apk.sh OUT   (OUT/jniLibs + OUT/jniLibs-test aus tools/build-channel-native.sh;
-#                                          ANDROID_HOME mit build-tools 34.0.0, JDK 17)
+#                                          ANDROID_HOME mit Plattform android-37.0, build-tools 36.0.0 (Build)
+#                                          und 34.0.0 (Prüfwerkzeuge), JDK 17)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$(cd "${1:?usage: build-channel-apk.sh OUT}" && pwd)"
@@ -20,7 +21,7 @@ export ORG_GRADLE_PROJECT_channelKeystorePass
 keytool -genkeypair -storetype PKCS12 -keystore "$KEYDIR/throwaway.p12" -alias helper-channel-throwaway \
   -keyalg RSA -keysize 3072 -validity 3 -dname "CN=Helper channel TEST ONLY - throwaway" \
   -storepass:env ORG_GRADLE_PROJECT_channelKeystorePass -keypass:env ORG_GRADLE_PROJECT_channelKeystorePass >/dev/null 2>&1
-"$ROOT/poc/android-capability/app-project/gradlew" --no-daemon -q -p "$ROOT" \
+"$ROOT/gradlew" --no-daemon -q -p "$ROOT" \
   :app:assembleChanneltest :app:assembleChanneltestAndroidTest -PchannelTests -Pandroid.useAndroidX=true \
   -PchannelJniLibs="$OUT/jniLibs" -PchannelJniLibsTest="$OUT/jniLibs-test" -PchannelKeystore="$KEYDIR/throwaway.p12"
 mkdir -p "$OUT/apk"
