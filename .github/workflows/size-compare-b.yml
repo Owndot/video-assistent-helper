@@ -1,0 +1,92 @@
+name: Size comparison Phase A vs Phase B (temporary branch, text only)
+# NUR MESSUNG (Zweig tmp/okhttp-size-test, nie mergen): APK-Größe und installierte Größe der Testvariante
+# (Phase A 1372b24 vs Phase B), dazu unsignierte Release-APKs: Phase A, Phase B, Phase B mit Umbenennung (ohne
+# -dontobfuscate) und Phase B ohne Test-Keep-Regeln. Nur Text wird hochgeladen, nie eine APK.
+on:
+  push:
+    branches: [tmp/okhttp-size-test]
+permissions:
+  contents: read
+env:
+  A: 1372b24b4b7c8922ca8746a59bdc438a308c7b1f
+  B: feature/okhttp-r8
+jobs:
+  size:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Toolchains, worktrees, native library
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018" "platforms;android-37.0" "build-tools;34.0.0" "build-tools;36.0.0" < <(yes 2>/dev/null) > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
+          git fetch -q origin "$B"
+          for v in a b bobf bnorules; do git worktree add -q "$RUNNER_TEMP/src-$v" "$( [ $v = a ] && echo "$A" || echo "origin/$B")"; done
+          echo "B commit: $(git -C "$RUNNER_TEMP/src-b" rev-parse HEAD)"
+          sed -i '/^-dontobfuscate$/d' "$RUNNER_TEMP/src-bobf/app/proguard-rules.pro"
+          grep '^#' "$RUNNER_TEMP/src-bnorules/app/r8-test-references.pro" > "$RUNNER_TEMP/h.pro"; cp "$RUNNER_TEMP/h.pro" "$RUNNER_TEMP/src-bnorules/app/r8-test-references.pro"
+          bash "$RUNNER_TEMP/src-a/tools/build-channel-native.sh" "$RUNNER_TEMP/native"
+      - name: Build channeltest A and B (throwaway signer), unsigned release for all four
+        run: |
+          set -euo pipefail
+          for v in a b; do
+            O="$RUNNER_TEMP/out-$v"; mkdir -p "$O"; cp -r "$RUNNER_TEMP/native/jniLibs" "$RUNNER_TEMP/native/jniLibs-test" "$O/"
+            (cd "$RUNNER_TEMP/src-$v" && bash tools/build-channel-apk.sh "$O")
+          done
+          for v in a b bobf bnorules; do
+            (cd "$RUNNER_TEMP/src-$v" && ./gradlew --no-daemon -q :app:assembleRelease -PreleaseVersionCode=200 -PreleaseVersionName=2.0.0)
+            mkdir -p "$RUNNER_TEMP/out-$v/apk"; cp "$RUNNER_TEMP/src-$v/app/build/outputs/apk/release/app-release-unsigned.apk" "$RUNNER_TEMP/out-$v/apk/release-unsigned.apk"
+          done
+      - name: Size report
+        run: |
+          set -euo pipefail
+          R="$RUNNER_TEMP/report"; mkdir -p "$R"; BT="$ANDROID_HOME/build-tools/36.0.0"
+          {
+            echo "variant file apk_bytes dex_bytes(raw) dex_classes"
+            for v in a b bobf bnorules; do for f in helper-channeltest.apk release-unsigned.apk; do
+              p="$RUNNER_TEMP/out-$v/apk/$f"; [ -f "$p" ] || continue
+              raw=$(unzip -l "$p" | awk '$4 ~ /\.dex$/ {s+=$1} END{print s}')
+              cls=$(python3 -c 'import struct,sys,zipfile
+          z=zipfile.ZipFile(sys.argv[1]); print(sum(struct.unpack_from("<I",z.read(n),0x60)[0] for n in z.namelist() if n.endswith(".dex")))' "$p")
+              echo "$v $f $(wc -c < "$p") $raw $cls"
+            done; done
+          } | column -t | tee "$R/sizes.txt"
+          for v in a b; do "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$RUNNER_TEMP/out-$v/apk/helper-channeltest.apk" > "$R/manifest-$v.txt"; "$BT/aapt2" dump permissions "$RUNNER_TEMP/out-$v/apk/helper-channeltest.apk" > "$R/permissions-$v.txt"; done
+          echo "== manifest a -> b"; diff "$R/manifest-a.txt" "$R/manifest-b.txt" || true
+          echo "== permissions a -> b"; diff "$R/permissions-a.txt" "$R/permissions-b.txt" && echo IDENTICAL || true
+          echo "== new APK entries (b vs a)"; diff <(unzip -Z1 "$RUNNER_TEMP/out-a/apk/helper-channeltest.apk" | sort) <(unzip -Z1 "$RUNNER_TEMP/out-b/apk/helper-channeltest.apk" | sort) || true
+          unzip -l "$RUNNER_TEMP/out-b/apk/helper-channeltest.apk" | tail -n +4 | sort -k4 | head -60
+          echo "== dex classes by package (b)"; mkdir -p "$RUNNER_TEMP/dexb"; unzip -q -o "$RUNNER_TEMP/out-b/apk/helper-channeltest.apk" '*.dex' -d "$RUNNER_TEMP/dexb"
+          for d in "$RUNNER_TEMP/dexb"/*.dex; do "$BT/dexdump" "$d" 2>/dev/null | sed -n "s/^  Class descriptor  : 'L\(.*\);'/\1/p"; done | awk -F/ '{NF=(NF>2?2:NF-1); print}' OFS=/ | sort | uniq -c | sort -rn | tee "$R/packages-b.txt"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Installed size (API 34 emulator)
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash .github/size-installed.sh "$RUNNER_TEMP" < /dev/null > "$RUNNER_TEMP/report/installed.txt" 2>&1
+      - name: Show installed sizes
+        if: always()
+        run: cat "$RUNNER_TEMP/report/installed.txt" || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: size-compare-b-text-only
+          path: ${{ runner.temp }}/report
+          retention-days: 7

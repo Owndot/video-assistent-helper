@@ -3,8 +3,7 @@ name: Build comparison AGP 8.5.2 vs 9.1.1 (temporary branch, text only)
 # und aus dem Phase-A-Stand (nachher) und vergleicht Manifest, Ressourcen, dex-Inhalt (Klassen/Methoden/Felder),
 # Assets und Nativbibliotheken. Lädt nur Text hoch, nie eine APK.
 on:
-  push:
-    branches: [tmp/okhttp-size-test]
+  workflow_dispatch:
 permissions:
   contents: read
 env:
