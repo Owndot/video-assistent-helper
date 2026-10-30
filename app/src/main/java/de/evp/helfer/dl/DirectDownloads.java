@@ -10,7 +10,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -48,7 +50,8 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     /** Rückmeldungen für Benachrichtigungen: nie mit URL. */
     public interface Listener {
         void progress(String id, String title, long bytes, long total);
-        void finished(String id, String title, String state, String reason);
+        /** {@code saved}: Verweis der Ablage bei "done", sonst null. */
+        void finished(String id, String title, String state, String reason, Object saved);
     }
 
     enum State { RUNNING, DONE, FAILED, CANCELLED, INTERRUPTED }
@@ -87,11 +90,13 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         this.store = store;
         this.listener = listener;
         this.callTimeoutMs = callTimeoutMs;
-        this.workers = Executors.newFixedThreadPool(MAX_PARALLEL, r -> {
+        ThreadPoolExecutor pool = new ThreadPoolExecutor(MAX_PARALLEL, MAX_PARALLEL, 30, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), r -> {
             Thread t = new Thread(r, "evp-mp4");
             t.setDaemon(true);
             return t;
         });
+        pool.allowCoreThreadTimeOut(true);     // ohne Auftrag keine wartenden Threads
+        this.workers = pool;
         loadJournal();
     }
 
@@ -119,7 +124,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         try {
             workers.execute(() -> run(j, url));
         } catch (RuntimeException rejected) {
-            finish(j, State.FAILED, "stopped");
+            finish(j, State.FAILED, "stopped", null);
         }
         return json(j);
     }
@@ -137,13 +142,18 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         return json(j);
     }
 
-    /** Dienstende: alle laufenden Aufträge abbrechen (ihre Arbeiter räumen selbst auf). */
+    /**
+     * Dienstende: keine neuen Starts, alle laufenden Aufträge abbrechen (ihre Arbeiter räumen selbst auf). Die Instanz
+     * bleibt je Prozess bestehen, damit ein Dienst-Neustart dasselbe Journal weiterführt.
+     */
     public void stopAll() {
         List<Job> snapshot;
         synchronized (this) { stopped = true; snapshot = new ArrayList<>(jobs.values()); }
         for (Job j : snapshot) if (j.state == State.RUNNING) j.cancel.cancel();
-        workers.shutdown();
     }
+
+    /** Dienststart: Starts wieder annehmen. */
+    public synchronized void serviceStarted() { stopped = false; }
 
     // ------------------------------------------------------------------ Ablauf eines Auftrags
 
@@ -152,6 +162,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         SafeResponse response = null;
         State state = State.FAILED;
         String reason = "network";
+        Object saved = null;
         try {
             response = http.get(url, -1, -1, MAX_FILE_BYTES, callTimeoutMs, job.cancel);
             checkCancelled(job);
@@ -209,7 +220,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             }
             if (in.read() != -1) throw new Fail("long_body");
             checkCancelled(job);
-            try { out.close(); target.commit(); } catch (IOException e) { throw new Fail("storage"); }
+            try { out.close(); saved = target.commit(); } catch (IOException e) { throw new Fail("storage"); }
             target = null;
             state = State.DONE;
             reason = "";
@@ -225,7 +236,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             if (target != null) target.abort();
         }
         if (state != State.DONE && job.cancel.isCancelled()) { state = State.CANCELLED; reason = ""; }
-        finish(job, state, reason);    // erst nach dem Aufräumen: "beendet" heißt, nichts Unfertiges bleibt
+        finish(job, state, reason, saved);    // erst nach dem Aufräumen: "beendet" heißt, nichts Unfertiges bleibt
     }
 
     private long freeBytes() throws Fail {
@@ -255,14 +266,14 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         if (lastModified != null && !lastModified.equals(r.lastModified())) throw new Fail("changed");
     }
 
-    private void finish(Job job, State state, String reason) {
+    private void finish(Job job, State state, String reason, Object saved) {
         synchronized (this) {
             job.state = state;
             job.reason = reason;
             running.decrementAndGet();
             try { saveJournal(); } catch (IOException ignored) { /* Zustand bleibt im Speicher; nächster Start: interrupted */ }
         }
-        listener.finished(job.id, job.title, state.name().toLowerCase(Locale.ROOT), reason);
+        listener.finished(job.id, job.title, state.name().toLowerCase(Locale.ROOT), reason, saved);
     }
 
     // ------------------------------------------------------------------ Prüfungen

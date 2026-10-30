@@ -2,7 +2,7 @@
 # Tests der MP4-Download-Engine (de.evp.helfer.dl) auf der JVM gegen echte lokale HTTP-Server.
 # Übersetzt den Android-freien Kern (net ohne SafeHttp.java, dl, ControlCommands) gegen OkHttp 5.5.1 (JVM-Artefakt)
 # und läuft mit 48 MiB Heap; die 512-MiB-Datei muss also gestreamt werden. Abhängigkeiten wie tests/java/net/run.sh.
-# Aufruf: tests/java/dl/run.sh [CACHE_DIR]
+# Aufruf: tests/java/dl/run.sh [CACHE_DIR]   (DL_JAVA_OPTS="-Ddl.large=BYTES" ändert die Größe der großen Datei)
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
@@ -22,9 +22,9 @@ fetch org/jetbrains/kotlin/kotlin-stdlib/2.2.21/kotlin-stdlib-2.2.21.jar 6558a3d
 CP="$CACHE/okhttp-jvm-5.5.1.jar:$CACHE/okio-jvm-3.18.1.jar:$CACHE/kotlin-stdlib-2.2.21.jar"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-SRC="$ROOT/app/src/main/java/de/evp/helfer"
+SRC="${APP_SRC:-$ROOT/app/src/main/java}/de/evp/helfer"   # mutation.py setzt eine veränderte Kopie
 javac -d "$WORK/classes" -cp "$CP" \
   $(ls "$SRC"/net/*.java | grep -v '/SafeHttp\.java$') "$SRC"/dl/*.java "$SRC"/ControlCommands.java \
   "$HERE"/de/evp/helfer/net/*.java "$HERE"/de/evp/helfer/dl/*.java
 mkdir -p "$WORK/files"
-java -Xmx48m -cp "$WORK/classes:$CP" de.evp.helfer.dl.TestDirectDownloads "$WORK/files"
+java -Xmx48m ${DL_JAVA_OPTS:-} -cp "$WORK/classes:$CP" de.evp.helfer.dl.TestDirectDownloads "$WORK/files"

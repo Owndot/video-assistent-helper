@@ -46,7 +46,7 @@ public final class ChannelChecks {
         "{\"op\":\"bright\",\"v\":-0.5}", "{\"op\":\"bright\",\"v\":1e0}", "{\"op\":\"bright\",\"v\":\"0.5\"}", "{\"op\":\"bright\",\"v\":.5}",
         "{\"op\":\"bright\",\"v\":0.}", "{\"op\":\"bright\",\"v\":01}", "{\"op\":\"bright\",\"v\":0.123456789}", "{\"op\":\"bright\",\"v\":NaN}",
         "{\"op\":\"bright\",\"v\":true}", "{\"op\":\"bright\",\"v\":null}", "{\"op\":\"vol\",\"v\":2}", "{\"op\":\"vol\",\"v\":1000}",
-        "{\"op\":\"status\",\"url\":\"https://x\"}", "{\"op\":\"status\",\"url\":\"abc\"}", "{\"url\":\"abc\",\"op\":\"status\"}", "{\"op\":\"status\",\"cookie\":\"a=b\"}", "{\"op\":\"dl\"}", "{\"op\":\"pair\"}",
+        "{\"op\":\"status\",\"url\":\"https://x\"}", "{\"op\":\"status\",\"url\":\"abc\"}", "{\"url\":\"abc\",\"op\":\"status\"}", "{\"op\":\"status\",\"cookie\":\"a=b\"}", "{\"op\":\"status\",\"x\":\"abc\"}", "{\"op\":\"status\",\"cookie\":\"abc\"}", "{\"op\":\"dl\"}", "{\"op\":\"pair\"}",
         "{\"op\":\"status\",}", "{,\"op\":\"status\"}", "{\"op\" \"status\"}", "{'op':'status'}", "{\"op\":status}",
         "{\"op\":\"abcdefghijklmnopq\"}", "ï»¿{\"op\":\"status\"}",
     };
@@ -60,6 +60,107 @@ public final class ChannelChecks {
         @Override public synchronized void end() { ends++; }
         @Override public synchronized String status() { return ControlCommands.statusJson("1.2.3", true, false, 5, 15, bright < 0 ? 0.5f : bright); }
         synchronized int touches() { return brights + vols + beats + ends; }
+    }
+
+    // ------------------------------------------------------------ Download-Befehle (Phase C2)
+
+    static final String ID = "0123456789abcdef0123456789abcdef";
+
+    static final String[] VALID_DL = {
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://media.example/v.mp4?sig=a%2Fb&x=1#t\"}",
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"http://a.example/v.mp4\",\"name\":\"Urlaub 2026 – Teil 1\"}",
+        "{\"url\":\"https://a.example/x\",\"name\":\"\",\"id\":\"" + ID + "\",\"op\":\"dlstart\"}",
+        "{\"op\":\"dlstatus\",\"id\":\"" + ID + "\"}",
+        "{\"op\":\"dlcancel\",\"id\":\"" + ID + "\"}",
+    };
+
+    static final String[] INVALID_DL = {
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\"}",                                              // ohne URL
+        "{\"op\":\"dlstart\",\"url\":\"https://a.example/x\"}",                                      // ohne Kennung
+        "{\"op\":\"dlstart\",\"id\":\"" + ID.toUpperCase() + "\",\"url\":\"https://a.example/x\"}",   // Großbuchstaben
+        "{\"op\":\"dlstart\",\"id\":\"" + ID.substring(1) + "\",\"url\":\"https://a.example/x\"}",    // 31 Zeichen
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "0\",\"url\":\"https://a.example/x\"}",              // 33 Zeichen
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"\"}",                                 // leere URL
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/a b\"}",             // Leerzeichen
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/a\\\"b\"}",        // Escape
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/\u00e4\"}",          // Nicht-ASCII
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/<x>\"}",             // < >
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\",\"cookie\":\"a=b\"}",
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\",\"cookie\":\"abc\"}",
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\",\"authorization\":\"abc\"}",
+        "{\"op\":\"dlstatus\",\"id\":\"" + ID + "\",\"x\":\"abc\"}",
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\",\"headers\":\"Authorization: x\"}",
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\",\"referer\":\"https://a.example/\"}",
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\",\"v\":1}",
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\"}",
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\",\"url\":\"https://b.example/x\"}",
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\",\"name\":\"a\",\"name\":\"b\"}",
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\",\"name\":\"a\\nb\"}",   // Escape im Namen
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\",\"name\":\"a\u0001b\"}",
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\",\"name\":\"a\u2028b\"}",
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\",\"name\":\"" + "n".repeat(121) + "\"}",
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/" + "x".repeat(2031) + "\"}",   // URL mit 2049 Zeichen
+        "{\"op\":\"dlstatus\"}",
+        "{\"op\":\"dlstatus\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\"}",
+        "{\"op\":\"dlcancel\",\"id\":\"" + ID + "\",\"name\":\"x\"}",
+        "{\"op\":\"dlcancel\",\"id\":\"" + ID + "\",\"v\":0}",
+        "{\"op\":\"status\",\"id\":\"" + ID + "\"}",                                               // Download-Feld bei Steuerbefehl
+        "{\"op\":\"bright\",\"v\":0.5,\"name\":\"x\"}",
+        "{\"op\":\"dlpause\",\"id\":\"" + ID + "\"}",
+        "{\"op\":\"dlstart\",\"id\":" + "1234" + ",\"url\":\"https://a.example/x\"}",
+    };
+
+    static final class FakeDownloads implements ControlCommands.DownloadControl {
+        final java.util.List<String> calls = new java.util.ArrayList<>();
+        @Override public synchronized String start(String id, String url, String name) { calls.add("start " + id + " " + url + " " + name); return "{\"ok\":true,\"id\":\"" + id + "\",\"state\":\"running\"}"; }
+        @Override public synchronized String status(String id) { calls.add("status " + id); return "{\"ok\":true,\"id\":\"" + id + "\",\"state\":\"done\"}"; }
+        @Override public synchronized String cancel(String id) { calls.add("cancel " + id); return "{\"ok\":true,\"id\":\"" + id + "\",\"state\":\"cancelled\"}"; }
+    }
+
+    static String dl(String json, FakeDevice d, ControlCommands.DownloadControl dl) {
+        return ControlCommands.handle(json.getBytes(StandardCharsets.UTF_8), d, dl);
+    }
+
+    static void downloadCommands() {
+        // Ohne angebundene Downloads (Phase-2-Zustand): jeder dl-Befehl abgelehnt.
+        for (String s : VALID_DL) {
+            FakeDevice d = new FakeDevice();
+            check(ControlCommands.REJECTED.equals(ControlCommands.handle(s.getBytes(StandardCharsets.UTF_8), d)), "accepted without handler: " + s);
+            check(ControlCommands.REJECTED.equals(dl(s, d, null)), "accepted with null handler: " + s);
+            check(d.touches() == 0, "device touched");
+        }
+        // Mit Downloads: gültige Befehle erreichen genau die Download-Steuerung, nie das Gerät.
+        FakeDevice d = new FakeDevice();
+        FakeDownloads f = new FakeDownloads();
+        check(dl(VALID_DL[0], d, f).contains("\"state\":\"running\""), "dlstart answer");
+        check(f.calls.get(0).equals("start " + ID + " https://media.example/v.mp4?sig=a%2Fb&x=1#t null"), f.calls.get(0));
+        dl(VALID_DL[1], d, f);
+        check(f.calls.get(1).equals("start " + ID + " http://a.example/v.mp4 Urlaub 2026 – Teil 1"), f.calls.get(1));
+        dl(VALID_DL[2], d, f);
+        check(f.calls.get(2).equals("start " + ID + " https://a.example/x "), "empty name: " + f.calls.get(2));
+        check(dl(VALID_DL[3], d, f).contains("done") && f.calls.get(3).equals("status " + ID), "dlstatus");
+        check(dl(VALID_DL[4], d, f).contains("cancelled") && f.calls.get(4).equals("cancel " + ID), "dlcancel");
+        check(d.touches() == 0, "device touched by download commands");
+        int calls = f.calls.size();
+        for (String s : INVALID_DL) {
+            check(ControlCommands.REJECTED.equals(dl(s, d, f)), "accepted: " + s);
+        }
+        check(f.calls.size() == calls && d.touches() == 0, "invalid download command reached a handler");
+        // Steuerbefehle bleiben unverändert (auch mit angebundenen Downloads) und berühren die Downloads nicht.
+        for (String s : VALID) dl(s, new FakeDevice(), f);
+        for (String s : INVALID) check(ControlCommands.REJECTED.equals(dl(s, new FakeDevice(), f)), "accepted with handler: " + s);
+        check(f.calls.size() == calls, "control command reached downloads");
+        // Größen: dlstart bis 4096 Byte, alle anderen bei 256 Byte.
+        String longUrl = "https://a.example/" + "x".repeat(2048 - 18);
+        String okBig = "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"" + longUrl + "\",\"name\":\"" + "n".repeat(120) + "\"}";
+        check(longUrl.length() == ControlCommands.MAX_URL && !ControlCommands.REJECTED.equals(dl(okBig, d, f)), "max dlstart rejected");
+        String padded = "{\"op\":\"dlstatus\",\"id\":\"" + ID + "\"" + " ".repeat(200) + "}";
+        check(padded.length() > ControlCommands.MAX_REQUEST && ControlCommands.REJECTED.equals(dl(padded, d, f)), "oversize dlstatus accepted");
+        String paddedStatus = "{\"op\":\"status\"" + " ".repeat(300) + "}";
+        check(ControlCommands.REJECTED.equals(dl(paddedStatus, d, f)), "oversize status accepted with handler");
+        byte[] huge = ("{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\"" + " ".repeat(4096) + "}").getBytes(StandardCharsets.UTF_8);
+        check(ControlCommands.REJECTED.equals(ControlCommands.handle(huge, d, f)), "oversize dlstart accepted");
+        passed++;
     }
 
     static void strictParser() {
@@ -123,18 +224,20 @@ public final class ChannelChecks {
     static byte[] identity;
 
     /** Startet einen Helper; bei {@code fresh} mit neuer Identität und leerer Registrierung. */
-    static void start(boolean fresh) throws Exception {
+    static void start(boolean fresh) throws Exception { start(fresh, null); }
+
+    static void start(boolean fresh, ControlCommands.DownloadControl downloads) throws Exception {
         if (server != null) server.stop();
         if (fresh || identity == null) { identity = Core.identityGenerate(); host = new Host(); }
         device = new FakeDevice();
-        ChannelServer s = new ChannelServer(host, device);
+        ChannelServer s = new ChannelServer(host, device, downloads);
         synchronized (ChannelServer.CORE) {
             Core.hostInit(identity.clone(), host.disk.get(), now(), true);
             ChannelServer.coreOwner = s;
         }
         for (int i = 0; i < 30 && !s.start(); i++) {   // der JDK gibt den Port verzögert frei
             Thread.sleep(100);
-            ChannelServer n = new ChannelServer(host, device);
+            ChannelServer n = new ChannelServer(host, device, downloads);
             synchronized (ChannelServer.CORE) { ChannelServer.coreOwner = n; }
             s = n;
         }
@@ -245,6 +348,37 @@ public final class ChannelChecks {
         check(ControlCommands.REJECTED.equals(request(h, "{\"op\":\"bright\",\"v\":7}")), "out of range rejected");
         check(device.touches() == before, "device untouched by rejected commands");
         check(request(h, "{\"op\":\"status\"}").startsWith("{\"ok\":true"), "session survives a rejected command");
+        // Phase-2-Server ohne Downloads: dl-Befehle über den echten Kanal abgelehnt.
+        check(ControlCommands.REJECTED.equals(request(h, VALID_DL[0])), "dlstart without handler accepted");
+        check(ControlCommands.REJECTED.equals(request(h, VALID_DL[3])), "dlstatus without handler accepted");
+        TestInitiator.free(h);
+        passed++;
+    }
+
+    /** Download-Befehle über den echten verschlüsselten Kanal (Noise KK), nur mit angebundener Download-Steuerung. */
+    static void downloadCommandsOverTheChannel() throws Exception {
+        FakeDownloads f = new FakeDownloads();
+        start(true, f);
+        byte[] kadri = Core.identityGenerate();
+        byte[] pin = pair(kadri, openWindow());
+        long h = connect(kadri, pin);
+        check(request(h, "{\"op\":\"status\"}").contains("\"dl\":false"), "status unchanged");
+        check(request(h, VALID_DL[0]).equals("{\"ok\":true,\"id\":\"" + ID + "\",\"state\":\"running\"}"), "dlstart");
+        check(request(h, VALID_DL[3]).contains("\"state\":\"done\""), "dlstatus");
+        check(request(h, VALID_DL[4]).contains("\"state\":\"cancelled\""), "dlcancel");
+        for (String s : INVALID_DL) {
+            check(ControlCommands.REJECTED.equals(request(h, s)), "accepted over channel: " + s);
+        }
+        check(f.calls.size() == 3, "handler calls: " + f.calls);
+        check(device.touches() == 0, "device touched by download commands");
+        // Die längste zulässige URL passt durch den Kanal.
+        String longUrl = "https://a.example/" + "x".repeat(2048 - 18);
+        check(request(h, "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"" + longUrl + "\"}").contains("running"), "max URL over channel");
+        check(f.calls.get(3).equals("start " + ID + " " + longUrl + " null"), "max URL intact");
+        // Klartext an den Record-Endpunkt erreicht die Downloads nie.
+        Http plain = raw("/p1/ch/rec", VALID_DL[0].getBytes(StandardCharsets.UTF_8));
+        check(plain.code != 200 || !new String(plain.body, StandardCharsets.UTF_8).contains("running"), "plaintext accepted");
+        check(f.calls.size() == 4, "plaintext reached downloads");
         TestInitiator.free(h);
         passed++;
     }
@@ -389,9 +523,11 @@ public final class ChannelChecks {
     public static void main(String[] args) throws Exception {
         Thread.setDefaultUncaughtExceptionHandler((t, e) -> { e.printStackTrace(); System.exit(1); });
         strictParser();
+        downloadCommands();
         commandsReachTheDevice();
         statusJsonIsFixedAndSanitised();
         pairingAndControlCommands();
+        downloadCommandsOverTheChannel();
         wrongCodeBurnsTheWindow();
         gateRefusesWebLikeRequests();
         revokeOneKeepsTheOthers();

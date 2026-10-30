@@ -49,7 +49,7 @@ public class Downloads {
             new java.util.concurrent.LinkedBlockingQueue<>());
     static { credentialedFiles.allowCoreThreadTimeOut(true); }
     private static final Map<Integer, Task> active = new ConcurrentHashMap<>();
-    private static final Object fileNames = new Object();
+    static final Object fileNames = new Object();   // auch Mp4Downloads (Android 8–9)
     private static boolean initialized;
     private static final Object admission = new Object();
     private static boolean stopped;
@@ -431,14 +431,14 @@ public class Downloads {
     private static void check(Task task) throws java.io.IOException {
         if(task!=null)task.check();else Fetcher.checkCancelled(null);
     }
-    private static File pendingProof(Context c) throws Exception {
+    static File pendingProof(Context c) throws Exception {
         File dir=new File(c.getFilesDir(),"download-pending-v1");
         if(!dir.isDirectory()&&!dir.mkdirs()&&!dir.isDirectory())throw new java.io.IOException("No pending ownership directory");
         File proof=File.createTempFile("evp-publish-",".pending",dir);
         try(FileOutputStream out=new FileOutputStream(proof)) { out.getFD().sync(); }
         return proof; // Created and synced BEFORE insert: an insert/return process kill retains proof.
     }
-    private static void removeProof(File proof) throws java.io.IOException {
+    static void removeProof(File proof) throws java.io.IOException {
         if(!proof.delete()&&proof.exists())throw new java.io.IOException("Cannot remove pending download ownership");
     }
     private static Uri save(Context c,File f,String name,String mime,Task task) throws Exception {

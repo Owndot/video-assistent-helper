@@ -17,9 +17,9 @@ public interface DownloadStore {
     /** Unveröffentlichtes Ziel: entweder {@link #commit()} oder {@link #abort()} (räumt vollständig auf). */
     interface Target {
         OutputStream out() throws IOException;
-        /** Macht die Datei sichtbar; danach kein abort mehr. */
-        void commit() throws IOException;
-        /** Entfernt alles Unfertige; darf mehrfach und nach Fehlern aufgerufen werden. */
+        /** Schließt und veröffentlicht die Datei; liefert den Verweis der Ablage (Android: Uri). Danach kein abort mehr. */
+        Object commit() throws IOException;
+        /** Schließt den Stream und entfernt alles Unfertige; darf mehrfach und nach Fehlern aufgerufen werden. */
         void abort();
     }
 

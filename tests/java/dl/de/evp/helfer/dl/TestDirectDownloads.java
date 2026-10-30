@@ -233,11 +233,12 @@ public final class TestDirectDownloads {
             return new Target() {
                 boolean done;
                 @Override public OutputStream out() { return counted; }
-                @Override public synchronized void commit() throws IOException {
+                @Override public synchronized Object commit() throws IOException {
                     fos.close();
                     if (!part.renameTo(fin)) throw new IOException("rename");
                     done = true;
                     committed.incrementAndGet();
+                    return fin;
                 }
                 @Override public synchronized void abort() {
                     if (done) return;
@@ -266,7 +267,8 @@ public final class TestDirectDownloads {
         final Map<String, String> finished = new ConcurrentHashMap<>();
         final List<String> all = new CopyOnWriteArrayList<>();
         @Override public void progress(String id, String title, long bytes, long total) { all.add("progress " + id + " " + title + " " + bytes + "/" + total); }
-        @Override public synchronized void finished(String id, String title, String state, String reason) {
+        @Override public synchronized void finished(String id, String title, String state, String reason, Object saved) {
+            expect(state.equals("done") == (saved instanceof File), "saved handle only on done: " + state + " " + saved);
             all.add("finished " + id + " " + title + " " + state + " " + reason);
             finished.put(id, state + (reason.isEmpty() ? "" : ":" + reason));
             notifyAll();
@@ -884,6 +886,9 @@ public final class TestDirectDownloads {
             expect(ev.await(a, 5_000).equals("cancelled"), "cancelled");
             expect(d.start(newId(), srv.url("/b"), "B").contains("busy"), "no start after stop");
             store.expectEmpty();
+            d.serviceStarted();                                    // Dienst-Neustart im selben Prozess
+            expect(d.status(a).contains("cancelled"), "state kept");
+            expect(d.start(a, srv.url("/a"), "A").contains("cancelled"), "old id stays final");
         }
     }
 
