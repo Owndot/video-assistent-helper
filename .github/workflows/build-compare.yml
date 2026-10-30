@@ -1,0 +1,89 @@
+name: Build comparison AGP 8.5.2 vs 9.1.1 (temporary branch, text only)
+# NUR DIAGNOSE für Phase A (Zweig tmp/okhttp-size-test, nie mergen): baut dieselben Varianten aus c192617 (vorher)
+# und aus dem Phase-A-Stand (nachher) und vergleicht Manifest, Ressourcen, dex-Inhalt (Klassen/Methoden/Felder),
+# Assets und Nativbibliotheken. Lädt nur Text hoch, nie eine APK.
+on:
+  push:
+    branches: [tmp/okhttp-size-test]
+permissions:
+  contents: read
+env:
+  OLD: c1926176165e5744b89568c42495e55e854d8ce0
+  NEW: feature/build-agp9-compilesdk37
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Toolchains
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018" "platforms;android-34" "platforms;android-37.0" "build-tools;34.0.0" "build-tools;36.0.0" < <(yes 2>/dev/null) > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Worktrees and native library (shared)
+        run: |
+          set -euo pipefail
+          git fetch -q origin "$NEW"
+          git worktree add -q "$RUNNER_TEMP/old" "$OLD"
+          git worktree add -q "$RUNNER_TEMP/new" "origin/$NEW"
+          echo "new commit: $(git -C "$RUNNER_TEMP/new" rev-parse HEAD)"
+          bash "$RUNNER_TEMP/old/tools/build-channel-native.sh" "$RUNNER_TEMP/native"
+      - name: Build channeltest (app + instrumentation), debug, unsigned release - old and new
+        run: |
+          set -euo pipefail
+          for side in old new; do
+            S="$RUNNER_TEMP/$side"; O="$RUNNER_TEMP/out-$side"; mkdir -p "$O"
+            cp -r "$RUNNER_TEMP/native/jniLibs" "$RUNNER_TEMP/native/jniLibs-test" "$O/"
+            echo "::group::$side channeltest"; (cd "$S" && bash tools/build-channel-apk.sh "$O"); echo "::endgroup::"
+            if [ "$side" = old ]; then G=gradle; else G="$S/gradlew"; fi
+            echo "::group::$side debug/release"
+            (cd "$S" && $G --no-daemon -q :app:assembleDebug :app:assembleDebugAndroidTest -Pandroid.useAndroidX=true)
+            (cd "$S" && $G --no-daemon -q :app:assembleRelease -PreleaseVersionCode=200 -PreleaseVersionName=2.0.0)
+            (cd "$S" && $G --version | grep -E '^Gradle ')
+            echo "::endgroup::"
+            cp "$S/app/build/outputs/apk/debug/app-debug.apk" "$O/apk/debug.apk"
+            cp "$S/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk" "$O/apk/debug-androidTest.apk"
+            cp "$S/app/build/outputs/apk/release/app-release-unsigned.apk" "$O/apk/release-unsigned.apk"
+          done
+      - name: Compare old vs new (text report)
+        run: |
+          set -uo pipefail
+          BT="$ANDROID_HOME/build-tools/36.0.0"; R="$RUNNER_TEMP/report"; mkdir -p "$R"
+          describe() {  # $1 apk, $2 prefix
+            local a="$1" p="$2"
+            "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$a" > "$p.manifest.txt"
+            "$BT/aapt2" dump badging "$a" | grep -v -E "^(application-label|launchable-activity)" > "$p.badging.txt" || true
+            "$BT/aapt2" dump resources "$a" > "$p.resources.txt"
+            "$BT/aapt2" dump permissions "$a" > "$p.permissions.txt"
+            unzip -Z1 "$a" | grep -v -E '\.dex$|^META-INF/' | sort | while read -r n; do echo "$(unzip -p "$a" "$n" | sha256sum | cut -c1-16) $n"; done > "$p.entries.txt"
+            unzip -Z1 "$a" | grep '^META-INF/' | sort > "$p.metainf.txt"
+            rm -rf "$p.dex"; mkdir -p "$p.dex"; unzip -q -o "$a" '*.dex' -d "$p.dex"
+            for d in "$p.dex"/*.dex; do "$BT/dexdump" "$d"; done 2>/dev/null \
+              | grep -E "^  Class descriptor|^      name +:|^      type +:|^  Access flags|^  Superclass|^  Interfaces" | sed 's/ (0x[0-9a-f]*)//' > "$p.dexapi.txt"
+          }
+          for apk in helper-channeltest.apk helper-channeltest-androidTest.apk debug.apk debug-androidTest.apk release-unsigned.apk; do
+            for side in old new; do describe "$RUNNER_TEMP/out-$side/apk/$apk" "$R/$side.$apk"; done
+            echo "================ $apk: size old=$(wc -c < "$RUNNER_TEMP/out-old/apk/$apk") new=$(wc -c < "$RUNNER_TEMP/out-new/apk/$apk")" | tee -a "$R/summary.txt"
+            for k in manifest badging permissions resources entries metainf dexapi; do
+              if diff -q "$R/old.$apk.$k.txt" "$R/new.$apk.$k.txt" > /dev/null; then echo "  $k: IDENTICAL" | tee -a "$R/summary.txt"
+              else echo "  $k: DIFFERENT" | tee -a "$R/summary.txt"; diff "$R/old.$apk.$k.txt" "$R/new.$apk.$k.txt" | head -60 | tee -a "$R/summary.txt"; fi
+            done
+          done
+          rm -rf "$R"/*.dex
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: build-compare-text-only
+          path: ${{ runner.temp }}/report
+          retention-days: 7
