@@ -6,10 +6,10 @@ name: Helper secure channel (test package only, nothing published)
 # eine Veröffentlichung) – nur Text-Berichte und Hashes.
 on:
   pull_request:
-    paths: ['app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', '.github/workflows/helper-channel.yml']
+    paths: ['app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/check-network-layer.sh', 'gradle/**', '.github/workflows/helper-channel.yml']
   push:
     branches: [feature/helper-channel-control]
-    paths: ['app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', '.github/workflows/helper-channel.yml']
+    paths: ['app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/check-network-layer.sh', 'gradle/**', '.github/workflows/helper-channel.yml']
   workflow_dispatch:
 
 permissions:
@@ -52,6 +52,15 @@ jobs:
             grep -q '^package de.evp.pakepoc;$' "$copy/$f.java"
           done
           bash poc/android-capability/tools/run-jvm-checks.sh "$copy"
+      - name: Network layer guard (OkHttp only via de.evp.helfer.net; no unhardened client; no test hooks in production)
+        run: |
+          set -euo pipefail
+          bash tools/check-network-layer.sh
+          bash tools/check-network-layer.sh --self-test
+      - name: Secure network layer - negative and functional tests (JVM, real sockets, 48 MiB heap)
+        run: bash tests/java/net/run.sh "$RUNNER_TEMP/safe-http-deps"
+      - name: Secure network layer - mutation probes (each weakened copy must fail the tests)
+        run: python3 -I tests/java/net/mutation.py "$RUNNER_TEMP/safe-http-deps"
       - name: Kadri's vendored WASM is byte-identical (the JNI binding does not change the browser side)
         run: |
           set -euo pipefail
@@ -60,9 +69,14 @@ jobs:
           grep -q '^d84e09bbfd365f69f50de99491705ba80a8ee85174dad220c6f5ed94c8fb79a4  kadri_pairing_poc_bg.wasm$' "$RUNNER_TEMP/wasm.txt"
 
   emulator:
-    name: Test package de.evp.helfer.channeltest on a disposable API 34 emulator
+    name: Test package de.evp.helfer.channeltest on a disposable API ${{ matrix.api }} emulator
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        # 34 = targetSdk; 26 = minSdk (älterer TLS-/Socket-Pfad von OkHttp: AndroidPlatform statt Android10Platform)
+        api: [34, 26]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -96,10 +110,10 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Instrumentation on a disposable API 34 x86_64 emulator
+      - name: Instrumentation on a disposable API ${{ matrix.api }} x86_64 emulator
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
-          api-level: 34
+          api-level: ${{ matrix.api }}
           arch: x86_64
           target: google_apis
           disable-animations: true
@@ -116,7 +130,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: helper-channel-report-text-only
+          name: helper-channel-report-text-only-api${{ matrix.api }}
           path: ${{ runner.temp }}/out
           retention-days: 7
           if-no-files-found: warn
