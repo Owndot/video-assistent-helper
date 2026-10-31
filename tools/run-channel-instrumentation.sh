@@ -20,11 +20,9 @@ adb logcat -c
 adb install -r -t "$OUT/apk/helper-channeltest.apk" > /dev/null
 adb install -r -t "$OUT/apk/helper-channeltest-androidTest.apk" > /dev/null
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS 2>/dev/null || true
-# Android 8–9: öffentlicher Download-Ordner (ab Android 10 nicht angefordert, der Befehl scheitert dort folgenlos).
-adb shell pm grant $PKG android.permission.WRITE_EXTERNAL_STORAGE > "$REPORT/storage-grant.txt" 2>&1 || true
-adb shell dumpsys package $PKG | grep -E 'WRITE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE' >> "$REPORT/storage-grant.txt" 2>&1 || true
-adb shell pidof $PKG >> "$REPORT/storage-grant.txt" 2>&1 || true   # läuft der Prozess schon vor der Instrumentierung?
-sed 's/^/STORAGE_GRANT /' "$REPORT/storage-grant.txt"
+# Android 8–9: READ/WRITE_EXTERNAL_STORAGE erteilt der Test selbst zur Laufzeit (wie der Dialog der App); hier nur
+# der Ausgangszustand. Ab Android 10 sind beide nicht angefordert.
+adb shell dumpsys package $PKG | grep -E 'WRITE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE' | sed 's/^/STORAGE_BEFORE /' || true
 adb shell am instrument -w -r -e class de.evp.helfer.ChannelInstrumentedTest,de.evp.helfer.net.SafeHttpInstrumentedTest,de.evp.helfer.Mp4DownloadsInstrumentedTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$REPORT/instrumentation.txt" 2>&1
 status=0
 grep -q '^OK (' "$REPORT/instrumentation.txt" || status=1

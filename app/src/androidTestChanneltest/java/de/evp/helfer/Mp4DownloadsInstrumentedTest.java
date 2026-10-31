@@ -69,8 +69,11 @@ public class Mp4DownloadsInstrumentedTest {
     @BeforeClass public static void setUp() throws Exception {
         ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
         if (Build.VERSION.SDK_INT >= 33) shell("pm grant " + ctx.getPackageName() + " android.permission.POST_NOTIFICATIONS");
-        // Android 8–9: öffentlicher Download-Ordner braucht die Laufzeitberechtigung (auch run-channel-instrumentation.sh).
-        if (Build.VERSION.SDK_INT < 29) shell("pm grant " + ctx.getPackageName() + " android.permission.WRITE_EXTERNAL_STORAGE");
+        // Android 8–9: READ und WRITE werden hier zur Laufzeit im laufenden Prozess erteilt – wie im Dialog der App.
+        // Android muss dann die Speicher-Ansicht ohne Neustart umschalten (storageWritableAfterRuntimeGrant prüft das).
+        if (Build.VERSION.SDK_INT < 29) {
+            for (String p : Mp4Downloads.LEGACY_STORAGE_PERMISSIONS) shell("pm grant " + ctx.getPackageName() + " " + p);
+        }
     }
 
     /** URL, Host und Token der Testserver dürfen nie im Logcat stehen (auch nicht in Fehlermeldungen). */
@@ -631,8 +634,11 @@ public class Mp4DownloadsInstrumentedTest {
         }
     }
 
-    /** Diagnose (nur API < 29, schlägt nie fehl): Berechtigung, Speicherzustand, Mount-Ansicht, Schreibrecht. */
-    @Test public void storageDiagnostics() throws Exception {
+    /**
+     * API < 29: nach dem Erteilen von READ und WRITE im laufenden Prozess ist der öffentliche Ordner beschreibbar
+     * (Android schaltet die Speicher-Ansicht um); protokolliert Berechtigungen, Ansicht und Ergebnis.
+     */
+    @Test public void storageWritableAfterRuntimeGrant() throws Exception {
         if (Build.VERSION.SDK_INT >= 29) return;
         File dl = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         String mounts = "";
@@ -645,5 +651,8 @@ public class Mp4DownloadsInstrumentedTest {
         Log.i(TAG, "MP4_STORAGE sdk=" + Build.VERSION.SDK_INT + " granted=" + Mp4Downloads.legacyWritePermitted(ctx)
             + " state=" + Environment.getExternalStorageState() + " dl=" + dl + " exists=" + dl.exists() + " canWrite=" + dl.canWrite()
             + " probe=" + probe + " uid=" + android.os.Process.myUid() + " pid=" + android.os.Process.myPid() + " mountinfo=" + mounts);
+        assertTrue("READ and WRITE granted", Mp4Downloads.legacyWritePermitted(ctx));
+        assertEquals("public folder writable after the runtime grant: " + mounts, "ok", probe);
+        assertTrue(dl.canWrite());
     }
 }

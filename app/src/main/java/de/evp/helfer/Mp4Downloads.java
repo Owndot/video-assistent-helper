@@ -72,9 +72,16 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         this.engine = new DirectDownloads(http, this, this);
     }
 
-    /** Echte Prüfung der Speicherberechtigung (Android 8–9). */
+    /** Speicherberechtigungen für Android 8–9: beide nötig (ohne READ vergibt Android nur die Lese-/Standard-Ansicht). */
+    static final String[] LEGACY_STORAGE_PERMISSIONS = {
+        android.Manifest.permission.READ_EXTERNAL_STORAGE, android.Manifest.permission.WRITE_EXTERNAL_STORAGE};
+
+    /** Echte Prüfung der Speicherberechtigungen (Android 8–9): READ und WRITE. */
     static boolean legacyWritePermitted(Context app) {
-        return app.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        for (String p : LEGACY_STORAGE_PERMISSIONS) {
+            if (app.checkSelfPermission(p) != android.content.pm.PackageManager.PERMISSION_GRANTED) return false;
+        }
+        return true;
     }
 
     /** Eine Instanz je Prozess (Journal und laufende Aufträge überdauern einen Dienst-Neustart im selben Prozess). */

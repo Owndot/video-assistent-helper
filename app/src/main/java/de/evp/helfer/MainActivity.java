@@ -193,7 +193,8 @@ public class MainActivity extends Activity {
                             startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName())));
                         } else {
                             prefs(this).edit().putBoolean("storageAsked", true).apply();
-                            requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 2);
+                            // READ und WRITE: Android 8+ erteilt nur, was angefragt wird, und ohne READ gäbe es kein Schreibrecht.
+                            requestPermissions(Mp4Downloads.LEGACY_STORAGE_PERMISSIONS, 2);
                         }
                     }, null);
         }
