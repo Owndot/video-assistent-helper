@@ -51,6 +51,17 @@ final class HarnessDownloads implements DownloadStore, DirectDownloads.Listener 
         return "JOURNAL " + (j == null ? "-" : new String(j, java.nio.charset.StandardCharsets.US_ASCII).replace('\n', '|'));
     }
 
+    private final java.util.Set<String> reserved = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+
+    /** Erster Name aus „Name.mp4“, „Name (1).mp4“ …, der weder als Datei existiert noch reserviert ist. */
+    private synchronized File free(String displayName, File release) {
+        if (release != null) reserved.remove(release.getPath());
+        File f = new File(dir, displayName);
+        for (int n = 1; f.exists() || reserved.contains(f.getPath()); n++) f = new File(dir, displayName.replaceFirst("(\\.mp4)?$", " (" + n + ")$1"));
+        reserved.add(f.getPath());
+        return f;
+    }
+
     // ------------------------------------------------------------------ DownloadStore
 
     @Override public long freeBytes() { return dir.getUsableSpace(); }
@@ -63,7 +74,9 @@ final class HarnessDownloads implements DownloadStore, DirectDownloads.Listener 
 
     @Override public Target create(String displayName, String mime) throws IOException {
         File part = File.createTempFile(".part-", ".tmp", dir);
-        File fin = new File(dir, displayName);
+        // Wie die Android-Ablage (Mp4Downloads.PublicFile): beim Anlegen einen FREIEN Namen wählen – der Journal-Verweis
+        // zeigt so nie auf eine ältere Datei gleichen Namens (sonst hielte die Absturz-Wiederherstellung sie für fertig).
+        File fin = free(displayName, null);
         FileOutputStream out = new FileOutputStream(part);
         return new Target() {
             File published;
@@ -72,13 +85,13 @@ final class HarnessDownloads implements DownloadStore, DirectDownloads.Listener 
             @Override public synchronized String ref() { return (published != null ? published : fin).getPath(); }
             @Override public synchronized Object commit() throws IOException {
                 out.close();
-                File dst = fin;
-                for (int n = 1; dst.exists(); n++) dst = new File(dir, displayName.replaceFirst("(\\.mp4)?$", " (" + n + ")$1"));
+                File dst = fin.exists() ? free(displayName, fin) : fin;
                 // Dateiname im Zeichensatz des Desktops nicht darstellbar (z. B. ohne UTF-8-Locale): Ablagefehler wie auf
                 // dem Gerät, nicht RuntimeException (die Engine meldete sonst "network").
                 try { Files.move(part.toPath(), dst.toPath()); } catch (java.nio.file.InvalidPathException e) { throw new IOException("name", e); }
                 published = dst;
                 finished = true;
+                reserved.remove(dst.getPath());
                 return dst.getPath();
             }
             @Override public synchronized void abort() {
@@ -86,6 +99,7 @@ final class HarnessDownloads implements DownloadStore, DirectDownloads.Listener 
                 finished = true;
                 try { out.close(); } catch (IOException ignored) { }
                 part.delete();
+                reserved.remove(fin.getPath());
             }
         };
     }

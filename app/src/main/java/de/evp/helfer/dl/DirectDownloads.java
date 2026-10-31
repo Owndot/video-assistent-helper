@@ -168,6 +168,9 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         try {
             // Ablage zuerst: ohne Schreibrecht (Android 8–9: Speicherberechtigung) kein Netzwerkzugriff.
             if (!store.writable()) throw new Fail("storage_permission");
+            // Neue Verbindung je Auftrag: eine ruhende, vom Server schon geschlossene Pool-Verbindung wäre ohne
+            // automatische Wiederholung ein Fehlschlag (siehe SafeHttpClient.closeIdleConnections).
+            http.closeIdleConnections();
             response = http.get(url, -1, -1, MAX_FILE_BYTES, callTimeoutMs, job.cancel);
             checkCancelled(job);
             if (response.code() != 200) throw new Fail("http_" + response.code());

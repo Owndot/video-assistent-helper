@@ -109,6 +109,14 @@ public final class SafeHttpClient {
         this.client = b.build();
     }
 
+    /**
+     * Ruhende Pool-Verbindungen schließen (laufende Anfragen bleiben unberührt). Ohne automatische Wiederholung
+     * ({@code retryOnConnectionFailure(false)}) würde eine Anfrage über eine Verbindung, die der Server inzwischen
+     * geschlossen hat (Keep-Alive-Zeitgrenze, HTTP/1.0), sonst als Netzwerkfehler enden. Die Download-Engine ruft das
+     * vor jedem Auftrag auf; Wiederverwendung innerhalb eines Auftrags (Fortsetzen) und alle Prüfschichten bleiben.
+     */
+    public void closeIdleConnections() { client.connectionPool().evictAll(); }
+
     /** Produktiver Client: strenge Regeln, Systemresolver, System-Vertrauen. */
     static SafeHttpClient strict(NetRules.Nat64Source nat64) { return new SafeHttpClient(NetRules.strict(nat64), SYSTEM_RESOLVER, null); }
 

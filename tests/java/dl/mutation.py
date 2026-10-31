@@ -31,6 +31,7 @@ MUTATIONS = [
     ('multipart 206 accepted', DL, 'if (type != null && type.trim().toLowerCase(Locale.ROOT).startsWith("multipart/")) throw new Fail("range_multipart");', ''),
     ('content-encoding unchecked', DL, 'if (!identityEncoding(response.contentEncoding())) throw new Fail("encoding");', ''),
     ('content-encoding unchecked on resume', DL, 'if (!identityEncoding(r.contentEncoding())) throw new Fail("encoding");', ''),
+    ('stale idle connection reused', DL, '            http.closeIdleConnections();\n', ''),
     ('storage permission not checked', DL, 'if (!store.writable()) throw new Fail("storage_permission");', ''),
     ('ref not journaled before writing', DL, 'try { saveJournal(); } catch (IOException e) { throw new Fail("storage"); }', ''),
     ('published file restored as interrupted', DL, 'st = j.ref != null && published(j.ref, j.total) ? State.DONE : State.INTERRUPTED;', 'st = State.INTERRUPTED;'),
