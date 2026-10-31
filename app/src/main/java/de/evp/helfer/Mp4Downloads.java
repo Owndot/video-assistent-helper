@@ -198,7 +198,7 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
             this.name = name;
             this.mime = mime;
             dir = publicDir();
-            if (!dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory()) throw new IOException("mkdir");
+            Files.createDirectories(dir.toPath());     // nennt den Grund (z. B. AccessDenied), anders als mkdirs()
             try { proof = Downloads.pendingProof(app); }
             catch (Exception e) { throw new IOException("pending ownership", e); }
             part = new File(dir, PART_PREFIX + proof.getName() + PART_SUFFIX);

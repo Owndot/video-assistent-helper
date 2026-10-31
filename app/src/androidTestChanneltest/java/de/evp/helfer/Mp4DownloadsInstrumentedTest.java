@@ -630,4 +630,20 @@ public class Mp4DownloadsInstrumentedTest {
             Log.i(TAG, "MP4_PERSIST sdk=" + Build.VERSION.SDK_INT + " name=" + t + ".mp4 bytes=65536");
         }
     }
+
+    /** Diagnose (nur API < 29, schlägt nie fehl): Berechtigung, Speicherzustand, Mount-Ansicht, Schreibrecht. */
+    @Test public void storageDiagnostics() throws Exception {
+        if (Build.VERSION.SDK_INT >= 29) return;
+        File dl = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        String mounts = "";
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader("/proc/self/mounts"))) {
+            for (String l; (l = r.readLine()) != null; ) if (l.contains("/storage") || l.contains("sdcard")) mounts += l.replace(' ', ',') + ";";
+        }
+        String probe;
+        try { java.nio.file.Files.createDirectories(Mp4Downloads.publicDir().toPath()); probe = "ok"; }
+        catch (IOException e) { probe = e.getClass().getSimpleName() + ":" + e.getMessage(); }
+        Log.i(TAG, "MP4_STORAGE sdk=" + Build.VERSION.SDK_INT + " granted=" + Mp4Downloads.legacyWritePermitted(ctx)
+            + " state=" + Environment.getExternalStorageState() + " dl=" + dl + " exists=" + dl.exists() + " canWrite=" + dl.canWrite()
+            + " probe=" + probe + " uid=" + android.os.Process.myUid() + " mounts=" + mounts);
+    }
 }
