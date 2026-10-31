@@ -40,9 +40,10 @@ import de.evp.helfer.net.SafeHttpClient;
  *       geschrieben, der bis zum Ende "pending" (unsichtbar) bleibt. Dieselbe Besitz-Markierung wie
  *       {@link Downloads} (Markierungsdatei vor dem Einfügen, Name {@code evp-publish-N.pending--…}): nach einem
  *       Prozessende räumt {@link Downloads#initialize} den Eintrag beim nächsten Start ab.</li>
- *   <li>Android 8–9 (API 26–28, kein MediaStore.Downloads): Teil-Datei {@code .evp-pending-*.part} im
- *       app-eigenen Download-Ordner, danach Umbenennen ohne Ersetzen und Eintrag in den MediaStore über den
- *       Medienscanner. Reste räumt ebenfalls {@link Downloads#initialize} ab.</li>
+ *   <li>Android 8–9 (API 26–28, kein MediaStore.Downloads): öffentlicher Ordner {@code Download/Video-Assistent}
+ *       mit WRITE_EXTERNAL_STORAGE (Laufzeitberechtigung, in der App erbeten; ohne sie scheitert der Auftrag vor
+ *       jedem Netzwerkzugriff). Teil-Datei, Umbenennen ohne Ersetzen, Medienscanner; eigene Reste entfernt
+ *       {@link #cleanupPublicLeftovers} beim Prozessstart. Die Datei bleibt nach einer Deinstallation erhalten.</li>
  * </ul>
  * Benachrichtigungen zeigen nur den Anzeigenamen und Prozent, nie die URL.
  */
@@ -56,20 +57,31 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     final DirectDownloads engine;
     private final Context app;
     private final File journal;
+    private final java.util.function.BooleanSupplier legacyWriteAllowed;
 
-    /** {@code http}: produktiv immer {@link SafeHttp#client}; Gerätetests geben einen Client mit Testregeln (eigenes Journal). */
-    Mp4Downloads(Context app, String journalName, SafeHttpClient http) throws IOException {
+    /**
+     * {@code http}: produktiv immer {@link SafeHttp#client}; Gerätetests geben einen Client mit Testregeln (eigenes
+     * Journal). {@code legacyWriteAllowed}: produktiv die echte Berechtigungsprüfung (nur Android 8–9 relevant).
+     */
+    Mp4Downloads(Context app, String journalName, SafeHttpClient http, java.util.function.BooleanSupplier legacyWriteAllowed) throws IOException {
         this.app = app;
         this.journal = new File(app.getFilesDir(), journalName);
+        this.legacyWriteAllowed = legacyWriteAllowed;
         Downloads.channel(app);
+        cleanupPublicLeftovers();              // vor dem Journal: Wiederherstellung sieht nur echte Dateien
         this.engine = new DirectDownloads(http, this, this);
+    }
+
+    /** Echte Prüfung der Speicherberechtigung (Android 8–9). */
+    static boolean legacyWritePermitted(Context app) {
+        return app.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED;
     }
 
     /** Eine Instanz je Prozess (Journal und laufende Aufträge überdauern einen Dienst-Neustart im selben Prozess). */
     static synchronized Mp4Downloads get(Context c) throws IOException {
         if (instance == null) {
             Context app = c.getApplicationContext();
-            instance = new Mp4Downloads(app, "mp4-jobs-v1", SafeHttp.client(app));
+            instance = new Mp4Downloads(app, "mp4-jobs-v1", SafeHttp.client(app), () -> legacyWritePermitted(app));
         }
         return instance;
     }
@@ -85,7 +97,26 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     }
 
     @Override public Target create(String displayName, String mime) throws IOException {
-        return Build.VERSION.SDK_INT >= 29 ? new PendingEntry(displayName, mime) : new PartFile(displayName, mime);
+        return Build.VERSION.SDK_INT >= 29 ? new PendingEntry(displayName, mime) : new PublicFile(displayName, mime);
+    }
+
+    /** Android 10+: MediaStore braucht keine Berechtigung. Android 8–9: WRITE_EXTERNAL_STORAGE (Laufzeit, in der App). */
+    @Override public boolean writable() {
+        return Build.VERSION.SDK_INT >= 29 || legacyWriteAllowed.getAsBoolean();
+    }
+
+    @Override public boolean isPublished(String ref, long total) {
+        if (Build.VERSION.SDK_INT >= 29) {
+            Uri u = Uri.parse(ref);
+            if (!"content".equals(u.getScheme())) return false;
+            try (android.database.Cursor c = app.getContentResolver().query(u,
+                    new String[] {MediaStore.Downloads.IS_PENDING, MediaStore.Downloads.SIZE}, null, null, null)) {
+                return c != null && c.moveToFirst() && c.getInt(0) == 0 && c.getLong(1) == total;
+            }
+        }
+        File f = new File(ref);
+        return f.getParentFile() != null && f.getParentFile().equals(publicDir()) && f.isFile() && f.length() == total
+            && !f.getName().startsWith(PART_PREFIX);
     }
 
     /** MediaStore-Eintrag, bis zum Ende pending. */
@@ -124,6 +155,8 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
 
         @Override public OutputStream out() { return out; }
 
+        @Override public String ref() { return uri.toString(); }
+
         @Override public synchronized Object commit() throws IOException {
             out.close();
             ContentValues cv = new ContentValues();
@@ -146,22 +179,32 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         }
     }
 
-    /** Android 8–9: Teil-Datei im app-eigenen Download-Ordner. */
-    private final class PartFile implements Target {
+    /**
+     * Android 8–9: Teil-Datei {@code .evp-pending-<Markierung>.part} direkt im öffentlichen Ordner
+     * {@code Download/Video-Assistent} (Berechtigung WRITE_EXTERNAL_STORAGE, nur bis API 28 angefordert). Die
+     * Markierung in filesDir beweist den Besitz: nur so markierte Teil-Dateien werden nach einem Absturz entfernt.
+     * Der endgültige Name wird beim Anlegen reserviert und ist der Journal-Verweis; Veröffentlichen = Umbenennen ohne
+     * Ersetzen, dann Medienscanner. Punkt-Dateien nimmt der Medienscanner nicht auf.
+     */
+    private final class PublicFile implements Target {
         private final String name, mime;
-        private final File dir, part;
+        private final File dir, part, proof;
+        private File dst;
         private final FileOutputStream file;
         private final OutputStream out;
-        private boolean finished;
+        private boolean finished, published;
 
-        PartFile(String name, String mime) throws IOException {
+        PublicFile(String name, String mime) throws IOException {
             this.name = name;
             this.mime = mime;
-            File external = app.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
-            if (external == null) throw new IOException("storage unavailable");
-            dir = new File(external, Downloads.FOLDER);
+            dir = publicDir();
             if (!dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory()) throw new IOException("mkdir");
-            part = File.createTempFile(".evp-pending-", ".part", dir);
+            try { proof = Downloads.pendingProof(app); }
+            catch (Exception e) { throw new IOException("pending ownership", e); }
+            part = new File(dir, PART_PREFIX + proof.getName() + PART_SUFFIX);
+            if (!part.createNewFile()) { Downloads.removeProof(proof); throw new IOException("part exists"); }
+            synchronized (Downloads.fileNames) { dst = reserve(dir, name); }
+            if (dst == null) { part.delete(); Downloads.removeProof(proof); throw new IOException("no unused file name"); }
             file = new FileOutputStream(part);
             // Die Engine schließt den Stream vor commit(): fsync gehört deshalb in close() (einmalig), nicht in commit().
             out = new java.io.FilterOutputStream(file) {
@@ -177,20 +220,25 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
 
         @Override public OutputStream out() { return out; }
 
+        @Override public synchronized String ref() { return dst.getPath(); }
+
         @Override public synchronized Object commit() throws IOException {
             out.close();
-            File dst = null;
             synchronized (Downloads.fileNames) {
-                int dot = name.lastIndexOf('.');
-                for (int n = 0; n < 10000 && dst == null; n++) {
-                    String candidate = n == 0 ? name : dot > 0 ? name.substring(0, dot) + " (" + n + ")" + name.substring(dot) : name + " (" + n + ")";
-                    File f = new File(dir, candidate);
-                    try { Files.move(part.toPath(), f.toPath()); dst = f; }
-                    catch (java.nio.file.FileAlreadyExistsException exists) { /* nächster Name */ }
+                // Ohne Ersetzen; ist der reservierte Name inzwischen belegt (fremde Datei), den nächsten freien nehmen.
+                while (!published) {
+                    try { Files.move(part.toPath(), dst.toPath()); published = true; }
+                    catch (java.nio.file.FileAlreadyExistsException exists) {
+                        File next = reserve(dir, name);   // der alte Name bleibt bis hier reserviert, wird also übersprungen
+                        RESERVED.remove(dst.getPath());
+                        if (next == null) throw new IOException("no unused file name");
+                        dst = next;
+                    }
                 }
+                RESERVED.remove(dst.getPath());
             }
-            if (dst == null) throw new IOException("no unused file name");
             finished = true;
+            Downloads.removeProof(proof);   // Absturz davor: Markierung ohne Teil-Datei, beim Start entfernt
             return scan(dst);
         }
 
@@ -207,7 +255,53 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
             if (finished) return;
             finished = true;
             try { file.close(); } catch (IOException ignored) { }
-            part.delete();
+            synchronized (Downloads.fileNames) { RESERVED.remove(dst.getPath()); }
+            // Markierung nur entfernen, wenn die Teil-Datei sicher weg ist; sonst räumt der nächste Start auf.
+            try { if (part.delete() || !part.exists()) Downloads.removeProof(proof); } catch (IOException ignored) { }
+        }
+    }
+
+    static final String PART_PREFIX = ".evp-pending-", PART_SUFFIX = ".part";
+    /** Im Prozess reservierte endgültige Namen (Android 8–9); geschützt durch {@link Downloads#fileNames}. */
+    private static final java.util.Set<String> RESERVED = new java.util.HashSet<>();
+
+    static File publicDir() {
+        return new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), Downloads.FOLDER);
+    }
+
+    /** Erster freier Name "x.mp4", "x (1).mp4" …, weder vorhanden noch reserviert; null, wenn keiner frei ist. */
+    private static File reserve(File dir, String name) {
+        int dot = name.lastIndexOf('.');
+        for (int n = 0; n < 10000; n++) {
+            String candidate = n == 0 ? name : dot > 0 ? name.substring(0, dot) + " (" + n + ")" + name.substring(dot) : name + " (" + n + ")";
+            File f = new File(dir, candidate);
+            if (!f.exists() && RESERVED.add(f.getPath())) return f;
+        }
+        return null;
+    }
+
+    /**
+     * Android 8–9, einmal je Prozess vor dem ersten Auftrag: eigene Teil-Dateien eines abgebrochenen Prozesses im
+     * öffentlichen Ordner entfernen (nur mit eigener Markierung; fremde Dateien bleiben) und Markierungen ohne
+     * Teil-Datei löschen (Absturz zwischen Umbenennen und Aufräumen: die fertige Datei bleibt).
+     */
+    private void cleanupPublicLeftovers() {
+        if (Build.VERSION.SDK_INT >= 29 || !writable()) return;
+        File proofs = new File(app.getFilesDir(), "download-pending-v1");
+        File[] parts = publicDir().listFiles();
+        if (parts != null) for (File f : parts) {
+            String n = f.getName();
+            if (!n.startsWith(PART_PREFIX) || !n.endsWith(PART_SUFFIX)) continue;
+            File proof = new File(proofs, n.substring(PART_PREFIX.length(), n.length() - PART_SUFFIX.length()));
+            if (!proof.isFile()) continue;                                   // nicht von uns: nie anfassen
+            try { if (f.delete() || !f.exists()) Downloads.removeProof(proof); } catch (IOException ignored) { }
+        }
+        File[] markers = proofs.listFiles();
+        if (markers != null) for (File m : markers) {
+            if (!m.getName().matches("evp-publish-[0-9]+\\.pending")) continue;
+            if (!new File(publicDir(), PART_PREFIX + m.getName() + PART_SUFFIX).exists()) {
+                try { Downloads.removeProof(m); } catch (IOException ignored) { }
+            }
         }
     }
 
@@ -279,6 +373,10 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         } else {
             b.setSmallIcon(android.R.drawable.stat_notify_error)
                 .setContentText(Tr.t("Download fehlgeschlagen: ", "Download failed: ") + reasonText(reason));
+            if ("storage_permission".equals(reason)) {   // Tippen öffnet die App, dort wird die Berechtigung erbeten
+                Intent open = new Intent(app, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                b.setContentIntent(PendingIntent.getActivity(app, id.hashCode(), open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
+            }
         }
         m.notify(tag(id), NOTE_ID, b.build());
     }
@@ -291,6 +389,7 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         if (reason.equals("not_mp4") || reason.equals("type")) return Tr.t("keine MP4-Datei", "not an MP4 file");
         if (reason.equals("too_large")) return Tr.t("Datei zu groß", "file too large");
         if (reason.startsWith("blocked_")) return Tr.t("Ziel nicht erlaubt", "target not allowed");
+        if (reason.equals("storage_permission")) return Tr.t("Speicherzugriff fehlt – in der App erlauben", "storage access missing – allow it in the app");
         return reason;
     }
 }

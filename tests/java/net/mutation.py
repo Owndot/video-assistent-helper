@@ -38,6 +38,8 @@ MUTATIONS = [
     ('*.localhost allowed', NET + 'NetRules.java', 'h.endsWith(".localhost") ||', ''),
     ('single-label names allowed', NET + 'NetRules.java', '|| !h.contains(".")', ''),
     ('body limit removed', NET + 'SafeResponse.java', 'if (count > max) throw', 'if (false) throw'),
+    ('If-Range dropped', NET + 'SafeHttpClient.java', 'if (ifRange != null) rb.header("If-Range", ifRange);', ''),
+    ('weak or invalid If-Range allowed', NET + 'SafeHttpClient.java', '|| (ifRange != null && (rangeStart < 0 || !isStrongEtag(ifRange)))', ''),
     ('NAT64 discovery: unknown treated as none', NET + 'Nat64Discovery.java', 'if (answers == null) return ALL_IPV6;', 'if (answers == null) return Collections.emptyList();'),
     ('NAT64 discovery: IPv6-only without DNS64 allowed', NET + 'Nat64Discovery.java',
      'return networkHasIpv4 ? Collections.emptyList() : ALL_IPV6;', 'return Collections.emptyList();'),

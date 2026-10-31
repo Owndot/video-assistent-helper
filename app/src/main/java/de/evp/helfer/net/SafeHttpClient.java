@@ -189,8 +189,23 @@ public final class SafeHttpClient {
      * und Rumpf. Wiederholt nie selbst.
      */
     public SafeResponse get(String url, long rangeStart, long rangeEnd, long maxBodyBytes, long timeoutMs, Cancellation cancellation) throws IOException {
+        return get(url, rangeStart, rangeEnd, null, maxBodyBytes, timeoutMs, cancellation);
+    }
+
+    /** Starker ETag (RFC 9110 8.8.3): {@code "…"} aus etagc ohne obs-text, kein {@code W/}; höchstens 512 Zeichen. */
+    static final java.util.regex.Pattern STRONG_ETAG = java.util.regex.Pattern.compile("\"[\\x21\\x23-\\x7e]{0,510}\"");
+
+    public static boolean isStrongEtag(String etag) { return etag != null && STRONG_ETAG.matcher(etag).matches(); }
+
+    /**
+     * Wie oben, mit {@code If-Range}: nur zusammen mit einem Byte-Bereich und nur mit einem starken ETag (RFC 9110 13.1.5
+     * verlangt starken Vergleich; ein Datum ist dort kein sicherer Validator). Der Server liefert dann 206 nur für
+     * dieselbe Darstellung, sonst 200 mit der ganzen Ressource.
+     */
+    public SafeResponse get(String url, long rangeStart, long rangeEnd, String ifRange, long maxBodyBytes, long timeoutMs, Cancellation cancellation) throws IOException {
         if (maxBodyBytes <= 0 || timeoutMs <= 0 || timeoutMs > MAX_CALL_TIMEOUT_MS || (rangeStart < 0 && rangeEnd >= 0)
-            || (rangeStart >= 0 && rangeEnd >= 0 && rangeEnd < rangeStart)) {
+            || (rangeStart >= 0 && rangeEnd >= 0 && rangeEnd < rangeStart)
+            || (ifRange != null && (rangeStart < 0 || !isStrongEtag(ifRange)))) {
             throw new NetBlockedException(NetBlockedException.Reason.BAD_ARGUMENT, "limits");
         }
         HttpUrl current = url == null ? null : HttpUrl.parse(url);
@@ -203,6 +218,7 @@ public final class SafeHttpClient {
                 .header("Accept-Encoding", "identity")
                 .tag(Attempts.class, new Attempts());
             if (rangeStart >= 0) rb.header("Range", "bytes=" + rangeStart + "-" + (rangeEnd >= 0 ? String.valueOf(rangeEnd) : ""));
+            if (ifRange != null) rb.header("If-Range", ifRange);
             Call call = client.newCall(rb.build());
             long remaining = deadline - System.nanoTime();
             if (remaining <= 0) throw new java.io.InterruptedIOException("timeout");

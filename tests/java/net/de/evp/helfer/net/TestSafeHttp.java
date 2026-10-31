@@ -331,6 +331,20 @@ public final class TestSafeHttp {
                 expect(blocked(() -> c.get(srv.url("/r"), 10, SafeHttpClient.MAX_CALL_TIMEOUT_MS + 1)) == NetBlockedException.Reason.BAD_ARGUMENT, "timeout");
             }
         });
+        check("If-Range: only a strong ETag, only with Range, sent unchanged", () -> {
+            try (Server srv = Server.plain()) {
+                srv.route("/r", (p, h, o, s) -> text(o, 206, h.get("range") + "|" + h.get("if-range")));
+                SafeHttpClient c = client(srv);
+                expect(body(c.get(srv.url("/r"), 10, 19, "\"abc-1\"", 100, T, null)).equals("bytes=10-19|\"abc-1\""), "If-Range sent");
+                expect(body(c.get(srv.url("/r"), 10, 19, null, 100, T, null)).equals("bytes=10-19|null"), "no If-Range");
+                int before = srv.accepts.get() + srv.requests.size();
+                for (String bad : new String[] {"W/\"abc\"", "abc", "\"a b\"", "\"x", "", "\"a\r\nX: 1\""}) {
+                    expect(blocked(() -> c.get(srv.url("/r"), 10, 19, bad, 100, T, null)) == NetBlockedException.Reason.BAD_ARGUMENT, "rejected " + bad);
+                }
+                expect(blocked(() -> c.get(srv.url("/r"), -1, -1, "\"abc\"", 100, T, null)) == NetBlockedException.Reason.BAD_ARGUMENT, "If-Range without Range");
+                expect(srv.accepts.get() + srv.requests.size() == before, "rejected arguments reached the server");
+            }
+        });
     }
 
     static void layers() throws Exception {

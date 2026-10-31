@@ -41,6 +41,7 @@ public final class SafeResponse implements Closeable {
     public String acceptRanges() { return response.header("Accept-Ranges"); }
     public String etag() { return response.header("ETag"); }
     public String lastModified() { return response.header("Last-Modified"); }
+    public String contentEncoding() { return response.header("Content-Encoding"); }
 
     /** Rumpf als Stream; bricht mit {@link NetBlockedException} (BODY_TOO_LARGE) ab, sobald die Grenze überschritten wird. */
     public synchronized InputStream body() {

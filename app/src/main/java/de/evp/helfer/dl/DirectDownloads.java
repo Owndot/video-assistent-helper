@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -32,8 +33,8 @@ import de.evp.helfer.net.SafeResponse;
  *   <li>Höchstens {@link #MAX_PARALLEL} gleichzeitig; darüber "busy" (nicht vermerkt, später erneut möglich).</li>
  *   <li>Prüft Status 200, Content-Length (Pflicht, ≤ Grenze), Content-Type, MP4-Signatur, freien Speicher vor und
  *       während des Downloads und die empfangene Menge (genau Content-Length).</li>
- *   <li>Unterbrechung: Fortsetzen nur mit Validator (ETag/Last-Modified unverändert), Status 206 und exakt passendem
- *       Content-Range; höchstens {@link #MAX_RESUMES}-mal; sonst Fehler.</li>
+ *   <li>Unterbrechung: Fortsetzen nur mit starkem ETag (If-Range, starker Vergleich), Status 206 und exakt passendem
+ *       Content-Range; höchstens {@link #MAX_RESUMES}-mal; sonst Fehler und Entfernen des Unfertigen.</li>
  *   <li>Abbruch jederzeit (auch während Verbindungsaufbau); jedes Ende ohne Erfolg entfernt das Unfertige.</li>
  *   <li>Antworten, Journal und Rückmeldungen enthalten nie die URL.</li>
  * </ul>
@@ -62,6 +63,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         volatile State state = State.RUNNING;
         volatile long bytes, total = -1;
         volatile String reason = "";
+        volatile String ref;      // Verweis der Ablage (Journal), nie die URL
         final SafeHttpClient.Cancellation cancel = new SafeHttpClient.Cancellation();
         Job(String id, String title) { this.id = id; this.title = title; }
     }
@@ -164,6 +166,8 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         String reason = "network";
         Object saved = null;
         try {
+            // Ablage zuerst: ohne Schreibrecht (Android 8–9: Speicherberechtigung) kein Netzwerkzugriff.
+            if (!store.writable()) throw new Fail("storage_permission");
             response = http.get(url, -1, -1, MAX_FILE_BYTES, callTimeoutMs, job.cancel);
             checkCancelled(job);
             if (response.code() != 200) throw new Fail("http_" + response.code());
@@ -171,9 +175,10 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             if (total <= 0) throw new Fail("no_length");
             if (total > MAX_FILE_BYTES) throw new Fail("too_large");
             if (!acceptedType(response.contentType())) throw new Fail("type");
+            if (!identityEncoding(response.contentEncoding())) throw new Fail("encoding");
             job.total = total;
-            // Nur starke Validatoren erlauben ein Fortsetzen (RFC 9110 13.1.5); schwache ETags zählen nicht.
-            String etag = strongEtag(response.etag()), lastModified = response.lastModified();
+            // Fortsetzen nur mit starkem ETag (RFC 9110 8.8.1/13.1.5); Last-Modified und schwache ETags genügen nicht.
+            String etag = strongEtag(response.etag());
             String finalUrl = response.url();
             if (freeBytes() < total + SPACE_RESERVE_BYTES) throw new Fail("no_space");
             InputStream in = response.body();
@@ -183,6 +188,12 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             try { target = store.create(fileName(job.title), "video/mp4"); } catch (IOException e) { throw new Fail("storage"); }
             OutputStream out;
             try { out = target.out(); } catch (IOException e) { throw new Fail("storage"); }
+            // Verweis vermerken, bevor Daten geschrieben werden: nach einem Absturz lässt sich so feststellen, ob die
+            // Datei schon veröffentlicht war (dann "done") oder nicht (dann "interrupted", Reste räumt die Ablage ab).
+            job.ref = target.ref();
+            synchronized (this) {
+                try { saveJournal(); } catch (IOException e) { throw new Fail("storage"); }
+            }
             write(out, head, 8);
             job.bytes = 8;
             byte[] buf = new byte[64 << 10];
@@ -198,13 +209,14 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
                     throw blocked;
                 } catch (IOException interrupted) {
                     checkCancelled(job);
-                    if (resumes >= MAX_RESUMES || (etag == null && lastModified == null)) throw new Fail("network");
+                    if (resumes >= MAX_RESUMES || etag == null) throw new Fail("network");
                     resumes++;
                     response.close();
+                    // If-Range: der Server liefert 206 nur für dieselbe Darstellung, sonst 200 (dann Fehler, nie Mischen).
                     // Grenze = Gesamtlänge: eine falsche Antwort (200 statt 206) wird so von checkResume benannt.
-                    response = http.get(finalUrl, job.bytes, total - 1, total, callTimeoutMs, job.cancel);
+                    response = http.get(finalUrl, job.bytes, total - 1, etag, total, callTimeoutMs, job.cancel);
                     checkCancelled(job);
-                    checkResume(response, job.bytes, total, etag, lastModified);
+                    checkResume(response, job.bytes, total, etag);
                     in = response.body();
                     continue;
                 }
@@ -221,6 +233,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             if (in.read() != -1) throw new Fail("long_body");
             checkCancelled(job);
             try { out.close(); saved = target.commit(); } catch (IOException e) { throw new Fail("storage"); }
+            job.ref = target.ref();   // nach dem Veröffentlichen (Android 8–9: endgültiger Dateiname)
             target = null;
             state = State.DONE;
             reason = "";
@@ -252,8 +265,12 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         if (job.cancel.isCancelled()) throw new Fail("cancelled");
     }
 
-    static void checkResume(SafeResponse r, long start, long total, String etag, String lastModified) throws Fail {
+    static void checkResume(SafeResponse r, long start, long total, String etag) throws Fail {
+        // 200 auf eine Anfrage mit If-Range: Darstellung geändert oder Range nicht unterstützt – beides kein Fortsetzen.
         if (r.code() != 206) throw new Fail(r.code() == 200 ? "range_ignored" : "range_http_" + r.code());
+        if (!identityEncoding(r.contentEncoding())) throw new Fail("encoding");
+        String type = r.contentType();
+        if (type != null && type.trim().toLowerCase(Locale.ROOT).startsWith("multipart/")) throw new Fail("range_multipart");
         String cr = r.contentRange();
         Matcher m = cr == null ? null : CONTENT_RANGE.matcher(cr.trim());
         if (m == null || !m.matches()) throw new Fail("range_header");
@@ -262,8 +279,8 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         catch (NumberFormatException nfe) { throw new Fail("range_header"); }
         if (s != start || e != total - 1 || t != total) throw new Fail("range_mismatch");
         if (r.contentLength() != total - start) throw new Fail("range_length");
-        if (etag != null && !etag.equals(strongEtag(r.etag()))) throw new Fail("changed");
-        if (lastModified != null && !lastModified.equals(r.lastModified())) throw new Fail("changed");
+        // Starker Vergleich (RFC 9110 8.8.3.2): beide stark und zeichengleich; fehlender oder schwacher ETag = geändert.
+        if (etag == null || !etag.equals(strongEtag(r.etag()))) throw new Fail("changed");
     }
 
     private void finish(Job job, State state, String reason, Object saved) {
@@ -278,8 +295,14 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
 
     // ------------------------------------------------------------------ Prüfungen
 
+    /** Der ETag, wenn er stark und syntaktisch gültig ist; sonst null (kein Fortsetzen). */
     static String strongEtag(String etag) {
-        return etag == null || etag.startsWith("W/") || etag.isEmpty() ? null : etag;
+        return SafeHttpClient.isStrongEtag(etag) ? etag : null;
+    }
+
+    /** Nur unkodierte Rümpfe (Accept-Encoding: identity); gzip o. Ä. würde Längen und Bereiche verfälschen. */
+    static boolean identityEncoding(String contentEncoding) {
+        return contentEncoding == null || contentEncoding.trim().isEmpty() || contentEncoding.trim().equalsIgnoreCase("identity");
     }
 
     static boolean acceptedType(String contentType) {
@@ -343,21 +366,37 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         byte[] raw = store.loadJournal();
         if (raw == null) return;
         String[] lines = new String(raw, StandardCharsets.US_ASCII).split("\n");
-        if (lines.length == 0 || !lines[0].equals("mp4-jobs-v1")) throw new IOException("corrupt download journal");
+        int fields = lines.length == 0 ? -1 : lines[0].equals("mp4-jobs-v2") ? 6 : lines[0].equals("mp4-jobs-v1") ? 5 : -1;
+        if (fields < 0) throw new IOException("corrupt download journal");
         boolean changed = false;
-        for (int i = 1; i < lines.length; i++) {
-            String[] f = lines[i].split(" ", -1);
-            if (f.length != 5 || !f[0].matches("[0-9a-f]{32}")) throw new IOException("corrupt download journal");
-            Job j = new Job(f[0], "Video");
-            State st = State.valueOf(f[1]);
-            if (st == State.RUNNING) { st = State.INTERRUPTED; changed = true; }   // Neustart während des Downloads
-            j.state = st;
-            j.bytes = Long.parseLong(f[2]);
-            j.total = Long.parseLong(f[3]);
-            j.reason = f[4].matches("[a-z0-9_]{0,40}") ? f[4] : "";
-            jobs.put(j.id, j);
+        try {
+            for (int i = 1; i < lines.length; i++) {
+                String[] f = lines[i].split(" ", -1);
+                if (f.length != fields || !f[0].matches("[0-9a-f]{32}")) throw new IOException("corrupt download journal");
+                Job j = new Job(f[0], "Video");
+                State st = State.valueOf(f[1]);
+                j.bytes = Long.parseLong(f[2]);
+                j.total = Long.parseLong(f[3]);
+                j.reason = f[4].matches("[a-z0-9_]{0,40}") ? f[4] : "";
+                j.ref = fields == 6 && !f[5].equals("-") ? new String(Base64.getUrlDecoder().decode(f[5]), StandardCharsets.UTF_8) : null;
+                if (st == State.RUNNING) {
+                    // Neustart während des Downloads: war die Datei schon veröffentlicht (Absturz zwischen Veröffentlichen
+                    // und Journal), gilt der Auftrag als fertig; sonst als unterbrochen (Reste räumt die Ablage ab).
+                    st = j.ref != null && published(j.ref, j.total) ? State.DONE : State.INTERRUPTED;
+                    if (st == State.DONE) { j.bytes = j.total; j.reason = ""; }
+                    changed = true;
+                }
+                j.state = st;
+                jobs.put(j.id, j);
+            }
+        } catch (IllegalArgumentException e) {
+            throw new IOException("corrupt download journal", e);
         }
         if (changed) saveJournal();
+    }
+
+    private boolean published(String ref, long total) {
+        try { return total > 0 && store.isPublished(ref, total); } catch (IOException | RuntimeException e) { return false; }
     }
 
     /** Mit Sperre auf this aufrufen. Älteste beendete Einträge fallen über {@link #JOURNAL_MAX} heraus. */
@@ -368,9 +407,10 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             if (drop == null) break;
             jobs.remove(drop);
         }
-        StringBuilder b = new StringBuilder("mp4-jobs-v1");
+        StringBuilder b = new StringBuilder("mp4-jobs-v2");
         for (Job j : jobs.values()) {
-            b.append('\n').append(j.id).append(' ').append(j.state.name()).append(' ').append(j.bytes).append(' ').append(j.total).append(' ').append(j.reason);
+            b.append('\n').append(j.id).append(' ').append(j.state.name()).append(' ').append(j.bytes).append(' ').append(j.total).append(' ').append(j.reason)
+                .append(' ').append(j.ref == null ? "-" : Base64.getUrlEncoder().withoutPadding().encodeToString(j.ref.getBytes(StandardCharsets.UTF_8)));
         }
         store.saveJournal(b.toString().getBytes(StandardCharsets.US_ASCII));
     }

@@ -179,6 +179,8 @@ public final class TestDirectDownloads {
     /** Ganze Datei oder Bereich; {@code cutAt} &gt;= 0: Verbindung nach so vielen Bytes (absolut) hart beenden. */
     static void serveFile(Req r, OutputStream out, long total, String etag, long cutAt) throws IOException {
         long start = r.rangeStart();
+        String ifRange = r.header("if-range");
+        if (start >= 0 && ifRange != null && !ifRange.equals(etag)) start = -1;   // RFC 9110 13.1.5: dann ganze Ressource
         String validator = etag == null ? "" : "ETag: " + etag;
         if (start < 0) {
             head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: " + total, "Accept-Ranges: bytes", validator);
@@ -204,6 +206,11 @@ public final class TestDirectDownloads {
         final AtomicInteger created = new AtomicInteger(), committed = new AtomicInteger(), aborted = new AtomicInteger();
         byte[] journal;
         volatile boolean failJournal;
+        volatile int failJournalAfterSaves = -1;              // so viele Schreibvorgänge gelingen, dann Fehler
+        volatile boolean writable = true;
+        volatile byte[] journalAtCreate, journalAtCommit;     // Stand des Journals bei einem "Absturz" an dieser Stelle
+        volatile boolean failPublishedCheck;
+        int saves;
 
         DirStore(String name) throws IOException {
             dir = new File(root, name);
@@ -215,9 +222,18 @@ public final class TestDirectDownloads {
             return free.get();
         }
 
+        @Override public boolean writable() { return writable; }
+
+        @Override public boolean isPublished(String ref, long total) throws IOException {
+            if (failPublishedCheck) throw new IOException("media store unavailable");
+            File f = new File(ref);
+            return f.getParentFile() != null && f.getParentFile().equals(dir) && f.isFile() && f.length() == total;
+        }
+
         @Override public Target create(String displayName, String mime) throws IOException {
             expect(mime.equals("video/mp4"), "mime");
             created.incrementAndGet();
+            journalAtCreate = loadJournal();
             File part = File.createTempFile(".part-", ".tmp", dir);
             File fin = new File(dir, displayName);
             OutputStream fos = new FileOutputStream(part);
@@ -233,11 +249,13 @@ public final class TestDirectDownloads {
             return new Target() {
                 boolean done;
                 @Override public OutputStream out() { return counted; }
+                @Override public String ref() { return fin.getPath(); }
                 @Override public synchronized Object commit() throws IOException {
                     fos.close();
                     if (!part.renameTo(fin)) throw new IOException("rename");
                     done = true;
                     committed.incrementAndGet();
+                    journalAtCommit = loadJournal();     // veröffentlicht, Journal noch nicht "DONE"
                     return fin;
                 }
                 @Override public synchronized void abort() {
@@ -252,7 +270,8 @@ public final class TestDirectDownloads {
         @Override public synchronized byte[] loadJournal() { return journal == null ? null : journal.clone(); }
 
         @Override public synchronized void saveJournal(byte[] data) throws IOException {
-            if (failJournal) throw new IOException("journal");
+            if (failJournal || (failJournalAfterSaves >= 0 && saves >= failJournalAfterSaves)) throw new IOException("journal");
+            saves++;
             journal = data.clone();
         }
 
@@ -316,6 +335,12 @@ public final class TestDirectDownloads {
         check("interruption resumed with exact range, content identical", TestDirectDownloads::resumeOk);
         check("range errors: 200 to range, wrong start/end/total, length, changed etag", TestDirectDownloads::rangeErrors);
         check("at most 3 resumes", TestDirectDownloads::maxResumes);
+        check("If-Range honoured: changed representation answers 200, never mixed", TestDirectDownloads::ifRangeHonoured);
+        check("only syntactically strong ETags allow resume", TestDirectDownloads::etagSyntax);
+        check("content-encoding other than identity rejected", TestDirectDownloads::contentEncoding);
+        check("storage not writable (permission): failed before any network access", TestDirectDownloads::storagePermission);
+        check("crash recovery: published -> done, unpublished -> interrupted, unsure -> interrupted", TestDirectDownloads::crashRecovery);
+        check("journal write failure after create: failed, partial removed", TestDirectDownloads::journalFailureAfterCreate);
         check("no space before download: nothing created", TestDirectDownloads::noSpaceBefore);
         check("no space during download: stopped and cleaned", TestDirectDownloads::noSpaceDuring);
         check("write error (ENOSPC) is a storage failure, never resumed", TestDirectDownloads::writeError);
@@ -461,10 +486,13 @@ public final class TestDirectDownloads {
             expect(srv.seen.get(0).header("range") == null, "first without range");
             expect(srv.seen.get(1).header("range").equals("bytes=" + (1 << 20) + "-" + (total - 1)), srv.seen.get(1).header("range"));
             expect(srv.seen.get(2).header("range").equals("bytes=" + (3 << 20) + "-" + (total - 1)), srv.seen.get(2).header("range"));
+            // If-Range mit genau dem starken ETag der ersten Antwort, nie ohne (RFC 9110 13.1.5).
+            expect(srv.seen.get(0).header("if-range") == null, "no If-Range without Range");
+            expect("\"abc\"".equals(srv.seen.get(1).header("if-range")) && "\"abc\"".equals(srv.seen.get(2).header("if-range")), "If-Range");
             File f = store.only();
             expect(java.util.Arrays.equals(fileSha(f), expectedSha(total)), "sha-256 after resume");
         }
-        // Last-Modified allein genügt als Validator.
+        // Last-Modified ist kein starker Validator (Sekundenauflösung, RFC 9110 8.8.2.2): kein Fortsetzen, sauberer Fehler.
         try (Server srv = new Server((r, out, i) -> {
             long start = r.rangeStart();
             if (start < 0) head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: 4096", "Last-Modified: Tue, 01 Sep 2026 10:00:00 GMT");
@@ -474,8 +502,11 @@ public final class TestDirectDownloads {
             if (start < 0) throw new IOException("cut");
         })) {
             DirStore store = new DirStore("resume-lm");
-            expect(run(srv, store, "/v.mp4").equals("done"), "done with last-modified");
-            expect(java.util.Arrays.equals(fileSha(store.only()), expectedSha(4096)), "sha");
+            String r = run(srv, store, "/v.mp4");
+            expect(r.equals("failed:network"), "last-modified only: " + r);
+            expect(srv.requests.get() == 1, "no range request with Last-Modified only");
+            expect(store.created.get() == 1 && store.aborted.get() == 1, "partial removed");
+            store.expectEmpty();
         }
     }
 
@@ -493,6 +524,9 @@ public final class TestDirectDownloads {
             {"etag-changed", "changed"},
             {"etag-missing", "changed"},
             {"416", "range_http_416"},
+            {"weak-etag", "changed"},
+            {"multipart", "range_multipart"},
+            {"gzip", "encoding"},
         };
         for (String[] c : cases) {
             String mode = c[0];
@@ -502,6 +536,7 @@ public final class TestDirectDownloads {
                 String cr = "Content-Range: bytes " + s + "-" + (total - 1) + "/" + total;
                 String len = "Content-Length: " + (total - s);
                 String et = "ETag: \"e1\"";
+                String ty = "Content-Type: video/mp4", enc = "";
                 switch (mode) {
                     case "200": head(out, "200 OK", "Content-Length: " + total, et); content(out, 0, total); return;
                     case "bad-start": cr = "Content-Range: bytes " + (s - 1) + "-" + (total - 1) + "/" + total; len = "Content-Length: " + (total - s + 1); break;
@@ -513,9 +548,12 @@ public final class TestDirectDownloads {
                     case "etag-changed": et = "ETag: \"e2\""; break;
                     case "etag-missing": et = "X-None: 1"; break;
                     case "416": head(out, "416 Range Not Satisfiable", "Content-Length: 0"); return;
+                    case "weak-etag": et = "ETag: W/\"e1\""; break;
+                    case "multipart": ty = "Content-Type: multipart/byteranges; boundary=B"; cr = "X-None: 1"; break;
+                    case "gzip": enc = "Content-Encoding: gzip"; break;
                     default: throw new AssertionError(mode);
                 }
-                head(out, "206 Partial Content", "Content-Type: video/mp4", len, cr, et);
+                head(out, "206 Partial Content", ty, len, cr, et, enc);
                 long n = Long.parseLong(len.substring("Content-Length: ".length()));
                 content(out, s, s + n);
             })) {
@@ -523,6 +561,7 @@ public final class TestDirectDownloads {
                 String r = run(srv, store, "/v.mp4");
                 expect(r.equals("failed:" + c[1]), mode + ": " + r);
                 expect(srv.requests.get() == 2, mode + ": requests " + srv.requests.get());
+                expect("\"e1\"".equals(srv.seen.get(1).header("if-range")), mode + ": If-Range");
                 store.expectEmpty();
             }
         }
@@ -901,5 +940,140 @@ public final class TestDirectDownloads {
         expect(DirectDownloads.fileName(DirectDownloads.displayTitle("....")).equals("Video.mp4"), "dots only");
         expect(DirectDownloads.displayTitle("x".repeat(500)).length() == 80, "length cap");
         expect(DirectDownloads.fileName(DirectDownloads.displayTitle("Ünïcødé")).equals("Ünïcødé.mp4"), "unicode letters kept");
+    }
+
+    static void ifRangeHonoured() throws Exception {
+        long total = 1 << 20;
+        String[] current = {"\"v1\""};
+        try (Server srv = new Server((r, out, i) -> {
+            String tag = current[0];
+            current[0] = "\"v2\"";                         // Darstellung ändert sich nach der ersten Antwort
+            serveFile(r, out, total, tag, i == 0 ? 300_000 : -1);
+        })) {
+            DirStore store = new DirStore("ifrange");
+            String r = run(srv, store, "/v.mp4");
+            expect(r.equals("failed:range_ignored"), r);
+            expect(srv.requests.get() == 2, "requests " + srv.requests.get());
+            expect("\"v1\"".equals(srv.seen.get(1).header("if-range")), "If-Range carries the first ETag");
+            store.expectEmpty();
+        }
+    }
+
+    static void etagSyntax() throws Exception {
+        for (String tag : new String[] {"abc", "\"a b\"", "W/\"x\"", "\"x", "w/\"x\"", "\"a\"\"b\""}) {
+            long total = 1 << 20;
+            try (Server srv = new Server((r, out, i) -> {
+                head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: " + total, "ETag: " + tag);
+                content(out, 0, 200_000);
+                out.flush();
+                throw new IOException("cut");
+            })) {
+                DirStore store = new DirStore("etag-" + Math.abs(tag.hashCode()));
+                String r = run(srv, store, "/v.mp4");
+                expect(r.equals("failed:network") && srv.requests.get() == 1, tag + " -> " + r + " / " + srv.requests.get());
+                store.expectEmpty();
+            }
+        }
+        expect(SafeHttpClient.isStrongEtag("\"abc\"") && SafeHttpClient.isStrongEtag("\"\""), "strong");
+        expect(!SafeHttpClient.isStrongEtag("W/\"abc\"") && !SafeHttpClient.isStrongEtag(null) && !SafeHttpClient.isStrongEtag("\"\u00e4\""), "weak/invalid");
+    }
+
+    static void contentEncoding() throws Exception {
+        try (Server srv = new Server((r, out, i) -> {
+            head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: 4096", "Content-Encoding: gzip");
+            content(out, 0, 4096);
+        })) {
+            DirStore store = new DirStore("encoding");
+            expect(run(srv, store, "/v.mp4").equals("failed:encoding"), "gzip");
+            expect(store.created.get() == 0, "nothing created");
+        }
+        expect(DirectDownloads.identityEncoding(null) && DirectDownloads.identityEncoding("identity") && DirectDownloads.identityEncoding(" Identity "), "identity");
+        expect(!DirectDownloads.identityEncoding("br") && !DirectDownloads.identityEncoding("gzip, identity"), "encodings");
+    }
+
+    static void storagePermission() throws Exception {
+        try (Server srv = new Server((r, out, i) -> serveFile(r, out, 4096, null, -1))) {
+            DirStore store = new DirStore("permission");
+            store.writable = false;
+            expect(run(srv, store, "/v.mp4").equals("failed:storage_permission"), "permission");
+            expect(srv.connections.get() == 0, "network contacted without storage permission");
+            expect(store.created.get() == 0, "nothing created");
+            store.writable = true;
+            expect(run(srv, store, "/v.mp4").equals("done"), "after grant");
+        }
+    }
+
+    static void crashRecovery() throws Exception {
+        long total = 256 << 10;
+        try (Server srv = new Server((r, out, i) -> {
+            if (r.line.contains("/slow")) { head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: " + total); content(out, 0, 8); out.flush(); Thread.sleep(60_000); }
+            else serveFile(r, out, total, null, -1);
+        })) {
+            // (a) Absturz nach dem Veröffentlichen, bevor "DONE" im Journal stand: Datei vorhanden -> fertig.
+            DirStore store = new DirStore("crash-a");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4"), "Clip");
+            expect(ev.await(id, 10_000).equals("done"), "done");
+            d.stopAll();
+            String atCommit = new String(store.journalAtCommit, StandardCharsets.US_ASCII);
+            expect(atCommit.startsWith("mp4-jobs-v2\n") && atCommit.contains(id + " RUNNING ") && !atCommit.endsWith(" -"), "journal at commit: " + atCommit);
+            store.journal = store.journalAtCommit;
+            DirectDownloads after = engine(LocalTestClients.loopback(srv.port()), store, new Events());
+            expect(after.status(id).contains("\"state\":\"done\"") && after.status(id).contains("\"bytes\":" + total), after.status(id));
+            int before = srv.requests.get();
+            expect(after.start(id, srv.url("/v.mp4"), "Clip").contains("\"state\":\"done\""), "late start");
+            expect(srv.requests.get() == before, "no new request");
+            expect(!new String(store.journal, StandardCharsets.US_ASCII).contains("RUNNING"), "journal rewritten as done");
+            after.stopAll();
+            // (c) Prüfung der Ablage scheitert: sicher "interrupted", nie ungeprüft "done".
+            store.journal = store.journalAtCommit;
+            store.failPublishedCheck = true;
+            DirectDownloads unsure = engine(LocalTestClients.loopback(srv.port()), store, new Events());
+            expect(unsure.status(id).contains("\"state\":\"interrupted\""), unsure.status(id));
+            unsure.stopAll();
+
+            // (b) Absturz während des Schreibens: Verweis steht im Journal, Datei nie veröffentlicht -> unterbrochen.
+            DirStore store2 = new DirStore("crash-b");
+            Events ev2 = new Events();
+            DirectDownloads d2 = engine(LocalTestClients.loopback(srv.port()), store2, ev2);
+            String id2 = newId();
+            d2.start(id2, srv.url("/slow"), "Slow");
+            long until = System.currentTimeMillis() + 5_000;
+            while ((store2.journal == null || !new String(store2.journal, StandardCharsets.US_ASCII).matches("(?s).*" + id2 + " RUNNING \\S+ \\S+ \\S* [A-Za-z0-9_-]+.*"))
+                   && System.currentTimeMillis() < until) Thread.sleep(10);
+            byte[] crashed = store2.loadJournal();
+            d2.cancel(id2);                                  // der "abgestürzte" Prozess räumt nichts mehr auf …
+            expect(ev2.await(id2, 5_000).equals("cancelled"), "cancelled");
+            store2.journal = crashed;                         // … und hinterlässt dieses Journal
+            DirectDownloads after2 = engine(LocalTestClients.loopback(srv.port()), store2, new Events());
+            expect(after2.status(id2).contains("\"state\":\"interrupted\""), after2.status(id2));
+            after2.stopAll();
+            d2.stopAll();
+        }
+        // (d) Journal v1 (vor diesem Schritt) bleibt lesbar; laufend -> unterbrochen.
+        DirStore v1 = new DirStore("journal-v1");
+        String a = newId(), b = newId();
+        v1.journal = ("mp4-jobs-v1\n" + a + " DONE 10 10 \n" + b + " RUNNING 5 10 ").getBytes(StandardCharsets.US_ASCII);
+        DirectDownloads e1 = engine(LocalTestClients.strict(), v1, new Events());
+        expect(e1.status(a).contains("done") && e1.status(b).contains("interrupted"), "v1");
+        e1.stopAll();
+        // (e) beschädigter Verweis: sicher fehlschlagen (keine Downloads statt unklarer Zustände).
+        DirStore bad = new DirStore("journal-bad-ref");
+        bad.journal = ("mp4-jobs-v2\n" + newId() + " RUNNING 5 10  !!!").getBytes(StandardCharsets.US_ASCII);
+        try { engine(LocalTestClients.strict(), bad, new Events()); throw new AssertionError("accepted bad ref"); }
+        catch (IOException expected) { }
+    }
+
+    static void journalFailureAfterCreate() throws Exception {
+        try (Server srv = new Server((r, out, i) -> serveFile(r, out, 1 << 20, null, -1))) {
+            DirStore store = new DirStore("journal-after-create");
+            store.failJournalAfterSaves = 1;                 // Start vermerkt, Verweis nicht mehr
+            String r = run(srv, store, "/v.mp4");
+            expect(r.equals("failed:storage"), r);
+            expect(store.created.get() == 1 && store.aborted.get() == 1 && store.committed.get() == 0, "aborted");
+            store.expectEmpty();
+        }
     }
 }
