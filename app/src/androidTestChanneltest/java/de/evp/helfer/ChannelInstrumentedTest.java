@@ -329,6 +329,11 @@ public class ChannelInstrumentedTest {
      * die Antworten nennen die URL nicht. Der Status bleibt "dl":false (alte Download-Funktion aus).
      */
     @Test public void downloadCommandsUseOnlyTheHardenedClient() throws Exception {
+        // Android 8–9: ohne Speicherberechtigung endete jeder Auftrag (richtig) schon vor dem Netzwerk mit
+        // storage_permission; hier sollen die Netzwerkregeln greifen, also wie im Dialog der App erteilen.
+        if (android.os.Build.VERSION.SDK_INT < 29) {
+            for (String p : Mp4Downloads.LEGACY_STORAGE_PERMISSIONS) shell("pm grant " + ctx.getPackageName() + " " + p);
+        }
         byte[] id = kadriIdentity();
         long h = pairAndConfirm(id, pair(id, openWindow()));
         try (ServerSocket local = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))) {
