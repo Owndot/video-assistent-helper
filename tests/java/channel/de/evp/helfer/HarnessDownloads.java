@@ -74,7 +74,9 @@ final class HarnessDownloads implements DownloadStore, DirectDownloads.Listener 
                 out.close();
                 File dst = fin;
                 for (int n = 1; dst.exists(); n++) dst = new File(dir, displayName.replaceFirst("(\\.mp4)?$", " (" + n + ")$1"));
-                Files.move(part.toPath(), dst.toPath());
+                // Dateiname im Zeichensatz des Desktops nicht darstellbar (z. B. ohne UTF-8-Locale): Ablagefehler wie auf
+                // dem Gerät, nicht RuntimeException (die Engine meldete sonst "network").
+                try { Files.move(part.toPath(), dst.toPath()); } catch (java.nio.file.InvalidPathException e) { throw new IOException("name", e); }
                 published = dst;
                 finished = true;
                 return dst.getPath();
