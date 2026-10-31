@@ -109,13 +109,19 @@ public final class SafeHttpClient {
         this.client = b.build();
     }
 
+    private SafeHttpClient(NetRules rules, OkHttpClient client) { this.rules = rules; this.client = client; }
+
     /**
-     * Ruhende Pool-Verbindungen schließen (laufende Anfragen bleiben unberührt). Ohne automatische Wiederholung
-     * ({@code retryOnConnectionFailure(false)}) würde eine Anfrage über eine Verbindung, die der Server inzwischen
-     * geschlossen hat (Keep-Alive-Zeitgrenze, HTTP/1.0), sonst als Netzwerkfehler enden. Die Download-Engine ruft das
-     * vor jedem Auftrag auf; Wiederverwendung innerhalb eines Auftrags (Fortsetzen) und alle Prüfschichten bleiben.
+     * Derselbe gehärtete Client ohne Wiederverwendung von Verbindungen (eigener Pool, der nichts aufbewahrt: jede
+     * Verbindung wird nach ihrer Anfrage geschlossen). Für die Download-Engine: ohne automatische Wiederholung
+     * ({@code retryOnConnectionFailure(false)}) wäre eine Anfrage über eine ruhende Verbindung, die der Server inzwischen
+     * geschlossen hat (Keep-Alive-Zeitgrenze, HTTP/1.0), sonst ein Fehlschlag – auch wenn ein paralleler Auftrag sie erst
+     * nach dem Start dieses Auftrags zurückgibt. DNS-, Adress-, Socket- und Weiterleitungsregeln, Zeitgrenzen, Protokoll,
+     * Interceptoren und Ereignisse bleiben unverändert.
      */
-    public void closeIdleConnections() { client.connectionPool().evictAll(); }
+    public SafeHttpClient withoutConnectionReuse() {
+        return new SafeHttpClient(rules, client.newBuilder().connectionPool(new ConnectionPool(0, 1, TimeUnit.SECONDS)).build());
+    }
 
     /** Produktiver Client: strenge Regeln, Systemresolver, System-Vertrauen. */
     static SafeHttpClient strict(NetRules.Nat64Source nat64) { return new SafeHttpClient(NetRules.strict(nat64), SYSTEM_RESOLVER, null); }

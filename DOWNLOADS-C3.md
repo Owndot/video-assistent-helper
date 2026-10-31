@@ -14,12 +14,14 @@ Sicherheitsgrenzen: `DOWNLOADS-C3.md` im Kadri-Repository.
 1. **Fehlerbehebung in der App (gefunden durch Kadris C3-Browsertests):** Nach einem fertigen Download scheiterte der
    nächste an denselben Server mit `network`. Ursache: OkHttp nahm eine ruhende Pool-Verbindung, die der Server
    inzwischen geschlossen hatte (Keep-Alive-Zeitgrenze, HTTP/1.0-Server); weil `SafeHttpClient` bewusst nie
-   automatisch wiederholt (`retryOnConnectionFailure(false)`, C1), wurde daraus ein Fehlschlag. Behebung:
-   `SafeHttpClient.closeIdleConnections()` (schließt nur ruhende Verbindungen) und `DirectDownloads.run()` ruft es vor
-   jedem Auftrag. Wiederverwendung innerhalb eines Auftrags, Weiterleitungen, alle Prüfschichten (Adressregeln, DNS,
-   Socket-Guard, Netzwerk-Interceptor bei jeder Anfrage) bleiben unverändert. Neuer JVM-Test
-   `staleIdleConnection` (ein Client für drei Aufträge, Server schließt nach jeder Antwort; ohne Behebung: Auftrag 2
-   `failed:network`) und Mutationsprobe „stale idle connection reused“.
+   automatisch wiederholt (`retryOnConnectionFailure(false)`, C1), wurde daraus ein Fehlschlag. Behebung: die Engine
+   nutzt `SafeHttpClient.withoutConnectionReuse()` – denselben gehärteten Client mit einem Pool, der nichts aufbewahrt
+   (jede Verbindung wird nach ihrer Anfrage geschlossen). Der erste Ansatz (ruhende Verbindungen vor jedem Auftrag
+   schließen) reichte nicht: gibt ein paralleler Auftrag seine Verbindung erst danach zurück, konnte der Server sie
+   schließen, bevor der nächste sie nahm (aufgedeckt durch die Nachprüfung, JVM-Test `parallelIdleReturn`). Alle
+   Prüfschichten (Adressregeln, DNS, Socket-Guard, Netzwerk-Interceptor bei jeder Anfrage), Zeitgrenzen und
+   Weiterleitungen bleiben unverändert. JVM-Tests `staleIdleConnection`, `parallelIdleReturn`,
+   `parallelRedirectResume`; Mutationsprobe „stale idle connection reused“ (Engine wieder mit Pool → erkannt).
 2. **Desktop-Harness, Download-Modus (nur Test, nie ausgeliefert):** `tests/java/channel/…/HarnessDownloads.java`
    betreibt die echte `DirectDownloads`-Engine mit echtem `SafeHttpClient` (Testregeln: einziges erlaubtes Ziel
    `127.0.0.1:<Medienport>`, alles andere gesperrt) hinter dem echten `ChannelServer`. Ersetzt ist nur die

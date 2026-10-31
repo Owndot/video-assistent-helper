@@ -88,7 +88,8 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     }
 
     DirectDownloads(SafeHttpClient http, DownloadStore store, Listener listener, long callTimeoutMs) throws IOException {
-        this.http = http;
+        // Jede Anfrage auf eigener Verbindung: nie eine ruhende, vom Server schon geschlossene (SafeHttpClient#withoutConnectionReuse).
+        this.http = http.withoutConnectionReuse();
         this.store = store;
         this.listener = listener;
         this.callTimeoutMs = callTimeoutMs;
@@ -168,9 +169,6 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         try {
             // Ablage zuerst: ohne Schreibrecht (Android 8–9: Speicherberechtigung) kein Netzwerkzugriff.
             if (!store.writable()) throw new Fail("storage_permission");
-            // Neue Verbindung je Auftrag: eine ruhende, vom Server schon geschlossene Pool-Verbindung wäre ohne
-            // automatische Wiederholung ein Fehlschlag (siehe SafeHttpClient.closeIdleConnections).
-            http.closeIdleConnections();
             response = http.get(url, -1, -1, MAX_FILE_BYTES, callTimeoutMs, job.cancel);
             checkCancelled(job);
             if (response.code() != 200) throw new Fail("http_" + response.code());
