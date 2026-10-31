@@ -21,6 +21,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -349,6 +351,8 @@ public final class TestDirectDownloads {
         check("cancel unknown id / after done", TestDirectDownloads::cancelOther);
         check("duplicate and late start: one request only", TestDirectDownloads::duplicates);
         check("server closed the idle keep-alive connection: next download uses a new one (no retry needed)", TestDirectDownloads::staleIdleConnection);
+        check("parallel eviction leaves active body intact during redirect and strong-ETag resume", TestDirectDownloads::parallelRedirectResume);
+        check("parallel job returns a closed connection after the other job's eviction", TestDirectDownloads::parallelIdleReturn);
         check("journal across restart: done stays done, running becomes interrupted", TestDirectDownloads::journal);
         check("journal failure: start refused, nothing fetched", TestDirectDownloads::journalFailure);
         check("corrupt journal fails closed", TestDirectDownloads::corruptJournal);
@@ -737,6 +741,90 @@ public final class TestDirectDownloads {
             }
             expect(srv.requests.get() == 3 && srv.connections.get() == 3, "requests " + srv.requests.get() + ", connections " + srv.connections.get());
             d.stopAll();
+        }
+    }
+
+    static void awaitGate(CountDownLatch latch) {
+        try { expect(latch.await(10, TimeUnit.SECONDS), "schedule gate timed out"); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AssertionError(e); }
+    }
+
+    static void parallelRedirectResume() throws Exception {
+        CountDownLatch firstBody = new CountDownLatch(1), releaseFirst = new CountDownLatch(1);
+        try (Server srv = new Server((r, out, i) -> {
+            if (r.line.contains("/first.mp4")) {
+                head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: 65536");
+                content(out, 0, 8); out.flush(); firstBody.countDown();
+                awaitGate(releaseFirst); content(out, 8, 65536);
+            } else if (r.line.contains("/redirect")) {
+                head(out, "302 Found", "Location: /resume.mp4", "Content-Length: 0");
+            } else {
+                serveFile(r, out, 4096, "\"parallel\"", r.rangeStart() < 0 ? 1024 : -1);
+            }
+        })) {
+            DirStore store = new DirStore("parallel-redirect-resume");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            try {
+                String first = newId(), second = newId();
+                d.start(first, srv.url("/first.mp4"), "First");
+                awaitGate(firstBody);
+                d.start(second, srv.url("/redirect"), "Second");
+                expect(ev.await(second, 10_000).equals("done"), "redirect/resume job failed");
+                expect(!ev.finished.containsKey(first), "active job must still be held, not cancelled");
+                releaseFirst.countDown();
+                expect(ev.await(first, 10_000).equals("done"), "active body interrupted by other job");
+                expect(srv.requests.get() == 4, "unexpected retry/request count: " + srv.requests.get());
+                expect(srv.seen.stream().filter(r -> r.rangeStart() >= 0).allMatch(r -> "\"parallel\"".equals(r.header("if-range"))), "strong validator missing");
+                expect(srv.seen.stream().allMatch(r -> r.header("cookie") == null && r.header("authorization") == null && r.header("referer") == null), "credentials leaked");
+                expect(java.util.Arrays.equals(fileSha(new File(store.dir, "First.mp4")), expectedSha(65536)), "first hash");
+                expect(java.util.Arrays.equals(fileSha(new File(store.dir, "Second.mp4")), expectedSha(4096)), "second hash");
+            } finally { releaseFirst.countDown(); d.stopAll(); }
+        }
+    }
+
+    static void parallelIdleReturn() throws Exception {
+        CountDownLatch firstBody = new CountDownLatch(1), releaseFirst = new CountDownLatch(1);
+        CountDownLatch secondCall = new CountDownLatch(1), releaseSecond = new CountDownLatch(1);
+        Map<String, okhttp3.Connection> acquired = new ConcurrentHashMap<>();
+        try (Server srv = new Server((r, out, i) -> {
+            if (r.line.contains("/first.mp4")) {
+                head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: 4096");
+                content(out, 0, 8); out.flush(); firstBody.countDown();
+                awaitGate(releaseFirst); content(out, 8, 4096);
+            } else serveFile(r, out, 4096, null, -1);
+        })) {
+            SafeHttpClient http = LocalTestClients.loopback(srv.port());
+            LocalTestClients.observe(http, new okhttp3.EventListener() {
+                @Override public void callStart(okhttp3.Call call) {
+                    if (call.request().url().encodedPath().equals("/second.mp4")) {
+                        secondCall.countDown(); awaitGate(releaseSecond);
+                    }
+                }
+                @Override public void connectionAcquired(okhttp3.Call call, okhttp3.Connection connection) {
+                    acquired.put(call.request().url().encodedPath(), connection);
+                }
+            });
+            DirStore store = new DirStore("parallel-idle-return");
+            Events ev = new Events();
+            DirectDownloads d = engine(http, store, ev);
+            try {
+                String first = newId(), second = newId();
+                d.start(first, srv.url("/first.mp4"), "First");
+                awaitGate(firstBody);
+                Socket firstSocket = srv.open.get(0);
+                d.start(second, srv.url("/second.mp4"), "Second");
+                awaitGate(secondCall);      // second job has evicted while first connection was active
+                releaseFirst.countDown();
+                expect(ev.await(first, 10_000).equals("done"), "first job"); // connection returned to pool
+                firstSocket.close();       // server closes that now-idle connection, before second acquires
+                releaseSecond.countDown();
+                String outcome = ev.await(second, 10_000);
+                boolean reused = acquired.get("/first.mp4") == acquired.get("/second.mp4");
+                expect(outcome.equals("done"), "second=" + outcome + ", reusedClosedConnection=" + reused);
+                expect(srv.requests.get() == 2, "exactly one request per job");
+                expect(java.util.Arrays.equals(fileSha(new File(store.dir, "Second.mp4")), expectedSha(4096)), "second hash");
+            } finally { releaseFirst.countDown(); releaseSecond.countDown(); d.stopAll(); }
         }
     }
 

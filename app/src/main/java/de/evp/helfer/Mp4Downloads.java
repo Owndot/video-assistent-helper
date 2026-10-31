@@ -171,7 +171,7 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
             cv.put(MediaStore.Downloads.DISPLAY_NAME, name);
             if (cr.update(uri, cv, null, null) != 1) throw new IOException("publish");
             finished = true;
-            Downloads.removeProof(proof);
+            cleanupPublishedProof(proof);
             return uri;
         }
 
@@ -245,7 +245,7 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
                 RESERVED.remove(dst.getPath());
             }
             finished = true;
-            Downloads.removeProof(proof);   // Absturz davor: Markierung ohne Teil-Datei, beim Start entfernt
+            cleanupPublishedProof(proof);
             return scan(dst);
         }
 
@@ -269,6 +269,13 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     }
 
     static final String PART_PREFIX = ".evp-pending-", PART_SUFFIX = ".part";
+    /** Veröffentlichung ist bereits verbindlich. Ein Aufräumfehler darf daraus keinen Fehlversuch machen.
+     * Die private Besitzmarkierung bleibt bei Fehler erhalten; der nächste Prozessstart entfernt sie.
+     * Dessen Bereinigung betrifft nur eigene unfertige Einträge/Teil-Dateien, nie die veröffentlichte Datei.
+     */
+    private static void cleanupPublishedProof(File proof) {
+        try { Downloads.removeProof(proof); } catch (IOException ignored) { /* beim nächsten Start nachholen */ }
+    }
     /** Im Prozess reservierte endgültige Namen (Android 8–9); geschützt durch {@link Downloads#fileNames}. */
     private static final java.util.Set<String> RESERVED = new java.util.HashSet<>();
 

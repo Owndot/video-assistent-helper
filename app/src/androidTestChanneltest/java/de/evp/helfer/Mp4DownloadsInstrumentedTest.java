@@ -574,6 +574,101 @@ public class Mp4DownloadsInstrumentedTest {
         }
     }
 
+    /** Echte Dateisystemstörung: Besitzmarkierung darf nach publish nicht gelöscht werden.
+     * Optional bleibt das Journal wie bei einem Prozessabsturz vor DONE stehen. Keine Produktions-Testschalter.
+     */
+    static final class MarkerFailureStore implements DownloadStore {
+        final Mp4Downloads real;
+        final boolean crashAfterPublish;
+        boolean dead;
+        File proof;
+        String publishedRef;
+        MarkerFailureStore(Mp4Downloads real, boolean crashAfterPublish) { this.real = real; this.crashAfterPublish = crashAfterPublish; }
+        @Override public boolean writable() { return real.writable(); }
+        @Override public long freeBytes() throws IOException { return real.freeBytes(); }
+        @Override public byte[] loadJournal() throws IOException { return real.loadJournal(); }
+        @Override public void saveJournal(byte[] data) throws IOException { if (!dead) real.saveJournal(data); }
+        @Override public boolean isPublished(String ref, long total) throws IOException { return real.isPublished(ref, total); }
+        @Override public Target create(String name, String mime) throws IOException {
+            Target target = real.create(name, mime);
+            try {
+                java.lang.reflect.Field f = target.getClass().getDeclaredField("proof");
+                f.setAccessible(true);
+                proof = (File) f.get(target);
+            } catch (ReflectiveOperationException e) { throw new IOException(e); }
+            return new Target() {
+                @Override public OutputStream out() throws IOException { return target.out(); }
+                @Override public String ref() { return target.ref(); }
+                @Override public Object commit() throws IOException {
+                    File dir = proof.getParentFile();
+                    int mode;
+                    try { mode = android.system.Os.stat(dir.getPath()).st_mode & 0777; android.system.Os.chmod(dir.getPath(), 0500); }
+                    catch (android.system.ErrnoException e) { throw new IOException(e); }
+                    try {
+                        assertFalse("fault injection must prevent unlink", proof.delete());
+                        dead = crashAfterPublish;
+                        Object saved = target.commit();
+                        publishedRef = target.ref();
+                        return saved;
+                    } finally {
+                        publishedRef = target.ref();
+                        try { android.system.Os.chmod(dir.getPath(), mode); }
+                        catch (android.system.ErrnoException e) { throw new IOException(e); }
+                    }
+                }
+                @Override public void abort() { target.abort(); }
+            };
+        }
+    }
+
+    @Test public void publishedFileSurvivesMarkerFailureAndRestart() throws Exception {
+        final long total = 65536;
+        try (Server srv = new Server((line, h, out, i) -> serveFile(h, out, total, "\"marker\"", -1))) {
+            for (boolean crash : new boolean[] {false, true}) {
+                engineFor(srv);
+                engine.stopAll();
+                MarkerFailureStore fault = new MarkerFailureStore(store, crash);
+                engine = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), fault, events);
+                String id = newId(), t = title(crash ? "MarkerCrash" : "MarkerDone");
+                // Gleich aussehende fremde Teil-Datei OHNE private Besitzmarkierung muss erhalten bleiben.
+                File foreign = null;
+                if (Build.VERSION.SDK_INT < 29) {
+                    java.nio.file.Files.createDirectories(legacyDir().toPath());
+                    foreign = new File(legacyDir(), Mp4Downloads.PART_PREFIX + "evp-publish-123456789.pending" + Mp4Downloads.PART_SUFFIX);
+                    assertTrue("isolated fixture name", foreign.createNewFile());
+                    cleanupFiles.add(foreign);
+                }
+                engine.start(id, srv.url("/marker.mp4"), t);
+                if (Build.VERSION.SDK_INT < 29) cleanupFiles.add(new File(legacyDir(), t + ".mp4"));
+                String result = events.await(id, 30_000);
+                Uri savedUri = Build.VERSION.SDK_INT >= 29 ? Uri.parse(fault.publishedRef) : Uri.fromFile(new File(fault.publishedRef));
+                cleanup.add(savedUri);   // auch die Fehler-Gegenprobe räumt ihre veröffentlichte Datei auf
+                assertEquals("published file is successful despite marker failure", "done", result);
+                assertTrue("proof retained for next startup", fault.proof.isFile());
+                assertTrue(store.isPublished(fault.publishedRef, total));
+                String journal = new String(store.loadJournal(), StandardCharsets.US_ASCII);
+                assertTrue(journal, journal.contains(id + (crash ? " RUNNING " : " DONE ")));
+                assertTrue(engine.start(id, srv.url("/marker.mp4"), t).contains("\"state\":\"done\""));
+                engine.stopAll();
+                newProcessCleanup();
+                assertFalse("obsolete proof removed at next startup", fault.proof.exists());
+                if (foreign != null) assertTrue("foreign file untouched", foreign.isFile());
+                assertTrue("published file untouched", store.isPublished(fault.publishedRef, total));
+                try (InputStream in = ctx.getContentResolver().openInputStream(savedUri)) {
+                    assertArrayEquals(expectedSha(total), sha(in));
+                }
+                Mp4Downloads restarted = new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> Mp4Downloads.legacyWritePermitted(ctx));
+                int requests = srv.requests.get();
+                assertTrue(restarted.engine.status(id).contains("\"state\":\"done\""));
+                assertTrue(restarted.engine.start(id, srv.url("/marker.mp4"), t).contains("\"state\":\"done\""));
+                assertEquals("same id must not fetch again after restart", requests, srv.requests.get());
+                restarted.engine.stopAll();
+                if (foreign != null) assertTrue(foreign.delete());
+                new File(ctx.getFilesDir(), journalName).delete();
+            }
+        }
+    }
+
     /** Journal und Ablage nach Abstürzen: veröffentlicht -> fertig; nicht veröffentlicht -> unterbrochen und Reste entfernt. */
     @Test public void crashConsistencyBetweenJournalAndStorage() throws Exception {
         long total = 1L << 20;

@@ -17,4 +17,14 @@ public final class LocalTestClients {
     public static SafeHttpClient strict() {
         return SafeHttpClient.strict(Collections::emptyList);
     }
+
+    /** Test-only scheduling/observation at callStart, after the engine's eviction and before connection acquisition.
+     * The copied builder preserves every guard, timeout, retry policy and the original pool.
+     */
+    public static void observe(SafeHttpClient http, okhttp3.EventListener listener) throws Exception {
+        java.lang.reflect.Field f = SafeHttpClient.class.getDeclaredField("client");
+        f.setAccessible(true);
+        okhttp3.OkHttpClient client = (okhttp3.OkHttpClient) f.get(http);
+        f.set(http, client.newBuilder().eventListener(listener).build());
+    }
 }

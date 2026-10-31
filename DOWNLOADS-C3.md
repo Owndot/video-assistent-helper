@@ -45,3 +45,18 @@ Emulator/Gerät: C3 ändert an der Android-Ablage nichts; deren Tests (Android 8
 READ/WRITE-Berechtigung, Android 10+ MediaStore, Absturz-Wiederherstellung) liefen in C2 auf Emulatoren API 26 und 34.
 Die Behebung (1) läuft in der CI zusätzlich in den Emulator-Tests mit (`Mp4DownloadsInstrumentedTest`). Kein echtes
 Gerät benutzt.
+
+## Unabhängige C3-Nachprüfung (Korrekturen)
+
+- Nach erfolgreicher Dateiveröffentlichung ist das Entfernen der privaten Besitzmarkierung nur noch Bereinigung.
+  Ein IOException dabei ändert den Download nicht in failed/storage. Die Markierung bleibt für die bestehende
+  Prozessstart-Bereinigung erhalten; deren Besitz- und Pending-Prüfungen sind unverändert (API 26 und 34).
+- Neue Instrumentierung sperrt das Markierungsverzeichnis während commit() tatsächlich gegen Löschen und prüft
+  DONE, Datei-Hash, den Journalstand vor/nach DONE, Neustart, dieselbe Auftragskennung und fremde Teil-Dateien.
+  Die CI führt zusätzlich eine Gegenprobe mit dem alten, fehlschlagenden Aufräumverhalten aus.
+- Zwei JVM-Prüfungen koordinieren parallele Jobs mit Latches: aktiver Body während Redirect/ETag-Resume sowie
+  Rückgabe einer vom Server geschlossenen Verbindung nach der Pool-Leerung des zweiten Jobs. Keine Sleep-gesteuerte
+  Reihenfolge und keine Lockerung der Netzwerkschicht. Testergebnisse werden anhand der CI bewertet.
+- Die allgemeine CI baut auf dem C3-Branch keine Release-/Signierfixtures und keine Auslieferungs-Debug-APK.
+  Die freigegebenen Kanal-APKs bleiben ausschließlich im Wegwerf-Emulator; nur Textberichte werden hochgeladen.
+  Produktionsrichtlinie und Produktionssignierung bleiben unverändert UNAPPROVED.

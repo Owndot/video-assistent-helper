@@ -288,6 +288,8 @@ jobs:
           gradle :app:assembleDebug -PmigrationFixtureVersion=122 --no-daemon
           sha256sum app/build/outputs/apk/debug/app-debug.apk > "$RUNNER_TEMP/pre-fixture-debug.sha256"
       - name: Unsigned release and disposable signing validation
+        # C3: only disposable emulator APKs; no production-package/signing fixtures or delivery artifacts.
+        if: github.head_ref != 'feature/c3-browser-downloads' && github.ref_name != 'feature/c3-browser-downloads'
         # run_local_release.sh creates test-only.jks; no production identity is loaded.
         run: bash tests/security/run_local_release.sh
       - name: Prove fixture build invalidates the earlier APK checksum
@@ -299,6 +301,8 @@ jobs:
           fi
           echo 'PASS: real fixture version 123 overwrote version 122; earlier hash is stale'
       - name: Isolated debug APK with disposable test key
+        # C3: only disposable emulator APKs; no production-package/signing fixtures or delivery artifacts.
+        if: github.head_ref != 'feature/c3-browser-downloads' && github.ref_name != 'feature/c3-browser-downloads'
         shell: bash
         run: |
           set -euo pipefail
@@ -308,6 +312,8 @@ jobs:
           trap 'rm -f "$HOME/.android/debug.keystore"' EXIT
           gradle :app:assembleDebug --no-daemon
       - name: Verify PSL data packaged into the debug APK
+        # C3: only disposable emulator APKs; no production-package/signing fixtures or delivery artifacts.
+        if: github.head_ref != 'feature/c3-browser-downloads' && github.ref_name != 'feature/c3-browser-downloads'
         run: |
           python3 - <<'PY'
           import hashlib,zipfile
@@ -317,6 +323,8 @@ jobs:
           print("PASS: pinned PSL present in APK")
           PY
       - name: Record isolated debug APK provenance
+        # C3: only disposable emulator APKs; no production-package/signing fixtures or delivery artifacts.
+        if: github.head_ref != 'feature/c3-browser-downloads' && github.ref_name != 'feature/c3-browser-downloads'
         shell: bash
         run: |
           mkdir -p validation-results
@@ -360,6 +368,8 @@ jobs:
           grep -Eq 'differ|EOF' "$work/signature.log"
           echo 'PASS: upload gate rejects stale real-APK hash and signature records'
       - name: Verify final debug artifact immediately before upload
+        # C3: only disposable emulator APKs; no production-package/signing fixtures or delivery artifacts.
+        if: github.head_ref != 'feature/c3-browser-downloads' && github.ref_name != 'feature/c3-browser-downloads'
         id: debug_artifact_verified
         run: bash .github/scripts/verify-debug-artifact.sh
       # Kanal-Integration: keine installierbare APK veröffentlichen (Freigabe des Eigentümers fehlt). Die Sperre gilt für
