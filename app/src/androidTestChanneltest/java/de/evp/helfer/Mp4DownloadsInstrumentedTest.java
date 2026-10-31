@@ -636,7 +636,7 @@ public class Mp4DownloadsInstrumentedTest {
         if (Build.VERSION.SDK_INT >= 29) return;
         File dl = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         String mounts = "";
-        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader("/proc/self/mounts"))) {
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader("/proc/self/mountinfo"))) {
             for (String l; (l = r.readLine()) != null; ) if (l.contains("/storage") || l.contains("sdcard")) mounts += l.replace(' ', ',') + ";";
         }
         String probe;
@@ -644,6 +644,6 @@ public class Mp4DownloadsInstrumentedTest {
         catch (IOException e) { probe = e.getClass().getSimpleName() + ":" + e.getMessage(); }
         Log.i(TAG, "MP4_STORAGE sdk=" + Build.VERSION.SDK_INT + " granted=" + Mp4Downloads.legacyWritePermitted(ctx)
             + " state=" + Environment.getExternalStorageState() + " dl=" + dl + " exists=" + dl.exists() + " canWrite=" + dl.canWrite()
-            + " probe=" + probe + " uid=" + android.os.Process.myUid() + " mounts=" + mounts);
+            + " probe=" + probe + " uid=" + android.os.Process.myUid() + " pid=" + android.os.Process.myPid() + " mountinfo=" + mounts);
     }
 }
