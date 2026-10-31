@@ -20,6 +20,8 @@ adb logcat -c
 adb install -r -t "$OUT/apk/helper-channeltest.apk" > /dev/null
 adb install -r -t "$OUT/apk/helper-channeltest-androidTest.apk" > /dev/null
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS 2>/dev/null || true
+# Android 8–9: öffentlicher Download-Ordner (ab Android 10 nicht angefordert, der Befehl scheitert dort folgenlos).
+adb shell pm grant $PKG android.permission.WRITE_EXTERNAL_STORAGE 2>/dev/null || true
 adb shell am instrument -w -r -e class de.evp.helfer.ChannelInstrumentedTest,de.evp.helfer.net.SafeHttpInstrumentedTest,de.evp.helfer.Mp4DownloadsInstrumentedTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$REPORT/instrumentation.txt" 2>&1
 status=0
 grep -q '^OK (' "$REPORT/instrumentation.txt" || status=1
@@ -34,8 +36,17 @@ adb shell pm list packages de.evp.helfer > "$REPORT/packages-during.txt"
 adb uninstall "$PKG.test" > /dev/null || true
 adb uninstall "$PKG" > /dev/null || true
 adb shell pm list packages de.evp.helfer > "$REPORT/packages-after.txt"
+# Fertige Downloads bleiben nach der Deinstallation im öffentlichen Ordner (Testdatei aus publicFileForUninstallCheck).
+persist="$(adb shell 'ls /sdcard/Download/Video-Assistent/ 2>/dev/null' | tr -d '\r' | grep '^C2 Persist ' | head -1 || true)"
+if [ -n "$persist" ]; then
+  echo "PERSIST_AFTER_UNINSTALL ok: $persist ($(adb shell "stat -c %s '/sdcard/Download/Video-Assistent/$persist'" | tr -d '\r') bytes)" >> "$REPORT/summary.txt"
+  adb shell "rm -f '/sdcard/Download/Video-Assistent/$persist'" || true
+else
+  echo "PERSIST_AFTER_UNINSTALL missing" >> "$REPORT/summary.txt"; status=1
+fi
 diff -q "$REPORT/packages-before.txt" "$REPORT/packages-after.txt" > /dev/null || { echo "package list changed" >> "$REPORT/summary.txt"; status=1; }
 tail -5 "$REPORT/summary.txt"
+grep -h 'PERSIST_AFTER_UNINSTALL' "$REPORT/summary.txt" || true
 # Fehlgeschlagene Tests mit dem Anfang ihres Stacktraces ins Job-Log (nur Testausgaben mit Wegwerfdaten).
 awk '/^INSTRUMENTATION_STATUS: test=/{t=$0} /^INSTRUMENTATION_STATUS: stack=/{print "FAILED " t; n=14} n>0{print; n--}' "$REPORT/instrumentation.txt" | head -150
 grep -E 'CHANNEL_|OKHTTP_|MP4_' "$REPORT/measurements.txt" || true

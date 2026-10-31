@@ -69,6 +69,8 @@ public class Mp4DownloadsInstrumentedTest {
     @BeforeClass public static void setUp() throws Exception {
         ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
         if (Build.VERSION.SDK_INT >= 33) shell("pm grant " + ctx.getPackageName() + " android.permission.POST_NOTIFICATIONS");
+        // Android 8–9: öffentlicher Download-Ordner braucht die Laufzeitberechtigung (auch run-channel-instrumentation.sh).
+        if (Build.VERSION.SDK_INT < 29) shell("pm grant " + ctx.getPackageName() + " android.permission.WRITE_EXTERNAL_STORAGE");
     }
 
     /** URL, Host und Token der Testserver dürfen nie im Logcat stehen (auch nicht in Fehlermeldungen). */
@@ -246,7 +248,7 @@ public class Mp4DownloadsInstrumentedTest {
 
     void engineFor(Server srv) throws Exception {
         journalName = "mp4-jobs-test-" + newId();
-        store = new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()));
+        store = new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> Mp4Downloads.legacyWritePermitted(ctx));
         events = new Events(store);
         engine = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), store, events);
     }
@@ -261,7 +263,8 @@ public class Mp4DownloadsInstrumentedTest {
         if (journalName != null) new File(ctx.getFilesDir(), journalName).delete();
     }
 
-    static File legacyDir() { return new File(ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), Downloads.FOLDER); }
+    /** Android 8–9: öffentlicher Ordner Download/Video-Assistent (bleibt nach Deinstallation). */
+    static File legacyDir() { return Mp4Downloads.publicDir(); }
 
     /** Unfertige Reste dieses Tests: pending MediaStore-Einträge bzw. .part-Dateien und Besitz-Markierungen. */
     static int leftovers(String title) {
@@ -275,7 +278,7 @@ public class Mp4DownloadsInstrumentedTest {
             }
         } else {
             File[] parts = legacyDir().listFiles();
-            if (parts != null) for (File f : parts) if (f.getName().startsWith(".evp-pending-")) n++;
+            if (parts != null) for (File f : parts) if (f.getName().startsWith(Mp4Downloads.PART_PREFIX)) n++;
         }
         return n;
     }
@@ -340,7 +343,10 @@ public class Mp4DownloadsInstrumentedTest {
                 cleanupFiles.add(f);
                 assertEquals(total, f.length());
                 try (InputStream in = new FileInputStream(f)) { assertArrayEquals(expectedSha(total), sha(in)); }
-                Log.i(TAG, "MP4_LEGACY_SCAN sdk=" + Build.VERSION.SDK_INT + " scheme=" + uri.getScheme() + " mediaStore=" + uri.toString().startsWith("content://media/"));
+                assertTrue("public Download folder: " + f, f.getPath().startsWith(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).getPath()));
+                assertEquals("media scanner entry", "content", uri.getScheme());
+                Log.i(TAG, "MP4_LEGACY_SCAN sdk=" + Build.VERSION.SDK_INT + " scheme=" + uri.getScheme() + " mediaStore=" + uri.toString().startsWith("content://media/")
+                    + " public=true");
             }
             assertEquals(0, leftovers(t));
             assertEquals(1, srv.requests.get());
@@ -480,13 +486,148 @@ public class Mp4DownloadsInstrumentedTest {
             target.out().write(new byte[] {0, 0, 0, 0x18, 'f', 't', 'y', 'p'});
             target.out().flush();
             assertEquals(1, leftovers(t));
-            // "Neuer Prozess": die einmalige Bereinigung erneut ausführen (Schalter nur im Test zurückgesetzt).
+            assertFalse("unfinished entry is not published", store.isPublished(target.ref(), 8));
+            int proofsBefore = proofs();
+            newProcessCleanup();
+            assertEquals(0, leftovers(t));
+            assertEquals("ownership proof removed with the leftover", proofsBefore - 1, proofs());
+            target.abort();
+        }
+    }
+
+    /** "Neuer Prozess": die einmaligen Bereinigungen erneut ausführen (Schalter nur im Test zurückgesetzt). */
+    void newProcessCleanup() throws Exception {
+        if (Build.VERSION.SDK_INT >= 29) {
             java.lang.reflect.Field f = Downloads.class.getDeclaredField("initialized");
             f.setAccessible(true);
             synchronized (Downloads.class) { f.setBoolean(null, false); }
             Downloads.initialize(ctx);
+        } else {
+            new Mp4Downloads(ctx, journalName + "-cleanup", DeviceTestClients.loopback(1), () -> Mp4Downloads.legacyWritePermitted(ctx)).engine.stopAll();
+            new File(ctx.getFilesDir(), journalName + "-cleanup").delete();
+        }
+    }
+
+    /**
+     * Android 8–9 ohne Speicherberechtigung: Auftrag scheitert vor jedem Netzwerkzugriff, nichts wird angelegt.
+     * Android 10+: keine Speicherberechtigung angefordert (MediaStore braucht keine) und trotzdem beschreibbar.
+     */
+    @Test public void storagePermissionOnlyOnAndroid8And9() throws Exception {
+        if (Build.VERSION.SDK_INT >= 29) {
+            String[] requested = ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions;
+            for (String p : requested) {
+                assertFalse("storage permission requested on API " + Build.VERSION.SDK_INT + ": " + p,
+                    p.equals("android.permission.WRITE_EXTERNAL_STORAGE") || p.equals("android.permission.READ_EXTERNAL_STORAGE")
+                        || p.equals("android.permission.MANAGE_EXTERNAL_STORAGE") || p.startsWith("android.permission.READ_MEDIA_"));
+            }
+            try (Server srv = new Server((line, h, out, i) -> serveFile(h, out, 4096, null, -1))) {
+                Mp4Downloads denied = new Mp4Downloads(ctx, "mp4-jobs-test-" + newId(), DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> false);
+                assertTrue("MediaStore needs no permission", denied.writable());
+                denied.engine.stopAll();
+            }
+            Log.i(TAG, "MP4_PERMISSION sdk=" + Build.VERSION.SDK_INT + " storagePermissionRequested=false");
+            return;
+        }
+        assertTrue("granted for the other tests", Mp4Downloads.legacyWritePermitted(ctx));
+        try (Server srv = new Server((line, h, out, i) -> serveFile(h, out, 4096, null, -1))) {
+            journalName = "mp4-jobs-test-" + newId();
+            Mp4Downloads denied = new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> false);
+            Events ev = new Events(denied);
+            engine = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), denied, ev);
+            String id = newId(), t = title("Denied");
+            engine.start(id, srv.url("/v.mp4"), t);
+            assertEquals("failed:storage_permission", ev.await(id, 10_000));
+            assertEquals("no network access without storage permission", 0, srv.connections.get());
             assertEquals(0, leftovers(t));
-            target.abort();
+            assertFalse(new File(legacyDir(), t + ".mp4").exists());
+            Log.i(TAG, "MP4_PERMISSION sdk=" + Build.VERSION.SDK_INT + " denied=failed:storage_permission connections=0");
+        }
+    }
+
+    /** Ablage mit "Absturz" an einer Stelle: das Journal auf der Platte bleibt dort stehen, nichts wird mehr aufgeräumt. */
+    static final class CrashingStore implements DownloadStore {
+        final Mp4Downloads real;
+        final boolean crashBeforePublish;
+        volatile boolean dead;
+        CrashingStore(Mp4Downloads real, boolean crashBeforePublish) { this.real = real; this.crashBeforePublish = crashBeforePublish; }
+        @Override public boolean writable() { return real.writable(); }
+        @Override public boolean isPublished(String ref, long total) throws IOException { return real.isPublished(ref, total); }
+        @Override public long freeBytes() throws IOException { return real.freeBytes(); }
+        @Override public byte[] loadJournal() throws IOException { return real.loadJournal(); }
+        @Override public void saveJournal(byte[] data) throws IOException { if (!dead) real.saveJournal(data); }
+        @Override public Target create(String displayName, String mime) throws IOException {
+            Target t = real.create(displayName, mime);
+            return new Target() {
+                @Override public OutputStream out() throws IOException { return t.out(); }
+                @Override public String ref() { return t.ref(); }
+                @Override public Object commit() throws IOException {
+                    if (crashBeforePublish) { dead = true; throw new IOException("process died before publishing"); }
+                    Object o = t.commit();
+                    dead = true;                       // veröffentlicht, aber "DONE" erreicht das Journal nicht mehr
+                    return o;
+                }
+                @Override public void abort() { if (!dead) t.abort(); }
+            };
+        }
+    }
+
+    /** Journal und Ablage nach Abstürzen: veröffentlicht -> fertig; nicht veröffentlicht -> unterbrochen und Reste entfernt. */
+    @Test public void crashConsistencyBetweenJournalAndStorage() throws Exception {
+        long total = 1L << 20;
+        try (Server srv = new Server((line, h, out, i) -> serveFile(h, out, total, "\"c\"", -1))) {
+            engineFor(srv);
+            engine.stopAll();
+            // (a) Absturz nach dem Veröffentlichen, bevor "DONE" gespeichert war.
+            CrashingStore afterPublish = new CrashingStore(store, false);
+            Events ev = new Events(store);
+            DirectDownloads crashing = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), afterPublish, ev);
+            String a = newId(), ta = title("CrashAfter");
+            crashing.start(a, srv.url("/v.mp4"), ta);
+            assertEquals("done", ev.await(a, 30_000));
+            Uri published = (Uri) ev.saved.get(a);
+            cleanup.add(published);
+            if (Build.VERSION.SDK_INT < 29) cleanupFiles.add(new File(legacyDir(), ta + ".mp4"));
+            String onDisk = new String(store.loadJournal(), StandardCharsets.US_ASCII);
+            assertTrue(onDisk, onDisk.contains(a + " RUNNING "));
+            Mp4Downloads restarted = new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> Mp4Downloads.legacyWritePermitted(ctx));
+            String st = restarted.engine.status(a);
+            assertTrue("published file after crash: " + st, st.contains("\"state\":\"done\"") && st.contains("\"bytes\":" + total));
+            int before = srv.requests.get();
+            assertTrue(restarted.engine.start(a, srv.url("/v.mp4"), ta).contains("\"state\":\"done\""));
+            assertEquals("no second download", before, srv.requests.get());
+            restarted.engine.stopAll();
+            crashing.stopAll();
+
+            // (b) Absturz vor dem Veröffentlichen: unterbrochen, unfertiger Eintrag nie sichtbar und beim Start entfernt.
+            CrashingStore beforePublish = new CrashingStore(store, true);
+            Events ev2 = new Events(store);
+            DirectDownloads crashing2 = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), beforePublish, ev2);
+            String b = newId(), tb = title("CrashBefore");
+            crashing2.start(b, srv.url("/v.mp4"), tb);
+            ev2.await(b, 30_000);
+            assertEquals("unfinished entry left behind by the dead process", 1, leftovers(tb));
+            assertFalse("never visible under its final name", new File(legacyDir(), tb + ".mp4").exists() && Build.VERSION.SDK_INT < 29);
+            Mp4Downloads restarted2 = new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> Mp4Downloads.legacyWritePermitted(ctx));
+            assertTrue(restarted2.engine.status(b), restarted2.engine.status(b).contains("\"state\":\"interrupted\""));
+            restarted2.engine.stopAll();
+            newProcessCleanup();
+            assertEquals("leftover removed on next start", 0, leftovers(tb));
+            crashing2.stopAll();
+            Log.i(TAG, "MP4_CRASH sdk=" + Build.VERSION.SDK_INT + " afterPublish=done beforePublish=interrupted leftovers=0");
+        }
+    }
+
+    /**
+     * Bleibt eine fertige Datei nach der Deinstallation erhalten? Diese Datei wird absichtlich nicht entfernt;
+     * tools/run-channel-instrumentation.sh prüft sie nach dem Deinstallieren und löscht sie dann.
+     */
+    @Test public void publicFileForUninstallCheck() throws Exception {
+        try (Server srv = new Server((line, h, out, i) -> serveFile(h, out, 65536, null, -1))) {
+            engineFor(srv);
+            String id = newId(), t = "C2 Persist " + Build.VERSION.SDK_INT;
+            engine.start(id, srv.url("/v.mp4"), t);
+            assertEquals("done", events.await(id, 30_000));
+            Log.i(TAG, "MP4_PERSIST sdk=" + Build.VERSION.SDK_INT + " name=" + t + ".mp4 bytes=65536");
         }
     }
 }
