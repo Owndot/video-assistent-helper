@@ -89,7 +89,8 @@ public class MainActivity extends Activity {
 
     @Override
     public void onRequestPermissionsResult(int code, String[] p, int[] r) {
-        if (HelferService.running) {   // Benachrichtigung jetzt sichtbar machen
+        // Nur für die Benachrichtigung (1) neu starten; die Speicherberechtigung (2) gilt sofort, laufende Downloads bleiben.
+        if (code == 1 && HelferService.running) {   // Benachrichtigung jetzt sichtbar machen
             stopService(new Intent(this, HelferService.class));
             HelferService.start(this);
         }
@@ -174,6 +175,29 @@ public class MainActivity extends Activity {
                 Tr.t("Code anzeigen", "Show code"), v -> showCode(),
                 // erledigt: Browser verwalten (weiteren koppeln, einzeln trennen) · lange drücken = Identität zurücksetzen
                 pill(Tr.t("Browser verwalten", "Manage browsers"), false, v -> manageBrowsers()));
+
+        // Android 8–9: Downloads landen im öffentlichen Ordner Download/Video-Assistent (bleiben nach Deinstallation
+        // erhalten) und brauchen dafür die Speicherberechtigung. Android 10+ braucht keine (MediaStore).
+        if (Build.VERSION.SDK_INT < 29) {
+            boolean storage = Mp4Downloads.legacyWritePermitted(this);
+            // Einmal abgelehnt mit „Nicht mehr fragen“: der Dialog erscheint nicht mehr, also die App-Einstellungen öffnen.
+            boolean blocked = prefs(this).getBoolean("storageAsked", false)
+                    && !shouldShowRequestPermissionRationale(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+            step(needNotif ? 5 : 4, Tr.t("Downloads speichern", "Save downloads"), storage, Tr.t("Erlaubt", "Allowed"),
+                    Tr.t("Nur für direkte Downloads: Android 8 und 9 verlangen dafür den Speicherzugriff, damit Videos dauerhaft in Download/"
+                            + Downloads.FOLDER + " landen. Ohne ihn lehnt der Helper Downloads ab; Steuerung und Kopplung funktionieren weiter.",
+                         "Only for direct downloads: Android 8 and 9 require storage access so videos are kept in Download/"
+                            + Downloads.FOLDER + ". Without it the helper refuses downloads; control and pairing keep working."),
+                    blocked ? Tr.t("Einstellungen", "Settings") : Tr.t("Erlauben", "Allow"), v -> {
+                        if (blocked) {
+                            startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName())));
+                        } else {
+                            prefs(this).edit().putBoolean("storageAsked", true).apply();
+                            // READ und WRITE: Android 8+ erteilt nur, was angefragt wird, und ohne READ gäbe es kein Schreibrecht.
+                            requestPermissions(Mp4Downloads.LEGACY_STORAGE_PERMISSIONS, 2);
+                        }
+                    }, null);
+        }
 
         // Einstellungen
         LinearLayout set = card();

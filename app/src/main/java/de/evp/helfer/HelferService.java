@@ -49,6 +49,7 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private ChannelServer server;
+    private Mp4Downloads mp4;   // null: direkte Downloads nicht verfügbar (Kanal lehnt dl-Befehle ab)
     private IdentityStore identityStore;
     private RegistryStore registryStore;
     private SnapshotWriter writer;
@@ -73,6 +74,9 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
         startupError = null;
         try { Downloads.serviceStarted(this); }
         catch(Exception e) { startupError="Interrupted download cleanup failed: "+e.getMessage();stopSelf();return; }
+        // Phase C2: direkte MP4-Downloads. Unlesbares Journal → keine Downloads (sonst wären Doppelstarts möglich).
+        try { mp4 = Mp4Downloads.get(this); mp4.engine.serviceStarted(); }
+        catch (Exception e) { mp4 = null; }
         String problem = startChannel();
         if (problem != null) {
             startupError = problem;
@@ -94,6 +98,12 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
             Downloads.cancelJob(cancelledId);
             return START_STICKY;
         }
+        if (intent != null && Mp4Downloads.ACTION_CANCEL.equals(intent.getAction())) {
+            // "Abbrechen" in der Benachrichtigung eines direkten MP4-Downloads
+            String job = intent.getStringExtra(Mp4Downloads.EXTRA_JOB);
+            if (mp4 != null && Mp4Downloads.validJobId(job)) mp4.engine.cancel(job);
+            return START_STICKY;
+        }
         if (intent != null && "test".equals(intent.getAction())) {
             // Knopf "Ausprobieren" in der App: 3 Sekunden dunkel, dann zurück
             lastBeat = System.currentTimeMillis();
@@ -113,6 +123,7 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
         instance = null;
         main.removeCallbacks(watchdog);
         Downloads.stopAll();
+        if (mp4 != null) mp4.engine.stopAll();
         clearBright();
         super.onDestroy();
     }
@@ -171,7 +182,7 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
             IdentityStore.Result id = identityStore.load(!registryStore.exists());
             if (id.identity == null) return Tr.t("Kanal-Identität nicht lesbar (" + id.state + ") – in der App „Identität zurücksetzen“ und neu koppeln.",
                 "Channel identity unreadable (" + id.state + ") – use “Reset identity” in the app and pair again.");
-            ChannelServer s = new ChannelServer(this, this);
+            ChannelServer s = new ChannelServer(this, this, mp4 == null ? null : mp4.engine);
             try {
                 RegistryStore.Loaded regs = registryStore.load();
                 synchronized (ChannelServer.CORE) {

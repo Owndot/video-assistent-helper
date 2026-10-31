@@ -213,6 +213,7 @@ public final class TestSafeHttp {
         sizes();
         pooling();
         streamingMemory();
+        nat64Discovery();
         System.out.println("RESULT safe-http " + (failed == 0 ? "PASS" : "FAIL") + " " + passed + "/" + (passed + failed));
         System.exit(failed == 0 ? 0 : 1);
     }
@@ -328,6 +329,20 @@ public final class TestSafeHttp {
                 expect(blocked(() -> c.get(srv.url("/r"), 20, 10, 100, T)) == NetBlockedException.Reason.BAD_ARGUMENT, "reversed range");
                 expect(blocked(() -> c.get(srv.url("/r"), 0, T)) == NetBlockedException.Reason.BAD_ARGUMENT, "maxBytes 0");
                 expect(blocked(() -> c.get(srv.url("/r"), 10, SafeHttpClient.MAX_CALL_TIMEOUT_MS + 1)) == NetBlockedException.Reason.BAD_ARGUMENT, "timeout");
+            }
+        });
+        check("If-Range: only a strong ETag, only with Range, sent unchanged", () -> {
+            try (Server srv = Server.plain()) {
+                srv.route("/r", (p, h, o, s) -> text(o, 206, h.get("range") + "|" + h.get("if-range")));
+                SafeHttpClient c = client(srv);
+                expect(body(c.get(srv.url("/r"), 10, 19, "\"abc-1\"", 100, T, null)).equals("bytes=10-19|\"abc-1\""), "If-Range sent");
+                expect(body(c.get(srv.url("/r"), 10, 19, null, 100, T, null)).equals("bytes=10-19|null"), "no If-Range");
+                int before = srv.accepts.get() + srv.requests.size();
+                for (String bad : new String[] {"W/\"abc\"", "abc", "\"a b\"", "\"x", "", "\"a\r\nX: 1\""}) {
+                    expect(blocked(() -> c.get(srv.url("/r"), 10, 19, bad, 100, T, null)) == NetBlockedException.Reason.BAD_ARGUMENT, "rejected " + bad);
+                }
+                expect(blocked(() -> c.get(srv.url("/r"), -1, -1, "\"abc\"", 100, T, null)) == NetBlockedException.Reason.BAD_ARGUMENT, "If-Range without Range");
+                expect(srv.accepts.get() + srv.requests.size() == before, "rejected arguments reached the server");
             }
         });
     }
@@ -676,6 +691,56 @@ public final class TestSafeHttp {
                 expect(n == total, "bytes " + n);
                 System.out.println("  MEASURE streamed=" + (n >> 20) + "MiB maxHeapUsed=" + (maxUsed >> 10) + "KiB maxHeap=" + (rt.maxMemory() >> 20) + "MiB");
             }
+        });
+    }
+
+    /** Android 8–10: NAT64-Erkennung nach RFC 7050; jede Unklarheit sperrt IPv6 (sicher fehlschlagen). */
+    static void nat64Discovery() throws Exception {
+        check("NAT64 discovery (RFC 7050) fails closed", () -> {
+            List<InetAddress> v4only = Arrays.asList(ip("192.0.0.170"), ip("192.0.0.171"));
+            // Kein DNS64, Netz mit IPv4: kein netzspezifisches Präfix, IPv6 normal.
+            expect(Nat64Discovery.decide(true, v4only).isEmpty(), "dual stack without DNS64");
+            expect(AddressPolicy.allowed(ip("2606:4700::1111"), Nat64Discovery.decide(true, v4only)), "public v6 allowed");
+            // Reines IPv6-Netz ohne DNS64 (464XLAT möglich, Präfix unbekannt) und gescheiterte Abfrage: IPv6 gesperrt.
+            for (List<AddressPolicy.Nat64Prefix> p : Arrays.asList(Nat64Discovery.decide(false, v4only), Nat64Discovery.decide(true, null),
+                     Nat64Discovery.decide(false, null), Nat64Discovery.decide(false, Collections.emptyList()))) {
+                expect(!AddressPolicy.allowed(ip("2606:4700::1111"), p), "v6 must be blocked when NAT64 is unknown");
+                expect(!AddressPolicy.allowed(ip("2001:db8:64::10.0.0.1"), p), "nsp-embedded private v4");
+                expect(AddressPolicy.allowed(ip("8.8.8.8"), p), "v4 still allowed");
+                expect(!AddressPolicy.allowed(ip("10.0.0.1"), p), "private v4 still blocked");
+            }
+            // DNS64 mit netzspezifischem /96-Präfix: Adressen darin nach eingebettetem IPv4 beurteilt.
+            List<AddressPolicy.Nat64Prefix> nsp = Nat64Discovery.decide(false, Arrays.asList(ip("2a01:4f8:64::c000:aa"), ip("2a01:4f8:64::c000:ab")));
+            expect(nsp.size() == 2 && nsp.get(0).bits == 96, "nsp /96 found");
+            expect(!AddressPolicy.allowed(ip("2a01:4f8:64::a00:1"), nsp), "nsp + 10.0.0.1 blocked");
+            expect(!AddressPolicy.allowed(ip("2a01:4f8:64::c0a8:101"), nsp), "nsp + 192.168.1.1 blocked");
+            expect(!AddressPolicy.allowed(ip("2a01:4f8:64::7f00:1"), nsp), "nsp + 127.0.0.1 blocked");
+            expect(AddressPolicy.allowed(ip("2a01:4f8:64::808:808"), nsp), "nsp + 8.8.8.8 allowed");
+            expect(AddressPolicy.allowed(ip("2a01:4f8:1::1"), nsp), "other v6 allowed");
+            // Bekanntes Präfix 64:ff9b::/96 (ohnehin dekodiert).
+            List<AddressPolicy.Nat64Prefix> wkp = Nat64Discovery.decide(false, Arrays.asList(ip("64:ff9b::c000:aa")));
+            expect(wkp.size() == 1 && wkp.get(0).bits == 96, "wkp");
+            expect(!AddressPolicy.allowed(ip("64:ff9b::a00:1"), wkp), "wkp + private");
+            // Andere RFC-6052-Längen: ganzes Präfix gesperrt (nicht dekodiert).
+            String[][] lengths = {
+                {"2001:4860:c000:aa::", "32", "2001:4860:808:808::"},
+                {"2a01:4f8:c0:0:aa::", "40", "2a01:4f8:8:808:8::"},          // /40: 192.0.0 | u | 170
+                {"2a01:4f8:6400:c000:0:aa00::", "48", "2a01:4f8:6400:808:8::"},
+                {"2a01:4f8:6400:c0:0:aa::", "56", "2a01:4f8:6400:8:8:808::"},
+                {"2a01:4f8:6400:1:c0:0:aa00:0", "64", "2a01:4f8:6400:1:8:808:800:0"},
+            };
+            for (String[] l : lengths) {
+                List<AddressPolicy.Nat64Prefix> p = Nat64Discovery.decide(true, Arrays.asList(ip(l[0])));
+                expect(p.size() == 1 && p.get(0).bits == Integer.parseInt(l[1]), "length " + l[1] + ": " + (p.isEmpty() ? "none" : p.get(0).bits));
+                expect(!AddressPolicy.allowed(ip(l[2]), p), "/" + l[1] + " prefix must be blocked entirely");
+            }
+            // AAAA ohne erkennbare Einbettung (unbekannte Synthese): IPv6 gesperrt.
+            List<AddressPolicy.Nat64Prefix> odd = Nat64Discovery.decide(true, Arrays.asList(ip("2a01:4f8::1")));
+            expect(!AddressPolicy.allowed(ip("2606:4700::1111"), odd), "unexplained AAAA");
+            // "u"-Oktett gesetzt: keine gültige Einbettung für Längen < 96.
+            expect(Nat64Discovery.prefixOf(ip("2a01:4f8:c0:0:ffaa::").getAddress()) == null, "u octet");
+            // IPv4-mapped Antworten zählen als IPv4.
+            expect(Nat64Discovery.decide(true, Arrays.asList(ip("::ffff:192.0.0.170"))).isEmpty(), "mapped");
         });
     }
 }

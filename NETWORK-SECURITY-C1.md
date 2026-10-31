@@ -84,10 +84,10 @@ Die Socket-Factory allein sichert **nicht** alle Wege ab. Gefundene Lücken und 
 
 | # | Risiko | Bewertung |
 |---|---|---|
-| N1 | Netzspezifisches NAT64-Präfix erst ab API 30 bekannt; davor wäre eine per DNS64 erzeugte Adresse mit eingebettetem privatem IPv4 im NAT64-Präfix des Netzbetreibers zulässig (Ziel liegt im Betreibernetz, nicht im Heimnetz) | gering; nur IPv6-only-Netze mit NAT64 unter Android 8–10 |
+| N1 | **C2:** auf API 26–29 jetzt RFC-7050-Erkennung mit sicherem Fehlschlagen (siehe `DOWNLOADS-C2.md`). Ursprünglich: Netzspezifisches NAT64-Präfix erst ab API 30 bekannt; davor wäre eine per DNS64 erzeugte Adresse mit eingebettetem privatem IPv4 im NAT64-Präfix des Netzbetreibers zulässig (Ziel liegt im Betreibernetz, nicht im Heimnetz) | gering; nur IPv6-only-Netze mit NAT64 unter Android 8–10 |
 | N2 | Unverschlüsseltes HTTP bleibt zulässig (Medienserver; `usesCleartextTraffic=true` besteht schon) | gewollt; nur Weiterleitung HTTPS→HTTP gesperrt |
 | N3 | VPN-Apps oder systemweite Weiterleitung liegen unterhalb der App | außerhalb des Bedrohungsmodells |
-| N4 | Der bestehende Download-Code (`Fetcher`/`Downloads`, `HttpURLConnection`, DownloadManager) ist **nicht** abgesichert | bis zur Umstellung in C2 unverändert; nicht über die neue Schicht |
+| N4 | **C2:** neue direkte MP4-Downloads nur über SafeHttpClient; der alte Code bleibt unerreichbar (siehe `DOWNLOADS-C2.md`). Ursprünglich: Der bestehende Download-Code (`Fetcher`/`Downloads`, `HttpURLConnection`, DownloadManager) ist **nicht** abgesichert | bis zur Umstellung in C2 unverändert; nicht über die neue Schicht |
 | N5 | Andere Hosts können über öffentliche Weiterleitungsdienste erreicht werden | zulässig, sofern das Ziel öffentlich ist; jede Weiterleitung wird geprüft |
 | N6 | Gerätetests nur auf x86_64-Emulatoren (API 34, 26) | arm64-Gerätetest vor einer Freigabe |
 

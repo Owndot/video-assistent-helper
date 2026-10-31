@@ -14,7 +14,10 @@
     <!-- Helligkeit: unsichtbares Mini-Fenster (bevorzugt) oder notfalls Systemeinstellung -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
-    <!-- nur Android 8/9: Download-Manager darf sonst nicht in "Download" schreiben -->
+    <!-- nur Android 8/9: öffentlicher Ordner Download/Video-Assistent. Android 8/9 vergibt die Schreib-Ansicht des
+         gemeinsamen Speichers nur mit READ und WRITE (READ war über die Split-Permission ohnehin angefordert, hier nur
+         ausdrücklich und ebenfalls bis API 28). Android 10+ fordert keine der beiden an. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <!-- Downloads explicitly support user-selected HTTP media and local HTTP media servers. -->

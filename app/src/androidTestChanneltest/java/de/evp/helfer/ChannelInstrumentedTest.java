@@ -49,7 +49,7 @@ import poc.TestInitiator;
  * Gerätetests (Emulator) des Steuerkanals in der echten Helper-App, Paket de.evp.helfer.channeltest:
  * Keystore-Identität, Kopplung, Noise-KK-Sitzung, Steuerbefehle, Einzel- und Gesamtwiderruf, Neustart,
  * Browser-Schutz, fremder Dienst auf dem Port, langsame Clients, kein Dienst auf dem alten Port 47811,
- * Bildschirm- und Backup-Schutz und eine Logcat-Prüfung auf Geheimnisse.
+ * Bildschirm- und Backup-Schutz, Download-Befehle (Phase C2) und eine Logcat-Prüfung auf Geheimnisse.
  * Nur Wegwerf-Identitäten und -Codes; keine Medien, Cookies oder URLs.
  */
 @RunWith(AndroidJUnit4.class)
@@ -320,6 +320,57 @@ public class ChannelInstrumentedTest {
         assertEquals("{\"ok\":false}", request(h, "{\"op\":\"bright\",\"v\":2}"));
         assertTrue(request(h, "{\"op\":\"status\"}").startsWith("{\"ok\":true"));
         Log.i(TAG, String.format(Locale.ROOT, "CHANNEL_COMMAND avgMs=%d", perCommand));
+        TestInitiator.free(h);
+    }
+
+    /**
+     * Phase C2: Download-Befehle über den echten Kanal erreichen die Produktiv-Engine mit dem strengen Client. Private
+     * und lokale Ziele scheitern mit "blocked_…" ohne Verbindung und ohne Ausweichweg; doppelte Starts starten nichts;
+     * die Antworten nennen die URL nicht. Der Status bleibt "dl":false (alte Download-Funktion aus).
+     */
+    @Test public void downloadCommandsUseOnlyTheHardenedClient() throws Exception {
+        // Android 8–9: ohne Speicherberechtigung endete jeder Auftrag (richtig) schon vor dem Netzwerk mit
+        // storage_permission; hier sollen die Netzwerkregeln greifen, also wie im Dialog der App erteilen.
+        if (android.os.Build.VERSION.SDK_INT < 29) {
+            for (String p : Mp4Downloads.LEGACY_STORAGE_PERMISSIONS) shell("pm grant " + ctx.getPackageName() + " " + p);
+        }
+        byte[] id = kadriIdentity();
+        long h = pairAndConfirm(id, pair(id, openWindow()));
+        try (ServerSocket local = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))) {
+            local.setSoTimeout(1);
+            String token = "C2CHANNELSECRET" + Long.toHexString(now());
+            SECRETS.add(token);
+            String[][] cases = {
+                {"http://127.0.0.1:" + local.getLocalPort() + "/v.mp4?sig=" + token, "blocked_port"},
+                {"http://127.0.0.1/v.mp4?sig=" + token, "blocked_address"},
+                {"http://10.0.2.2/v.mp4?sig=" + token, "blocked_address"},
+                {"http://169.254.169.254/latest?sig=" + token, "blocked_address"},
+                {"http://[::1]/v.mp4?sig=" + token, "blocked_address"},
+                {"http://localhost/v.mp4?sig=" + token, "blocked_host_name"},
+                {"http://2130706433/v.mp4?sig=" + token, "blocked_"},
+                {"https://user:pw@example.com/v.mp4?sig=" + token, "blocked_credentials_in_url"},
+            };
+            for (int k = 0; k < cases.length; k++) {
+                String[] c = cases[k];
+                String job = hex(Core.identityGenerate()).substring(0, 32);
+                String r = request(h, "{\"op\":\"dlstart\",\"id\":\"" + job + "\",\"url\":\"" + c[0] + "\",\"name\":\"C2 Kanal\"}");
+                assertTrue(r, r.startsWith("{\"ok\":true,\"id\":\"" + job + "\""));
+                assertFalse(r, r.contains(token) || r.contains("http"));
+                String st = r;
+                long end = now() + 15_000;
+                while (st.contains("\"state\":\"running\"") && now() < end) { Thread.sleep(50); st = request(h, "{\"op\":\"dlstatus\",\"id\":\"" + job + "\"}"); }
+                assertTrue("case " + k + " (" + c[1] + ") -> " + st, st.contains("\"state\":\"failed\"") && st.contains("\"reason\":\"" + c[1]));
+                assertFalse(st, st.contains(token));
+                // Wiederholter Start derselben Kennung: bekannter Zustand, kein neuer Versuch.
+                assertTrue(request(h, "{\"op\":\"dlstart\",\"id\":\"" + job + "\",\"url\":\"https://example.com/v.mp4\"}").contains("\"state\":\"failed\""));
+                assertTrue(request(h, "{\"op\":\"dlcancel\",\"id\":\"" + job + "\"}").contains("\"state\":\"failed\""));
+            }
+            try (Socket s = local.accept()) { fail("local target was contacted"); } catch (java.net.SocketTimeoutException expected) { }
+        }
+        String unknown = "ffffffffffffffffffffffffffffffff";
+        assertTrue(request(h, "{\"op\":\"dlstatus\",\"id\":\"" + unknown + "\"}").contains("\"state\":\"unknown\""));
+        assertEquals("{\"ok\":false}", request(h, "{\"op\":\"dlstart\",\"id\":\"" + unknown + "\",\"url\":\"https://a.example/x\",\"cookie\":\"a\"}"));
+        assertTrue(request(h, "{\"op\":\"status\"}").contains("\"dl\":false"));
         TestInitiator.free(h);
     }
 

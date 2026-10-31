@@ -61,6 +61,10 @@ jobs:
         run: bash tests/java/net/run.sh "$RUNNER_TEMP/safe-http-deps"
       - name: Secure network layer - mutation probes (each weakened copy must fail the tests)
         run: python3 -I tests/java/net/mutation.py "$RUNNER_TEMP/safe-http-deps"
+      - name: Direct MP4 downloads (C2) - engine tests against real local servers (JVM, 48 MiB heap, 512 MiB file)
+        run: bash tests/java/dl/run.sh "$RUNNER_TEMP/safe-http-deps"
+      - name: Direct MP4 downloads (C2) - mutation probes (each weakened copy must fail the tests)
+        run: python3 -I tests/java/dl/mutation.py "$RUNNER_TEMP/safe-http-deps"
       - name: Kadri's vendored WASM is byte-identical (the JNI binding does not change the browser side)
         run: |
           set -euo pipefail
