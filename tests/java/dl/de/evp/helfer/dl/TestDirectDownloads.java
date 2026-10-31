@@ -348,6 +348,7 @@ public final class TestDirectDownloads {
         check("cancel while waiting for headers (no 30 s read timeout)", TestDirectDownloads::cancelHeaders);
         check("cancel unknown id / after done", TestDirectDownloads::cancelOther);
         check("duplicate and late start: one request only", TestDirectDownloads::duplicates);
+        check("server closed the idle keep-alive connection: next download uses a new one (no retry needed)", TestDirectDownloads::staleIdleConnection);
         check("journal across restart: done stays done, running becomes interrupted", TestDirectDownloads::journal);
         check("journal failure: start refused, nothing fetched", TestDirectDownloads::journalFailure);
         check("corrupt journal fails closed", TestDirectDownloads::corruptJournal);
@@ -709,6 +710,32 @@ public final class TestDirectDownloads {
             Thread.sleep(200);
             expect(srv.requests.get() == 1, "requests " + srv.requests.get());
             expect(store.files().length == 1 && store.created.get() == 1, "one file");
+            d.stopAll();
+        }
+    }
+
+    /**
+     * Ein Server beendet eine ruhende Keep-Alive-Verbindung (Zeitgrenze, HTTP/1.0-Server). Ohne automatische Wiederholung
+     * (SafeHttpClient) darf der nächste Download nicht über diese tote Pool-Verbindung laufen (gefunden mit Kadri, C3).
+     */
+    static void staleIdleConnection() throws Exception {
+        try (Server srv = new Server((r, out, i) -> {
+            serveFile(r, out, 4096, "\"v1\"", -1);
+            out.flush();
+            Thread.sleep(50);
+            throw new IOException("idle close");      // Verbindung nach der Antwort schließen (FIN), ohne "Connection: close"
+        })) {
+            DirStore store = new DirStore("stale");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);   // EIN Client für alle Aufträge
+            for (int n = 0; n < 3; n++) {
+                String id = newId();
+                d.start(id, srv.url("/s" + n + ".mp4"), "Clip");
+                String r = ev.await(id, 10_000);
+                expect(r.equals("done"), "download " + n + ": " + r);
+                Thread.sleep(300);                    // Server hat die Verbindung inzwischen geschlossen
+            }
+            expect(srv.requests.get() == 3 && srv.connections.get() == 3, "requests " + srv.requests.get() + ", connections " + srv.connections.get());
             d.stopAll();
         }
     }

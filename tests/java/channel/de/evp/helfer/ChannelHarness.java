@@ -29,6 +29,10 @@ import poc.Core;
  * Steuerung: ein Befehl je stdin-Zeile, Antwort auf stdout.
  *   open | list | revoke <reg-id-hex> | revoke-all | restart | reset-identity | device | stats |
  *   rogue-on | rogue-off | fail-persist on|off | quit
+ *   Phase C3 (direkte MP4-Downloads, echte Engine {@link HarnessDownloads}):
+ *   downloads <port> (an; Testserver auf 127.0.0.1:port; bleibt über einen Neustart des Prozesses an) |
+ *   storage-permission on|off | dl-files | dl-parts | dl-journal
+ * Ohne "downloads" lehnt der Kanal dl-Befehle ab (Phase-2-Zustand).
  * "open" gibt "CODE <8 Ziffern>" aus – der Code geht nur an den steuernden Test.
  * Aufruf: java -Djava.library.path=LIB -cp CLASSES de.evp.helfer.ChannelHarness STATE_DIR
  */
@@ -54,8 +58,11 @@ public final class ChannelHarness implements ChannelServer.Host {
     private ChannelServer server;
     private Rogue rogue;
     private volatile boolean failPersist;
+    private final File stateDir;
+    private HarnessDownloads downloads;
 
     ChannelHarness(File stateDir) {
+        this.stateDir = stateDir;
         identityFile = new File(stateDir, "identity.bin");
         registryFile = new File(stateDir, "registrations.bin");
         writer = new SnapshotWriter(this::write);
@@ -77,6 +84,20 @@ public final class ChannelHarness implements ChannelServer.Host {
         File tmp = new File(registryFile.getPath() + ".tmp");
         Files.write(tmp.toPath(), snapshot);
         Files.move(tmp.toPath(), registryFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    static void downloadEvent(String line) { out("EVENT " + line); }
+
+    private ChannelServer newServer() {
+        return new ChannelServer(this, device, downloads == null ? null : downloads.engine);
+    }
+
+    /** Download-Modus an (bleibt über einen Neustart des Prozesses an: Port in STATE_DIR/downloads.port). */
+    private synchronized String enableDownloads(int port) throws Exception {
+        if (downloads == null) downloads = new HarnessDownloads(stateDir, port);
+        Files.write(new File(stateDir, "downloads.port").toPath(), String.valueOf(port).getBytes(StandardCharsets.US_ASCII));
+        String r = startGenuine();
+        return r.startsWith("READY") ? "DOWNLOADS on" : r;
     }
 
     private static synchronized void out(String line) {
@@ -101,7 +122,7 @@ public final class ChannelHarness implements ChannelServer.Host {
         for (int i = 0; i < 30; i++) {
             if (s.start()) return s;
             Thread.sleep(100);
-            ChannelServer n = new ChannelServer(this, device);
+            ChannelServer n = newServer();
             synchronized (ChannelServer.CORE) { if (ChannelServer.coreOwner == s) ChannelServer.coreOwner = n; }
             s = n;
         }
@@ -115,7 +136,7 @@ public final class ChannelHarness implements ChannelServer.Host {
         else if (registryFile.exists()) return "ERROR_INCONSISTENT";   // dieselbe Regel wie die App
         else { id = Core.identityGenerate(); Files.write(identityFile.toPath(), id); }
         byte[] regs = registryFile.exists() ? Files.readAllBytes(registryFile.toPath()) : new byte[0];
-        ChannelServer s = new ChannelServer(this, device);
+        ChannelServer s = newServer();
         String pub;
         try {
             synchronized (ChannelServer.CORE) {
@@ -168,6 +189,18 @@ public final class ChannelHarness implements ChannelServer.Host {
         writer.delete(() -> Files.deleteIfExists(registryFile.toPath()));
         Files.deleteIfExists(identityFile.toPath());
         return startGenuine();
+    }
+
+    private synchronized String downloadCommand(String cmd) throws Exception {
+        if (downloads == null) return "NO_DOWNLOADS";
+        switch (cmd) {
+            case "storage-permission on": downloads.writable = true; return "OK";
+            case "storage-permission off": downloads.writable = false; return "OK";
+            case "dl-files": return downloads.files();
+            case "dl-parts": return "PARTS " + downloads.parts();
+            case "dl-journal": return downloads.journalText();
+            default: return "UNKNOWN";
+        }
     }
 
     private String stats() {
@@ -263,12 +296,18 @@ public final class ChannelHarness implements ChannelServer.Host {
         File dir = new File(args[0]);
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IllegalStateException("state dir");
         ChannelHarness h = new ChannelHarness(dir);
+        File portFile = new File(dir, "downloads.port");
+        if (portFile.isFile()) {   // Neustart des Prozesses: Downloads (mit Journal) wieder an
+            h.downloads = new HarnessDownloads(dir, Integer.parseInt(new String(Files.readAllBytes(portFile.toPath()), StandardCharsets.US_ASCII).trim()));
+        }
         out(h.startGenuine());
         BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
         for (String line; (line = in.readLine()) != null; ) {
             String cmd = line.trim(), reply;
             try {
                 if (cmd.startsWith("revoke ")) reply = h.revoke(unhex(cmd.substring(7).trim()));
+                else if (cmd.startsWith("downloads ")) reply = h.enableDownloads(Integer.parseInt(cmd.substring(10).trim()));
+                else if (cmd.startsWith("storage-permission ") || cmd.startsWith("dl-")) reply = h.downloadCommand(cmd);
                 else switch (cmd) {
                     case "open": reply = h.open(); break;
                     case "list": reply = h.list(); break;
@@ -281,7 +320,7 @@ public final class ChannelHarness implements ChannelServer.Host {
                     case "rogue-off": reply = h.rogueOff(); break;
                     case "fail-persist on": h.failPersist = true; reply = "OK"; break;
                     case "fail-persist off": h.failPersist = false; reply = "OK"; break;
-                    case "quit": h.stopServer(); out("BYE"); return;
+                    case "quit": h.stopServer(); if (h.downloads != null) h.downloads.engine.stopAll(); out("BYE"); return;
                     default: reply = "UNKNOWN";
                 }
             } catch (Exception e) {
