@@ -178,6 +178,7 @@ jobs:
         shell: bash
         run: |
           node tools/build.js --check
+          node tests/confidential_names_check.js
           node tests/security/hls_license.js
           node tests/cookie_sites.js
           old="$RUNNER_TEMP/old-cookie-sites.js"

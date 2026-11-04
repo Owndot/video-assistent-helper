@@ -2,7 +2,7 @@
 // @name         Video-Assistent (externer Player)
 // @namespace    externer-player
 // @version      19.30
-// @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram, Pornhub u. a.
+// @description  Wie der Video-Assistent von Samsung Internet: Button am laufenden Video öffnet einen eingebauten Vollbild-Player mit Wischgesten (oder die externe App wie VLC/Just Player). Mit Download über YTDLnis und eigener Erkennung für Facebook, Instagram u. a.
 // @match        *://*/*
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
@@ -2047,7 +2047,7 @@ var e,t,r="function"==typeof Symbol?Symbol:{},i=r.iterator||"@@iterator",n=r.toS
     const list = [];
     const add = (url, how) => { if (url && !list.some((x) => x.u === url)) list.push({ u: url, how: how }); };
     const single = countEligible() <= 1;
-    // Pornhub: komplette MP4 mit Ton zuerst (beste Qualität vorn), der Stream nur als Ausweich
+    // Seite A: komplette MP4 mit Ton zuerst (beste Qualität vorn), der Stream nur als Ausweich
     if (PH && phCache && phCache.length) phCache.forEach((c) => add(c.u, 'MP4 mit Ton' + (c.res ? ' · ' + c.res + 'p' : '')));
     // 1. bewiesen: die Seite lädt gerade Stücke genau dieses Streams (seit Start dieses Videos / letztem Wechsel)
     checkNav();
@@ -2139,9 +2139,16 @@ const buildPslBase = () => {
     openExternal(link, null, YTDLNIS, 'An YTDLnis übergeben …', 'https://github.com/deniscerri/ytdlnis/releases/latest');
     return true;
   }
-  // ---------- Pornhub: komplette MP4-Dateien mit Ton über die eigene Abfrage der Seite ----------
+  // ---------- Seite A: komplette MP4-Dateien mit Ton über die eigene Abfrage der Seite ----------
+  // (Seite A wird am Hash der zweiten Domain-Ebene erkannt, Endung com/org/net – der Name steht nicht im Quelltext)
   // (der HLS-Stream ist dort an den Web-Player gebunden und bleibt im externen Player schwarz)
-  const PH = /(^|\.)pornhub\.(com|org|net)$/i.test(location.hostname);
+  const siteLabelHash = (host) => {
+    const p = String(host || '').toLowerCase().replace(/\.$/, '').split('.');
+    let x = 0x811c9dc5;
+    for (const ch of p.length >= 2 ? p[p.length - 2] : '') { x ^= ch.charCodeAt(0); x = Math.imul(x, 0x01000193) >>> 0; }
+    return p.length >= 2 && /^(com|org|net)$/.test(p[p.length - 1]) ? x : 0;
+  };
+  const PH = siteLabelHash(location.hostname) === 0x507a797;   // Seite A
   let phCache = null, phPending = null, phLog = '-', phHref = '';
   function phMp4() {
     if (!PH) return null;
@@ -4888,7 +4895,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
           });
         return items;
       }
-      // Einzeldateien in mehreren Qualitäten (Facebook, Pornhub …)
+      // Einzeldateien in mehreren Qualitäten (Facebook, Seite A …)
       const files = st.sources.filter((u) => !PLAYLIST_RE.test(u) && st.srcRes[u]);
       if (files.length > 1 && st.mode === 'own') {
         files.slice().sort((a, b) => st.srcRes[b] - st.srcRes[a]).forEach((u) => items.push({
@@ -6673,7 +6680,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       // Vollbild endet wegen Bild-in-Bild (Knopf oder Wischen zum Startbildschirm): Player bleibt offen
       const pipNow = () => pipIsOurs(vid) || document.hidden || (st.pipAt && Date.now() - st.pipAt < 2500);
       if (pipNow()) { st.fsStart = false; st.fsLost = true; return; }
-      // Kurz nach DEINEM Tipp auf "Drehen" beendet? Dann war es die Webseite (z. B. Pornhub beendet das Vollbild im Hochformat),
+      // Kurz nach DEINEM Tipp auf "Drehen" beendet? Dann war es die Webseite (z. B. Seite A beendet das Vollbild im Hochformat),
       // nicht die Zurück-Taste: Player offen lassen und Vollbild sofort zurückholen (der Tipp ist noch "frisch").
       if (st.selfTurnAt && exitAt - st.selfTurnAt < 1200) {
         enterFs().then(() => {
@@ -7506,7 +7513,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
       'Link zum Video: ' + (function () { try { const u = postUrlFor(v); return (u || '-') + ' (' + (postUrlFor.via || '-') + ') | Video-ID im Kasten: ' + (fbVideoId(v) || '-'); } catch (e) { return '-'; } })(),
       'Spiegeln: ' + (vp && vp.mode === 'capture' ? 'aktiv, ' + (vp.mirrorFix || 0) + '× neu verbunden' + (vp.mirrorWhy ? ' (zuletzt: ' + vp.mirrorWhy + ')' : '') : (FB_MIRROR ? 'bereit' : 'aus')),
       'Puffer-Spur: ' + (function () { if (!v) return '-'; const m = creditsFor(v, 0); const l = (bufCredit.get(v) || []).length; return l + ' Zuwächse | ' + (Array.from(m.entries()).map((e) => e[0].slice(-6) + ':' + e[1].toFixed(1)).join(', ') || '-'); })(),
-      'HD nachladen: ' + hdLog + ' | Weiterleitung: ' + lastResolve + (PH ? ' | Pornhub-MP4: ' + phLog : '') + (IG ? ' | Instagram-MP4: ' + igLog : '') + (TT ? ' | TikTok: ' + ttLog + ' · ' + (ttPostUrl(v) || 'kein Link') : ''),
+      'HD nachladen: ' + hdLog + ' | Weiterleitung: ' + lastResolve + (PH ? ' | Seite-A-MP4: ' + phLog : '') + (IG ? ' | Instagram-MP4: ' + igLog : '') + (TT ? ' | TikTok: ' + ttLog + ' · ' + (ttPostUrl(v) || 'kein Link') : ''),
       'Öffnen (zuletzt): ' + (function () {
         const o = openTimes;
         if (!o) return '-';
