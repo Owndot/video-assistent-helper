@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.application'
+}
+
+// P4a TEST APP ONLY: eigene applicationId, Debug-Signatur des Wegwerf-Emulators, keine Berechtigungen, nie hochgeladen.
+// Media3 exakt gepinnt (1.11.1, AndroidX-Tag-Commit 8c6678b657ede1e7883fc164ef73ed483c7796c3 quellgeprüft).
+def fixtures = project.findProperty('p4aFixtures') ?: "$rootDir/../build/fixtures"
+
+android {
+    namespace 'de.evp.p4a'
+    compileSdk 37
+    buildToolsVersion '36.0.0'
+    defaultConfig {
+        applicationId 'de.evp.p4a'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '0.1-p4a'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+    sourceSets {
+        main {
+            // reiner Java-Kern (Parser/Plan) aus poc/p4a-hls/src/main; HlsFetch (src/jvm) braucht SafeHttpClient, nur JVM
+            java.srcDir("$rootDir/../src/main/java")
+        }
+        androidTest { assets.srcDirs = [fixtures] }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    lint { abortOnError false; checkReleaseBuilds false }
+}
+
+dependencies {
+    implementation 'androidx.media3:media3-extractor:1.11.1'
+    implementation 'androidx.media3:media3-muxer:1.11.1'
+    androidTestImplementation 'androidx.media3:media3-exoplayer-hls:1.11.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}
