@@ -118,6 +118,14 @@ tasks.configureEach {
 // Instrumentation only; debug and disposable fixtures retain their existing separation.
 dependencies {
     implementation 'com.squareup.okhttp3:okhttp-android:5.5.1'
+    // P4b: HLS → MP4 ohne Neukodierung (nur Extractor + Mp4Muxer; kein ExoPlayer, keine Media3-Netzschicht/DataSource).
+    // Exakt gepinnt (AndroidX-Tag 1.11.1, Quellen geprüft in P4a), Hashes in gradle/verification-metadata.xml, Apache-2.0.
+    implementation 'androidx.media3:media3-extractor:1.11.1'
+    implementation 'androidx.media3:media3-muxer:1.11.1'
+    constraints {
+        // Media3 1.11.1 zieht Guava 33.3.1-android: GHSA-xxph-c9ww-hj94 / CVE-2026-102554 (Deserialisierung), behoben ab 33.7.2
+        implementation('com.google.guava:guava') { version { strictly '33.7.2-android' } }
+    }
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 }
