@@ -15,6 +15,13 @@ def channelKeystore = project.findProperty('channelKeystore')
 // P4b, nur Instrumentierung der Testvariante: synthetische HLS-Fixtures (poc/p4a-hls/tools/make-fixtures.sh) als
 // Assets der Test-APK – nie in der App selbst.
 def hlsFixtures = project.findProperty('hlsFixtures')
+// P4-Testapp de.evp.helfer.p4test (Option B): Gradle baut sie NUR unsigniert. Signiert wird ausschließlich lokal beim
+// Eigentümer mit der dauerhaften P4-Testidentität (tools/p4test/sign.sh, Zertifikat in release/p4test-signer.json
+// festgelegt). Kein Schlüssel in Gradle, CI oder Git. Versionscode monoton (Updates ohne Deinstallation).
+def p4VersionCode = project.findProperty('p4VersionCode')
+if (p4VersionCode != null && !(p4VersionCode.toString() ==~ /[1-9][0-9]{0,8}/)) {
+    throw new GradleException('p4VersionCode must be in 1..999999999.')
+}
 def debugCode = releaseCode != null ? 1 : (fixtureVersion ?: System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int
 if (releaseCode != null && !(releaseCode.toString() ==~ /[1-9][0-9]{0,9}/ && releaseCode.toString().toLong() <= 2100000000L)) {
     throw new GradleException('Explicit releaseVersionCode must be in 1..2100000000.')
@@ -70,6 +77,16 @@ android {
             signingConfig channelKeystore != null ? signingConfigs.channeltest : null
             matchingFallbacks = ['debug']
         }
+        // P4b: eigene Test-App für den HLS-Gerätetest; installiert sich neben (nie über) de.evp.helfer und
+        // de.evp.helfer.channeltest, eigene Daten und eigene Kopplung. Gleicher Code und gleiche R8-Regeln wie
+        // channeltest, aber nie signiert durch Gradle.
+        p4test {
+            initWith channeltest
+            applicationIdSuffix '.p4test'
+            versionNameSuffix '-p4test'
+            signingConfig null
+            matchingFallbacks = ['debug']
+        }
     }
     sourceSets {
         main { jniLibs.srcDirs = [channelJniLibs] }
@@ -117,7 +134,18 @@ def verifyChannelLibs = tasks.register('verifyChannelLibs') {
     }
 }
 tasks.configureEach {
-    if (name.startsWith('pre') && name.contains('Channeltest')) dependsOn verifyChannelLibs
+    if (name.startsWith('pre') && (name.contains('Channeltest') || name.contains('P4test'))) dependsOn verifyChannelLibs
+}
+// Ohne festen, monotonen Versionscode keine P4-Testapp (sonst kein Update ohne Deinstallation).
+tasks.configureEach {
+    if (name.startsWith('pre') && name.contains('P4test') && !name.contains('AndroidTest')) {
+        doFirst { if (p4VersionCode == null) throw new GradleException('p4test needs -Pp4VersionCode (monotonic).') }
+    }
+}
+androidComponents {
+    onVariants(selector().withBuildType('p4test')) { v ->
+        if (p4VersionCode != null) v.outputs.each { o -> o.versionCode.set(p4VersionCode.toString().toInteger()) }
+    }
 }
 
 // HTTP-Client (Phase B: eingebunden und auf dem Gerät getestet, noch von keiner Funktion genutzt; siehe HttpClients).

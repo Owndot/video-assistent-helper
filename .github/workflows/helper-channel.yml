@@ -6,10 +6,10 @@ name: Helper secure channel (test package only, nothing published)
 # eine Veröffentlichung) – nur Text-Berichte und Hashes.
 on:
   pull_request:
-    paths: ['poc/p4a-hls/tools/**', 'app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/check-network-layer.sh', 'gradle/**', '.github/workflows/helper-channel.yml']
+    paths: ['poc/p4a-hls/tools/**', 'app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/check-network-layer.sh', 'tools/p4test/**', 'release/p4test-signer.json', 'gradle/**', '.github/workflows/helper-channel.yml']
   push:
     branches: [feature/helper-channel-control]
-    paths: ['poc/p4a-hls/tools/**', 'app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/check-network-layer.sh', 'gradle/**', '.github/workflows/helper-channel.yml']
+    paths: ['poc/p4a-hls/tools/**', 'app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/check-network-layer.sh', 'tools/p4test/**', 'release/p4test-signer.json', 'gradle/**', '.github/workflows/helper-channel.yml']
   workflow_dispatch:
 
 permissions:
@@ -120,6 +120,14 @@ jobs:
           ls app/build/outputs/apk
           test ! -e app/build/outputs/apk/release
           test ! -e app/build/outputs/apk/debug
+      - name: P4 test app de.evp.helfer.p4test - unsigned build and fail-closed signing self-test (throwaway key; everything deleted)
+        if: matrix.api == 34
+        run: |
+          set -euo pipefail
+          bash tools/p4test/build-unsigned.sh "$RUNNER_TEMP/a" "$GITHUB_RUN_NUMBER"
+          bash tools/p4test/selftest.sh "$RUNNER_TEMP/a/p4/helper-p4test-unsigned.apk" "$RUNNER_TEMP/a/apk/helper-channeltest.apk"
+          rm -rf "$RUNNER_TEMP/a/p4" app/build/outputs/apk/p4test
+          test ! -e app/build/outputs/apk/release && test ! -e app/build/outputs/apk/debug
       - name: Publication regression - build the previous failing cleanup in a disposable test variant
         run: |
           set -euo pipefail
