@@ -117,18 +117,29 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         return Build.VERSION.SDK_INT >= 29 || legacyWriteAllowed.getAsBoolean();
     }
 
-    @Override public boolean isPublished(String ref, long total) {
+    @Override public boolean isPublished(String ref, long total) throws IOException {
         if (Build.VERSION.SDK_INT >= 29) {
             Uri u = Uri.parse(ref);
             if (!"content".equals(u.getScheme())) return false;
-            try (android.database.Cursor c = app.getContentResolver().query(u,
-                    new String[] {MediaStore.Downloads.IS_PENDING, MediaStore.Downloads.SIZE}, null, null, null)) {
-                return c != null && c.moveToFirst() && c.getInt(0) == 0 && c.getLong(1) == total;
+            ContentResolver cr = app.getContentResolver();
+            try (android.database.Cursor c = cr.query(u, new String[] {MediaStore.Downloads.IS_PENDING}, null, null, null)) {
+                if (c == null || !c.moveToFirst() || c.getInt(0) != 0) return false;
             }
+            // Größe der echten Datei, nicht die SIZE-Spalte: Android 10 füllt sie beim Schreiben über
+            // openOutputStream nicht (bleibt 0), ein veröffentlichter Download sähe sonst unvollständig aus.
+            return storedSize(cr, u) == total;
         }
         File f = new File(ref);
         return f.getParentFile() != null && f.getParentFile().equals(publicDir()) && f.isFile() && f.length() == total
             && !f.getName().startsWith(PART_PREFIX);
+    }
+
+    /** Tatsächliche Länge der Datei hinter einem MediaStore-Eintrag. */
+    static long storedSize(ContentResolver cr, Uri u) throws IOException {
+        try (android.os.ParcelFileDescriptor fd = cr.openFileDescriptor(u, "r")) {
+            if (fd == null) throw new IOException("open");
+            return fd.getStatSize();
+        }
     }
 
     /** MediaStore-Eintrag, bis zum Ende pending. */
@@ -174,6 +185,9 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
             ContentValues cv = new ContentValues();
             cv.put(MediaStore.Downloads.IS_PENDING, 0);
             cv.put(MediaStore.Downloads.DISPLAY_NAME, name);
+            // Android 10 trägt die Größe nicht selbst ein; gemessene Dateigröße, damit Dateimanager sie anzeigen.
+            // Ab Android 11 pflegt der Provider SIZE selbst (dort schreibgeschützt), daher nur API 29.
+            if (Build.VERSION.SDK_INT == 29) cv.put(MediaStore.Downloads.SIZE, storedSize(cr, uri));
             if (cr.update(uri, cv, null, null) != 1) throw new IOException("publish");
             finished = true;
             cleanupPublishedProof(proof);

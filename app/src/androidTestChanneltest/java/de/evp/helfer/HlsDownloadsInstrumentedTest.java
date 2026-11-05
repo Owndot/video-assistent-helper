@@ -38,6 +38,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
@@ -145,7 +147,7 @@ public class HlsDownloadsInstrumentedTest {
     static String id() { return String.format(Locale.ROOT, "%032x", System.nanoTime()); }
 
     static String field(String json, String k) {
-        Matcher m = Pattern.compile("\"" + k + "\":(\"([^\"]*)\"|(-?[0-9.]+))").matcher(json);
+        Matcher m = Pattern.compile("\"" + k + "\":(\"([^\"]*)\"|(-?[0-9.]+|true|false))").matcher(json);
         return m.find() ? (m.group(2) != null ? m.group(2) : m.group(3)) : null;
     }
 
@@ -210,41 +212,52 @@ public class HlsDownloadsInstrumentedTest {
         }
     }
 
-    /** ART-Heap je Sample im Muxer-Index (10-min-Fixture, ~43 000 Samples) → Grundlage des Sample-Budgets. */
+    /**
+     * ART-Heap je Sample im Muxer-Index (10-min-Fixture, ~43 000 Samples) → Grundlage des Sample-Budgets.
+     * Gemessen wird der nach einer vollständigen GC noch belegte Heap (nicht Müll, der jederzeit frei wird), und zwar
+     * im Remux-Thread an den Prüfpunkten des Remuxers (alle 2048 Samples), wenn der Index genau so viele Samples hält.
+     * Steigung (Regression) = Kosten je Sample; Achsenabschnitt = feste Kosten (Puffer, Extraktoren, Warteschlangen).
+     */
     @Test public void heapPerSampleSupportsTheBudget() throws Exception {
         List<File> v = res(new File(fx, "ts_long600"), "v0.m3u8"), a = res(new File(fx, "ts_long600"), "v1.m3u8");
         File out = new File(ctx.getCacheDir(), "long.mp4");
         Runtime rt = Runtime.getRuntime();
-        AtomicBoolean measuring = new AtomicBoolean(true);
-        final long[] peak = {0};
         gc();
         long before = rt.totalMemory() - rt.freeMemory();
-        Thread probe = new Thread(() -> {
-            while (measuring.get()) {
-                peak[0] = Math.max(peak[0], rt.totalMemory() - rt.freeMemory());
-                try { Thread.sleep(5); } catch (InterruptedException e) { return; }
-            }
-        });
-        probe.start();
+        List<long[]> points = new ArrayList<>();      // {Samples im Index, belegter Heap nach GC}
+        int[] calls = {0};
         Media3HlsRemuxer m = new Media3HlsRemuxer(false);
         long t0 = System.nanoTime();
-        HlsRemux.Result res = m.remux(new HlsRemux.Input(v, a, false, 1_000_000), out, () -> false);
+        HlsRemux.Result res = m.remux(new HlsRemux.Input(v, a, false, 1_000_000), out, () -> {
+            long n = (long) calls[0]++ * Media3HlsRemuxer.MEMORY_CHECK_EVERY + 1;
+            for (int i = 0; i < 2; i++) rt.gc();
+            points.add(new long[] {n, rt.totalMemory() - rt.freeMemory()});
+            return false;
+        });
         long ms = (System.nanoTime() - t0) / 1_000_000;
-        measuring.set(false);
-        probe.join();
         long samples = res.videoSamples + res.audioSamples;
-        long perSample = Math.max(0, (peak[0] - before)) / samples;
+        // Der letzte Aufruf liegt nach der Schleife (alle Samples im Index, Muxer noch offen).
+        points.get(points.size() - 1)[0] = samples;
+        double sx = 0, sy = 0, sxx = 0, sxy = 0;
+        for (long[] p : points) { sx += p[0]; sy += p[1]; sxx += (double) p[0] * p[0]; sxy += (double) p[0] * p[1]; }
+        int k = points.size();
+        double slope = (k * sxy - sx * sy) / (k * sxx - sx * sx);
+        long perSample = (long) Math.ceil(Math.max(0, slope));
+        long fixed = Math.max(0, (long) ((sy - slope * sx) / k) - before);
         long budget = HlsDownloads.sampleBudget(rt.maxMemory());
-        Log.i(TAG, "HLS_MEASURE api=" + Build.VERSION.SDK_INT + " samples=" + samples + " ms=" + ms + " heapPeakGrowthKiB=" + (peak[0] - before) / 1024
+        long budgetHeap = fixed + budget * perSample;
+        Log.i(TAG, "HLS_MEASURE api=" + Build.VERSION.SDK_INT + " samples=" + samples + " ms=" + ms + " points=" + k
+            + " retainedFixedKiB=" + fixed / 1024 + " retainedEndKiB=" + (points.get(k - 1)[1] - before) / 1024
             + " bytesPerSample=" + perSample + " maxHeapMiB=" + rt.maxMemory() / (1 << 20) + " budgetSamples=" + budget
-            + " budgetHeapMiB=" + budget * perSample / (1 << 20));
+            + " budgetHeapMiB=" + budgetHeap / (1 << 20));
         m.verify(out, res, 600, 600, 4, () -> false);
         out.delete();
         assertTrue("10 min clip", samples > 40_000);
-        // Die Annahme hinter dem Budget (128 B/Sample) muss auf diesem ART gelten, und das Budget darf höchstens den
-        // halben Heap beanspruchen (gemessene Spitze je Sample, inkl. Puffer und Warteschlangen).
+        assertTrue("enough measuring points: " + k, k >= 10);
+        // Die Annahme hinter dem Budget (128 B/Sample) muss auf diesem ART gelten, und volles Budget plus feste
+        // Kosten dürfen höchstens den halben Heap beanspruchen.
         assertTrue("heap per sample " + perSample + " B exceeds the budget assumption", perSample <= HlsDownloads.HEAP_BYTES_PER_SAMPLE);
-        assertTrue("budget fits half the heap", budget * perSample <= rt.maxMemory() / 2);
+        assertTrue("budget fits half the heap: " + budgetHeap, budgetHeap <= rt.maxMemory() / 2);
     }
 
     @Test public void memoryPressureAbortsCleanly() throws Exception {
@@ -354,12 +367,16 @@ public class HlsDownloadsInstrumentedTest {
         DirectDownloads mp4 = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), store, mp4Events, shared);
         try {
             srv.delayMs = 40;
+            CountDownLatch hold = new CountDownLatch(1);
+            srv.hold = hold;          // beide Jobs bleiben aktiv, bis der dritte Start geprüft ist
             String mid = id(), hid = id();
             assertTrue(mp4.start(mid, srv.url("big.mp4"), "MP4 parallel").contains("running"));
             String plan = r.engine.plan(PEER, BIND, srv.url("fmp4_sep/master.m3u8"));
             assertTrue(r.engine.start(PEER, BIND, hid, field(plan, "planId"), firstOption(plan), "HLS parallel").contains("running"));
             String third = r.engine.plan(PEER, BIND, srv.url("ts_sep/master.m3u8"));
             assertTrue("third job busy", r.engine.start(PEER, BIND, id(), field(third, "planId"), firstOption(third), "x").contains("busy"));
+            srv.hold = null;
+            hold.countDown();
             String hs = await(r.engine, hid, 120_000);
             assertTrue("mp4 idle", mp4.awaitIdle(120_000));
             assertEquals(hs, "done", field(hs, "state"));
@@ -370,6 +387,9 @@ public class HlsDownloadsInstrumentedTest {
             assertEquals(0, shared.httpInUse());
         } finally {
             srv.delayMs = 0;
+            CountDownLatch h = srv.hold;
+            srv.hold = null;
+            if (h != null) h.countDown();
             mp4.stopAll();
             mp4.awaitIdle(30_000);
             for (Object s : mp4Events.saved.values()) delete(s);
@@ -465,6 +485,8 @@ public class HlsDownloadsInstrumentedTest {
         final ServerSocket ss;
         final AtomicInteger segments = new AtomicInteger(), inFlight = new AtomicInteger(), maxInFlight = new AtomicInteger();
         volatile int delayMs;
+        /** Gesetzt: Daten-Antworten (MP4, Segmente) warten, bis der Test freigibt – Jobs bleiben sicher aktiv. */
+        volatile CountDownLatch hold;
         Server() throws IOException {
             ss = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"));
             Thread t = new Thread(() -> {
@@ -496,6 +518,8 @@ public class HlsDownloadsInstrumentedTest {
                     int q = path.indexOf('?');
                     if (q >= 0) path = path.substring(0, q);
                     if (delayMs > 0) Thread.sleep(delayMs);
+                    CountDownLatch h = hold;
+                    if (h != null && !path.endsWith(".m3u8") && !h.await(60, TimeUnit.SECONDS)) return;
                     byte[] body;
                     String type;
                     if (path.equals("/big.mp4")) {

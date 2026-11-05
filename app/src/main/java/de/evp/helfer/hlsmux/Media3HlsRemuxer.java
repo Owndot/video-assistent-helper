@@ -56,7 +56,7 @@ public final class Media3HlsRemuxer implements HlsRemux {
     static final int MAX_SEEKS = 16;
     /** Unter so viel freiem Heap (Anteil am Maximum) wird abgebrochen: der Rest bleibt für Muxer-Index und App. */
     static final double MIN_FREE_HEAP_FRACTION = 0.15;
-    static final int MEMORY_CHECK_EVERY = 2048;
+    public static final int MEMORY_CHECK_EVERY = 2048;
 
     private final boolean opusAllowed;
     private final double minFreeHeapFraction;
