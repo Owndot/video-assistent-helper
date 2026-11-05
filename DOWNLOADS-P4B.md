@@ -15,7 +15,7 @@ Sicherheitsfreigabe. Keine APK wurde ausgeliefert, nichts ist auf einem Gerät i
 | P4b-4 | `Media3HlsRemuxer` (TS/fMP4 → MP4 ohne Neukodierung) + Ausgabeprüfung | `b3bd8b8` |
 | P4b-5/6 | App-Anbindung (`HlsDownloads`, Dienst, Benachrichtigungen), Protokoll `hlsplan`/`hlsstart` v1, Gerätetests, API 29 in der Matrix | `884cded` |
 | P4b-7 | Desktop-Harness mit echter `HlsEngine` für Kadris Ende-zu-Ende-Tests | `ad69aa2` |
-| Korrekturen | Android 10: Veröffentlichungsprüfung über die echte Dateilänge; Heap-Messung des Restbestands; Gerätetests ohne Zeitannahmen (Latch, eigener Fortschritt statt globaler Zähler, Rückruf statt Status); API 26: Berechtigung per `pm grant`; Absturzdiagnose im Job-Log; wirkungsloser Android-10-Scan entfernt | `4436aaf`, `519b44d`, `f720bee`, `d53ec8a`, `a8c0af4` |
+| Korrekturen | Android 10: Veröffentlichungsprüfung über die echte Dateilänge; Heap-Messung des Restbestands; Gerätetests ohne Zeitannahmen (Latch, eigener Fortschritt statt globaler Zähler, Rückruf statt Status); API 26: Berechtigung per `pm grant`; Absturzdiagnose im Job-Log; wirkungsloser Android-10-Scan entfernt | `4436aaf`, `519b44d`, `f720bee`, `d53ec8a`, `a8c0af4`, `2c18ec7`, `1ba52bd` |
 | P4b-8 | P4-Testapp `de.evp.helfer.p4test`, dauerhafter Signierweg (lokal, fail-closed), Doku | `54184a9` |
 
 Kadri (Branch `feature/c3-helper-mp4`, Draft-PR #11): `83afa8f` (P4b-7, Menü „Stream speichern …“) und P4b-8
@@ -126,7 +126,7 @@ aus dem CI-Lauf, nicht unabhängig geprüft. R8: Regeln für die App unveränder
   Kopplung der C3-Testerweiterung überschreiben. Vorbereitet in Kadri `tools/p4test/identity.json`
   (ID `pcccpjllneffccpenbepmfbkjedllkkf`, nur öffentlicher Schlüssel; geprüft von `tests/channel/p4_identity_check.js`).
 
-## 9. Ergebnisse je Android-Version (Kopf `a8c0af4`, Lauf 42087786998, x86_64-Emulatoren)
+## 9. Ergebnisse je Android-Version (Messwerte Lauf 42087786998 auf `a8c0af4`; Endstand `1ba52bd`, Lauf 42093071738: API 26 und 34 je 44/44, API 29 43/44 – nur `SIZE`)
 
 | | API 26 | API 29 | API 34 |
 |---|---|---|---|
@@ -139,6 +139,8 @@ aus dem CI-Lauf, nicht unabhängig geprüft. R8: Regeln für die App unveränder
 | Opus | nicht angeboten (`audio_codec`) | fertig | fertig |
 | C2-Flake-Wiederholung (20×+2) | 22/22 | 22/22 | 22/22 |
 | P4-Signierweg-Selbsttest | – | – | alle Ablehnungen PASS |
+
+Nachträglich behoben (nur Tests): Fremd-Listener-Test las die Anfrage nicht vollständig (RST auf API 26); Fortsetzen-Test wartete auf den ersten statt den veröffentlichenden Rückruf. Auf `1ba52bd` sind HLS-Lieferkette/JVM/Mutationen, Safe validation und Browser-Tests ohne Wiederholung grün.
 
 Weitere Workflows auf `a8c0af4`: HLS-Lieferkette/JVM/Mutationen grün; Helper safe validation grün (ein Job,
 `download-manager-privacy`, scheiterte einmal an einer doppelten Anfrage des System-DownloadManagers – unberührter
