@@ -43,7 +43,7 @@ MUTATIONS = [
     ('changed etag ignored', DL, 'if (etag == null || !etag.equals(strongEtag(r.etag()))) throw new Fail("changed");', ''),
     ('duplicate start allowed', DL, 'if (known != null) return json(known);           // doppelter', 'if (known != null && known.state != State.RUNNING) return json(known);           // doppelter'),
     ('start before journal', DL, 'saveJournal();                                    // erst vermerkt', '// erst vermerkt'),
-    ('parallel limit removed', DL, 'if (running.get() >= MAX_PARALLEL) return busy(id);', ''),
+    ('parallel limit removed', DL, 'if (running.get() >= MAX_PARALLEL || !slots.tryAcquireWithConnection()) return busy(id);', 'slots.tryAcquireWithConnection();'),
     ('running survives restart', DL, 'if (st == State.RUNNING) {', 'if (false) {'),
     ('no cleanup on failure', DL, 'if (target != null) target.abort();', ''),
     ('cancel does not reach the call', NET, 'if (cancellation != null) cancellation.attach(call);', ''),

@@ -89,13 +89,25 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     private final ExecutorService workers;
     private final Map<String, Job> jobs = new LinkedHashMap<>();
     private final AtomicInteger running = new AtomicInteger();
+    private final JobSlots slots;
     private boolean stopped;
 
     public DirectDownloads(SafeHttpClient http, DownloadStore store, Listener listener) throws IOException {
-        this(http, store, listener, SafeHttpClient.MAX_CALL_TIMEOUT_MS);
+        this(http, store, listener, SafeHttpClient.MAX_CALL_TIMEOUT_MS, new JobSlots(MAX_PARALLEL, 2 * MAX_PARALLEL));
+    }
+
+    /** Wie oben; {@code slots}: mit anderen Download-Arten (HLS) geteilte Obergrenze aktiver Aufträge. */
+    public DirectDownloads(SafeHttpClient http, DownloadStore store, Listener listener, JobSlots slots) throws IOException {
+        this(http, store, listener, SafeHttpClient.MAX_CALL_TIMEOUT_MS, slots);
     }
 
     DirectDownloads(SafeHttpClient http, DownloadStore store, Listener listener, long callTimeoutMs) throws IOException {
+        this(http, store, listener, callTimeoutMs, new JobSlots(MAX_PARALLEL, 2 * MAX_PARALLEL));
+    }
+
+    DirectDownloads(SafeHttpClient http, DownloadStore store, Listener listener, long callTimeoutMs, JobSlots slots) throws IOException {
+        if (slots.max > MAX_PARALLEL) throw new IllegalArgumentException("slots");
+        this.slots = slots;
         // Jede Anfrage auf eigener Verbindung: nie eine ruhende, vom Server schon geschlossene (SafeHttpClient#withoutConnectionReuse).
         this.http = http.withoutConnectionReuse();
         this.store = store;
@@ -119,7 +131,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             Job known = jobs.get(id);
             if (known != null) return json(known);           // doppelter oder verspäteter Start: nichts Neues
             if (stopped) return busy(id);
-            if (running.get() >= MAX_PARALLEL) return busy(id);
+            if (running.get() >= MAX_PARALLEL || !slots.tryAcquireWithConnection()) return busy(id);
             job = new Job(id, displayTitle(name));
             jobs.put(id, job);
             running.incrementAndGet();
@@ -128,6 +140,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             } catch (IOException e) {
                 jobs.remove(id);
                 running.decrementAndGet();
+                slots.releaseWithConnection();
                 return busy(id);
             }
         }
@@ -318,6 +331,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             job.state = state;
             job.reason = reason;
             running.decrementAndGet();
+            slots.releaseWithConnection();
             try { saveJournal(); } catch (IOException ignored) { /* Zustand bleibt im Speicher; nächster Start: interrupted */ }
             notifyAll();
         }
@@ -364,7 +378,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     }
 
     /** Anzeigetitel (Benachrichtigung): nie aus der URL; nur sichere Zeichen. */
-    static String displayTitle(String name) {
+    public static String displayTitle(String name) {
         if (name == null) return "Video";
         StringBuilder b = new StringBuilder();
         for (int i = 0; i < name.length() && b.length() < 80; i++) {
@@ -375,7 +389,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         return t.isEmpty() ? "Video" : t;
     }
 
-    static String fileName(String title) {
+    public static String fileName(String title) {
         String t = title.replace('.', ' ').replace('/', ' ').trim();
         return (t.isEmpty() ? "Video" : t) + ".mp4";
     }

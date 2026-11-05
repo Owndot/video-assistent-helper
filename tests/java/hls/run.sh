@@ -22,5 +22,8 @@ CP="$CACHE/okhttp-jvm-5.5.1.jar:$CACHE/okio-jvm-3.18.1.jar:$CACHE/kotlin-stdlib-
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 SRC="${APP_SRC:-$ROOT/app/src/main/java}/de/evp/helfer"   # mutation.py setzt eine veränderte Kopie
 javac -Xlint:-options -d "$WORK/c" -cp "$CP" $(ls "$SRC"/net/*.java | grep -v '/SafeHttp\.java$') "$SRC"/hls/*.java \
+  "$SRC"/dl/*.java "$SRC"/ControlCommands.java \
   "$ROOT/tests/java/dl/de/evp/helfer/net/LocalTestClients.java" "$HERE"/de/evp/helfer/hls/*.java
 java -Xmx64m -cp "$WORK/c:$CP" de.evp.helfer.hls.TestHls "$FX"
+# Koordinator (P4b-3/5): Ablauf, Grenzen, Journal, Absturz an jeder Grenze, Wiederaufnahme, Abbruchvorrang
+java -Xmx96m -cp "$WORK/c:$CP" de.evp.helfer.hls.TestHlsEngine "$FX"
