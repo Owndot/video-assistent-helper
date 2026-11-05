@@ -120,9 +120,9 @@ public class RemuxDeviceTest {
                     r = new Result().put("path", path).put("error", t.getClass().getSimpleName() + ": " + t.getMessage());
                 }
                 r.put("test", "remux").put("fixture", name).put("file", o.getName());
-                record(r);
                 boolean expectedRejection = name.contains("opus") && !opus && String.valueOf(r.v.get("error")).contains("audio-codec");
                 r.put("expected_rejection", expectedRejection);
+                record(r);
                 if (path.equals("media3") && !expectedRejection && (r.v.containsKey("error") || r.v.containsKey("device_video_decode_error")
                         || r.v.containsKey("device_audio_decode_error") || r.v.containsKey("device_extract_error")))
                     mainFailures.add(name + ": " + r.json());
