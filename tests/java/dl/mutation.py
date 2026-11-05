@@ -14,6 +14,9 @@ DL = 'de/evp/helfer/dl/DirectDownloads.java'
 NET = 'de/evp/helfer/net/SafeHttpClient.java'
 
 MUTATIONS = [
+    ('job slots never report idle', 'de/evp/helfer/dl/JobSlots.java', 'private void freed() { if (--used == 0) activity.active(false); }', 'private void freed() { --used; }'),
+    ('job slots report every acquire', 'de/evp/helfer/dl/JobSlots.java', 'private void occupied() { if (++used == 1) activity.active(true); }', 'private void occupied() { ++used; activity.active(true); }'),
+    ('late listener not told about running job', 'de/evp/helfer/dl/JobSlots.java', 'if (used > 0) activity.active(true);', ''),
     ('status not checked', DL, 'if (response.code() != 200) throw new Fail("http_" + response.code());', ''),
     ('content-length optional', DL, 'if (total <= 0) throw new Fail("no_length");', 'if (total <= 0) total = Long.MAX_VALUE;'),
     ('content type not checked', DL, 'if (!acceptedType(response.contentType())) throw new Fail("type");', ''),

@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -343,6 +344,7 @@ public final class TestDirectDownloads {
         check("storage not writable (permission): failed before any network access", TestDirectDownloads::storagePermission);
         check("crash recovery: published -> done, unpublished -> interrupted, unsure -> interrupted", TestDirectDownloads::crashRecovery);
         check("journal write failure after create: failed, partial removed", TestDirectDownloads::journalFailureAfterCreate);
+        check("job slots report activity only on 0->1 and 1->0 (CPU lock on Android)", TestDirectDownloads::slotActivity);
         check("no space before download: nothing created", TestDirectDownloads::noSpaceBefore);
         check("no space during download: stopped and cleaned", TestDirectDownloads::noSpaceDuring);
         check("write error (ENOSPC) is a storage failure, never resumed", TestDirectDownloads::writeError);
@@ -365,6 +367,28 @@ public final class TestDirectDownloads {
         check("file name never from URL", TestDirectDownloads::names);
         System.out.println("dl tests: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    static void slotActivity() {
+        JobSlots s = new JobSlots(2, 4);
+        List<Boolean> ev = new ArrayList<>();
+        s.setActivity(ev::add);
+        expect(ev.isEmpty(), "no report while idle");
+        expect(s.tryAcquire(), "first");
+        expect(s.tryAcquireWithConnection(), "second");
+        expect(!s.tryAcquire(), "third refused");
+        expect(ev.equals(Arrays.asList(true)), "one 'active' for two jobs: " + ev);
+        s.release();
+        expect(ev.equals(Arrays.asList(true)), "still active with one job: " + ev);
+        s.releaseWithConnection();
+        expect(ev.equals(Arrays.asList(true, false)), "'idle' after the last job: " + ev);
+        expect(s.tryAcquireWithConnection(), "again");
+        List<Boolean> late = new ArrayList<>();
+        s.setActivity(late::add);
+        expect(late.equals(Arrays.asList(true)), "a listener set while a job runs learns it at once: " + late);
+        s.releaseWithConnection();
+        expect(late.equals(Arrays.asList(true, false)) && ev.size() == 3, "only the current listener: " + late + " " + ev);
+        expect(s.inUse() == 0 && s.httpInUse() == 0, "all free");
     }
 
     static void largeFile() throws Exception {

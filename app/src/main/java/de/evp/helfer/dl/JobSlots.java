@@ -12,8 +12,22 @@ import java.util.function.BooleanSupplier;
  * </ul>
  */
 public final class JobSlots {
+    /** Meldet, ob mindestens ein Auftrag aktiv ist (Übergang 0→1: true, 1→0: false); unter der Sperre aufgerufen. */
+    public interface Activity { void active(boolean any); }
+
     public final int max, maxHttp;
     private int used, http;
+    private Activity activity = any -> { };
+
+    /** Android: CPU-Sperre während aktiver Aufträge. Ist bereits ein Auftrag aktiv, wird das sofort gemeldet. */
+    public synchronized void setActivity(Activity a) {
+        activity = a == null ? any -> { } : a;
+        if (used > 0) activity.active(true);
+    }
+
+    private void occupied() { if (++used == 1) activity.active(true); }
+
+    private void freed() { if (--used == 0) activity.active(false); }
 
     public JobSlots(int max) { this(max, 2 * max); }
 
@@ -26,28 +40,28 @@ public final class JobSlots {
     /** Auftragsplatz ohne Verbindung (HLS: Anfragen einzeln über {@link #acquireHttp}). false: alle belegt. */
     public synchronized boolean tryAcquire() {
         if (used >= max) return false;
-        used++;
+        occupied();
         return true;
     }
 
     /** Auftragsplatz und eine Verbindung für die ganze Dauer (MP4). false: eines davon ist belegt. */
     public synchronized boolean tryAcquireWithConnection() {
         if (used >= max || http >= maxHttp) return false;
-        used++;
         http++;
+        occupied();
         return true;
     }
 
     public synchronized void release() {
         if (used <= 0) throw new IllegalStateException("release without acquire");
-        used--;
+        freed();
         notifyAll();
     }
 
     public synchronized void releaseWithConnection() {
         if (used <= 0 || http <= 0) throw new IllegalStateException("release without acquire");
-        used--;
         http--;
+        freed();
         notifyAll();
     }
 

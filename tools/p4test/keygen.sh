@@ -10,6 +10,7 @@ DIR="${1:?usage: keygen.sh TARGET_DIR}"
 [ -d "$DIR" ] || die "$DIR does not exist"
 KS="$(cd "$DIR" && pwd)/helper-p4-test.p12"
 outside_git "$KS"
+outside_cloud "$KS"
 [ ! -e "$KS" ] || die "$KS exists: the P4 identity is created once and reused (no new key for updates)"
 [ -z "${CI:-}${GITHUB_ACTIONS:-}" ] || die "never in CI"
 umask 077

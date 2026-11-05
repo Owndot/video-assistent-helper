@@ -3,7 +3,8 @@
 #  * nur Paket de.evp.helfer.p4test (nie de.evp.helfer, nie channeltest), nicht debugfähig, Kanalbibliothek für
 #    arm64-v8a + x86_64, keine Testbibliothek, allowBackup=false, Eingabe noch unsigniert;
 #  * Zertifikat des Schlüsselspeichers == festgelegter SHA-256 (release/p4test-signer.json), sonst Abbruch;
-#  * Schlüssel und Ausgabe nie in einem Git-Arbeitsverzeichnis; danach genau ein Signierer mit diesem Zertifikat.
+#  * Schlüssel und Ausgabe nie in einem Git-Arbeitsverzeichnis oder Cloud-Ordner; danach genau ein Signierer mit diesem
+#    Zertifikat. Läuft unter Linux und macOS (bash 3.2); braucht JDK (keytool), openssl und Android build-tools 34.0.0.
 # Aufruf: tools/p4test/sign.sh UNSIGNED.apk KEYSTORE.p12 OUT.apk [PIN.json]   (Passwort: Abfrage oder P4_KS_PASS)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -13,7 +14,7 @@ BT="${ANDROID_HOME:?set ANDROID_HOME}/build-tools/34.0.0"
 [ -x "$BT/apksigner" ] && [ -x "$BT/aapt2" ] || die "build-tools 34.0.0 required"
 [ -f "$IN" ] && [ -f "$KS" ] || die "input APK or keystore missing"
 [ ! -e "$OUT" ] || die "$OUT exists"
-outside_git "$KS"; outside_git "$OUT"
+outside_git "$KS"; outside_git "$OUT"; outside_cloud "$KS"; outside_cloud "$OUT"
 pin="$(pinned_sha256 "$PIN")"
 [ -n "$pin" ] || die "no certificate pinned in $(basename "$PIN") (create the key with keygen.sh and pin its SHA-256 first)"
 
@@ -41,4 +42,4 @@ certs="$("$BT/apksigner" verify --verbose --print-certs "$OUT")" || { rm -f "$OU
 [ "$(grep -c '^Signer #[0-9]* certificate DN' <<<"$certs")" = 1 ] || { rm -f "$OUT"; die "not exactly one signer"; }
 got="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$certs")"
 [ "$got" = "$pin" ] || { rm -f "$OUT"; die "signed APK carries $got"; }
-echo "SIGNED $P4_PACKAGE versionCode=$code cert_sha256=$got apk_sha256=$(sha256sum < "$OUT" | cut -d' ' -f1)"
+echo "SIGNED $P4_PACKAGE versionCode=$code cert_sha256=$got apk_sha256=$(sha256_file "$OUT")"

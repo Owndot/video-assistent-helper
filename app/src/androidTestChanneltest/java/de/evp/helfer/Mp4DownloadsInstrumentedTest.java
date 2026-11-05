@@ -421,6 +421,36 @@ public class Mp4DownloadsInstrumentedTest {
         }
     }
 
+    /**
+     * Android-Energiesparen: solange ein Download über den echten Weg (Mp4Downloads → gemeinsame Grenzen) läuft, hält
+     * die App eine teilweise CPU-Sperre; danach ist sie wieder frei (kein dauerhaftes Wachhalten).
+     */
+    @Test public void cpuStaysAwakeOnlyWhileDownloading() throws Exception {
+        long total = 64L << 20;
+        try (Server srv = new Server((line, h, out, i) -> {
+            head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: " + total, "ETag: \"awake\"");
+            for (long p = 0; p < total; p += 64 << 10) { content(out, p, Math.min(total, p + (64 << 10))); out.flush(); Thread.sleep(5); }
+        })) {
+            engineFor(srv);
+            long end = SystemClock.elapsedRealtime() + 30_000;
+            while (Mp4Downloads.SLOTS.inUse() > 0 && SystemClock.elapsedRealtime() < end) Thread.sleep(20);
+            assertEquals("no download from earlier tests", 0, Mp4Downloads.SLOTS.inUse());
+            assertFalse("idle: no CPU lock", Mp4Downloads.awake());
+            String id = newId(), t = title("Awake");
+            store.engine.start(id, srv.url("/v.mp4"), t);
+            end = SystemClock.elapsedRealtime() + 20_000;
+            while (!Mp4Downloads.awake() && SystemClock.elapsedRealtime() < end) Thread.sleep(20);
+            assertTrue("CPU lock held while downloading", Mp4Downloads.awake());
+            store.engine.cancel(id);
+            end = SystemClock.elapsedRealtime() + 20_000;
+            while ((Mp4Downloads.awake() || !store.engine.status(id).contains("\"state\":\"cancelled\"")) && SystemClock.elapsedRealtime() < end) Thread.sleep(20);
+            assertTrue(store.engine.status(id), store.engine.status(id).contains("\"state\":\"cancelled\""));
+            assertFalse("CPU lock released when no download runs", Mp4Downloads.awake());
+            assertEquals(0, Mp4Downloads.SLOTS.inUse());
+            awaitNoLeftovers(t, 5_000, "cancelled download");
+        }
+    }
+
     /** Abbruch während des Rumpfs: kein sichtbarer oder pending Eintrag, keine Markierung, keine Teil-Datei. */
     @Test public void cancelRemovesEverything() throws Exception {
         long total = 256L << 20;

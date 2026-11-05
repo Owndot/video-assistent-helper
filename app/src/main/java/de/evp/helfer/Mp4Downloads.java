@@ -75,7 +75,36 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         Downloads.channel(app);
         cleanupPublicLeftovers();              // vor dem Journal: Wiederherstellung sieht nur echte Dateien
         this.engine = new DirectDownloads(http, this, this, SLOTS);
+        SLOTS.setActivity(any -> keepAwake(app, any));
     }
+
+    /**
+     * Teilweise CPU-Sperre, solange ein Download (MP4 oder HLS) aktiv ist: der Vordergrunddienst hält nur den Prozess,
+     * nicht die CPU wach; bei ausgeschaltetem Bildschirm würden Abrufe sonst stocken und in Zeitüberschreitungen enden.
+     * Mit Zeitlimit und Verlängerung bei jedem Fortschritt: ein hängender Auftrag hält das Gerät nicht unbegrenzt wach.
+     */
+    static final long AWAKE_WINDOW_MS = 30 * 60_000L;
+    private static android.os.PowerManager.WakeLock wake;
+
+    static synchronized void keepAwake(Context c, boolean on) {
+        if (wake == null) {
+            if (!on) return;
+            android.os.PowerManager pm = c.getSystemService(android.os.PowerManager.class);
+            if (pm == null) return;
+            wake = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "evp:downloads");
+            wake.setReferenceCounted(false);
+        }
+        if (on) wake.acquire(AWAKE_WINDOW_MS);
+        else if (wake.isHeld()) wake.release();
+    }
+
+    /** Verlängert nur eine gehaltene Sperre (ein Fortschritt nach dem Ende holt sie nie neu). */
+    static synchronized void renewAwake() {
+        if (wake != null && wake.isHeld()) wake.acquire(AWAKE_WINDOW_MS);
+    }
+
+    /** Nur Gerätetests: ob die Sperre gerade gehalten wird. */
+    static synchronized boolean awake() { return wake != null && wake.isHeld(); }
 
     /** Speicherberechtigungen für Android 8–9: beide nötig (ohne READ vergibt Android nur die Lese-/Standard-Ansicht). */
     static final String[] LEGACY_STORAGE_PERMISSIONS = {
@@ -383,6 +412,7 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     private static String tag(String id) { return "mp4-" + id; }
 
     @Override public void progress(String id, String title, long bytes, long total) {
+        renewAwake();                                    // Fortschritt verlängert das Zeitfenster der CPU-Sperre
         Intent stop = new Intent(app, HelferService.class).setAction(ACTION_CANCEL).putExtra(EXTRA_JOB, id)
             .setData(Uri.parse("evp-mp4:" + id));                // je Auftrag eigener PendingIntent
         PendingIntent cancel = PendingIntent.getService(app, id.hashCode(), stop, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
