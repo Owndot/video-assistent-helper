@@ -27,11 +27,14 @@ for res in sorted(glob.glob(os.path.join(root, '*', 'files', 'files', 'p4a', 're
                 o = a.get('output', {})
                 detail = 'frames %s sync %s->%s ms dur %.3f; device %s %s' % (o.get('video_frames'), a.get('source', {}).get('sync_offset_ms'),
                     o.get('sync_offset_ms'), o.get('duration') or 0, decoded, '; '.join(a['fails'] + [k + '=' + str(r[k]) for k in dev]))
+            if r.get('expected_rejection'):   # Richtlinie: Opus nur, wo nachweislich abspielbar (API >= 29)
+                verdict, detail = 'PASS', 'abgelehnt wie vorgesehen: ' + r.get('error', '')
             rows.append((api, r['fixture'], r['path'], verdict, detail))
             if r['path'] == 'media3' and verdict != 'PASS': bad.append((api, r['fixture'], detail))
         elif r.get('test') == 'cancel':
             ok = r.get('outcome') == 'cancelled' and not r.get('output_left')
-            rows.append((api, 'cancel', r['path'], 'PASS' if ok else 'FAIL', '%s after %s ms, output left: %s' % (r.get('outcome'), r.get('ms_total'), r.get('output_left'))))
+            rows.append((api, 'cancel', r['path'], 'PASS' if ok else 'FAIL', '%s after %s ms (%s ms after the cancel request), output left: %s' % (
+                r.get('outcome'), r.get('ms_total'), r.get('ms_after_cancel'), r.get('output_left'))))
             if not ok: bad.append((api, 'cancel', r['path']))
         elif r.get('test') == 'memory':
             rows.append((api, 'memory', r['path'], 'INFO', 'samples v%s a%s, java probe %s, native delta %s KB, max heap %s MB %s' % (

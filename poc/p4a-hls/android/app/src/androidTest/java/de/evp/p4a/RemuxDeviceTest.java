@@ -105,7 +105,8 @@ public class RemuxDeviceTest {
         for (String name : FIXTURES) {
             File dir = copy(name);
             List<List<File>> p = plan(dir, name);
-            boolean fmp4 = name.startsWith("fmp4"), opus = name.contains("opus");
+            // Opus nur, wo es nachweislich abspielbar ist (P4a: API 26 kann Opus-in-MP4 nicht lesen, ab API 29 schon)
+            boolean fmp4 = name.startsWith("fmp4"), opus = name.contains("opus") && Build.VERSION.SDK_INT >= 29;
             for (String path : new String[] {"media3", "media3-fragmented", "platform"}) {
                 File o = new File(out, name + "--" + path + "--api" + Build.VERSION.SDK_INT + ".mp4");
                 Result r;
@@ -120,7 +121,9 @@ public class RemuxDeviceTest {
                 }
                 r.put("test", "remux").put("fixture", name).put("file", o.getName());
                 record(r);
-                if (path.equals("media3") && (r.v.containsKey("error") || r.v.containsKey("device_video_decode_error")
+                boolean expectedRejection = name.contains("opus") && !opus && String.valueOf(r.v.get("error")).contains("audio-codec");
+                r.put("expected_rejection", expectedRejection);
+                if (path.equals("media3") && !expectedRejection && (r.v.containsKey("error") || r.v.containsKey("device_video_decode_error")
                         || r.v.containsKey("device_audio_decode_error") || r.v.containsKey("device_extract_error")))
                     mainFailures.add(name + ": " + r.json());
             }
@@ -137,9 +140,9 @@ public class RemuxDeviceTest {
             AtomicBoolean cancel = new AtomicBoolean();
             Result r = new Result().put("test", "cancel").put("path", path);
             try (Concat v = new Concat(p.get(0)); Concat a = new Concat(p.get(1))) {
-                v.throttleNanosPerRead = 3_000_000;   // langsame Quelle: Abbruch fällt mitten in Extraktion/Mux
-                a.throttleNanosPerRead = 3_000_000;
-                Thread t = new Thread(() -> { try { Thread.sleep(300); } catch (InterruptedException ignored) { } cancel.set(true); });
+                v.throttleNanosPerRead = 20_000_000;   // langsame Quelle (~20 ms je Lesezugriff): Abbruch fällt mitten in den Lauf
+                a.throttleNanosPerRead = 20_000_000;
+                Thread t = new Thread(() -> { try { Thread.sleep(150); } catch (InterruptedException ignored) { } cancel.set(true); });
                 long t0 = System.nanoTime();
                 t.start();
                 String outcome;
@@ -151,7 +154,7 @@ public class RemuxDeviceTest {
                     outcome = "cancelled";
                 }
                 long ms = (System.nanoTime() - t0) / 1_000_000;
-                r.put("outcome", outcome).put("ms_total", ms).put("output_left", o.exists());
+                r.put("outcome", outcome).put("ms_total", ms).put("ms_after_cancel", ms - 150).put("output_left", o.exists());
             }
             record(r);
             assertTrue(path + ": " + r.json(), "cancelled".equals(r.v.get("outcome")) && !o.exists());
