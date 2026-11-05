@@ -15,8 +15,8 @@ Sicherheitsfreigabe. Keine APK wurde ausgeliefert, nichts ist auf einem Gerät i
 | P4b-4 | `Media3HlsRemuxer` (TS/fMP4 → MP4 ohne Neukodierung) + Ausgabeprüfung | `b3bd8b8` |
 | P4b-5/6 | App-Anbindung (`HlsDownloads`, Dienst, Benachrichtigungen), Protokoll `hlsplan`/`hlsstart` v1, Gerätetests, API 29 in der Matrix | `884cded` |
 | P4b-7 | Desktop-Harness mit echter `HlsEngine` für Kadris Ende-zu-Ende-Tests | `ad69aa2` |
-| Korrektur | Android 10: Veröffentlichungsprüfung (MediaStore `SIZE` bleibt 0); Heap-Messung des Restbestands; deterministischer Paralleltest | `4436aaf` |
-| P4b-8 | P4-Testapp `de.evp.helfer.p4test`, dauerhafter Signierweg (lokal, fail-closed), Doku | siehe Abschnitt 8 |
+| Korrekturen | Android 10: Veröffentlichungsprüfung über die echte Dateilänge; Heap-Messung des Restbestands; Gerätetests ohne Zeitannahmen (Latch, eigener Fortschritt statt globaler Zähler, Rückruf statt Status); API 26: Berechtigung per `pm grant`; Absturzdiagnose im Job-Log; wirkungsloser Android-10-Scan entfernt | `4436aaf`, `519b44d`, `f720bee`, `d53ec8a`, `a8c0af4` |
+| P4b-8 | P4-Testapp `de.evp.helfer.p4test`, dauerhafter Signierweg (lokal, fail-closed), Doku | `54184a9` |
 
 Kadri (Branch `feature/c3-helper-mp4`, Draft-PR #11): `83afa8f` (P4b-7, Menü „Stream speichern …“) und P4b-8
 (P4-Testerweiterungsidentität, Doku).
@@ -89,12 +89,19 @@ Apache-2.0 (`licenses/media3-1.11.1.LICENSE`); Hashes in `gradle/verification-me
 aus dem CI-Lauf, nicht unabhängig geprüft. R8: Regeln für die App unverändert, Test-Keep-Regeln um
 `ListenableFuture` ergänzt.
 
-## 7. Korrektur Android 10 (bestehender C2-Fehler)
+## 7. Android 10 (API 29): Veröffentlichung und MediaStore-Größe
 
-Android 10 trägt bei `openOutputStream` die MediaStore-Spalte `SIZE` nicht ein (bleibt 0). `isPublished` prüfte diese
-Spalte → ein fertiger Download galt nach Neustart als unvollständig („interrupted“, erneuter Download). Erst mit
-API 29 in der Matrix sichtbar. Jetzt: `IS_PENDING == 0` und echte Länge über den Dateideskriptor; auf API 29 wird die
-gemessene Länge beim Veröffentlichen in `SIZE` geschrieben (Dateimanager), ab API 30 pflegt der Provider sie selbst.
+- Fehler (seit C2, erst mit API 29 in der Matrix sichtbar): `isPublished` prüfte die MediaStore-Spalte `SIZE`. Android 10
+  füllt sie bei `openOutputStream` nicht (bleibt 0) → ein fertiger Download galt nach Neustart als unvollständig
+  („interrupted“, erneuter Download). **Behoben:** `IS_PENDING == 0` und echte Länge über den Dateideskriptor. Belegt
+  durch die Gerätetests Absturz-Konsistenz und Markierungsfehler + Neustart auf API 29 (vorher rot, jetzt grün).
+- **Offen (Befund, nicht verdeckt):** Die Spalte `SIZE` des Download-Eintrags bleibt auf Android 10 dennoch 0. Gemessen
+  (Lauf 42086488051): eine eigene Aktualisierung von `SIZE` ändert 0 Zeilen; `MediaScannerConnection.scanFile` liefert
+  eine **andere** MediaStore-Zeile zurück, der Eintrag bleibt bei 0. Ein Scan, der womöglich einen zweiten Eintrag für
+  dieselbe Datei anlegt, ist schlimmer als die fehlende Angabe → beides wieder entfernt. Datei und Inhalt sind korrekt
+  (64 MiB am erwarteten Ort). Der Gerätetest `publishesThroughMediaStoreAndReadsBack` prüft die Spalte unverändert und
+  bleibt auf API 29 **rot**. Ob Dateimanager/Galerie auf Android 10 „0 B“ anzeigen, ist auf einem Gerät zu prüfen;
+  Entscheidung nötig (hinnehmen für Android 10 oder anderer Weg).
 
 ## 8. P4-Testidentität und Signierweg (Option B)
 
@@ -119,9 +126,24 @@ gemessene Länge beim Veröffentlichen in `SIZE` geschrieben (Dateimanager), ab 
   Kopplung der C3-Testerweiterung überschreiben. Vorbereitet in Kadri `tools/p4test/identity.json`
   (ID `pcccpjllneffccpenbepmfbkjedllkkf`, nur öffentlicher Schlüssel; geprüft von `tests/channel/p4_identity_check.js`).
 
-## 9. Ergebnisse je Android-Version
+## 9. Ergebnisse je Android-Version (Kopf `a8c0af4`, Lauf 42087786998, x86_64-Emulatoren)
 
-Wird mit dem letzten CI-Lauf ergänzt.
+| | API 26 | API 29 | API 34 |
+|---|---|---|---|
+| Instrumentierung (Kanal, Netz, MP4, HLS) | **44/44 OK** | 43/44 – nur `SIZE`-Spalte (Abschnitt 7) | **44/44 OK** |
+| HLS: 9 Profile umgepackt, veröffentlicht, auf dem Gerät vollständig dekodiert | 9/9 | 9/9 | 9/9 |
+| Heap je Sample (Restbestand nach GC, Steigung) | 42 B | 42 B | 42 B |
+| Max. Heap / Sample-Budget / Budget-Heap | 384 MiB / 1 000 000 / 40 MiB | 512 MiB / 1 000 000 / 40 MiB | 192 MiB / 786 432 / 31 MiB |
+| Abbruch → „cancelled“ | 95 ms | 127 ms | 100 ms |
+| MP4 + HLS parallel, gleichzeitige HTTP-Anfragen (Grenze 4) | 3 | 3 | 3 |
+| Opus | nicht angeboten (`audio_codec`) | fertig | fertig |
+| C2-Flake-Wiederholung (20×+2) | 22/22 | 22/22 | 22/22 |
+| P4-Signierweg-Selbsttest | – | – | alle Ablehnungen PASS |
+
+Weitere Workflows auf `a8c0af4`: HLS-Lieferkette/JVM/Mutationen grün; Helper safe validation grün (ein Job,
+`download-manager-privacy`, scheiterte einmal an einer doppelten Anfrage des System-DownloadManagers – unberührter
+Altpfad – und war bei der einen Wiederholung grün); Browser-Tests grün (ein Firefox-Spul-Timingtest scheiterte einmal,
+Wiederholung grün). Kanal-/JVM-Mutationen grün.
 
 ## 10. Offene Sicherheits- und Funktionsgrenzen
 
@@ -137,6 +159,9 @@ Wird mit dem letzten CI-Lauf ergänzt.
 8. Vordergrunddienst `specialUse` (für Browsersteuerung deklariert) trägt jetzt auch lange Downloads; Eignung für
    Android 17 und Samsung-Energiesparen auf dem Gerät prüfen (P4c).
 9. Opus nur mit Geräteprobe ab Android 10.
+10. Android 10: MediaStore-`SIZE` des Download-Eintrags bleibt 0 (Abschnitt 7); Gerätetest dort rot, Entscheidung offen.
+11. Zwei einmalige CI-Ausreißer in unberührten Altpfaden (System-DownloadManager, Firefox-Spul-Timing), je eine
+    Wiederholung grün – beobachten.
 
 ## 11. Samsung-Testplan (P4c, nur nach ausdrücklicher Freigabe)
 
