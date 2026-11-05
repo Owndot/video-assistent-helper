@@ -121,7 +121,18 @@ public class HlsDownloadsInstrumentedTest {
     static final class Events implements DirectDownloads.Listener {
         final Map<String, Object> saved = new ConcurrentHashMap<>();
         @Override public void progress(String id, String title, long bytes, long total) { }
-        @Override public void finished(String id, String title, String state, String reason, Object s) { if (s != null) saved.put(id, s); }
+        final Map<String, String> ended = new ConcurrentHashMap<>();
+        @Override public synchronized void finished(String id, String title, String state, String reason, Object s) {
+            if (s != null) saved.put(id, s);
+            ended.put(id, state);
+            notifyAll();
+        }
+        /** Die Engine meldet den Endzustand vor dem Rückruf (außerhalb ihrer Sperren): auf den Rückruf warten. */
+        synchronized Object saved(String id, long ms) throws InterruptedException {
+            long end = System.currentTimeMillis() + ms;
+            while (!ended.containsKey(id) && System.currentTimeMillis() < end) wait(Math.max(1, end - System.currentTimeMillis()));
+            return saved.get(id);
+        }
     }
 
     static final class Rig {
@@ -149,6 +160,11 @@ public class HlsDownloadsInstrumentedTest {
     static String field(String json, String k) {
         Matcher m = Pattern.compile("\"" + k + "\":(\"([^\"]*)\"|(-?[0-9.]+|true|false))").matcher(json);
         return m.find() ? (m.group(2) != null ? m.group(2) : m.group(3)) : null;
+    }
+
+    static int intField(String json, String k) {
+        String v = field(json, k);
+        return v == null ? -1 : Integer.parseInt(v);
     }
 
     static String firstOption(String plan) {
@@ -186,7 +202,7 @@ public class HlsDownloadsInstrumentedTest {
                 String id = id();
                 String st = run(r, n, id);
                 assertEquals(n + ": " + st + " " + r.engine.diagnostics(id), "done", field(st, "state"));
-                Object saved = r.ev.saved.get(id);
+                Object saved = r.ev.saved(id, 10_000);
                 assertNotNull(n + ": published reference", saved);
                 int[] dec = decodeAll(saved);
                 Log.i(TAG, "HLS_DEVICE api=" + Build.VERSION.SDK_INT + " fixture=" + n + " tracks=" + dec[0] + " videoSamples=" + dec[1] + " videoDecoded=" + dec[2]
@@ -200,7 +216,7 @@ public class HlsDownloadsInstrumentedTest {
             String st = run(r, "fmp4_opus_sep", id);
             if (HlsDownloads.opusSupported()) {
                 assertEquals(st, "done", field(st, "state"));
-                assertEquals(2, decodeAll(r.ev.saved.get(id))[0]);
+                assertEquals(2, decodeAll(r.ev.saved(id, 10_000))[0]);
             } else {
                 assertEquals(st, "failed", field(st, "state"));
                 assertTrue(st, "audio_codec".equals(field(st, "reason")) || "no_supported_variant".equals(field(st, "reason")));
@@ -298,24 +314,32 @@ public class HlsDownloadsInstrumentedTest {
             String id = id();
             String plan = r.engine.plan(PEER, BIND, srv.url("ts_sep/master.m3u8"));
             r.engine.start(PEER, BIND, id, field(plan, "planId"), firstOption(plan), "Resume");
+            // Der Server-Zähler gilt für die ganze Klasse: gewartet wird auf den eigenen Fortschritt des Auftrags
+            // (verifizierte, im Journal stehende Segmente), nicht auf einen absoluten Zählerstand.
             long end = System.nanoTime() + 20_000_000_000L;
-            while (srv.segments.get() < 4 && System.nanoTime() < end) Thread.sleep(10);
+            while (intField(r.engine.status(id), "done") < 2 && System.nanoTime() < end) Thread.sleep(10);
             r.engine.stopAll();
             String st = await(r.engine, id, 20_000);
             assertEquals(st, "interrupted", field(st, "state"));
+            int kept = intField(st, "done");
+            assertTrue("segments kept before the stop: " + st, kept >= 2 && kept < 11);
             srv.delayMs = 0;
             // Abgebrochene Anfragen schlafen im Server noch ihre Verzögerung ab und zählen erst danach: erst wenn keine
             // Anfrage mehr offen ist, ist der Zähler der Ausgangswert (Bedingung, keine feste Wartezeit).
             assertTrue("server quiet", srv.quiesce(10_000));
             r.restart();                                   // neue Engine auf demselben Ordner (wie nach Prozessende)
-            assertEquals("interrupted", field(r.engine.status(id), "state"));
+            String afterRestart = r.engine.status(id);
+            assertEquals(afterRestart, "interrupted", field(afterRestart, "state"));
+            assertEquals(afterRestart, kept, intField(afterRestart, "done"));
             int before = srv.segments.get();
             String p2 = r.engine.plan(PEER, BIND, srv.url("ts_sep/master.m3u8"));
             r.engine.start(PEER, BIND, id, field(p2, "planId"), firstOption(p2), "Resume");
             st = await(r.engine, id, 120_000);
             assertEquals(st, "done", field(st, "state"));
-            assertTrue("verified segments reused via strong ETag (" + (srv.segments.get() - before) + " re-fetched)", srv.segments.get() - before < 11);
-            assertEquals(2, decodeAll(r.ev.saved.get(id))[0]);
+            int refetched = srv.segments.get() - before;
+            // ts_sep: 5 Video- + 6 Tonsegmente; genau die nicht bestätigten werden neu geladen (wie der JVM-Test)
+            assertEquals("verified segments reused via strong ETag (kept " + kept + ")", 11 - kept, refetched);
+            assertEquals(2, decodeAll(r.ev.saved(id, 10_000))[0]);
         } finally {
             srv.delayMs = 0;
             r.close();
@@ -330,7 +354,7 @@ public class HlsDownloadsInstrumentedTest {
             String plan = r.engine.plan(PEER, BIND, srv.url("ts_sep/master.m3u8"));
             r.engine.start(PEER, BIND, id, field(plan, "planId"), firstOption(plan), "Cancel");
             long end = System.nanoTime() + 20_000_000_000L;
-            while (srv.segments.get() < 2 && System.nanoTime() < end) Thread.sleep(10);
+            while (intField(r.engine.status(id), "done") < 1 && System.nanoTime() < end) Thread.sleep(10);
             String c = r.engine.cancel(id);
             assertNotNull(c);
             String st = await(r.engine, id, 20_000);

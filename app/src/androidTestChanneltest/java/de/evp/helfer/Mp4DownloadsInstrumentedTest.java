@@ -375,13 +375,13 @@ public class Mp4DownloadsInstrumentedTest {
             if (Build.VERSION.SDK_INT >= 29) {
                 assertEquals("content", uri.getScheme());
                 try (Cursor c = cr.query(uri, new String[] {MediaStore.Downloads.DISPLAY_NAME, MediaStore.Downloads.IS_PENDING,
-                        MediaStore.Downloads.RELATIVE_PATH, MediaStore.Downloads.SIZE, MediaStore.Downloads.MIME_TYPE}, null, null, null)) {
+                        MediaStore.Downloads.RELATIVE_PATH, MediaStore.Downloads.SIZE, MediaStore.Downloads.MIME_TYPE, MediaStore.MediaColumns.DATA}, null, null, null)) {
                     assertNotNull(c);
                     assertTrue(c.moveToFirst());
                     assertEquals(t + ".mp4", c.getString(0));
                     assertEquals(0, c.getInt(1));
                     assertEquals(Environment.DIRECTORY_DOWNLOADS + "/" + Downloads.FOLDER + "/", c.getString(2));
-                    assertEquals(total, c.getLong(3));
+                    assertEquals("SIZE column (file " + c.getString(5) + ", length " + new File(c.getString(5)).length() + ")", total, c.getLong(3));
                     assertEquals("video/mp4", c.getString(4));
                 }
                 try (InputStream in = cr.openInputStream(uri)) { assertArrayEquals(expectedSha(total), sha(in)); }

@@ -198,6 +198,13 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
          */
         @SuppressWarnings("deprecation")
         private void scanQ() {
+            try {
+                ContentValues size = new ContentValues();
+                size.put(MediaStore.Downloads.SIZE, storedSize(cr, uri));   // eigene Aktualisierung, nicht mit IS_PENDING
+                cr.update(uri, size, null, null);
+            } catch (IOException | RuntimeException e) {
+                android.util.Log.w("Mp4Downloads", "size update failed: " + e.getClass().getSimpleName());
+            }
             try (android.database.Cursor c = cr.query(uri, new String[] {MediaStore.MediaColumns.DATA}, null, null, null)) {
                 String path = c != null && c.moveToFirst() ? c.getString(0) : null;
                 if (path == null) return;

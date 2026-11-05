@@ -54,7 +54,7 @@ grep -h 'PERSIST_AFTER_UNINSTALL' "$REPORT/summary.txt" || true
 awk '/^INSTRUMENTATION_STATUS: test=/{t=$0} /^INSTRUMENTATION_STATUS: stack=/{print "FAILED " t; n=14} n>0{print; n--}' "$REPORT/instrumentation.txt" | head -150
 # Runner-Ergebnis (Absturzmeldung, Liste aller Fehlschläge) und Crash-Puffer ins Job-Log.
 grep -E 'INSTRUMENTATION_RESULT|INSTRUMENTATION_FAILED|shortMsg|longMsg|Process crashed' "$REPORT/instrumentation.txt" | head -20 || true
-awk '/^There (was|were) [0-9]+ failure/{p=1} p&&/^[0-9]+\) /{print}' "$REPORT/instrumentation.txt" | head -20 || true
+awk '/^There (was|were) [0-9]+ failure/{p=1} p&&/^[0-9]+\) /{n=6} p&&n>0{print; n--}' "$REPORT/instrumentation.txt" | head -60 || true
 grep -E 'FATAL|Exception|Error|^\s+at |Abort|signal|backtrace|#[0-9]+ pc' "$REPORT/crash.txt" | head -80 || true
 grep -E 'CHANNEL_|OKHTTP_|MP4_|HLS_' "$REPORT/measurements.txt" || true
 grep -E 'TOTAL PSS|TOTAL:|Native Heap|Java Heap' "$REPORT/meminfo.txt" | head -5 || true
