@@ -55,6 +55,8 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     private static Mp4Downloads instance;
     /** Nur Diagnose (Tests/Logs): Ergebnis der letzten Abbruch-Bereinigung ("deleted:n" oder "kept:…"), nie eine URL. */
     static volatile String lastAbortOutcome = "";
+    /** Nur Diagnose (Android 10): Ergebnis der Größen-Aktualisierung und des Scans nach dem letzten Veröffentlichen. */
+    static volatile String lastQScan = "";
 
     /** Gemeinsame Grenzen aller Download-Arten im Prozess (MP4 und HLS): 2 Aufträge, 4 HTTP-Anfragen. */
     static final de.evp.helfer.dl.JobSlots SLOTS = new de.evp.helfer.dl.JobSlots(DirectDownloads.MAX_PARALLEL, 4);
@@ -198,23 +200,38 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
          */
         @SuppressWarnings("deprecation")
         private void scanQ() {
+            StringBuilder d = new StringBuilder();
             try {
                 ContentValues size = new ContentValues();
                 size.put(MediaStore.Downloads.SIZE, storedSize(cr, uri));   // eigene Aktualisierung, nicht mit IS_PENDING
-                cr.update(uri, size, null, null);
+                d.append("update=").append(cr.update(uri, size, null, null)).append(" size=").append(sizeColumn());
             } catch (IOException | RuntimeException e) {
-                android.util.Log.w("Mp4Downloads", "size update failed: " + e.getClass().getSimpleName());
+                d.append("update=").append(e.getClass().getSimpleName());
             }
             try (android.database.Cursor c = cr.query(uri, new String[] {MediaStore.MediaColumns.DATA}, null, null, null)) {
                 String path = c != null && c.moveToFirst() ? c.getString(0) : null;
-                if (path == null) return;
+                if (path == null) { lastQScan = d.append(" path=none").toString(); return; }
                 CountDownLatch done = new CountDownLatch(1);
-                MediaScannerConnection.scanFile(app, new String[] {path}, null, (p, u) -> done.countDown());
-                if (!done.await(10, TimeUnit.SECONDS)) android.util.Log.w("Mp4Downloads", "media scan timed out");
+                AtomicReference<Uri> scanned = new AtomicReference<>();
+                MediaScannerConnection.scanFile(app, new String[] {path}, null, (p, u) -> { scanned.set(u); done.countDown(); });
+                boolean ok = done.await(10, TimeUnit.SECONDS);
+                Uri su = scanned.get();
+                d.append(" scan=").append(ok ? (su == null ? "null" : (su.equals(uri) ? "same" : "other:" + su.getLastPathSegment())) : "timeout")
+                    .append(" size=").append(sizeColumn());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                d.append(" scan=interrupted");
             } catch (RuntimeException e) {
-                android.util.Log.w("Mp4Downloads", "media scan failed: " + e.getClass().getSimpleName());
+                d.append(" scan=").append(e.getClass().getSimpleName());
+            }
+            lastQScan = d.toString();
+        }
+
+        private long sizeColumn() {
+            try (android.database.Cursor c = cr.query(uri, new String[] {MediaStore.Downloads.SIZE}, null, null, null)) {
+                return c != null && c.moveToFirst() ? c.getLong(0) : -1;
+            } catch (RuntimeException e) {
+                return -2;
             }
         }
 

@@ -381,7 +381,7 @@ public class Mp4DownloadsInstrumentedTest {
                     assertEquals(t + ".mp4", c.getString(0));
                     assertEquals(0, c.getInt(1));
                     assertEquals(Environment.DIRECTORY_DOWNLOADS + "/" + Downloads.FOLDER + "/", c.getString(2));
-                    assertEquals("SIZE column (file " + c.getString(5) + ", length " + new File(c.getString(5)).length() + ")", total, c.getLong(3));
+                    assertEquals("SIZE column (file " + c.getString(5) + ", length " + new File(c.getString(5)).length() + ", " + Mp4Downloads.lastQScan + ")", total, c.getLong(3));
                     assertEquals("video/mp4", c.getString(4));
                 }
                 try (InputStream in = cr.openInputStream(uri)) { assertArrayEquals(expectedSha(total), sha(in)); }

@@ -76,9 +76,8 @@ public class HlsDownloadsInstrumentedTest {
     @BeforeClass public static void setUp() throws Exception {
         ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
         if (Build.VERSION.SDK_INT < 29) {
-            for (String p : Mp4Downloads.LEGACY_STORAGE_PERMISSIONS) {
-                InstrumentationRegistry.getInstrumentation().getUiAutomation().grantRuntimePermission(ctx.getPackageName(), p);
-            }
+            // UiAutomation.grantRuntimePermission gibt es erst ab API 28 (API 26: NoSuchMethodError); wie der MP4-Test.
+            for (String p : Mp4Downloads.LEGACY_STORAGE_PERMISSIONS) Mp4DownloadsInstrumentedTest.shell("pm grant " + ctx.getPackageName() + " " + p);
         }
         fx = new File(ctx.getCacheDir(), "hls-fx");
         AssetManager am = InstrumentationRegistry.getInstrumentation().getContext().getAssets();
