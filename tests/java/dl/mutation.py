@@ -23,7 +23,7 @@ MUTATIONS = [
     # Nicht als Probe: 'if (n < 0) throw new IOException("short body")' und der long_body-Test sind über OkHttp nicht
     # erreichbar (FixedLengthSource wirft bei vorzeitigem Ende ProtocolException und liefert genau Content-Length);
     # sie bleiben als zweite Absicherung. Vorzeitiges Ende prüfen 'truncated body …' und 'at most 3 resumes'.
-    ('write error resumed', DL, 'try { out.write(b, 0, n); } catch (IOException e) { throw new Fail("storage"); }', 'out.write(b, 0, n);'),
+    ('write error resumed', DL, 'try { out.write(b, 0, n); } catch (IOException e) { throw new Fail("storage", e); }', 'out.write(b, 0, n);'),
     ('resume without strong ETag', DL, 'if (resumes >= MAX_RESUMES || etag == null) throw new Fail("network");', 'if (resumes >= MAX_RESUMES) throw new Fail("network");'),
     ('weak or invalid etag accepted', DL, 'return SafeHttpClient.isStrongEtag(etag) ? etag : null;', 'return etag;'),
     ('If-Range not sent', DL, 'response = http.get(finalUrl, job.bytes, total - 1, etag, total, callTimeoutMs, job.cancel);',
@@ -33,7 +33,7 @@ MUTATIONS = [
     ('content-encoding unchecked on resume', DL, 'if (!identityEncoding(r.contentEncoding())) throw new Fail("encoding");', ''),
     ('stale idle connection reused', DL, 'this.http = http.withoutConnectionReuse();', 'this.http = http;'),
     ('storage permission not checked', DL, 'if (!store.writable()) throw new Fail("storage_permission");', ''),
-    ('ref not journaled before writing', DL, 'try { saveJournal(); } catch (IOException e) { throw new Fail("storage"); }', ''),
+    ('ref not journaled before writing', DL, 'try { saveJournal(); } catch (IOException e) { throw new Fail("storage", e); }', ''),
     ('published file restored as interrupted', DL, 'st = j.ref != null && published(j.ref, j.total) ? State.DONE : State.INTERRUPTED;', 'st = State.INTERRUPTED;'),
     ('unchecked restore as done', DL, 'try { return total > 0 && store.isPublished(ref, total); }', 'try { return true; }'),
     ('unlimited resumes', DL, 'resumes >= MAX_RESUMES || ', ''),

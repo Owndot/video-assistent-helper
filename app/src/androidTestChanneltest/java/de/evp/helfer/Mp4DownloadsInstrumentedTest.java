@@ -256,10 +256,22 @@ public class Mp4DownloadsInstrumentedTest {
         engine = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), store, events);
     }
 
-    @Before public void before() { cleanup.clear(); cleanupFiles.clear(); }
+    java.util.Set<String> proofsAtStart = new java.util.HashSet<>();
 
-    @After public void after() {
-        if (engine != null) engine.stopAll();
+    @Before public void before() { cleanup.clear(); cleanupFiles.clear(); proofsAtStart = proofNames(); }
+
+    /**
+     * Isolation: erst warten, bis jeder Arbeiter dieses Tests aufgeräumt und sein Ende gemeldet hat (begrenzt, mit
+     * Befund statt stillem Weiterlaufen), dann Reste dieses Tests entfernen. So kann kein Test mit noch laufenden
+     * Arbeitern oder liegengebliebenen Besitzmarkierungen den nächsten beeinflussen (API-34-Befund: ein fremder Rest
+     * wurde vom nächsten Test mitgezählt bzw. mit entfernt).
+     */
+    @After public void after() throws Exception {
+        if (engine != null) {
+            engine.stopAll();
+            assertTrue("workers of this test finished within 30 s", engine.awaitIdle(30_000));
+        }
+        isolateLeftovers();
         ContentResolver cr = ctx.getContentResolver();
         for (Uri u : cleanup) { try { if ("content".equals(u.getScheme())) cr.delete(u, null, null); } catch (RuntimeException ignored) { } }
         for (File f : cleanupFiles) f.delete();
@@ -284,6 +296,38 @@ public class Mp4DownloadsInstrumentedTest {
             if (parts != null) for (File f : parts) if (f.getName().startsWith(Mp4Downloads.PART_PREFIX)) n++;
         }
         return n;
+    }
+
+    static java.util.Set<String> proofNames() {
+        java.util.Set<String> n = new java.util.TreeSet<>();
+        File[] l = new File(ctx.getFilesDir(), "download-pending-v1").listFiles();
+        if (l != null) for (File f : l) n.add(f.getName());
+        return n;
+    }
+
+    /** Neue Besitzmarkierungen dieses Tests samt ihrer pending-Einträge entfernen (nur API 29+, nur eigene Namen). */
+    void isolateLeftovers() {
+        java.util.Set<String> fresh = proofNames();
+        fresh.removeAll(proofsAtStart);
+        if (fresh.isEmpty()) return;
+        if (Build.VERSION.SDK_INT >= 29) {
+            ContentResolver cr = ctx.getContentResolver();
+            for (String p : fresh) {
+                try { cr.delete(MediaStore.setIncludePending(MediaStore.Downloads.EXTERNAL_CONTENT_URI),
+                    "owner_package_name=? AND is_pending=1 AND _display_name LIKE ?", new String[] {ctx.getPackageName(), p + "--%"}); }
+                catch (RuntimeException ignored) { }
+            }
+        }
+        for (String p : fresh) new File(new File(ctx.getFilesDir(), "download-pending-v1"), p).delete();
+        android.util.Log.i(TAG, "MP4_ISOLATION removedProofs=" + fresh.size());
+    }
+
+    /** Wartet begrenzt, bis keine pending-Reste dieses Titels mehr sichtbar sind (Sichtbarkeit des MediaStore). */
+    static void awaitNoLeftovers(String title, long ms, String context) throws InterruptedException {
+        long end = SystemClock.elapsedRealtime() + ms;
+        int n;
+        while ((n = leftovers(title)) != 0 && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
+        assertEquals("no pending entry visible within " + ms + " ms (" + context + ")", 0, n);
     }
 
     static int proofs() {
@@ -397,7 +441,10 @@ public class Mp4DownloadsInstrumentedTest {
             assertEquals("cancelled", events.await(id, 10_000));
             long ms = SystemClock.elapsedRealtime() - t0;
             assertTrue("cancel took " + ms + " ms", ms < 5_000);
-            assertEquals(0, leftovers(t));
+            // Zuerst der Zustand der App (hat SIE den Eintrag entfernt?), dann die Sichtbarkeit im MediaStore.
+            String outcome = Mp4Downloads.lastAbortOutcome;
+            if (Build.VERSION.SDK_INT >= 29) assertTrue("app removed its pending entry: " + outcome, outcome.startsWith("deleted"));
+            awaitNoLeftovers(t, 3_000, "app cleanup " + outcome);
             assertEquals(proofsBefore, proofs());
             assertEquals(1, srv.requests.get());
             assertTrue(engine.status(id).contains("\"state\":\"cancelled\""));
@@ -468,7 +515,8 @@ public class Mp4DownloadsInstrumentedTest {
             engine.start(id, srv.url("/v.mp4"), t);
             engine.start(id, srv.url("/v.mp4"), t);
             engine.start(id, srv.url("/other.mp4"), "Other");
-            assertEquals("done", events.await(id, 30_000));
+            String r = events.await(id, 30_000);
+            assertEquals("result (cause: " + engine.diagnostics(id) + "; last abort: " + Mp4Downloads.lastAbortOutcome + ")", "done", r);
             cleanup.add((Uri) events.saved.get(id));
             if (Build.VERSION.SDK_INT < 29) cleanupFiles.add(new File(legacyDir(), t + ".mp4"));
             assertTrue(engine.start(id, srv.url("/v.mp4"), t).contains("\"state\":\"done\""));
@@ -477,6 +525,7 @@ public class Mp4DownloadsInstrumentedTest {
             Thread.sleep(300);
             assertEquals(1, srv.requests.get());
             restarted.stopAll();
+            assertTrue("restarted engine idle", restarted.awaitIdle(30_000));
         }
     }
 
@@ -491,6 +540,7 @@ public class Mp4DownloadsInstrumentedTest {
             assertEquals(1, leftovers(t));
             assertFalse("unfinished entry is not published", store.isPublished(target.ref(), 8));
             int proofsBefore = proofs();
+            assertEquals("only this test's ownership proof exists before the simulated restart: " + proofNames(), 1, proofsBefore);
             newProcessCleanup();
             assertEquals(0, leftovers(t));
             assertEquals("ownership proof removed with the leftover", proofsBefore - 1, proofs());

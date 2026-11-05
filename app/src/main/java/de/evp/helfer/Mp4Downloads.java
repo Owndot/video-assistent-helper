@@ -53,6 +53,8 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     private static final int NOTE_ID = 0x4d50;     // je Auftrag eigener Tag ("mp4-<id>")
     private static final int MAX_JOURNAL_BYTES = 256 << 10;
     private static Mp4Downloads instance;
+    /** Nur Diagnose (Tests/Logs): Ergebnis der letzten Abbruch-Bereinigung ("deleted:n" oder "kept:…"), nie eine URL. */
+    static volatile String lastAbortOutcome = "";
 
     final DirectDownloads engine;
     private final Context app;
@@ -179,10 +181,24 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
             if (finished) return;
             finished = true;
             try { out.close(); } catch (IOException ignored) { }
+            String outcome;
             try {
-                // Markierung nur nach bestätigtem Löschen entfernen; sonst räumt der nächste Prozessstart auf.
-                if (cr.delete(uri, null, null) == 1) Downloads.removeProof(proof);
-            } catch (IOException | RuntimeException ignored) { }
+                // Markierung nur nach bestätigtem Entfernen löschen; sonst räumt der nächste Prozessstart auf.
+                // "Bestätigt" heißt: der Provider meldet genau einen gelöschten Eintrag ODER der Eintrag ist nachweislich
+                // nicht mehr vorhanden (eigene Abfrage, schließt "0 gelöscht, weil schon weg" ein).
+                int n = cr.delete(uri, null, null);
+                if (n == 1 || !pendingExists(uri)) { Downloads.removeProof(proof); outcome = "deleted:" + n; }
+                else outcome = "kept:delete=" + n;
+            } catch (IOException | RuntimeException e) {
+                outcome = "kept:" + e.getClass().getSimpleName();
+            }
+            lastAbortOutcome = outcome;
+        }
+
+        private boolean pendingExists(Uri u) {
+            try (android.database.Cursor c = cr.query(MediaStore.setIncludePending(u), new String[] {MediaStore.Downloads._ID}, null, null, null)) {
+                return c == null || c.getCount() > 0;    // unbekannt (null) zählt als vorhanden: nie voreilig die Markierung löschen
+            }
         }
     }
 

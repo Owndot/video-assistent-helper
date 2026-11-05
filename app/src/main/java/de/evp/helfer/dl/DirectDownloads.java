@@ -64,6 +64,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         volatile long bytes, total = -1;
         volatile String reason = "";
         volatile String ref;      // Verweis der Ablage (Journal), nie die URL
+        volatile String cause = "";   // nur Diagnose (Tests/Logs): Ausnahmeklasse eines Ablagefehlers, nie im Status/Kanal
         final SafeHttpClient.Cancellation cancel = new SafeHttpClient.Cancellation();
         Job(String id, String title) { this.id = id; this.title = title; }
     }
@@ -71,7 +72,14 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     /** Endgültiger Ausgang eines Auftrags (für den Abbruch der Schleife). */
     static final class Fail extends Exception {
         final String reason;
-        Fail(String reason) { super(reason, null, false, false); this.reason = reason; }
+        final String cause;
+        Fail(String reason) { this(reason, null); }
+        /** Mit Ursache (nur Diagnose): Klasse und Meldung der auslösenden Ausnahme. */
+        Fail(String reason, Throwable why) {
+            super(reason, null, false, false);
+            this.reason = reason;
+            this.cause = why == null ? "" : why.getClass().getSimpleName() + ": " + why.getMessage();
+        }
     }
 
     private final SafeHttpClient http;
@@ -155,6 +163,26 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         for (Job j : snapshot) if (j.state == State.RUNNING) j.cancel.cancel();
     }
 
+    /**
+     * Wartet höchstens {@code ms}, bis kein Auftrag mehr läuft (jeder Arbeiter hat aufgeräumt und sein Ende gemeldet).
+     * Für einen geordneten Dienst-Stopp und für Tests, die den Endzustand prüfen. true = leer.
+     */
+    public synchronized boolean awaitIdle(long ms) throws InterruptedException {
+        long end = System.nanoTime() + ms * 1_000_000L;
+        while (running.get() > 0) {
+            long left = (end - System.nanoTime()) / 1_000_000L;
+            if (left <= 0) return false;
+            wait(left);
+        }
+        return true;
+    }
+
+    /** Nur Diagnose: Ursache eines Ablagefehlers dieses Auftrags (leer, wenn keiner). Nie Teil des Kanalstatus. */
+    public synchronized String diagnostics(String id) {
+        Job j = jobs.get(id);
+        return j == null ? "" : j.cause;
+    }
+
     /** Dienststart: Starts wieder annehmen. */
     public synchronized void serviceStarted() { stopped = false; }
 
@@ -186,14 +214,14 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             byte[] head = new byte[8];
             int h = readFully(in, head);
             if (h < 8 || !mp4Signature(head)) throw new Fail("not_mp4");
-            try { target = store.create(fileName(job.title), "video/mp4"); } catch (IOException e) { throw new Fail("storage"); }
+            try { target = store.create(fileName(job.title), "video/mp4"); } catch (IOException e) { throw new Fail("storage", e); }
             OutputStream out;
-            try { out = target.out(); } catch (IOException e) { throw new Fail("storage"); }
+            try { out = target.out(); } catch (IOException e) { throw new Fail("storage", e); }
             // Verweis vermerken, bevor Daten geschrieben werden: nach einem Absturz lässt sich so feststellen, ob die
             // Datei schon veröffentlicht war (dann "done") oder nicht (dann "interrupted", Reste räumt die Ablage ab).
             job.ref = target.ref();
             synchronized (this) {
-                try { saveJournal(); } catch (IOException e) { throw new Fail("storage"); }
+                try { saveJournal(); } catch (IOException e) { throw new Fail("storage", e); }
             }
             write(out, head, 8);
             job.bytes = 8;
@@ -233,13 +261,14 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             }
             if (in.read() != -1) throw new Fail("long_body");
             checkCancelled(job);
-            try { out.close(); saved = target.commit(); } catch (IOException e) { throw new Fail("storage"); }
+            try { out.close(); saved = target.commit(); } catch (IOException e) { throw new Fail("storage", e); }
             job.ref = target.ref();   // nach dem Veröffentlichen (Android 8–9: endgültiger Dateiname)
             target = null;
             state = State.DONE;
             reason = "";
         } catch (Fail f) {
             reason = f.reason;
+            job.cause = f.cause;
         } catch (NetBlockedException blocked) {
             // Sicherheitsprüfung abgelehnt: Ende des Auftrags. Kein zweiter Versuch, kein anderer Abrufweg.
             reason = blocked.reason == NetBlockedException.Reason.BODY_TOO_LARGE ? "too_large" : "blocked_" + blocked.reason.name().toLowerCase(Locale.ROOT);
@@ -254,12 +283,12 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     }
 
     private long freeBytes() throws Fail {
-        try { return store.freeBytes(); } catch (IOException e) { throw new Fail("storage"); }
+        try { return store.freeBytes(); } catch (IOException e) { throw new Fail("storage", e); }
     }
 
     /** Schreibfehler (z. B. Speicher voll) sind Ablagefehler, keine Netzwerkunterbrechung: nie Fortsetzen. */
     private static void write(OutputStream out, byte[] b, int n) throws Fail {
-        try { out.write(b, 0, n); } catch (IOException e) { throw new Fail("storage"); }
+        try { out.write(b, 0, n); } catch (IOException e) { throw new Fail("storage", e); }
     }
 
     private static void checkCancelled(Job job) throws Fail {
@@ -290,6 +319,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             job.reason = reason;
             running.decrementAndGet();
             try { saveJournal(); } catch (IOException ignored) { /* Zustand bleibt im Speicher; nächster Start: interrupted */ }
+            notifyAll();
         }
         listener.finished(job.id, job.title, state.name().toLowerCase(Locale.ROOT), reason, saved);
     }
