@@ -459,7 +459,7 @@ public class HlsDownloadsInstrumentedTest {
         MediaExtractor ex = new MediaExtractor();
         int[] r = new int[5];
         try {
-            ex.setDataSource(ctx, uri(saved), null);
+            open(ex, saved);
             r[0] = ex.getTrackCount();
             for (int i = 0; i < ex.getTrackCount(); i++) {
                 MediaFormat fmt = ex.getTrackFormat(i);
@@ -474,11 +474,41 @@ public class HlsDownloadsInstrumentedTest {
         return r;
     }
 
+    /**
+     * Öffnet die veröffentlichte Datei für den Plattform-Extractor. Scheitert das, schlägt der Test weiterhin fehl – mit
+     * Befund (echte Länge über den Dateideskriptor, erste Bytes, ob das Öffnen über den Deskriptor gelingt), damit ein
+     * seltener Fehler beim erneuten Öffnen (einmal auf API 34 beobachtet) zuzuordnen ist.
+     */
+    static void open(MediaExtractor ex, Object saved) throws Exception {
+        try {
+            ex.setDataSource(ctx, uri(saved), null);
+        } catch (java.io.IOException e) {
+            StringBuilder d = new StringBuilder("extractor open failed: " + e.getMessage());
+            try (android.os.ParcelFileDescriptor fd = ctx.getContentResolver().openFileDescriptor(uri(saved), "r")) {
+                d.append(" | statSize=").append(fd.getStatSize());
+                try (java.io.FileInputStream in = new java.io.FileInputStream(fd.getFileDescriptor())) {
+                    byte[] head = new byte[12];
+                    int n = in.read(head);
+                    d.append(" head=");
+                    for (int i = 0; i < Math.max(n, 0); i++) d.append(String.format(Locale.ROOT, "%02x", head[i]));
+                }
+            } catch (Exception f) { d.append(" | fd=").append(f.getClass().getSimpleName()); }
+            MediaExtractor viaFd = new MediaExtractor();
+            try (android.os.ParcelFileDescriptor fd = ctx.getContentResolver().openFileDescriptor(uri(saved), "r")) {
+                viaFd.setDataSource(fd.getFileDescriptor());
+                d.append(" | fd-open=ok tracks=").append(viaFd.getTrackCount());
+            } catch (Exception f) { d.append(" | fd-open=").append(f.getClass().getSimpleName()); }
+            finally { viaFd.release(); }
+            Log.i(TAG, "HLS_OPEN_FAILURE api=" + Build.VERSION.SDK_INT + " " + d);
+            throw new AssertionError(d.toString(), e);
+        }
+    }
+
     static int[] decode(Object saved, int track, MediaFormat fmt) throws Exception {
         MediaExtractor ex = new MediaExtractor();
         MediaCodec codec = null;
         try {
-            ex.setDataSource(ctx, uri(saved), null);
+            open(ex, saved);
             ex.selectTrack(track);
             codec = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME));
             codec.configure(fmt, null, null, 0);

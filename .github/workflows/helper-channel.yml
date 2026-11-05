@@ -196,10 +196,10 @@ jobs:
           api-level: ${{ matrix.api }}
           arch: x86_64
           target: google_apis
-          # API 37 bootete im Standardlimit (600 s) nicht fertig: mehr Zeit und Speicher (Runner: 4 Kerne, 16 GB)
+          # API 37 bootete im Standardlimit (600 s) nicht fertig: mehr Zeit und Arbeitsspeicher (4 Kerne meldeten Boot vor
+          # den Systemdiensten settings/input und wurden wieder entfernt)
           emulator-boot-timeout: 1200
           ram-size: ${{ matrix.api == '37.0' && '4096M' || '' }}
-          cores: ${{ matrix.api == '37.0' && 4 || '' }}
           # API 37: Standard-Datenpartition zu klein für Test-APKs + 64-MiB-Downloads ("not enough space")
           disk-size: ${{ matrix.api == '37.0' && '8G' || '' }}
           disable-animations: true
