@@ -30,7 +30,41 @@ final class HarnessDownloads implements DownloadStore, DirectDownloads.Listener 
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("mkdir");
         journal = new File(stateDir, "mp4-jobs");
         for (File f : list()) if (f.getName().startsWith(".part-")) f.delete();   // Reste eines beendeten Prozesses
-        engine = new DirectDownloads(LocalTestClients.loopback(mediaPort), this, this);
+        engine = new DirectDownloads(LocalTestClients.loopback(mediaPort), this, this, slots);
+    }
+
+    /** Gemeinsame Grenzen von MP4 und HLS wie in der App (2 Aufträge, 4 HTTP-Anfragen). */
+    final de.evp.helfer.dl.JobSlots slots = new de.evp.helfer.dl.JobSlots(2, 4);
+    /** P4b: echte HLS-Engine der App (null: aus – der Kanal lehnt hlsplan/hlsstart ab wie bei einem alten Helfer). */
+    de.evp.helfer.hls.HlsEngine hls;
+
+    /**
+     * HLS an: echte {@link de.evp.helfer.hls.HlsEngine} (Pläne, Sitzungsbindung, Journal, Abruf über SafeHttpClient mit
+     * den Testregeln, Wiederaufnahme, Abbruch). NUR der Remux ist hier eine Nachbildung ohne Medienbibliothek (Ressourcen
+     * hintereinander, Prüfung nur der Länge): Kadris Ablauf wird Ende-zu-Ende geprüft, das echte Umpacken prüfen
+     * tests/java/hlsmux und die Emulatortests.
+     */
+    void enableHls(File stateDir, int mediaPort) throws Exception {
+        if (hls != null) return;
+        hls = new de.evp.helfer.hls.HlsEngine(LocalTestClients.loopback(mediaPort), this, this, new File(stateDir, "hls-jobs"), new ConcatRemux(),
+            slots, false, 1_000_000);
+    }
+
+    /** Nur Testgerüst: verkettet die Ressourcen (kein MP4) – nie in der App. */
+    static final class ConcatRemux implements de.evp.helfer.hls.HlsRemux {
+        @Override public Result remux(Input in, File out, java.util.function.BooleanSupplier cancelled) throws IOException, de.evp.helfer.hls.HlsException {
+            try (OutputStream o = new FileOutputStream(out)) {
+                for (File f : in.video) { if (cancelled.getAsBoolean()) throw new de.evp.helfer.hls.HlsException("cancelled"); o.write(Files.readAllBytes(f.toPath())); }
+                for (File f : in.audio) o.write(Files.readAllBytes(f.toPath()));
+            } catch (de.evp.helfer.hls.HlsException e) {
+                out.delete();
+                throw e;
+            }
+            return new Result(in.video.size(), in.audio.size(), 0, 0);
+        }
+        @Override public void verify(File out, Result expected, double v, double a, double tol, java.util.function.BooleanSupplier cancelled) throws de.evp.helfer.hls.HlsException {
+            if (!out.isFile() || out.length() == 0) throw new de.evp.helfer.hls.HlsException("verify-missing");
+        }
     }
 
     private File[] list() { File[] l = dir.listFiles(); return l == null ? new File[0] : l; }

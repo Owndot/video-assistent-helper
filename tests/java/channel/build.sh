@@ -43,7 +43,7 @@ fetch com/squareup/okio/okio-jvm/3.18.1/okio-jvm-3.18.1.jar b97b640557a650d15411
 fetch org/jetbrains/kotlin/kotlin-stdlib/2.2.21/kotlin-stdlib-2.2.21.jar 6558a3d233da56a20934b32159f9db5f86ed5816ef098f78a2c223dc6abb79dd
 JARS="$DEPS/okhttp-jvm-5.5.1.jar:$DEPS/okio-jvm-3.18.1.jar:$DEPS/kotlin-stdlib-2.2.21.jar"
 javac --release 17 -nowarn -d "$OUT/classes" -cp "$OUT/classes:$JARS" \
-  $(ls "$APP"/de/evp/helfer/net/*.java | grep -v '/SafeHttp\.java$') "$APP"/de/evp/helfer/dl/*.java \
+  $(ls "$APP"/de/evp/helfer/net/*.java | grep -v '/SafeHttp\.java$') "$APP"/de/evp/helfer/dl/*.java "$APP"/de/evp/helfer/hls/*.java \
   "$ROOT/tests/java/dl/de/evp/helfer/net/LocalTestClients.java"
 javac -Xlint:all -Werror --release 17 -d "$OUT/classes" -cp "$OUT/classes:$JARS" \
   "$HERE/de/evp/helfer/HarnessDownloads.java" \
