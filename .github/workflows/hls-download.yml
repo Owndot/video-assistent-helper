@@ -68,3 +68,33 @@ jobs:
           name: hls-media3-supply-chain-text
           path: ${{ runner.temp }}/out
           retention-days: 7
+
+  hls-core-jvm:
+    # Strict parser, URI resolution, plan/budgets and fetches through the real SafeHttpClient (local server), then
+    # mutation probes: every weakened copy must fail.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: ffmpeg (synthetic fixtures)
+        run: |
+          set -euo pipefail
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"; fi
+          done
+          timeout 120 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          timeout 300 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends ffmpeg
+          bash poc/p4a-hls/tools/make-fixtures.sh "$RUNNER_TEMP/fx"
+      - name: HLS core JVM tests and mutation probes
+        run: |
+          set -euo pipefail
+          bash tests/java/hls/run.sh "$RUNNER_TEMP/fx" "$RUNNER_TEMP/deps"
+          python3 -I tests/java/hls/mutation.py "$RUNNER_TEMP/fx" "$RUNNER_TEMP/deps"
+      - name: Network layer guard (HLS core only via SafeHttpClient, remuxer without network)
+        run: bash tools/check-network-layer.sh && bash tools/check-network-layer.sh --self-test
