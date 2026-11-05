@@ -48,7 +48,8 @@ jobs:
       - name: Known vulnerabilities (OSV) of every newly verified component
         run: |
           set -euo pipefail
-          python3 - "$RUNNER_TEMP/out/verification-metadata.diff" > "$RUNNER_TEMP/out/osv.txt" <<'PY'
+          status=0
+          python3 - "$RUNNER_TEMP/out/verification-metadata.diff" > "$RUNNER_TEMP/out/osv.txt" 2>&1 <<'PY' || status=1
           import json, re, sys, urllib.request
           comps = sorted(set(re.findall(r'^\+\s*<component group="([^"]+)" name="([^"]+)" version="([^"]+)"', open(sys.argv[1]).read(), re.M)))
           bad = 0
@@ -62,6 +63,7 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
           cat "$RUNNER_TEMP/out/osv.txt"
+          exit $status
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
