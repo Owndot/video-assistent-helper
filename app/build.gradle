@@ -12,6 +12,9 @@ def channelJniLibs = project.findProperty('channelJniLibs') ?: "$buildDir/channe
 def channelJniLibsTest = project.findProperty('channelJniLibsTest') ?: "$buildDir/channel-jni/jniLibs-test"
 // Test variant de.evp.helfer.channeltest only: throwaway key supplied at build time, never committed, never production.
 def channelKeystore = project.findProperty('channelKeystore')
+// P4b, nur Instrumentierung der Testvariante: synthetische HLS-Fixtures (poc/p4a-hls/tools/make-fixtures.sh) als
+// Assets der Test-APK – nie in der App selbst.
+def hlsFixtures = project.findProperty('hlsFixtures')
 def debugCode = releaseCode != null ? 1 : (fixtureVersion ?: System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int
 if (releaseCode != null && !(releaseCode.toString() ==~ /[1-9][0-9]{0,9}/ && releaseCode.toString().toLong() <= 2100000000L)) {
     throw new GradleException('Explicit releaseVersionCode must be in 1..2100000000.')
@@ -70,7 +73,10 @@ android {
     }
     sourceSets {
         main { jniLibs.srcDirs = [channelJniLibs] }
-        androidTestChanneltest { jniLibs.srcDirs = [channelJniLibsTest] }
+        androidTestChanneltest {
+            jniLibs.srcDirs = [channelJniLibsTest]
+            if (hlsFixtures != null) assets.srcDirs = [hlsFixtures]
+        }
     }
     packaging {
         jniLibs { useLegacyPackaging false }

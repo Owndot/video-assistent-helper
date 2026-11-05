@@ -50,6 +50,7 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
     private final Handler main = new Handler(Looper.getMainLooper());
     private ChannelServer server;
     private Mp4Downloads mp4;   // null: direkte Downloads nicht verfügbar (Kanal lehnt dl-Befehle ab)
+    private HlsDownloads hls;   // null: HLS nicht verfügbar (Kanal lehnt hlsplan/hlsstart ab, Status ohne "hls")
     private IdentityStore identityStore;
     private RegistryStore registryStore;
     private SnapshotWriter writer;
@@ -77,6 +78,11 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
         // Phase C2: direkte MP4-Downloads. Unlesbares Journal → keine Downloads (sonst wären Doppelstarts möglich).
         try { mp4 = Mp4Downloads.get(this); mp4.engine.serviceStarted(); }
         catch (Exception e) { mp4 = null; }
+        // P4b: HLS-VOD → MP4 (gleiche Ablage, gemeinsame Grenzen). Unlesbarer Auftragsordner → kein HLS.
+        if (mp4 != null) {
+            try { hls = HlsDownloads.get(this, mp4); hls.engine.serviceStarted(); }
+            catch (Exception | LinkageError e) { hls = null; }
+        }
         String problem = startChannel();
         if (problem != null) {
             startupError = problem;
@@ -101,7 +107,8 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
         if (intent != null && Mp4Downloads.ACTION_CANCEL.equals(intent.getAction())) {
             // "Abbrechen" in der Benachrichtigung eines direkten MP4-Downloads
             String job = intent.getStringExtra(Mp4Downloads.EXTRA_JOB);
-            if (mp4 != null && Mp4Downloads.validJobId(job)) mp4.engine.cancel(job);
+            if (hls != null && Mp4Downloads.validJobId(job) && hls.engine.knows(job)) hls.engine.cancel(job);
+            else if (mp4 != null && Mp4Downloads.validJobId(job)) mp4.engine.cancel(job);
             return START_STICKY;
         }
         if (intent != null && "test".equals(intent.getAction())) {
@@ -124,6 +131,7 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
         main.removeCallbacks(watchdog);
         Downloads.stopAll();
         if (mp4 != null) mp4.engine.stopAll();
+        if (hls != null) hls.engine.stopAll();
         clearBright();
         super.onDestroy();
     }
@@ -182,7 +190,7 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
             IdentityStore.Result id = identityStore.load(!registryStore.exists());
             if (id.identity == null) return Tr.t("Kanal-Identität nicht lesbar (" + id.state + ") – in der App „Identität zurücksetzen“ und neu koppeln.",
                 "Channel identity unreadable (" + id.state + ") – use “Reset identity” in the app and pair again.");
-            ChannelServer s = new ChannelServer(this, this, mp4 == null ? null : mp4.engine);
+            ChannelServer s = new ChannelServer(this, this, mp4 == null ? null : mp4.engine, hls == null ? null : hls.engine);
             try {
                 RegistryStore.Loaded regs = registryStore.load();
                 synchronized (ChannelServer.CORE) {
@@ -295,7 +303,7 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
         boolean overlayOk = Settings.canDrawOverlays(this);
         boolean writeOk = Settings.System.canWrite(this);
         float b = curBright >= 0 ? curBright : systemBright();
-        return ControlCommands.statusJson(appVersion(), overlayOk, writeOk, cur, max, b);
+        return ControlCommands.statusJson(appVersion(), overlayOk, writeOk, cur, max, b, hls == null ? null : hls.opus);
     }
 
     private String appVersion() {

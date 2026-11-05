@@ -56,6 +56,9 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     /** Nur Diagnose (Tests/Logs): Ergebnis der letzten Abbruch-Bereinigung ("deleted:n" oder "kept:…"), nie eine URL. */
     static volatile String lastAbortOutcome = "";
 
+    /** Gemeinsame Grenzen aller Download-Arten im Prozess (MP4 und HLS): 2 Aufträge, 4 HTTP-Anfragen. */
+    static final de.evp.helfer.dl.JobSlots SLOTS = new de.evp.helfer.dl.JobSlots(DirectDownloads.MAX_PARALLEL, 4);
+
     final DirectDownloads engine;
     private final Context app;
     private final File journal;
@@ -71,7 +74,7 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         this.legacyWriteAllowed = legacyWriteAllowed;
         Downloads.channel(app);
         cleanupPublicLeftovers();              // vor dem Journal: Wiederherstellung sieht nur echte Dateien
-        this.engine = new DirectDownloads(http, this, this);
+        this.engine = new DirectDownloads(http, this, this, SLOTS);
     }
 
     /** Speicherberechtigungen für Android 8–9: beide nötig (ohne READ vergibt Android nur die Lese-/Standard-Ansicht). */
@@ -391,6 +394,12 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         NotificationManager m = nm();
         if (m == null) return;
         if ("cancelled".equals(state)) { m.cancel(tag(id), NOTE_ID); return; }
+        if ("interrupted".equals(state)) {   // HLS: wiederaufnehmbar über Kadri ("Fortsetzen"), Daten bleiben app-privat
+            m.notify(tag(id), NOTE_ID, new Notification.Builder(app, Downloads.CHANNEL).setContentTitle(title).setAutoCancel(true)
+                .setSmallIcon(android.R.drawable.stat_sys_warning)
+                .setContentText(Tr.t("Unterbrochen – in Kadri fortsetzen: ", "Interrupted – resume in Kadri: ") + reasonText(reason)).build());
+            return;
+        }
         Notification.Builder b = new Notification.Builder(app, Downloads.CHANNEL).setContentTitle(title).setAutoCancel(true);
         if ("done".equals(state)) {
             b.setSmallIcon(android.R.drawable.stat_sys_download_done)

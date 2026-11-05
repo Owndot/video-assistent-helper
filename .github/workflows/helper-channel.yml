@@ -6,10 +6,10 @@ name: Helper secure channel (test package only, nothing published)
 # eine Veröffentlichung) – nur Text-Berichte und Hashes.
 on:
   pull_request:
-    paths: ['app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/check-network-layer.sh', 'gradle/**', '.github/workflows/helper-channel.yml']
+    paths: ['poc/p4a-hls/tools/**', 'app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/check-network-layer.sh', 'gradle/**', '.github/workflows/helper-channel.yml']
   push:
     branches: [feature/helper-channel-control]
-    paths: ['app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/check-network-layer.sh', 'gradle/**', '.github/workflows/helper-channel.yml']
+    paths: ['poc/p4a-hls/tools/**', 'app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/check-network-layer.sh', 'gradle/**', '.github/workflows/helper-channel.yml']
   workflow_dispatch:
 
 permissions:
@@ -80,7 +80,8 @@ jobs:
       fail-fast: false
       matrix:
         # 34 = targetSdk; 26 = minSdk (älterer TLS-/Socket-Pfad von OkHttp: AndroidPlatform statt Android10Platform)
-        api: [34, 26]
+        # 29 (P4b): erste Stufe mit MediaStore.Downloads und Opus-Ausgabe; Heap-Messung für das HLS-Sample-Budget
+        api: [34, 29, 26]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -100,6 +101,16 @@ jobs:
       - name: Native channel libraries (API 26 linker, arm64-v8a + x86_64)
         # pipefail: ein Fehler im Skript darf nicht hinter tee verschwinden.
         run: set -o pipefail; bash tools/build-channel-native.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/native.txt"
+      - name: Synthetic HLS fixtures for the device tests (own content, ffmpeg; test APK assets only)
+        run: |
+          set -euo pipefail
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"; fi
+          done
+          timeout 120 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          timeout 300 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends ffmpeg
+          bash poc/p4a-hls/tools/make-fixtures.sh "$RUNNER_TEMP/hlsfx"
+          echo "HLS_FIXTURES=$RUNNER_TEMP/hlsfx" >> "$GITHUB_ENV"
       - name: Test APKs with a throwaway signer (deleted after the build)
         # pipefail: ein Fehler im Skript darf nicht hinter tee verschwinden.
         run: set -o pipefail; bash tools/build-channel-apk.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/apk.txt"

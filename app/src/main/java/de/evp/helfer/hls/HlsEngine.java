@@ -52,7 +52,7 @@ import de.evp.helfer.net.SafeHttpClient;
  *       alles gelöscht.</li>
  * </ul>
  */
-public final class HlsEngine {
+public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl {
     public static final long PLAN_TTL_MS = 10 * 60_000L;
     public static final int MAX_PLANS_PER_PEER = 4;
     public static final int MAX_PLANS = 16;
@@ -146,6 +146,7 @@ public final class HlsEngine {
      * {@code hlsplan}: lädt und prüft die Liste(n) und antwortet nur mit Optionen ohne Adressen. {@code peer}: Kennung
      * der authentifizierten Kanal-Sitzung; {@code bind}: Kadris Bindung (Player, Generation, Revision).
      */
+    @Override
     public String plan(byte[] peer, String bind, String url) {
         SafeHttpClient.Cancellation cancel = new SafeHttpClient.Cancellation();
         try {
@@ -256,12 +257,14 @@ public final class HlsEngine {
         Stop(HlsJournal.State state, String reason) { super(reason, null, false, false); this.state = state; this.reason = code(reason); }
     }
 
+    @Override
     public synchronized boolean knows(String id) { return jobs.containsKey(id); }
 
     /**
      * {@code hlsstart}. Bekannte Kennung: unterbrochener Auftrag ohne Abbruchwunsch → Wiederaufnahme mit diesem Plan;
      * sonst nur der bekannte Zustand (nie ein zweiter Start).
      */
+    @Override
     public String start(byte[] peer, String bind, String id, String planId, String optionId, String name) {
         PlanEntry plan;
         Job job;
@@ -330,6 +333,7 @@ public final class HlsEngine {
         return null;
     }
 
+    @Override
     public synchronized String status(String id) {
         Job j = jobs.get(id);
         return j == null ? unknown(id) : json(j);
@@ -339,6 +343,7 @@ public final class HlsEngine {
      * Abbruch: der Wunsch wird zuerst dauerhaft vermerkt (gewinnt nach jedem Neustart), dann laufende Abrufe, Warten und
      * Remux gestoppt. Ein nicht laufender (unterbrochener) Auftrag wird sofort vollständig entfernt.
      */
+    @Override
     public String cancel(String id) {
         Job j;
         synchronized (this) { j = jobs.get(id); }

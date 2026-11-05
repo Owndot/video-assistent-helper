@@ -64,7 +64,7 @@ public final class Media3HlsRemuxer implements HlsRemux {
     public Media3HlsRemuxer(boolean opusAllowed) { this(opusAllowed, MIN_FREE_HEAP_FRACTION); }
 
     /** {@code minFreeHeapFraction}: unter diesem freien Anteil des Java-Heaps bricht der Remux mit "memory" ab. */
-    Media3HlsRemuxer(boolean opusAllowed, double minFreeHeapFraction) {
+    public Media3HlsRemuxer(boolean opusAllowed, double minFreeHeapFraction) {
         this.opusAllowed = opusAllowed;
         this.minFreeHeapFraction = minFreeHeapFraction;
     }
