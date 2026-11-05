@@ -48,11 +48,16 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$JAVA_HOME/bin"
-          if command -v sha256sum; then echo "sha256sum on PATH: fallback not exercised" >&2; exit 1; fi
           /bin/bash --version | head -1
           /usr/bin/openssl version
+          sw_vers -productVersion
           /bin/bash tools/p4test/synthetic-apk.sh "$RUNNER_TEMP/p4.apk" de.evp.helfer.p4test "P4 TEST Helfer"
           /bin/bash tools/p4test/synthetic-apk.sh "$RUNNER_TEMP/other.apk" de.evp.helfer.channeltest "TEST Helper-Kanal"
+          # 1) Bordmittel wie auf einem aktuellen Mac (macOS 15 bringt /sbin/sha256sum mit)
+          /bin/bash tools/p4test/selftest.sh "$RUNNER_TEMP/p4.apk" "$RUNNER_TEMP/other.apk"
+          # 2) wie auf älteren Macs ohne sha256sum: Rückfall auf shasum
+          PATH="/usr/bin:/bin:$JAVA_HOME/bin"
+          if command -v sha256sum; then echo "sha256sum still on PATH: fallback not exercised" >&2; exit 1; fi
           /bin/bash tools/p4test/selftest.sh "$RUNNER_TEMP/p4.apk" "$RUNNER_TEMP/other.apk"
           rm -f "$RUNNER_TEMP/p4.apk" "$RUNNER_TEMP/other.apk"
   jvm:
@@ -195,6 +200,8 @@ jobs:
           emulator-boot-timeout: 1200
           ram-size: ${{ matrix.api == '37.0' && '4096M' || '' }}
           cores: ${{ matrix.api == '37.0' && 4 || '' }}
+          # API 37: Standard-Datenpartition zu klein für Test-APKs + 64-MiB-Downloads ("not enough space")
+          disk-size: ${{ matrix.api == '37.0' && '8G' || '' }}
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: bash tools/run-channel-publication-regression.sh "$RUNNER_TEMP/publication-mutant" && bash tools/run-channel-instrumentation.sh "$RUNNER_TEMP/a" && bash tools/run-flaky-repeat.sh "$RUNNER_TEMP/a" 20
