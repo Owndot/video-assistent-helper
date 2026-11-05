@@ -58,6 +58,12 @@ jobs:
               r = json.load(urllib.request.urlopen(urllib.request.Request("https://api.osv.dev/v1/query", q, {"Content-Type": "application/json"}), timeout=30))
               ids = [x["id"] for x in r.get("vulns", [])]
               print("%s:%s:%s %s" % (g, n, v, ",".join(ids) if ids else "no known vulnerabilities"))
+              for vid in ids:
+                  d = json.load(urllib.request.urlopen("https://api.osv.dev/v1/vulns/" + vid, timeout=30))
+                  print("  %s aliases=%s summary=%s" % (vid, ",".join(d.get("aliases", [])), d.get("summary", "")[:200]))
+                  for a in d.get("affected", []):
+                      for rg in a.get("ranges", []):
+                          print("    %s %s" % (a.get("package", {}).get("name"), [e for e in rg.get("events", [])]))
               bad += bool(ids)
           print("components=%d with_vulns=%d" % (len(comps), bad))
           sys.exit(1 if bad else 0)
