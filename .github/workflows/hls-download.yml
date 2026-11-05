@@ -38,10 +38,19 @@ jobs:
           cp gradle/verification-metadata.xml "$RUNNER_TEMP/before.xml"
           # Only in this job's workspace if the app does not declare Media3 yet (first pinning pass).
           if ! grep -q "androidx.media3:media3-extractor" app/build.gradle; then
-            sed -i "s#^    implementation 'com.squareup.okhttp3:okhttp-android:5.5.1'#&\n    implementation 'androidx.media3:media3-extractor:1.11.1'\n    implementation 'androidx.media3:media3-muxer:1.11.1'#" app/build.gradle
+            python3 - <<'PY'
+          p = 'app/build.gradle'; s = open(p).read()
+          a = "    implementation 'com.squareup.okhttp3:okhttp-android:5.5.1'\n"
+          assert s.count(a) == 1
+          s = s.replace(a, a + "    implementation 'androidx.media3:media3-extractor:1.11.1'\n    implementation 'androidx.media3:media3-muxer:1.11.1'\n"
+                        "    constraints { implementation('com.google.guava:guava') { version { strictly '33.7.2-android' } } }\n")
+          open(p, 'w').write(s)
+          PY
           fi
-          grep -n "media3" app/build.gradle
+          grep -n "media3\|guava" app/build.gradle
           ./gradlew --no-daemon -q --write-verification-metadata sha256 :app:dependencies --configuration releaseRuntimeClasspath > "$RUNNER_TEMP/out/release-runtime-classpath.txt"
+          # alle übrigen Konfigurationen (Debug, channeltest, Instrumentierung, Compile-Klassenpfade)
+          ./gradlew --no-daemon -q --write-verification-metadata sha256 :app:dependencies > "$RUNNER_TEMP/out/all-configurations.txt"
           diff -u "$RUNNER_TEMP/before.xml" gradle/verification-metadata.xml > "$RUNNER_TEMP/out/verification-metadata.diff" || true
           echo "----- verification-metadata.diff -----"; cat "$RUNNER_TEMP/out/verification-metadata.diff"
           echo "----- resolved (release runtime) -----"; grep -E 'media3|guava|failureaccess|listenablefuture|annotation|kotlin-stdlib|jspecify|checker|errorprone' "$RUNNER_TEMP/out/release-runtime-classpath.txt" | sort -u
