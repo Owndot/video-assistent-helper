@@ -24,6 +24,6 @@ XML
 mkdir -p "$W/z/lib/arm64-v8a" "$W/z/lib/x86_64"
 printf 'x' > "$W/z/lib/arm64-v8a/libkadri_pairing_poc.so"
 printf 'x' > "$W/z/lib/x86_64/libkadri_pairing_poc.so"
-(cd "$W/z" && zip -q -r "$W/base.apk" lib)
+(cd "$W/z" && zip -q -r -D "$W/base.apk" lib)   # -D: keine Ordnereinträge (wie in echten APKs)
 "$BT/zipalign" -p -f 4 "$W/base.apk" "$OUT"
 echo "SYNTHETIC $PKG (unsigned, no code, never installed)"
