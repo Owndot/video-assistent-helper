@@ -16,6 +16,11 @@ adb install -t "$OUT/apk/helper-channeltest.apk" >/dev/null
 adb install -t "$OUT/apk/helper-channeltest-androidTest.apk" >/dev/null
 adb shell am instrument -w -r -e class de.evp.helfer.Mp4DownloadsInstrumentedTest#publishedFileSurvivesMarkerFailureAndRestart "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$OUT/report/publication-baseline.txt" 2>&1
 cat "$OUT/report/publication-baseline.txt"
+# Absturz des Systems (z. B. "System has crashed" auf neuen Emulator-Abbildern): Crash-Puffer und Systemprotokoll zeigen
+if grep -q 'INSTRUMENTATION_ABORTED\|Process crashed' "$OUT/report/publication-baseline.txt"; then
+  echo "== crash buffer"; adb logcat -d -b crash 2>/dev/null | head -150 || true
+  echo "== system log (fatal)"; adb logcat -d -b system,main 2>/dev/null | grep -E 'FATAL|\*\*\* |Watchdog|SystemServer|system_server' | tail -80 || true
+fi
 grep -q 'published file is successful despite marker failure' "$OUT/report/publication-baseline.txt"
 # JUnit kürzt ComparisonFailure: expected:<[don]e> but was:<[failed:storag]e> – beide Schreibweisen zulassen
 grep -Eq 'failed:storage|failed:storag\]e' "$OUT/report/publication-baseline.txt"
