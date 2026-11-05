@@ -185,13 +185,30 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
             ContentValues cv = new ContentValues();
             cv.put(MediaStore.Downloads.IS_PENDING, 0);
             cv.put(MediaStore.Downloads.DISPLAY_NAME, name);
-            // Android 10 trägt die Größe nicht selbst ein; gemessene Dateigröße, damit Dateimanager sie anzeigen.
-            // Ab Android 11 pflegt der Provider SIZE selbst (dort schreibgeschützt), daher nur API 29.
-            if (Build.VERSION.SDK_INT == 29) cv.put(MediaStore.Downloads.SIZE, storedSize(cr, uri));
             if (cr.update(uri, cv, null, null) != 1) throw new IOException("publish");
             finished = true;
             cleanupPublishedProof(proof);
+            if (Build.VERSION.SDK_INT == 29) scanQ();
             return uri;
+        }
+
+        /**
+         * Android 10 füllt SIZE (und Dauer) nur über den Medienscanner; ohne Scan zeigen Dateimanager 0 Byte. Nur Metadaten:
+         * die Veröffentlichung ist bereits gültig (isPublished prüft die echte Länge), ein Fehler hier kehrt sie nicht um.
+         */
+        @SuppressWarnings("deprecation")
+        private void scanQ() {
+            try (android.database.Cursor c = cr.query(uri, new String[] {MediaStore.MediaColumns.DATA}, null, null, null)) {
+                String path = c != null && c.moveToFirst() ? c.getString(0) : null;
+                if (path == null) return;
+                CountDownLatch done = new CountDownLatch(1);
+                MediaScannerConnection.scanFile(app, new String[] {path}, null, (p, u) -> done.countDown());
+                if (!done.await(10, TimeUnit.SECONDS)) android.util.Log.w("Mp4Downloads", "media scan timed out");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (RuntimeException e) {
+                android.util.Log.w("Mp4Downloads", "media scan failed: " + e.getClass().getSimpleName());
+            }
         }
 
         @Override public synchronized void abort() {

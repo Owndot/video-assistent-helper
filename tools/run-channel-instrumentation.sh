@@ -30,6 +30,8 @@ grep -E 'INSTRUMENTATION_STATUS: (test|class)=|INSTRUMENTATION_STATUS_CODE|^OK \
 adb shell dumpsys meminfo $PKG > "$REPORT/meminfo.txt" 2>&1 || true
 adb shell top -b -n 1 -p "$(adb shell pidof $PKG | tr -d '\r')" > "$REPORT/top.txt" 2>&1 || true
 adb logcat -d -s CHANNEL_TEST:I OKHTTP_TEST:I MP4_TEST:I HLS_TEST:I > "$REPORT/measurements.txt"
+# Abstürze des Testprozesses (z. B. "Process crashed" ohne Stacktrace im Runner-Ergebnis): Crash-Puffer sichern.
+adb logcat -d -b crash > "$REPORT/crash.txt" 2>&1 || true
 # Nichts lauscht mehr auf dem alten Port, solange der Dienst läuft.
 adb shell 'cat /proc/net/tcp /proc/net/tcp6 2>/dev/null' | awk '$4=="0A"{print $2}' > "$REPORT/listeners.txt"
 if grep -qi ':BA43$' "$REPORT/listeners.txt"; then echo "LISTENER ON 47811" >> "$REPORT/summary.txt"; status=1; fi
@@ -50,6 +52,10 @@ tail -5 "$REPORT/summary.txt"
 grep -h 'PERSIST_AFTER_UNINSTALL' "$REPORT/summary.txt" || true
 # Fehlgeschlagene Tests mit dem Anfang ihres Stacktraces ins Job-Log (nur Testausgaben mit Wegwerfdaten).
 awk '/^INSTRUMENTATION_STATUS: test=/{t=$0} /^INSTRUMENTATION_STATUS: stack=/{print "FAILED " t; n=14} n>0{print; n--}' "$REPORT/instrumentation.txt" | head -150
+# Runner-Ergebnis (Absturzmeldung, Liste aller Fehlschläge) und Crash-Puffer ins Job-Log.
+grep -E 'INSTRUMENTATION_RESULT|INSTRUMENTATION_FAILED|shortMsg|longMsg|Process crashed' "$REPORT/instrumentation.txt" | head -20 || true
+awk '/^There (was|were) [0-9]+ failure/{p=1} p&&/^[0-9]+\) /{print}' "$REPORT/instrumentation.txt" | head -20 || true
+grep -E 'FATAL|Exception|Error|^\s+at |Abort|signal|backtrace|#[0-9]+ pc' "$REPORT/crash.txt" | head -80 || true
 grep -E 'CHANNEL_|OKHTTP_|MP4_|HLS_' "$REPORT/measurements.txt" || true
 grep -E 'TOTAL PSS|TOTAL:|Native Heap|Java Heap' "$REPORT/meminfo.txt" | head -5 || true
 exit $status

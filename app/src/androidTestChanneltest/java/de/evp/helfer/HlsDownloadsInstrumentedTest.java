@@ -304,6 +304,9 @@ public class HlsDownloadsInstrumentedTest {
             String st = await(r.engine, id, 20_000);
             assertEquals(st, "interrupted", field(st, "state"));
             srv.delayMs = 0;
+            // Abgebrochene Anfragen schlafen im Server noch ihre Verzögerung ab und zählen erst danach: erst wenn keine
+            // Anfrage mehr offen ist, ist der Zähler der Ausgangswert (Bedingung, keine feste Wartezeit).
+            assertTrue("server quiet", srv.quiesce(10_000));
             r.restart();                                   // neue Engine auf demselben Ordner (wie nach Prozessende)
             assertEquals("interrupted", field(r.engine.status(id), "state"));
             int before = srv.segments.get();
@@ -500,6 +503,15 @@ public class HlsDownloadsInstrumentedTest {
             t.start();
         }
         String url(String path) { return "http://dl.test:" + ss.getLocalPort() + "/" + path; }
+        /** Wartet, bis keine Anfrage mehr bearbeitet wird (Zähler danach stabil). */
+        boolean quiesce(long ms) throws InterruptedException {
+            long end = System.nanoTime() + ms * 1_000_000L;
+            while (inFlight.get() > 0) {
+                if (System.nanoTime() > end) return false;
+                Thread.sleep(5);
+            }
+            return true;
+        }
         void serve(Socket s) {
             try (Socket sock = s) {
                 InputStream in = sock.getInputStream();
