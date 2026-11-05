@@ -82,7 +82,10 @@ def main():
     fails = []
     if len(ov) != 1 or ov[0]['codec_name'] != 'h264': fails.append('output video stream')
     if len(oa) != 1 or oa[0]['codec_name'] != audio: fails.append('output audio stream (%s expected)' % audio)
-    if abs(od - sd) > 0.15: fails.append('duration %.3f vs %.3f' % (od, sd))
+    # --duration: erwartete Gesamtdauer, wenn sie nicht der von ffmpeg gelesenen HLS-Quelle entspricht (z. B. Video beginnt
+    # später als der Ton: die MP4-Ausgabe reicht vom ersten Ton- bis zum letzten Video-/Ton-Sample)
+    want = float(args[args.index('--duration') + 1]) if '--duration' in args else sd
+    if abs(od - want) > 0.15: fails.append('duration %.3f vs %.3f' % (od, want))
     if sv and ov and sv[0].get('nb_read_frames') != ov[0].get('nb_read_frames'): fails.append('video frame count')
     if len(of) != len(sf) or len(sf) < 5: fails.append('flashes %d vs %d' % (len(of), len(sf)))
     if len(ob) != len(sb): fails.append('beeps %d vs %d' % (len(ob), len(sb)))

@@ -30,6 +30,9 @@ hls fmp4_sep fmp4 -map 0:v -map 1:a "${X264[@]}" "${AAC[@]}" -var_stream_map 'v:
 # still aligned): per-track timestamp normalisation would shift the beeps by 300 ms against the flashes
 hls ts_sep_offset mpegts -map 0:v -map 1:a -filter:a atrim=start=0.3:end=20 "${X264[@]}" "${AAC[@]}" -var_stream_map 'v:0,agroup:aud a:0,agroup:aud,default:yes'
 hls fmp4_sep_offset fmp4 -map 0:v -map 1:a -filter:a atrim=start=0.3:end=20 "${X264[@]}" "${AAC[@]}" -var_stream_map 'v:0,agroup:aud a:0,agroup:aud,default:yes'
+# 4d (P4b): separate video whose first frame is 0.32 s after the first audio sample: the video track's edit list then
+# carries a non-zero correction (empty edit + media edit), which per-track or ignored edits would turn into an offset
+hls fmp4_sep_voffset fmp4 -map 0:v -map 1:a -filter:v trim=start=0.32 "${X264[@]}" "${AAC[@]}" -var_stream_map 'v:0,agroup:aud a:0,agroup:aud,default:yes'
 # 4c: fMP4 without edit lists (timeline only in tfdt/composition offsets, as other packagers write it)
 hls fmp4_sep_noedts fmp4 -map 0:v -map 1:a "${X264[@]}" "${AAC[@]}" -hls_segment_options use_editlist=0 \
   -var_stream_map 'v:0,agroup:aud a:0,agroup:aud,default:yes'
