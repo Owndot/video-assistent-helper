@@ -100,8 +100,13 @@ aus dem CI-Lauf, nicht unabhängig geprüft. R8: Regeln für die App unveränder
   eine **andere** MediaStore-Zeile zurück, der Eintrag bleibt bei 0. Ein Scan, der womöglich einen zweiten Eintrag für
   dieselbe Datei anlegt, ist schlimmer als die fehlende Angabe → beides wieder entfernt. Datei und Inhalt sind korrekt
   (64 MiB am erwarteten Ort). Der Gerätetest `publishesThroughMediaStoreAndReadsBack` prüft die Spalte unverändert und
-  bleibt auf API 29 **rot**. Ob Dateimanager/Galerie auf Android 10 „0 B“ anzeigen, ist auf einem Gerät zu prüfen;
-  Entscheidung nötig (hinnehmen für Android 10 oder anderer Weg).
+  bleibt auf API 29 **rot**. Ob Dateimanager/Galerie auf Android 10 „0 B“ anzeigen, ist auf einem Gerät zu prüfen.
+- **Entscheidung des Eigentümers:** vorläufig hingenommen nur als dokumentierte Einschränkung für die P4c-Gerätetests
+  auf dem Samsung mit Android 17 – **keine Freigabe für Android 10**. Offener Befund **P4B-A10-SIZE** für eine spätere,
+  eigene Korrektur: Test bleibt rot und sichtbar, keine Abschwächung, kein zweiter MediaStore-Eintrag; Länge,
+  Integrität, Abspielbarkeit, Veröffentlichung und Wiedererkennung nach Neustart bleiben geprüft.
+  Ansatzpunkte für die Korrektur: Eintrag auf Android 10 anders anlegen (z. B. Größe vor dem Schreiben bekannt geben
+  oder Scan über den bestehenden Pfad mit Abgleich der Zeilen-ID), jeweils mit Gerätetest gegen doppelte Einträge.
 
 ## 8. P4-Testidentität und Signierweg (Option B)
 
@@ -158,10 +163,11 @@ Wiederholung grün). Kanal-/JVM-Mutationen grün.
 6. Pläne liegen im Speicher (Helfer und Kadri); nach Neustart des Service Workers oder der App neu planen.
 7. Kadris Browser-Tests nutzen im Desktop-Harness eine Test-Verkettung statt Media3 (echtes Umpacken nur in
    Helfer-JVM- und Emulatortests).
-8. Vordergrunddienst `specialUse` (für Browsersteuerung deklariert) trägt jetzt auch lange Downloads; Eignung für
-   Android 17 und Samsung-Energiesparen auf dem Gerät prüfen (P4c).
+8. Vordergrunddienst `specialUse` trägt auch lange Downloads (Beschreibung ergänzt); CPU-Sperre während aktiver
+   Downloads seit der P4c-Vorbereitung; Samsung-Energiesparen auf dem Gerät prüfen (`P4C-VORBEREITUNG.md`).
 9. Opus nur mit Geräteprobe ab Android 10.
-10. Android 10: MediaStore-`SIZE` des Download-Eintrags bleibt 0 (Abschnitt 7); Gerätetest dort rot, Entscheidung offen.
+10. Android 10: MediaStore-`SIZE` des Download-Eintrags bleibt 0 (Abschnitt 7, Befund P4B-A10-SIZE); Gerätetest
+    dort rot; vom Eigentümer nur für den P4c-Test auf Android 17 hingenommen, keine Android-10-Freigabe.
 11. Zwei einmalige CI-Ausreißer in unberührten Altpfaden (System-DownloadManager, Firefox-Spul-Timing), je eine
     Wiederholung grün – beobachten.
 

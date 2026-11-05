@@ -1,0 +1,154 @@
+# P4c – Vorbereitung des Samsung-Tests (HLS über die Test-App `de.evp.helfer.p4test`)
+
+Stand der Vorbereitung. **Keine APK erzeugt, ausgeliefert oder installiert.** Produktion bleibt **UNAPPROVED**. Die
+Installation auf dem Samsung braucht eine eigene Freigabe. Grüne Tests sind keine Sicherheitsfreigabe.
+
+Unverändert und unberührt: `de.evp.helfer` und `de.evp.helfer.channeltest` samt Daten und Kopplungen.
+
+## 1. Entscheidungen des Eigentümers (übernommen)
+
+- **Android 10 / API 29, MediaStore `SIZE` = 0:** vorläufig hingenommen *nur* als dokumentierte Einschränkung für die
+  P4c-Gerätetests auf dem Samsung mit Android 17. **Keine Freigabe für Android 10.** Der rote Gerätetest
+  `Mp4DownloadsInstrumentedTest#publishesThroughMediaStoreAndReadsBack` (API 29) bleibt sichtbar, die Prüfung bleibt
+  unverändert, es entsteht kein zweiter MediaStore-Eintrag. Tatsächliche Länge, Integrität, Abspielbarkeit,
+  Veröffentlichung und Wiedererkennung nach Neustart werden weiter geprüft (auch auf API 29 grün).
+  → Offener Befund **P4B-A10-SIZE** für eine spätere, eigene Korrektur (siehe `DOWNLOADS-P4B.md` §7).
+- Separate Test-App `de.evp.helfer.p4test` und separate P4-Testerweiterung (ID `pcccpjllneffccpenbepmfbkjedllkkf`).
+- Der dauerhafte P4-Testschlüssel entsteht **nur auf dem Mac des Eigentümers**. Privater Schlüssel, Keystore-Datei und
+  Passwort gehen nie an Claude, GitHub, CI oder einen Cloud-Dienst; übernommen wird nur der öffentliche Fingerabdruck.
+
+## 2. Vor dem Gerätetest korrigiert (Android 17 / Samsung)
+
+| Punkt | Befund | Maßnahme |
+|---|---|---|
+| CPU bei ausgeschaltetem Bildschirm | Der Vordergrunddienst hält den Prozess, nicht die CPU. Lange Downloads hätten bei Bildschirm aus stocken und als „unterbrochen“ enden können. | Teilweise CPU-Sperre nur solange ≥ 1 Download läuft (MP4 oder HLS), 30-min-Fenster, bei jedem Fortschritt verlängert; danach sofort frei. Berechtigung `WAKE_LOCK`. JVM-Test + 3 Mutanten, Gerätetest (API 26/29/34/37). |
+| Beschreibung des Vordergrunddienstes | `specialUse`-Untertyp nannte nur Helligkeit/Lautstärke. | Nennt jetzt auch vom Nutzer gestartete Downloads. |
+| Android 17 im Emulator | Bisher API 26/29/34. | Emulator-Matrix um **API 37** ergänzt (Ergebnis siehe Bericht). |
+
+Geprüft, ohne Änderungsbedarf: `targetSdk 34` → die Zeitgrenzen für `dataSync`/`mediaProcessing` (ab targetSdk 35)
+und die Start-Sperren aus `BOOT_COMPLETED` für bestimmte Typen gelten nicht; `specialUse` hat keine Zeitgrenze.
+Netz bleibt im Doze-Modus für Prozesse mit Vordergrunddienst erhalten. Port 47899 fail-closed (belegt → kein Kanal,
+kein Ausweichport). Nicht aus der Ferne prüfbar: Samsung-eigenes Energiesparen („Apps im Ruhezustand“, „Apps im
+Tiefschlaf“) und Android-17-Änderungen jenseits des Emulators → im Gerätetest (Schritte S2, T11).
+
+## 3. Signieren auf dem Mac – genaue Befehle
+
+Voraussetzung einmalig (Homebrew vorhanden; sonst JDK 17 und Android-Kommandozeilenwerkzeuge von den offiziellen Seiten):
+
+```sh
+xcode-select --install                       # git (falls noch nicht vorhanden)
+brew install --cask temurin@17               # JDK: keytool, java
+brew install --cask android-commandlinetools # sdkmanager
+export ANDROID_HOME="$(brew --prefix)/share/android-commandlinetools"
+sdkmanager --sdk_root="$ANDROID_HOME" "build-tools;34.0.0"
+"$ANDROID_HOME/build-tools/34.0.0/apksigner" --version   # muss eine Version ausgeben
+```
+
+Skripte genau in dem Stand holen, den Claude nennt (`<SHA>` aus der Nachricht, 40 Zeichen):
+
+```sh
+mkdir -p ~/src && cd ~/src
+git clone https://github.com/Owndot/video-assistent-helper.git
+cd video-assistent-helper
+git fetch origin feature/c3-browser-downloads
+git checkout --detach <SHA>
+git log -1 --format=%H                       # muss genau <SHA> ausgeben
+```
+
+**A. Schlüssel erzeugen (einmalig, außerhalb des Repositorys, nicht in iCloud):**
+
+```sh
+mkdir -p ~/P4-Signing && chmod 700 ~/P4-Signing   # Home-Ordner selbst wird nicht von iCloud synchronisiert
+tmutil addexclusion ~/P4-Signing                   # nicht in Time Machine; Sicherung gezielt unter B
+cd ~/src/video-assistent-helper
+bash tools/p4test/keygen.sh ~/P4-Signing
+```
+
+`keytool` fragt zweimal nach dem Keystore-Passwort, das Skript danach ein drittes Mal (nur zum Auslesen des
+Fingerabdrucks). Passwort lang und zufällig wählen (z. B. von einem lokalen Passwortmanager erzeugen lassen). Ausgabe:
+`certificate_sha256=<64 Zeichen>`. Das Skript verweigert CI, Git-Ordner, Cloud-Ordner und ein Überschreiben.
+
+**B. Privaten Schlüssel und Passwort getrennt sichern:**
+
+- Keystore: verschlüsselter USB-Stick (Festplattendienstprogramm → „APFS (verschlüsselt)“), z. B. `/Volumes/P4-BACKUP`:
+  ```sh
+  cp ~/P4-Signing/helper-p4-test.p12 /Volumes/P4-BACKUP/
+  shasum -a 256 ~/P4-Signing/helper-p4-test.p12 /Volumes/P4-BACKUP/helper-p4-test.p12   # beide Werte gleich
+  diskutil eject /Volumes/P4-BACKUP
+  ```
+- Passwort: getrennt vom Stick – in einem **nur lokalen** Passwortmanager-Tresor (nicht iCloud-Schlüsselbund, keine
+  Cloud-Synchronisierung) **oder** auf Papier an einem sicheren Ort. Nie zusammen mit der `.p12` aufbewahren.
+- Nicht in Mail, Chat, Notizen-Apps, iCloud Drive, Dropbox o. Ä. ablegen.
+
+**C. Nur den öffentlichen Fingerabdruck übergeben:**
+
+```sh
+keytool -list -v -keystore ~/P4-Signing/helper-p4-test.p12 -storetype PKCS12 -alias helper-p4-test | grep -E "Owner|SHA256:"
+```
+
+`Owner` muss `CN=Helper P4 TEST ONLY - durable` sein. Den Wert aus `certificate_sha256=…` (aus Schritt A, klein, ohne
+Doppelpunkte; dieselben Hex-Zeichen wie `SHA256:` hier) an Claude schicken – sonst nichts. Claude legt ihn in
+`release/p4test-signer.json` fest. Danach prüfen:
+
+```sh
+cd ~/src/video-assistent-helper && git fetch origin feature/c3-browser-downloads
+git checkout --detach <NEUER_SHA>
+grep certificate_sha256 release/p4test-signer.json         # muss genau deinen Fingerabdruck zeigen
+```
+
+**D. Später gelieferte unsignierte P4-Test-APK prüfen und signieren** (erst nach Freigabe der Lieferung):
+
+```sh
+mkdir -p ~/P4-Delivery && chmod 700 ~/P4-Delivery            # gelieferte Dateien hierher (nicht ins Repository)
+cd ~/P4-Delivery && shasum -a 256 -c SHA256SUMS              # Prüfsumme der gelieferten APK
+cd ~/src/video-assistent-helper
+export ANDROID_HOME="$(brew --prefix)/share/android-commandlinetools"
+bash tools/p4test/sign.sh ~/P4-Delivery/helper-p4test-unsigned.apk ~/P4-Signing/helper-p4-test.p12 ~/P4-Delivery/helper-p4test-signed.apk
+"$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs ~/P4-Delivery/helper-p4test-signed.apk | grep SHA-256
+```
+
+`sign.sh` fragt das Passwort ab (nie als Argument, nicht in der Shell-Historie) und lehnt ab: anderes Paket als
+`de.evp.helfer.p4test`, debugfähige oder bereits signierte Eingabe, fehlende/zusätzliche Bibliotheken, Zertifikat ≠
+Festlegung, Schlüssel oder Ausgabe in Git- oder Cloud-Ordnern. Ausgabe am Ende: `SIGNED de.evp.helfer.p4test
+versionCode=… cert_sha256=<dein Fingerabdruck> apk_sha256=…`. Spätere Updates: derselbe Schlüssel, höherer Versionscode.
+Läuft unter macOS mit Bordmitteln (bash 3.2, LibreSSL, `shasum`) – in CI auf einem macOS-Runner geprüft.
+
+Schlüssel verloren? Nie einen Produktions- oder Wegwerfschlüssel nehmen; neue P4-Identität erzeugen, nur p4test
+deinstallieren und neu koppeln.
+
+## 4. Testseite und Testerweiterung (in Kadri vorbereitet)
+
+- Seite `tests/web/public/p4-hls.html` mit eigenem synthetischem Material (`tests/web/public/p4/`, 14 MB, Prüfsummen):
+  T1–T7 unterstützt, T14a AES-128 und T14b Live müssen abgelehnt werden. Gegen die echte HlsEngine geprüft (alle
+  unterstützten Fälle planen und laden; AES → `encrypted`, Live → `live`). Öffentlich über einen Commit-Link wie die
+  C3-Seite (Link in der P4c-Nachricht).
+- Testerweiterung „Kadri P4 TEST“: `tools/p4test/pack-extension.py` (nur Name, Beschreibung, öffentlicher Schlüssel
+  verschieden), in CI aus zwei Build-Wegen bytegleich und im Wegwerf-Chromium mit fester ID und getrennten Daten.
+
+## 5. Samsung-Testmatrix (Android 17, Vivaldi/Chromium mit „Kadri P4 TEST“, nur nach Freigabe)
+
+Vorbereitung S1–S3: **S1** `channeltest` „Stopp erzwingen“ (nicht deinstallieren), C3-Testerweiterung deaktivieren (nicht
+entfernen). **S2** p4test: Benachrichtigungen erlauben, Akku „Nicht eingeschränkt“, nicht in „Apps im Ruhezustand/Tiefschlaf“.
+**S3** p4test starten, mit „Kadri P4 TEST“ koppeln. Jeder Fall: Seite öffnen, Fall wählen, Kadri-Player, ⬇ → „Stream speichern …“.
+
+| ID | Fall | Erwartung | Ergebnis |
+|---|---|---|---|
+| T1 | HLS-TS, Ton getrennt | 1 Option 360p · de; Datei 20 s, Blitz = Piepton, in Galerie/Player abspielbar | |
+| T2 | HLS-TS, Ton im Video | 1 Option „Ton im Stream“; Datei mit Ton | |
+| T3 | fMP4, Ton getrennt | wie T1 | |
+| T4 | fMP4, Ton im Video | wie T2 | |
+| T5 | Qualitätsauswahl | 2 Optionen 360p/180p; Datei hat die gewählte Auflösung | |
+| T6 | Audiospuren | 2 Optionen de/en; de = hoher, en = tiefer Piepton – genau die gewählte Spur | |
+| T7 | Abbruch | T7-Fall starten, nach ~5 s abbrechen → „abgebrochen“, keine Datei, keine Teildatei | |
+| T8 | Abbruch + Neustart | starten, abbrechen, p4test „Stopp erzwingen“, neu öffnen → bleibt abgebrochen | |
+| T9 | Wiederaufnahme nach Netzabbruch | starten, Flugmodus an → „unterbrochen“; Flugmodus aus → „Fortsetzen“ → fertig, Datei vollständig | |
+| T10 | Wiederaufnahme nach App-Ende | starten, p4test „Stopp erzwingen“, neu öffnen, „Fortsetzen“ → fertig | |
+| T11 | Bildschirm aus | starten, Bildschirm sofort aus, 3 min warten → fertig, nicht „unterbrochen“ | |
+| T12 | Parallel MP4 + HLS | C3-MP4 (C3-Seite) und T7 gleichzeitig → beide fertig | |
+| T13 | Dritter Download | während zwei laufen, dritten starten → „belegt“ | |
+| T14 | Nicht unterstützt | T14a → „verschlüsselt“, T14b → „Live“, keine Datei | |
+| T15 | Wiedererkennung | nach T1 Handy neu starten → Download weiter „fertig“, kein erneuter Abruf | |
+| T16 | Aufräumen | p4test deinstallieren, P4-Testerweiterung entfernen; channeltest/C3-Paar unverändert | |
+
+Für jeden Fall notieren: PASS/FAIL, angezeigte Dateigröße und Dauer, bei Fehlern den angezeigten Grund. Keine privaten
+Adressen, Kopplungscodes oder Schlüssel in Notizen.

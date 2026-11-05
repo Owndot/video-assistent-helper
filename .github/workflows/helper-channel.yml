@@ -40,7 +40,9 @@ jobs:
           set -euo pipefail
           sdk="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
           echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
-          yes 2>/dev/null | "$sdk/cmdline-tools/latest/bin/sdkmanager" --install "build-tools;34.0.0" "platforms;android-34" > /dev/null
+          ls "$sdk/cmdline-tools/latest/bin/sdkmanager"
+          # Wie im Linux-Job: yes über Prozessersetzung (eine Pipe endete mit SIGPIPE und pipefail)
+          "$sdk/cmdline-tools/latest/bin/sdkmanager" --install "build-tools;34.0.0" "platforms;android-34" < <(yes 2>/dev/null) > "$RUNNER_TEMP/sdkmanager.log" || { tail -20 "$RUNNER_TEMP/sdkmanager.log"; exit 1; }
           test -x "$sdk/build-tools/34.0.0/apksigner"
       - name: Self-test with stock macOS tools only
         run: |
@@ -189,6 +191,10 @@ jobs:
           api-level: ${{ matrix.api }}
           arch: x86_64
           target: google_apis
+          # API 37 bootete im Standardlimit (600 s) nicht fertig: mehr Zeit und Speicher (Runner: 4 Kerne, 16 GB)
+          emulator-boot-timeout: 1200
+          ram-size: ${{ matrix.api == '37.0' && '4096M' || '' }}
+          cores: ${{ matrix.api == '37.0' && 4 || '' }}
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: bash tools/run-channel-publication-regression.sh "$RUNNER_TEMP/publication-mutant" && bash tools/run-channel-instrumentation.sh "$RUNNER_TEMP/a" && bash tools/run-flaky-repeat.sh "$RUNNER_TEMP/a" 20

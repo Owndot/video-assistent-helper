@@ -2,7 +2,7 @@
 # NUR beim Eigentümer ausführen, einmalig. Erzeugt die DAUERHAFTE P4-Testidentität (eigener Schlüssel, getrennt von
 # Produktion, Emulator- und Wegwerfschlüsseln) für de.evp.helfer.p4test. Nie in CI, nie in einem Git-Ordner.
 # Aufruf: tools/p4test/keygen.sh ZIELORDNER      (Passwort fragt keytool interaktiv ab, nie als Argument)
-# Danach: .p12 und Passwort getrennt sichern (Passwortmanager + Offline-Kopie); den ausgegebenen SHA-256 in
+# Danach: .p12 und Passwort getrennt sichern (verschlüsselter Stick bzw. lokaler Tresor/Papier, nie Cloud); SHA-256 in
 # release/p4test-signer.json eintragen lassen (öffentlich, kein Geheimnis). Kein zweiter Schlüssel für Updates.
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
@@ -23,4 +23,4 @@ fp="$(keystore_cert_sha256 "$KS")"; unset P4_KS_PASS
 [ ${#fp} -eq 64 ] || die "could not read the certificate"
 echo "P4 test identity created: $KS"
 echo "certificate_sha256=$fp"
-echo "Back up the .p12 and its password separately. Publish only the fingerprint above."
+echo "Back up the .p12 and its password separately and offline (never a cloud service). Share only the fingerprint above."
