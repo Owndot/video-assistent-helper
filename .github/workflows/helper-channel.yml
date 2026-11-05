@@ -6,10 +6,10 @@ name: Helper secure channel (test package only, nothing published)
 # eine Veröffentlichung) – nur Text-Berichte und Hashes.
 on:
   pull_request:
-    paths: ['poc/p4a-hls/tools/**', 'app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/check-network-layer.sh', 'tools/p4test/**', 'release/p4test-signer.json', 'gradle/**', '.github/workflows/helper-channel.yml']
+    paths: ['poc/p4a-hls/tools/**', 'app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/wait-device-ready.sh', 'tools/check-network-layer.sh', 'tools/p4test/**', 'release/p4test-signer.json', 'gradle/**', '.github/workflows/helper-channel.yml']
   push:
     branches: [feature/helper-channel-control]
-    paths: ['poc/p4a-hls/tools/**', 'app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/check-network-layer.sh', 'tools/p4test/**', 'release/p4test-signer.json', 'gradle/**', '.github/workflows/helper-channel.yml']
+    paths: ['poc/p4a-hls/tools/**', 'app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/wait-device-ready.sh', 'tools/check-network-layer.sh', 'tools/p4test/**', 'release/p4test-signer.json', 'gradle/**', '.github/workflows/helper-channel.yml']
   workflow_dispatch:
 
 permissions:
@@ -204,7 +204,7 @@ jobs:
           disk-size: ${{ matrix.api == '37.0' && '8G' || '' }}
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
-          script: bash tools/run-channel-publication-regression.sh "$RUNNER_TEMP/publication-mutant" && bash tools/run-channel-instrumentation.sh "$RUNNER_TEMP/a" && bash tools/run-flaky-repeat.sh "$RUNNER_TEMP/a" 20
+          script: bash tools/wait-device-ready.sh && bash tools/run-channel-publication-regression.sh "$RUNNER_TEMP/publication-mutant" && bash tools/run-channel-instrumentation.sh "$RUNNER_TEMP/a" && bash tools/run-flaky-repeat.sh "$RUNNER_TEMP/a" 20
       - name: Collect text-only report (no APK, no keys)
         if: always()
         run: |
