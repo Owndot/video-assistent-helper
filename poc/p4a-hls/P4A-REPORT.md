@@ -24,7 +24,7 @@ Stand: Helper-Branch `feature/c3-browser-downloads` (Draft PR #27), isolierter P
   Gerät** mit `MediaExtractor` + `MediaCodec` vollständig dekodiert. Nur Textberichte verlassen den Job.
 - JVM: `tools/run-jvm.sh` (80/80), `tools/mutation.py` (12/12 Mutationen erkannt).
 
-## 3. Ergebnisse (CI-Lauf 41984708715 auf `f27aac5`; Abbruch/Opus-Richtlinie im Folgelauf)
+## 3. Ergebnisse (CI-Lauf 41986884407 auf `a66dbcc`: API 26, 29, 34 grün)
 
 **Media3 + Mp4Muxer** – alle Fixtures, alle drei API-Stufen:
 
@@ -48,14 +48,15 @@ Stand: Helper-Branch `feature/c3-browser-downloads` (Draft PR #27), isolierter P
   ergab 60 ms bzw. 360 ms Versatz. Mit `Fmp4Edits` (nur „keine", „eine Edit", „leere + Medien-Edit", Rate 1; sonst
   Ablehnung) korrekt.
 
-**Speicher (ART, Java-Heap nach GC, 10-min-Fixture, 43 126 Samples):** `Mp4Muxer` ≈ **58–59 Byte je Sample**
-(API 26: 2,68→4,38 MB, API 29: 3,34→5,06 MB, API 34: 4,35→6,06 MB je 10 000→40 000 Samples). JVM-Messung über
+**Speicher (ART, Java-Heap nach GC, 10-min-Fixture, 43 126 Samples):** `Mp4Muxer` ≈ **57–59 Byte je Sample**
+(API 26: 2,67→4,38 MB, API 29: 3,34→5,06 MB, API 34: 4,33→6,05 MB je 10 000→40 000 Samples); `FragmentedMp4Muxer` konstant. JVM-Messung über
 1 h (258 751 Samples): ~72 Byte/Sample. Eigene Puffer fest: Sample ≤ 8 MiB, Warteschlange je Spur ≤ 32 MiB.
 Folgerung: Sample-Budget je Auftrag nötig (Vorschlag 1 000 000 Samples ≈ 60 MB, ≈ 3,5 h bei 30 fps + AAC 48 kHz);
 genau ein Remuxer gleichzeitig.
 
-**Abbruch:** zwischen jedem Lese- und Schreibschritt; Ausgabe wird bei Abbruch/Fehler gelöscht (Folgelauf misst die
-Reaktionszeit mit gedrosselter Quelle).
+**Abbruch (gedrosselte Quelle, ~20 ms je Lesezugriff):** Media3-Weg endet 54–56 ms nach dem Abbruchwunsch
+(API 26/34), keine Ausgabe bleibt liegen. Plattform-Weg braucht ~5 s (blockierende `readSampleData`). Opus auf API 26
+wird wie vorgesehen abgelehnt (`audio-codec`), nicht stillschweigend ohne Ton ausgegeben.
 
 **Netz (JVM, echter SafeHttpClient gegen lokalen Server):** finale Adresse nach Weiterleitung als Basis; kein geerbtes
 Query-Token; kein Cookie/Authorization/Referer/Origin; private Netze, Link-Local-Metadatenadresse und `file:`-Weiterleitung
@@ -134,7 +135,10 @@ Alte Helfer melden nichts → Kadri bietet HLS weiterhin nicht an. Unbekannte Fe
    heute nicht korrekt/abspielbar).
 6. Tokens in Segmentadressen können während langer Downloads ablaufen (gleiche Klasse wie R3) → sauberer Abbruch mit
    Grund, keine Umgehung.
-7. Der vorhandene `specialUse`-Vordergrunddienst ist für Browsersteuerung deklariert; Eignung für lange Downloads und
+7. Bestehender C2-Gerätetest `Mp4DownloadsInstrumentedTest#cancelRemovesEverything` (API 34) schlug einmal fehl
+   (MediaStore-Eintrag nach „cancelled" noch sichtbar), im einzigen Wiederholungslauf grün (Lauf 41986889823) – vom PoC
+   unberührt; in P4b vor dem gemeinsamen Abbruchpfad zeitlich härten.
+8. Der vorhandene `specialUse`-Vordergrunddienst ist für Browsersteuerung deklariert; Eignung für lange Downloads und
    Android-17-Lebenszyklus in P4b prüfen.
 
 ## 9. P4b – kleine Arbeitspakete (erst nach Freigabe)
