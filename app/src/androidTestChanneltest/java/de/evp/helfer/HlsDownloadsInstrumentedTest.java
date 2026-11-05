@@ -126,10 +126,16 @@ public class HlsDownloadsInstrumentedTest {
             ended.put(id, state);
             notifyAll();
         }
-        /** Die Engine meldet den Endzustand vor dem Rückruf (außerhalb ihrer Sperren): auf den Rückruf warten. */
+        /**
+         * Die Engine meldet den Endzustand vor dem Rückruf (außerhalb ihrer Sperren): auf den Rückruf warten – auf die
+         * veröffentlichte Datei oder einen Endzustand ohne Datei. "interrupted" ist kein Ende (Fortsetzen folgt).
+         */
         synchronized Object saved(String id, long ms) throws InterruptedException {
             long end = System.currentTimeMillis() + ms;
-            while (!ended.containsKey(id) && System.currentTimeMillis() < end) wait(Math.max(1, end - System.currentTimeMillis()));
+            while (!saved.containsKey(id) && !"failed".equals(ended.get(id)) && !"cancelled".equals(ended.get(id))
+                    && System.currentTimeMillis() < end) {
+                wait(Math.max(1, end - System.currentTimeMillis()));
+            }
             return saved.get(id);
         }
     }
