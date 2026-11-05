@@ -203,7 +203,9 @@ jobs:
           # API 37: Standard-Datenpartition zu klein für Test-APKs + 64-MiB-Downloads ("not enough space")
           disk-size: ${{ matrix.api == '37.0' && '8G' || '' }}
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          # API 37: surfaceflinger stürzte mit swiftshader_indirect ab (Assertion hasReadColorBufferDma der Host-GPU-
+          # Emulation, riss system_server mit) – dort Rendering im Gast
+          emulator-options: -no-window -gpu ${{ matrix.api == '37.0' && 'guest' || 'swiftshader_indirect' }} -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: bash tools/wait-device-ready.sh && bash tools/run-channel-publication-regression.sh "$RUNNER_TEMP/publication-mutant" && bash tools/run-channel-instrumentation.sh "$RUNNER_TEMP/a" && bash tools/run-flaky-repeat.sh "$RUNNER_TEMP/a" 20
       - name: Collect text-only report (no APK, no keys)
         if: always()
