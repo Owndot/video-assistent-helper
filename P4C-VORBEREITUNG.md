@@ -1,7 +1,8 @@
 # P4c – Vorbereitung des Samsung-Tests (HLS über die Test-App `de.evp.helfer.p4test`)
 
-Stand der Vorbereitung. **Keine APK erzeugt, ausgeliefert oder installiert.** Produktion bleibt **UNAPPROVED**. Die
-Installation auf dem Samsung braucht eine eigene Freigabe. Grüne Tests sind keine Sicherheitsfreigabe.
+Stand der Vorbereitung. Produktion bleibt **UNAPPROVED**. Grüne Tests sind keine Sicherheitsfreigabe.
+Nachtrag P4c: Der Eigentümer hat eine **temporär signierte** Test-APK für den kontrollierten Samsung-Test freigegeben
+(Abschnitt 6); der dauerhafte P4-Schlüssel (Abschnitt 3) entsteht später und unverändert auf dem Mac.
 
 Unverändert und unberührt: `de.evp.helfer` und `de.evp.helfer.channeltest` samt Daten und Kopplungen.
 
@@ -154,3 +155,38 @@ entfernen). **S2** p4test: Benachrichtigungen erlauben, Akku „Nicht eingeschr�
 
 Für jeden Fall notieren: PASS/FAIL, angezeigte Dateigröße und Dauer, bei Fehlern den angezeigten Grund. Keine privaten
 Adressen, Kopplungscodes oder Schlüssel in Notizen.
+
+## 6. P4c-Durchführung ohne Mac: temporär signierte Test-APK (Freigabe des Eigentümers)
+
+Freigegeben für den kontrollierten Samsung-Test, keine Produktionsfreigabe. Workflow
+`.github/workflows/p4-test-package.yml` (läuft nur bei Änderung der eigenen Datei auf diesem Branch):
+
+- Baut exakt den Quell-Commit `9da4434` (sonst nur die Workflow-Datei bzw. Doku verschieden), nur wenn dessen CI grün
+  ist; einzige zugelassene Ausnahme: genau ein Fehlschlag auf API 29, genau `publishesThroughMediaStoreAndReadsBack`
+  mit `SIZE … but was:<0>` (P4B-A10-SIZE).
+- Unsignierte P4-Testapp aus zwei Pfaden, alle APK-Einträge bytegleich.
+- **Getrennter, temporärer Testsignierweg:** Wegwerf-Schlüssel nur in diesem Lauf (RSA-3072, 2 Tage, DN
+  `CN=Helper P4 TEST ONLY - throwaway`, zufälliges Passwort nur im Prozess-Umfeld), einmal benutzt über die
+  fail-closed Prüfungen von `tools/p4test/sign.sh` mit einer Wegwerf-Festlegung im Wegwerf-Ordner, danach Schlüssel,
+  Festlegung und Passwort gelöscht; geprüft, dass kein Schlüsselspeicher übrig ist und `release/p4test-signer.json`
+  (`null`, `KEY_NOT_YET_CREATED`) sowie `tools/p4test/**` unverändert sind. Nie Produktion, nie der alte Signierer
+  `ec17fab1…` (zusätzlich abgewiesen).
+- Geprüft vor und nach einem Installationstest auf einem Wegwerf-Emulator (API 34): Paket, Bezeichnung, Versionscode,
+  nicht debugfähig/testOnly, `allowBackup=false`, genau die 12 Manifest-Berechtigungen, genau eine Signatur (v2+v3)
+  mit dem Wegwerf-Zertifikat dieses Laufs, Kanalbibliothek nur für arm64-v8a/x86_64 ohne Testinitiator; Dienst läuft,
+  Kanal lauscht nur auf `127.0.0.1:47899`, alter Port 47811 zu; danach deinstalliert, Paketliste wie vorher.
+- Auslieferung: `helper-p4test.apk`, `SHA256SUMS`, `p4test-evidence.json` (APK- und Zertifikats-SHA-256, Gültigkeit,
+  Helfer- und Kadri-Commits, Erweiterungs-ID, Ablaufdatum). Öffentliches Actions-Artefakt, **2 Tage** Aufbewahrung.
+- Gegenstück in Kadri: `.github/workflows/p4-test-extension.yml` (Testerweiterung „Kadri P4 TEST“, Kadri-Commit mit
+  `helper_commit=9da4434`).
+
+**Folge des Wegwerf-Schlüssels:** Der Schlüssel existiert nach dem Lauf nicht mehr. Jede spätere p4test-APK (neuer
+Wegwerf-Schlüssel oder die dauerhafte Mac-Identität) hat eine andere Signatur: Android lehnt sie als Update ab. Dann
+**nur `de.evp.helfer.p4test` deinstallieren** (seine Daten, Kopplung und laufenden Downloads gehen verloren; fertige
+Dateien in `Download/Video-Assistent` bleiben) und mit „Kadri P4 TEST“ neu koppeln. `de.evp.helfer`,
+`de.evp.helfer.channeltest` und die C3-Testerweiterung sind davon nie betroffen.
+
+**Portregel:** channeltest und p4test benutzen denselben Port 47899. Es lauscht nur die zuerst gestartete App, die
+andere meldet „Port 47899 ist belegt“. Für P4-Tests channeltest „Stopp erzwingen“ (auch nach jedem Neustart des Handys,
+weil beide beim Hochfahren starten), danach p4test öffnen. Den Kopplungscode nur in den Einstellungen von „Kadri P4
+TEST“ eingeben, nie in der C3-Testerweiterung (sonst würde deren Kopplung ersetzt).
