@@ -255,14 +255,23 @@ jobs:
           if adb shell run-as "$PKG" id 2>/dev/null | grep -q uid=; then echo "run-as works: debuggable" >&2; exit 1; fi
           adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS || true
           adb shell am start -W -n "$PKG/de.evp.helfer.MainActivity" > /dev/null
+          # 127.0.0.1 erscheint je nach Socket als IPv4 (tcp) oder als IPv4-gemappte Adresse ::ffff:127.0.0.1 (tcp6).
+          LOOP='^(0100007F|0000000000000000FFFF00000100007F):BB1B$'
           ok=
           for i in $(seq 1 60); do
             l="$(adb shell 'cat /proc/net/tcp /proc/net/tcp6 2>/dev/null' | awk '$4=="0A"{print toupper($2)}')"
-            if grep -qx '0100007F:BB1B' <<<"$l"; then ok=1; break; fi
+            if grep -qE "$LOOP" <<<"$l"; then ok=1; break; fi
             sleep 1
           done
-          [ -n "$ok" ] || { echo "channel not listening on 127.0.0.1:47899" >&2; adb logcat -d -b crash | tail -40; exit 1; }
-          if grep -E ':BB1B$' <<<"$l" | grep -vqx '0100007F:BB1B'; then echo "listens beyond 127.0.0.1: $l" >&2; exit 1; fi
+          if [ -z "$ok" ]; then
+            echo "channel not listening on 127.0.0.1:47899; listeners: $(tr '\n' ' ' <<<"$l")" >&2
+            adb shell dumpsys activity services "$PKG" | tr -d '\r' | head -30 || true
+            adb shell pidof "$PKG" || true
+            adb logcat -d | grep -E 'evp|helfer|Helfer|AndroidRuntime|FATAL' | tail -60 || true
+            adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1 && adb shell cat /sdcard/ui.xml | tr '>' '\n' | grep -o 'text="[^"]*"' | head -40 || true
+            exit 1
+          fi
+          if grep -E ':BB1B$' <<<"$l" | grep -vqE "$LOOP"; then echo "listens beyond 127.0.0.1: $l" >&2; exit 1; fi
           if grep -qE ':BA43$' <<<"$l"; then echo "legacy port 47811 open" >&2; exit 1; fi
           adb shell dumpsys activity services "$PKG" | tr -d '\r' | grep -q 'de.evp.helfer.HelferService' || { echo "foreground service not running" >&2; exit 1; }
           echo "SMOKE: installed, service running, channel only on 127.0.0.1:47899 ($(adb shell getprop ro.build.version.release | tr -d '\r'), API $(adb shell getprop ro.build.version.sdk | tr -d '\r'))"
