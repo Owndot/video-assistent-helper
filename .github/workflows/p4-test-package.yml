@@ -30,8 +30,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SOURCE_SHA: ad3c59723524fd202021f7335eca98bf390768bf
-  KADRI_PAIR_SHA: cb4f5ac3c5ee604c1a98637d2b7f8f02cb518efe
+  SOURCE_SHA: 8b906c504f0612ff4af69a397a2745b717f156b3
+  KADRI_PAIR_SHA: ef9a5ed22920e8bee0a204323388b9104e58892e
   KADRI_P4_EXTENSION_ID: pcccpjllneffccpenbepmfbkjedllkkf
   NDK_VERSION: 27.2.12479018
   RETENTION_DAYS: 2
@@ -347,7 +347,7 @@ jobs:
           [ "$(find "$D" -type f | wc -l)" = 3 ]
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: helper-p4test-ad3c597-run${{ github.run_id }}
+          name: helper-p4test-8b906c5-run${{ github.run_id }}
           path: ${{ runner.temp }}/deliver
           retention-days: ${{ env.RETENTION_DAYS }}
           if-no-files-found: error
