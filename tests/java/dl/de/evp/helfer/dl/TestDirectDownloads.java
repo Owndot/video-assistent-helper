@@ -289,6 +289,8 @@ public final class TestDirectDownloads {
         final Map<String, String> finished = new ConcurrentHashMap<>();
         final List<String> all = new CopyOnWriteArrayList<>();
         @Override public void progress(String id, String title, long bytes, long total) { all.add("progress " + id + " " + title + " " + bytes + "/" + total); }
+        final List<String> waits = new CopyOnWriteArrayList<>();   // P4c: jede Pause vor einem erneuten Versuch
+        @Override public void waiting(String id, String title, Retry.Wait wait) { if (wait != Retry.Wait.NONE) waits.add(id + " " + wait); }
         @Override public synchronized void finished(String id, String title, String state, String reason, Object saved) {
             expect(state.equals("done") == (saved instanceof File), "saved handle only on done: " + state + " " + saved);
             all.add("finished " + id + " " + title + " " + state + " " + reason);
@@ -910,6 +912,8 @@ public final class TestDirectDownloads {
                 Thread.sleep(300);                    // Server hat die Verbindung inzwischen geschlossen
             }
             expect(srv.requests.get() == 3 && srv.connections.get() == 3, "requests " + srv.requests.get() + ", connections " + srv.connections.get());
+            // P4c: die automatische Wiederholung darf eine tote Verbindung nicht verdecken – es gibt nichts zu wiederholen
+            expect(ev.waits.isEmpty(), "no retry needed, but paused: " + ev.waits);
             d.stopAll();
         }
     }

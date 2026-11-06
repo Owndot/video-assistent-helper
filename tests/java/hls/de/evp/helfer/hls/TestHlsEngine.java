@@ -62,7 +62,7 @@ public final class TestHlsEngine {
         volatile String changedPath = null;        // diese Ressource liefert anderen Inhalt (anderer ETag)
         volatile String masterExtra = "";          // wird an Master angehängt (Playlist-Änderung)
         // P4c: so viele volle Segmentabrufe beantwortet der Server mit 503 (vorübergehend überlastet)
-        final AtomicInteger fail503 = new AtomicInteger(), answered503 = new AtomicInteger(), requests = new AtomicInteger();
+        final AtomicInteger fail503 = new AtomicInteger(), answered503 = new AtomicInteger(), answered403 = new AtomicInteger(), requests = new AtomicInteger();
         volatile Runnable on503 = null;            // z. B. Netz abschalten (Flugmodus) beim ersten 503
         final AtomicInteger inFlight = new AtomicInteger(), maxInFlight = new AtomicInteger();
         final Map<String, AtomicInteger> fullGets = new ConcurrentHashMap<>(), rangeGets = new ConcurrentHashMap<>(), rangeMisses = new ConcurrentHashMap<>(),
@@ -80,7 +80,7 @@ public final class TestHlsEngine {
         String url(String fixture, String file) { return "http://127.0.0.1:" + port + "/dyn/" + fixture + "/" + file + "?t=" + token; }
 
         void reset() { fullGets.clear(); rangeGets.clear(); rangeMisses.clear(); rangeBroken.clear(); maxInFlight.set(0); delayMs = 0; chunked = false; changedPath = null; masterExtra = ""; etagMode = "strong"; token = "T1";
-            fail503.set(0); answered503.set(0); on503 = null; }
+            fail503.set(0); answered503.set(0); answered403.set(0); on503 = null; }
 
         int full(String suffix) { int n = 0; for (Map.Entry<String, AtomicInteger> e : fullGets.entrySet()) if (e.getKey().endsWith(suffix)) n += e.getValue().get(); return n; }
         int fullSegments() { int n = 0; for (Map.Entry<String, AtomicInteger> e : fullGets.entrySet()) if (!e.getKey().endsWith(".m3u8")) n += e.getValue().get(); return n; }
@@ -98,7 +98,7 @@ public final class TestHlsEngine {
                 String rel = path.substring(5);
                 File f = new File(fx, rel);
                 if (!f.isFile() || !f.getCanonicalPath().startsWith(fx.getCanonicalPath())) { x.sendResponseHeaders(404, -1); return; }
-                if (q == null || !q.equals("t=" + token)) { x.sendResponseHeaders(403, -1); return; }
+                if (q == null || !q.equals("t=" + token)) { answered403.incrementAndGet(); x.sendResponseHeaders(403, -1); return; }
                 if (delayMs > 0) Thread.sleep(delayMs);
                 byte[] body = Files.readAllBytes(f.toPath());
                 if (rel.endsWith(".m3u8")) {
@@ -528,8 +528,11 @@ public final class TestHlsEngine {
         String st = await(r.engine, id, "done", "failed", "interrupted", "cancelled");
         check("Auto (503): ohne Nutzeraktion fertig, Inhalt korrekt", "done".equals(field(st, "state")) && sameOutput(r), st + " " + r.engine.diagnostics(id));
         check("Auto (503): der Server meldete wirklich 503", s.answered503.get() >= 1, s.answered503.get());
-        check("Auto (503): jedes Segment genau einmal vollständig geladen (früher verifizierte per starkem ETag bestätigt)",
-            s.fullSegments() == total, "full=" + s.fullSegments() + " total=" + total + " ranges=" + s.ranges());
+        // Verifizierte Segmente werden nur per starkem ETag bestätigt (Range 0-0), nie neu geladen; neu geladen werden darf
+        // höchstens, was im Moment der Störung noch unterwegs (also unverifiziert) war: je weiterem Abrufer eines.
+        check("Auto (503): verifizierte Segmente nicht neu geladen (höchstens die gerade laufenden), Rest bestätigt",
+            s.fullSegments() >= total && s.fullSegments() <= total + HlsEngine.FETCH_PER_JOB - 1 && s.ranges() >= 3,
+            "full=" + s.fullSegments() + " total=" + total + " ranges=" + s.ranges());
 
         // 2) Flugmodus: kein Netz → keine Anfrage, Status „wartet auf Verbindung“; Netz zurück → fertig
         s.reset();
@@ -550,7 +553,8 @@ public final class TestHlsEngine {
         r2.net(true);
         st = await(r2.engine, id2, "done", "failed", "interrupted", "cancelled");
         check("Offline: Netz zurück → selbstständig fertig, Inhalt korrekt", "done".equals(field(st, "state")) && sameOutput(r2), st);
-        check("Offline: kein Segment doppelt geladen", s.fullSegments() == total, s.fullSegments() + "/" + total);
+        check("Offline: verifizierte Segmente nicht neu geladen (höchstens die gerade laufenden)", s.fullSegments() >= total
+            && s.fullSegments() <= total + HlsEngine.FETCH_PER_JOB - 1 && s.ranges() >= 3, s.fullSegments() + "/" + total + " ranges=" + s.ranges());
 
         // 3) Abbruch während des Wartens: sofort cancelled, Daten weg, auch nach Netz zurück kein weiterer Versuch
         s.reset();
@@ -637,6 +641,8 @@ public final class TestHlsEngine {
         Thread.sleep(500);
         check("403: interrupted ohne automatischen Versuch (keine weitere Anfrage)", "interrupted".equals(field(st, "state")) && "http_403".equals(field(st, "reason"))
             && s.requests.get() == afterFail, st + " +" + (s.requests.get() - afterFail));
+        // ein einziger Versuch: höchstens je Abrufer eine 403-Antwort (ein Versuch je Pause gäbe deutlich mehr)
+        check("403: genau ein Versuch (höchstens " + HlsEngine.FETCH_PER_JOB + " Antworten 403)", s.answered403.get() >= 1 && s.answered403.get() <= HlsEngine.FETCH_PER_JOB, s.answered403.get());
     }
 
     static void resume(Server s) throws Exception {

@@ -351,6 +351,54 @@ public class HlsDownloadsInstrumentedTest {
         }
     }
 
+    /**
+     * P4c (Samsung T11, T15): Bildschirm aus mitten im Download – fertig ohne „unterbrochen“, die CPU-Sperre hält,
+     * solange er läuft, und ist danach frei; nach einem Neustart der Engine (wie nach Prozessende) bleibt er als fertig
+     * erkannt, ein erneuter Start derselben Kennung lädt nichts nach.
+     */
+    @Test public void screenOffCompletesAndIsRecognisedAfterRestart() throws Exception {
+        Rig r = new Rig(Mp4Downloads.SLOTS);                 // gemeinsame Grenzen der App: daran hängt die CPU-Sperre
+        try {
+            srv.delayMs = 120;
+            String id = id();
+            String plan = r.engine.plan(PEER, BIND, srv.url("ts_sep/master.m3u8"));
+            r.engine.start(PEER, BIND, id, field(plan, "planId"), firstOption(plan), "ScreenOff");
+            long end = System.nanoTime() + 20_000_000_000L;
+            while (intField(r.engine.status(id), "done") < 1 && System.nanoTime() < end) Thread.sleep(10);
+            Mp4DownloadsInstrumentedTest.shell("input keyevent 223");          // KEYCODE_SLEEP: Bildschirm aus
+            boolean heldWhileOff = false;
+            end = System.nanoTime() + 120_000_000_000L;
+            String st = r.engine.status(id);
+            while ("running".equals(field(st, "state")) && System.nanoTime() < end) {
+                heldWhileOff |= Mp4Downloads.awake();
+                Thread.sleep(20);
+                st = r.engine.status(id);
+            }
+            Mp4DownloadsInstrumentedTest.shell("input keyevent 224");          // KEYCODE_WAKEUP
+            assertEquals(st, "done", field(st, "state"));
+            assertTrue("CPU lock held while downloading with the screen off", heldWhileOff);
+            assertNotNull("published", r.ev.saved(id, 30_000));
+            end = System.nanoTime() + 5_000_000_000L;
+            while (Mp4Downloads.awake() && System.nanoTime() < end) Thread.sleep(20);
+            assertFalse("CPU lock released after the download", Mp4Downloads.awake());
+            srv.delayMs = 0;
+            assertTrue("server quiet", srv.quiesce(10_000));
+            int before = srv.segments.get();
+            r.restart();                                   // wie nach Prozessende
+            String again = r.engine.status(id);
+            assertEquals(again, "done", field(again, "state"));
+            String p2 = r.engine.plan(PEER, BIND, srv.url("ts_sep/master.m3u8"));
+            String st2 = r.engine.start(PEER, BIND, id, field(p2, "planId"), firstOption(p2), "ScreenOff");
+            assertEquals(st2, "done", field(st2, "state"));
+            assertEquals("nothing fetched again after restart", before, srv.segments.get());
+            Log.i(TAG, "HLS_SCREEN_OFF api=" + Build.VERSION.SDK_INT + " done=true lockHeld=" + heldWhileOff + " recognisedAfterRestart=true");
+        } finally {
+            Mp4DownloadsInstrumentedTest.shell("input keyevent 224");
+            srv.delayMs = 0;
+            r.close();
+        }
+    }
+
     @Test public void persistentCancelWinsAfterRestart() throws Exception {
         Rig r = new Rig();
         try {

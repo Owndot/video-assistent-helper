@@ -344,7 +344,8 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     /** Wartet vor Versuch {@code attempt}; Abbruch oder Aufgeben (zu lange ohne Netz) beendet den Auftrag. */
     private void pause(Job job, int attempt) throws Fail {
         boolean go;
-        try { go = retry.await(attempt, job.cancel::isCancelled, w -> { job.wait = w; listener.waiting(job.id, job.title, w); }); }
+        // Obergrenze ist allein MAX_RESUMES (die Aufrufer zählen); Retry liefert nur die Pause (letzte Stufe bleibt)
+        try { go = retry.await(Math.min(attempt, Retry.MAX_ATTEMPTS), job.cancel::isCancelled, w -> { job.wait = w; listener.waiting(job.id, job.title, w); }); }
         catch (InterruptedException e) { Thread.currentThread().interrupt(); go = false; }
         finally { job.wait = Retry.Wait.NONE; }
         checkCancelled(job);
