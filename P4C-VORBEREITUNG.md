@@ -190,3 +190,48 @@ Dateien in `Download/Video-Assistent` bleiben) und mit „Kadri P4 TEST“ neu k
 andere meldet „Port 47899 ist belegt“. Für P4-Tests channeltest „Stopp erzwingen“ (auch nach jedem Neustart des Handys,
 weil beide beim Hochfahren starten), danach p4test öffnen. Den Kopplungscode nur in den Einstellungen von „Kadri P4
 TEST“ eingeben, nie in der C3-Testerweiterung (sonst würde deren Kopplung ersetzt).
+
+## 7. P4c-2: automatische Wiederaufnahme, Downloads unabhängig vom Player (nach dem ersten Samsung-Test)
+
+**Befund „Player sofort geschlossen“:** Die Download-Verwaltung läuft im Service Worker, ein bestätigter Auftrag im
+eigenen Thread der Helfer-App; beides hängt nicht am Player. Nachgestellt (Desktop-Helfer, echtes Chromium): Schließen
+0/100/500 ms nach dem Tipp, Seite verlassen, Tab-Wechsel – die Datei wird jedes Mal fertig. Gefunden und behoben
+wurden die Schwachstellen drumherum: (1) Netzabbruch ⇒ HLS „unterbrochen“ bzw. MP4 „fehlgeschlagen“ (die drei
+MP4-Fortsetzungen liefen ohne Pause hintereinander und scheiterten alle im Flugmodus); (2) ein unbestätigter Start
+wurde erst geklärt, wenn der Player wieder fragte; (3) ein im Speicher veraltetes „läuft“ (Player war zu, niemand fragte
+nach) blockierte einen späteren erneuten Download derselben Datei („Läuft schon“). Die genaue Geräte-Ursache des
+T-Befunds ist ohne Gerätedaten nicht belegt; der Nachtest prüft genau diesen Fall.
+
+**Automatische Wiederaufnahme (`dl/Retry`, MP4 und HLS):**
+- Pausen 2 s, 5 s, 15 s, 30 s, 1, 2, 5, 10 min (höchstens 8 Versuche ohne Fortschritt; HLS insgesamt höchstens 64).
+- Ohne Netz (Android `ConnectivityManager`, Standardnetz mit INTERNET): warten ohne Anfrage und ohne Versuch zu
+  verbrauchen, höchstens 2 h; Netz zurück ⇒ nach 1 s weiter. Status `"wait":"offline"|"retry"`, Benachrichtigung
+  „Wartet auf Internet – setzt automatisch fort“ mit „Abbrechen“.
+- Nur bei Netzwerk/IO, Zeitüberschreitung, 408, 429, 500/502/503/504. Nie bei Abbruch (gewinnt immer, beendet jedes
+  Warten in ≤ 250 ms), Dienstende, 401/403/404/410 (abgelaufene Signatur, fehlende Berechtigung, entfernt), geänderter
+  Quelle, Sicherheitsprüfung oder ohne starken ETag (MP4).
+- Jeder HLS-Versuch ist eine vollständige Wiederaufnahme: Listen neu laden und vergleichen, früher geladene Segmente
+  nur mit Länge, SHA-256 und starkem ETag übernehmen. Neu geladen wird höchstens das beim Abriss gerade laufende Segment.
+- „Fortsetzen“ in der Benachrichtigung eines unterbrochenen Streams, solange die App-Instanz lebt (Quelle nur im
+  Arbeitsspeicher).
+
+**Nach einem Prozessende (T10)** gibt es keine gespeicherte Quelle (Journal ohne Adresse, unverändert). Fortsetzen:
+Webseite öffnen und ⬇ am Video bzw. im Player „Fortsetzen“ (neuer Plan, dieselbe Kennung, gleiche Prüfungen). Eine
+selbstständige Wiederaufnahme bräuchte eine neue, dauerhafte Speicherung der Quelle – **nicht umgesetzt**, Entwurf und
+Freigabeantrag unten.
+
+### Entwurf zur Freigabe: verschlüsselte, zeitlich begrenzte Quelle für die Wiederaufnahme nach Prozessende
+
+- Gespeichert wird nur die vom Nutzer gewählte Hauptadresse (HLS-Liste bzw. MP4-Datei) eines laufenden oder
+  unterbrochenen Auftrags; Segmentadressen werden wie heute aus der Liste abgeleitet.
+- AES-256-GCM mit einem nicht exportierbaren Schlüssel im Android-Keystore (nur diese App, kein Backup, kein Export),
+  Auftragskennung als zusätzliche Authentisierung (AAD); Datei in `noBackupFilesDir` neben dem Journal, nie im Journal,
+  Kanal, Log oder in einer Benachrichtigung.
+- Ablauf: höchstens 24 h (Vorschlag), sofort gelöscht bei fertig, fehlgeschlagen, Abbruch (Abbruchwunsch zuerst) oder
+  wenn der Auftrag älter wird; beim Löschen der App-Daten mit weg.
+- Nach dem Neustart dieselben Prüfungen wie heute (Listen-Hash, Fingerabdruck, starker ETag); 401/403 (Token abgelaufen,
+  andere IP) ⇒ keine Automatik, Hinweis „im Video fortsetzen“.
+- Risiken: Zugangs-Token in der Adresse liegt bis zu 24 h verschlüsselt auf dem Gerät (lesbar nur für ein Gerät mit
+  Zugriff auf diesen Keystore-Schlüssel, z. B. gerootet/kompromittiert); Abrufe Stunden später können vom Server
+  abgelehnt werden; zusätzliche Speicherlogik (nur Plattform-Krypto, keine Eigenentwicklung).
+- Offen für die Entscheidung des Eigentümers: Freigabe ja/nein, Gültigkeit (24 h / 6 h), nur HLS oder auch MP4.
