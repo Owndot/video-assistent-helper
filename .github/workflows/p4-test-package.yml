@@ -30,8 +30,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SOURCE_SHA: 9da44342b26516d6b4ef4448e01ae4691508ad1d
-  KADRI_PAIR_SHA: 63e5cd7d7f423c4b1368430254813e51219ee723
+  SOURCE_SHA: ad3c59723524fd202021f7335eca98bf390768bf
+  KADRI_PAIR_SHA: cb4f5ac3c5ee604c1a98637d2b7f8f02cb518efe
   KADRI_P4_EXTENSION_ID: pcccpjllneffccpenbepmfbkjedllkkf
   NDK_VERSION: 27.2.12479018
   RETENTION_DAYS: 2
@@ -97,7 +97,7 @@ jobs:
                                     '-H', 'Accept: application/vnd.github+json',
                                     f"https://api.github.com/repos/{repo}/actions/jobs/{bad[0]['id']}/logs"],
                                    check=True, capture_output=True, text=True).stdout
-              assert re.search(r'Tests run: 45,  Failures: 1\b', log), 'not exactly 1 of 45 failed'
+              assert re.search(r'Tests run: \d+,  Failures: 1\b', log), 'not exactly 1 test failed'
               failed = sorted(set(re.findall(r'FAILED INSTRUMENTATION_STATUS: test=(\w+)', log)))
               assert failed == ['publishesThroughMediaStoreAndReadsBack'], failed
               assert re.search(r'AssertionError: SIZE column \(file [^)]*, length (\d+)\) expected:<\1> but was:<0>', log), 'failure is not the SIZE finding'
@@ -335,6 +335,7 @@ jobs:
             'workflow_run': f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
             'built_at': now.isoformat(), 'artifact_expires_at': (now + datetime.timedelta(days=days)).isoformat(),
             'known_limitation': 'P4B-A10-SIZE: Android 10 MediaStore SIZE column stays 0 (accepted by the owner only for the Android 17 test).',
+            'changes': 'P4c-2: automatic resume (backoff, connectivity), notification resume while the app instance lives, screen-off/restart regression',
             'production_status': 'UNAPPROVED',
           }
           open(os.path.join(d, 'p4test-evidence.json'), 'w').write(json.dumps(ev, indent=2) + '\n')
@@ -346,7 +347,7 @@ jobs:
           [ "$(find "$D" -type f | wc -l)" = 3 ]
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: helper-p4test-9da4434-run${{ github.run_id }}
+          name: helper-p4test-ad3c597-run${{ github.run_id }}
           path: ${{ runner.temp }}/deliver
           retention-days: ${{ env.RETENTION_DAYS }}
           if-no-files-found: error
