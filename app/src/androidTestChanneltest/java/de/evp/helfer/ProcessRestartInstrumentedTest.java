@@ -22,6 +22,7 @@ import java.util.Properties;
 
 import de.evp.helfer.hls.HlsEngine;
 import de.evp.helfer.hlsmux.Media3HlsRemuxer;
+import de.evp.helfer.net.DeviceTestClients;
 import poc.Core;
 import poc.TestInitiator;
 
@@ -105,9 +106,9 @@ public class ProcessRestartInstrumentedTest {
             st = HlsDownloadsInstrumentedTest.await(e, fresh, 120_000);
             assertEquals(st, "done", HlsDownloadsInstrumentedTest.field(st, "state"));
             assertNotNull("new HLS published", ev.saved(fresh, 30_000));
-            // neuer MP4-Download (Init-Segment einer fMP4-Fixture ist eine gültige MP4-Datei mit fester Länge)
+            // neuer MP4-Download (4-MiB-Testdatei mit Content-Type video/mp4, fester Länge und starkem ETag)
             String mp4 = HlsDownloadsInstrumentedTest.id();
-            store.engine.start(mp4, HlsDownloadsInstrumentedTest.srv.url("fmp4_muxed/init.mp4"), "Restart MP4");
+            store.engine.start(mp4, HlsDownloadsInstrumentedTest.srv.url("big.mp4"), "Restart MP4");
             long end = System.nanoTime() + 60_000_000_000L;
             String ms = store.engine.status(mp4);
             while (ms.contains("\"state\":\"running\"") && System.nanoTime() < end) { Thread.sleep(50); ms = store.engine.status(mp4); }
