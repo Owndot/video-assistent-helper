@@ -132,8 +132,16 @@ jobs:
           entries() { python3 -c 'import hashlib,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); [print(hashlib.sha256(z.read(n)).hexdigest(), n) for n in sorted(z.namelist())]' "$1"; }
           entries "$RUNNER_TEMP/a/p4/helper-p4test-unsigned.apk" > "$RUNNER_TEMP/a.entries"
           entries "$RUNNER_TEMP/b/p4/helper-p4test-unsigned.apk" > "$RUNNER_TEMP/b.entries"
-          diff "$RUNNER_TEMP/a.entries" "$RUNNER_TEMP/b.entries"
-          echo "REPRODUCIBLE: $(wc -l < "$RUNNER_TEMP/a.entries") entries byte-identical; content hash $(sha256sum < "$RUNNER_TEMP/a.entries" | cut -c1-16)"
+          # Einzige Ausnahme: META-INF/version-control-info.textproto - AGP schreibt dort die Git-Revision hinein (Bau A im
+          # Git-Checkout, Bau B aus git archive ohne .git). Bau A muss genau den Quell-Commit nennen.
+          VCI=META-INF/version-control-info.textproto
+          grep -vx "[0-9a-f]\{64\} $VCI" "$RUNNER_TEMP/a.entries" > "$RUNNER_TEMP/a.code"
+          grep -vx "[0-9a-f]\{64\} $VCI" "$RUNNER_TEMP/b.entries" > "$RUNNER_TEMP/b.code"
+          [ "$(( $(wc -l < "$RUNNER_TEMP/a.entries") - $(wc -l < "$RUNNER_TEMP/a.code") ))" -le 1 ]
+          diff "$RUNNER_TEMP/a.code" "$RUNNER_TEMP/b.code"
+          unzip -p "$RUNNER_TEMP/a/p4/helper-p4test-unsigned.apk" "$VCI" | tee "$RUNNER_TEMP/vci.txt"
+          grep -q "$SOURCE_SHA" "$RUNNER_TEMP/vci.txt"
+          echo "REPRODUCIBLE: $(wc -l < "$RUNNER_TEMP/a.code") entries byte-identical (all but $VCI, which names $SOURCE_SHA); content hash $(sha256sum < "$RUNNER_TEMP/a.code" | cut -c1-16)"
           rm -rf "$RUNNER_TEMP/b" "$RUNNER_TEMP/src-b"
       - name: Temporary test signing - throwaway key created, used once for the P4 test APK, deleted
         run: |
