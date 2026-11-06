@@ -67,9 +67,8 @@ jobs:
           python3 - <<'PY'
           import json, os, re, subprocess, sys
           repo, sha = os.environ['GITHUB_REPOSITORY'], os.environ['SOURCE_SHA']
-          def api(path, raw=False):
-              out = subprocess.run(['gh', 'api', path], check=True, capture_output=True, text=True).stdout
-              return out if raw else json.loads(out)
+          def api(path):
+              return json.loads(subprocess.run(['gh', 'api', path], check=True, capture_output=True, text=True).stdout)
           runs = api(f'repos/{repo}/actions/runs?head_sha={sha}&per_page=100')['workflow_runs']
           def latest(path):
               a = [r for r in runs if r['path'] == path]
@@ -93,7 +92,11 @@ jobs:
               assert len(bad) == 1 and bad[0]['name'] == 'Test package de.evp.helfer.channeltest on a disposable API 29 emulator', [j['name'] for j in bad]
               steps = [s['name'] for s in bad[0]['steps'] if s['conclusion'] not in ('success', 'skipped')]
               assert steps == ['Instrumentation on a disposable API 29 x86_64 emulator'], steps
-              log = api(f"repos/{repo}/actions/jobs/{bad[0]['id']}/logs", raw=True)
+              # Job-Log über die Weiterleitung zum Log-Speicher (curl schickt den Token dorthin nicht mit).
+              log = subprocess.run(['curl', '-sSfL', '--retry', '3', '-H', 'Authorization: Bearer ' + os.environ['GH_TOKEN'],
+                                    '-H', 'Accept: application/vnd.github+json',
+                                    f"https://api.github.com/repos/{repo}/actions/jobs/{bad[0]['id']}/logs"],
+                                   check=True, capture_output=True, text=True).stdout
               assert re.search(r'Tests run: 45,  Failures: 1\b', log), 'not exactly 1 of 45 failed'
               failed = sorted(set(re.findall(r'FAILED INSTRUMENTATION_STATUS: test=(\w+)', log)))
               assert failed == ['publishesThroughMediaStoreAndReadsBack'], failed
