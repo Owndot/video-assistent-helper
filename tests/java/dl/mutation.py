@@ -51,6 +51,14 @@ MUTATIONS = [
     ('no cleanup on failure', DL, 'if (target != null) target.abort();', ''),
     ('cancel does not reach the call', NET, 'if (cancellation != null) cancellation.attach(call);', ''),
     ('corrupt journal accepted', DL, 'if (fields < 0) throw new IOException("corrupt download journal");', 'if (fields < 0) return;'),
+    # P4c: automatische Wiederaufnahme (Pause, Netz, Abbruch, endgültige Fehler)
+    ('resume without pause', DL, 'pause(job, resumes);       // P4c', '// P4c'),
+    ('403 treated as transient', 'de/evp/helfer/dl/Retry.java', 'return code == 408 || code == 429', 'return code == 403 || code == 408 || code == 429'),
+    ('offline wait unbounded', 'de/evp/helfer/dl/Retry.java', 'if (now - offlineSince > MAX_OFFLINE_MS / scale) return false;', ''),
+    ('cancel ignored while waiting', 'de/evp/helfer/dl/Retry.java', 'if (stop.getAsBoolean()) return false;', ''),
+    ('offline treated as online', 'de/evp/helfer/dl/Retry.java', 'if (!online()) {', 'if (false) {'),
+    ('transient 5xx on resume not retried', DL, 'if (Retry.transientStatus(response.code())) continue;', ''),
+    ('first request not retried', DL, 'if (!Retry.transientStatus(r.code()) || attempt >= MAX_RESUMES) return r;', 'return r;'),
 ]
 
 

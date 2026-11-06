@@ -61,6 +61,9 @@ public final class TestHlsEngine {
         volatile boolean chunked = false;          // Segmente ohne Content-Length
         volatile String changedPath = null;        // diese Ressource liefert anderen Inhalt (anderer ETag)
         volatile String masterExtra = "";          // wird an Master angehängt (Playlist-Änderung)
+        // P4c: so viele volle Segmentabrufe beantwortet der Server mit 503 (vorübergehend überlastet)
+        final AtomicInteger fail503 = new AtomicInteger(), answered503 = new AtomicInteger(), requests = new AtomicInteger();
+        volatile Runnable on503 = null;            // z. B. Netz abschalten (Flugmodus) beim ersten 503
         final AtomicInteger inFlight = new AtomicInteger(), maxInFlight = new AtomicInteger();
         final Map<String, AtomicInteger> fullGets = new ConcurrentHashMap<>(), rangeGets = new ConcurrentHashMap<>(), rangeMisses = new ConcurrentHashMap<>(),
             rangeBroken = new ConcurrentHashMap<>();
@@ -76,7 +79,8 @@ public final class TestHlsEngine {
 
         String url(String fixture, String file) { return "http://127.0.0.1:" + port + "/dyn/" + fixture + "/" + file + "?t=" + token; }
 
-        void reset() { fullGets.clear(); rangeGets.clear(); rangeMisses.clear(); rangeBroken.clear(); maxInFlight.set(0); delayMs = 0; chunked = false; changedPath = null; masterExtra = ""; etagMode = "strong"; token = "T1"; }
+        void reset() { fullGets.clear(); rangeGets.clear(); rangeMisses.clear(); rangeBroken.clear(); maxInFlight.set(0); delayMs = 0; chunked = false; changedPath = null; masterExtra = ""; etagMode = "strong"; token = "T1";
+            fail503.set(0); answered503.set(0); on503 = null; }
 
         int full(String suffix) { int n = 0; for (Map.Entry<String, AtomicInteger> e : fullGets.entrySet()) if (e.getKey().endsWith(suffix)) n += e.getValue().get(); return n; }
         int fullSegments() { int n = 0; for (Map.Entry<String, AtomicInteger> e : fullGets.entrySet()) if (!e.getKey().endsWith(".m3u8")) n += e.getValue().get(); return n; }
@@ -85,6 +89,7 @@ public final class TestHlsEngine {
         void handle(HttpExchange x) throws IOException {
             int now = inFlight.incrementAndGet();
             maxInFlight.accumulateAndGet(now, Math::max);
+            requests.incrementAndGet();
             try {
                 for (String h : new String[] {"Cookie", "Authorization", "Referer", "Origin"})
                     if (x.getRequestHeaders().containsKey(h)) leaks.add(h);
@@ -104,6 +109,13 @@ public final class TestHlsEngine {
                     try (OutputStream o = x.getResponseBody()) { o.write(body); }
                     return;
                 }
+                if (x.getRequestHeaders().getFirst("Range") == null && fail503.getAndDecrement() > 0) {
+                    answered503.incrementAndGet();
+                    Runnable r = on503; if (r != null) r.run();
+                    x.sendResponseHeaders(503, -1);
+                    return;
+                }
+                fail503.accumulateAndGet(0, Math::max);
                 if (rel.equals(changedPath)) { body = body.clone(); body[body.length - 1] ^= 1; }
                 String etag = etagMode.equals("none") ? null : (etagMode.equals("weak") ? "W/" : "") + "\"" + sha(body).substring(0, 16) + "\"";
                 if (etag != null) x.getResponseHeaders().set("ETag", etag);
@@ -280,6 +292,10 @@ public final class TestHlsEngine {
         HlsEngine engine;
         CrashHooks hooks = new CrashHooks();
         final SafeHttpClient http;
+        // P4c: Wartezeiten 1000-fach verkürzt; Netz steuerbar
+        final java.util.concurrent.atomic.AtomicBoolean online = new java.util.concurrent.atomic.AtomicBoolean(true);
+        de.evp.helfer.dl.Retry retry = new de.evp.helfer.dl.Retry(online::get, de.evp.helfer.dl.Retry.Clock.SYSTEM, 1000);
+        void net(boolean on) { online.set(on); retry.networkChanged(); }
         Rig(String name, Server s) throws Exception { this(name, s, new JobSlots(2, 4)); }
         Rig(String name, Server s, JobSlots slots) throws Exception {
             root = new File(base, name + "/jobs");
@@ -295,6 +311,7 @@ public final class TestHlsEngine {
             store.processStartCleanup();
             hooks = new CrashHooks();
             engine = new HlsEngine(http, store, events, root, remux, slots, false, 1_000_000, hooks, now::get);
+            engine.setRetry(retry);
         }
         File dir(String id) { return new File(root, id); }
     }
@@ -388,6 +405,7 @@ public final class TestHlsEngine {
             fullRuns(s);
             plans(s);
             resume(s);
+            autoResume(s);
             crashes(s);
             cancelPriority(s);
             storageAndFailures(s);
@@ -477,6 +495,148 @@ public final class TestHlsEngine {
         check("Plan: Produktionsregeln sperren Loopback (privates Ziel) → blocked_*", "false".equals(field(sp, "ok")) && String.valueOf(field(sp, "reason")).startsWith("blocked_"), sp);
         String bad = r.engine.plan(PEER, BIND, "http://127.0.0.1:" + s.port + "/dyn/ts_sep/missing.m3u8?t=T1");
         check("Plan: fehlende Liste → neutraler Grund ohne Adresse", "false".equals(field(bad, "ok")) && !bad.contains("127.0.0.1"), bad);
+    }
+
+
+    // ------------------------------------------------------------------ P4c: automatische Wiederaufnahme
+
+    static void startJob(Rig r, Server s, String id) {
+        String plan = r.engine.plan(PEER, BIND, s.url("ts_sep", "master.m3u8"));
+        r.engine.start(PEER, BIND, id, field(plan, "planId"), firstOption(plan), "x");
+    }
+    static boolean sameOutput(Rig r) throws IOException {
+        return r.store.files().length == 1 && sha(Files.readAllBytes(new File(r.out, r.store.files()[0]).toPath())).equals(sha(expected("ts_sep", "v0.m3u8", "v1.m3u8")));
+    }
+    static String waitField(HlsEngine e, String id, String key, String value) throws InterruptedException {
+        long end = System.nanoTime() + 10_000_000_000L;
+        String st = e.status(id);
+        while (!value.equals(field(st, key)) && System.nanoTime() < end) { Thread.sleep(5); st = e.status(id); }
+        return st;
+    }
+
+    static void autoResume(Server s) throws Exception {
+        int total = countResources("ts_sep", "v0.m3u8", "v1.m3u8");
+        // 1) Server kurz überlastet (3× 503) mitten im Abruf: ohne Zutun fertig, kein Segment doppelt geladen
+        s.reset();
+        s.delayMs = 20;
+        Rig r = new Rig("auto-503", s);
+        String id = newId();
+        startJob(r, s, id);
+        long end = System.nanoTime() + 10_000_000_000L;
+        while (s.fullSegments() < 4 && System.nanoTime() < end) Thread.sleep(2);
+        s.fail503.set(3);
+        String st = await(r.engine, id, "done", "failed", "interrupted", "cancelled");
+        check("Auto (503): ohne Nutzeraktion fertig, Inhalt korrekt", "done".equals(field(st, "state")) && sameOutput(r), st + " " + r.engine.diagnostics(id));
+        check("Auto (503): der Server meldete wirklich 503", s.answered503.get() >= 1, s.answered503.get());
+        check("Auto (503): jedes Segment genau einmal vollständig geladen (früher verifizierte per starkem ETag bestätigt)",
+            s.fullSegments() == total, "full=" + s.fullSegments() + " total=" + total + " ranges=" + s.ranges());
+
+        // 2) Flugmodus: kein Netz → keine Anfrage, Status „wartet auf Verbindung“; Netz zurück → fertig
+        s.reset();
+        s.delayMs = 20;
+        Rig r2 = new Rig("auto-offline", s);
+        String id2 = newId();
+        s.on503 = () -> r2.net(false);
+        startJob(r2, s, id2);
+        end = System.nanoTime() + 10_000_000_000L;
+        while (s.fullSegments() < 4 && System.nanoTime() < end) Thread.sleep(2);
+        s.fail503.set(1);
+        st = waitField(r2.engine, id2, "wait", "offline");
+        check("Offline: läuft weiter (running) mit wait=offline", "running".equals(field(st, "state")) && "offline".equals(field(st, "wait")), st);
+        s.quiesce();
+        int req = s.requests.get();
+        Thread.sleep(1_200);                     // länger als alle verkürzten Pausen zusammen
+        check("Offline: keine einzige Anfrage ohne Netz", s.requests.get() == req, (s.requests.get() - req) + " requests");
+        r2.net(true);
+        st = await(r2.engine, id2, "done", "failed", "interrupted", "cancelled");
+        check("Offline: Netz zurück → selbstständig fertig, Inhalt korrekt", "done".equals(field(st, "state")) && sameOutput(r2), st);
+        check("Offline: kein Segment doppelt geladen", s.fullSegments() == total, s.fullSegments() + "/" + total);
+
+        // 3) Abbruch während des Wartens: sofort cancelled, Daten weg, auch nach Netz zurück kein weiterer Versuch
+        s.reset();
+        s.delayMs = 20;
+        Rig r3 = new Rig("auto-cancel", s);
+        String id3 = newId();
+        s.on503 = () -> r3.net(false);
+        startJob(r3, s, id3);
+        end = System.nanoTime() + 10_000_000_000L;
+        while (s.fullSegments() < 3 && System.nanoTime() < end) Thread.sleep(2);
+        s.fail503.set(1);
+        waitField(r3.engine, id3, "wait", "offline");
+        long t0 = System.nanoTime();
+        r3.engine.cancel(id3);
+        st = await(r3.engine, id3, "cancelled", "done", "failed", "interrupted");
+        check("Abbruch im Warten: cancelled in < 1 s", "cancelled".equals(field(st, "state")) && (System.nanoTime() - t0) / 1_000_000 < 1_000, st);
+        int req3 = s.requests.get();
+        r3.net(true);
+        Thread.sleep(800);
+        check("Abbruch im Warten: nie wieder aufgenommen (keine Anfrage, nur Journal)", s.requests.get() == req3
+            && Arrays.equals(list(r3.dir(id3)), new String[] {"journal"}) && r3.store.files().length == 0, (s.requests.get() - req3) + " " + Arrays.toString(list(r3.dir(id3))));
+        r3.restart();
+        check("Abbruch im Warten: nach Neustart weiterhin cancelled", "cancelled".equals(field(r3.engine.status(id3), "state")), r3.engine.status(id3));
+
+        // 4) Dienstende während des Wartens: interrupted:stopped, Segmente bleiben
+        s.reset();
+        s.delayMs = 20;
+        Rig r4 = new Rig("auto-stop", s);
+        String id4 = newId();
+        s.on503 = () -> r4.net(false);
+        startJob(r4, s, id4);
+        end = System.nanoTime() + 10_000_000_000L;
+        while (s.fullSegments() < 3 && System.nanoTime() < end) Thread.sleep(2);
+        s.fail503.set(1);
+        waitField(r4.engine, id4, "wait", "offline");
+        r4.engine.stopAll();
+        st = await(r4.engine, id4, "interrupted", "cancelled", "done", "failed");
+        check("Dienstende im Warten: interrupted:stopped", "interrupted".equals(field(st, "state")) && "stopped".equals(field(st, "reason")), st);
+        r4.net(true);
+
+        // 5) Dauerhaft 503: begrenzt (keine Endlosschleife), danach unterbrochen; „Fortsetzen“ ohne Kadri (Quelle im
+        //    Arbeitsspeicher) lädt den Rest; nach einem Prozessneustart ist das nicht mehr möglich
+        s.reset();
+        Rig r5 = new Rig("auto-limit", s);
+        String id5 = newId();
+        s.fail503.set(1_000_000);
+        startJob(r5, s, id5);
+        st = await(r5.engine, id5, "interrupted", "done", "failed", "cancelled");
+        int n503 = s.answered503.get();
+        check("Dauerfehler: endet als interrupted:http_503", "interrupted".equals(field(st, "state")) && "http_503".equals(field(st, "reason")), st);
+        check("Dauerfehler: Anfragen begrenzt (≤ 2 je Versuch, " + (1 + de.evp.helfer.dl.Retry.MAX_ATTEMPTS) + " Versuche)",
+            n503 <= HlsEngine.FETCH_PER_JOB * (1 + de.evp.helfer.dl.Retry.MAX_ATTEMPTS), n503);
+        Thread.sleep(300);
+        check("Dauerfehler: danach keine weiteren Anfragen", s.answered503.get() == n503, s.answered503.get() - n503);
+        s.fail503.set(0);
+        check("Fortsetzen ohne Kadri möglich (Quelle im Arbeitsspeicher)", r5.engine.canResumeLocal(id5), "");
+        check("Fortsetzen ohne Kadri: gestartet", r5.engine.resumeLocal(id5), "");
+        check("Fortsetzen ohne Kadri: kein zweiter Lauf parallel", !r5.engine.resumeLocal(id5), "");
+        st = await(r5.engine, id5, "done", "failed", "interrupted", "cancelled");
+        check("Fortsetzen ohne Kadri: fertig, Inhalt korrekt", "done".equals(field(st, "state")) && sameOutput(r5), st);
+        check("Fortsetzen ohne Kadri: nach done nicht mehr fortsetzbar (Quelle vergessen)", !r5.engine.canResumeLocal(id5), "");
+        s.reset();
+        Rig r6 = new Rig("auto-restart", s);
+        String id6 = newId();
+        s.fail503.set(1_000_000);
+        startJob(r6, s, id6);
+        await(r6.engine, id6, "interrupted", "done", "failed", "cancelled");
+        r6.restart();
+        check("Nach Prozessneustart: keine Quelle mehr – kein Fortsetzen ohne Kadri (keine Adresse gespeichert)",
+            !r6.engine.canResumeLocal(id6) && !r6.engine.resumeLocal(id6) && "interrupted".equals(field(r6.engine.status(id6), "state")), r6.engine.status(id6));
+        check("Nach Prozessneustart: Journal ohne Adresse", !new String(Files.readAllBytes(new File(r6.dir(id6), "journal").toPath()), StandardCharsets.UTF_8).contains("127.0.0.1"), "");
+        s.fail503.set(0);
+        // 6) 403 (abgelaufene Signatur/fehlende Berechtigung) wird nie automatisch wiederholt: ein einziger Versuch
+        s.reset();
+        s.delayMs = 20;
+        Rig r7 = new Rig("auto-403", s);
+        String id7 = newId();
+        startJob(r7, s, id7);
+        end = System.nanoTime() + 10_000_000_000L;
+        while (s.fullSegments() < 3 && System.nanoTime() < end) Thread.sleep(2);
+        s.token = "T2";
+        st = await(r7.engine, id7, "interrupted", "done", "failed", "cancelled");
+        int afterFail = s.requests.get();
+        Thread.sleep(500);
+        check("403: interrupted ohne automatischen Versuch (keine weitere Anfrage)", "interrupted".equals(field(st, "state")) && "http_403".equals(field(st, "reason"))
+            && s.requests.get() == afterFail, st + " +" + (s.requests.get() - afterFail));
     }
 
     static void resume(Server s) throws Exception {

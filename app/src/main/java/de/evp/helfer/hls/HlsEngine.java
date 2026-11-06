@@ -50,6 +50,12 @@ import de.evp.helfer.net.SafeHttpClient;
  *   <li>Unterbrochen (wiederaufnehmbar): Netzwerk, Server-/Quellfehler (z. B. abgelaufene Adresse), Dienstende,
  *       Prozessende. Fehlgeschlagen (alles gelöscht): Sicherheitsprüfung, Grenzen, Formatfehler, Prüfung. Abgebrochen:
  *       alles gelöscht.</li>
+ *   <li>P4c: nach einem vorübergehenden Fehler ({@link Retry#transientReason}: Netzwerk, Zeitüberschreitung, 408/429/5xx)
+ *       setzt der laufende Auftrag selbst fort – nach wachsender Pause, ohne Netz ohne Anfragen ({@link Retry}). Jeder
+ *       Versuch ist ein vollständiger Neuansatz wie eine Wiederaufnahme: Listen erneut laden und vergleichen, früher
+ *       geladene Segmente nur mit Länge, SHA-256 und starkem ETag übernehmen. Nie nach Abbruch, Dienstende, 403/404/410,
+ *       geänderter Quelle oder einer Sicherheitsprüfung. Die Adresse bleibt dabei nur im Arbeitsspeicher; nach dem
+ *       Aufgeben ermöglicht sie (solange der Prozess lebt) „Fortsetzen“ aus der Benachrichtigung ({@link #resumeLocal}).</li>
  * </ul>
  */
 public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl {
@@ -62,6 +68,8 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
     static final int JOURNAL_KEEP = 64;
     static final long PLAN_DEADLINE_MS = 20_000;
     static final long HTTP_WAIT_MS = 10 * 60_000L;
+    /** P4c: höchstens so viele automatische Versuche je Auftrag insgesamt (auch wenn zwischendurch Fortschritt war). */
+    static final int MAX_AUTO_ATTEMPTS = 64;
 
     /** Zeitquelle (Tests: steuerbar). */
     public interface Clock { long nowMs(); }
@@ -82,6 +90,10 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
     private final Map<String, Job> jobs = new LinkedHashMap<>();
     private final AtomicInteger running = new AtomicInteger();
     private boolean stopped;
+    private volatile de.evp.helfer.dl.Retry retry = de.evp.helfer.dl.Retry.DEFAULT;
+
+    /** P4c: Wiederholungen (Android: mit Verbindungsüberwachung; Tests: beschleunigt). */
+    public void setRetry(de.evp.helfer.dl.Retry r) { this.retry = r; }
 
     public HlsEngine(SafeHttpClient http, DownloadStore store, DirectDownloads.Listener listener, File root, HlsRemux remux,
             JobSlots slots, boolean opusAllowed, long maxSamples) throws IOException {
@@ -246,6 +258,11 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         final AtomicInteger done = new AtomicInteger();
         volatile long estimate = -1;
         volatile String cause = "";    // nur Diagnose, nie im Kanal
+        volatile de.evp.helfer.dl.Retry.Wait wait = de.evp.helfer.dl.Retry.Wait.NONE;   // P4c: wartet auf Netz/Versuch
+        // P4c: Quelle des laufenden bzw. zuletzt unterbrochenen Laufs NUR im Arbeitsspeicher (nie im Journal), damit ein
+        // unterbrochener Auftrag aus der Benachrichtigung fortgesetzt werden kann, solange der Prozess lebt.
+        volatile PlanEntry source;
+        volatile String sourceOption;
         Job(String id, File dir, HlsJournal journal) { this.id = id; this.dir = dir; this.journal = journal; }
         boolean userCancelled() { synchronized (this) { return journal.cancelRequested; } }
     }
@@ -321,11 +338,60 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         }
         final Job j = job;
         final PlanEntry p = plan;
+        launch(j, p, optionId);
+        return json(j);
+    }
+
+    private void launch(Job j, PlanEntry p, String optionId) {
+        j.source = p;
+        j.sourceOption = optionId;
         Thread t = new Thread(() -> run(j, p, optionId), "evp-hls");
         t.setDaemon(true);
         try { t.start(); }
         catch (RuntimeException | Error e) { finish(j, HlsJournal.State.INTERRUPTED, "stopped", null); }
-        return json(j);
+    }
+
+    /** P4c: kann ein unterbrochener Auftrag ohne Kadri fortgesetzt werden (Quelle noch im Arbeitsspeicher)? */
+    public synchronized boolean canResumeLocal(String id) {
+        Job j = jobs.get(id);
+        if (j == null || j.source == null || stopped) return false;
+        synchronized (j) { return !j.active && j.journal.state == HlsJournal.State.INTERRUPTED && !j.journal.cancelRequested; }
+    }
+
+    /**
+     * P4c: „Fortsetzen“ aus der Benachrichtigung: derselbe Auftrag mit der Quelle im Arbeitsspeicher, wie ein
+     * {@code hlsstart} mit derselben Kennung (gleiche Prüfungen beim Lauf). Ohne Quelle (Prozess neu gestartet),
+     * nach einem Abbruch oder bei laufendem Auftrag: nichts. true = gestartet.
+     */
+    public boolean resumeLocal(String id) {
+        Job job;
+        PlanEntry p;
+        String option;
+        synchronized (this) {
+            job = jobs.get(id);
+            if (job == null || stopped) return false;
+            p = job.source;
+            option = job.sourceOption;
+            if (p == null || option == null) return false;
+            synchronized (job) {
+                if (job.active || job.journal.state != HlsJournal.State.INTERRUPTED || job.journal.cancelRequested) return false;
+            }
+            if (!slots.tryAcquire()) return false;
+            running.incrementAndGet();
+            synchronized (job) {
+                job.journal.state = HlsJournal.State.RUNNING;
+                job.journal.reason = "";
+                try { job.journal.save(job.dir, hooks); }
+                catch (IOException e) { job.journal.state = HlsJournal.State.INTERRUPTED; running.decrementAndGet(); slots.release(); return false; }
+                job.cancel = new SafeHttpClient.Cancellation();
+                job.stopRequested = false;
+                job.cause = "";
+                job.active = true;
+                job.phase = Phase.FETCH;
+            }
+        }
+        launch(job, p, option);
+        return true;
     }
 
     private static HlsPlan.Option option(PlanEntry p, String optionId) {
@@ -402,7 +468,45 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
 
     // ------------------------------------------------------------------ Ablauf
 
+    /** Ausgang eines Versuchs. */
+    static final class Outcome {
+        final HlsJournal.State state;
+        final String reason;
+        final Object saved;
+        Outcome(HlsJournal.State state, String reason, Object saved) { this.state = state; this.reason = reason; this.saved = saved; }
+    }
+
+    /**
+     * Lauf eines Auftrags: Versuch; nach einem vorübergehenden Fehler (P4c) wachsende Pause, ohne Netz warten, dann
+     * erneut – höchstens {@link de.evp.helfer.dl.Retry#MAX_ATTEMPTS} Versuche ohne Fortschritt und
+     * {@link #MAX_AUTO_ATTEMPTS} insgesamt. Abbruch und Dienstende beenden auch jedes Warten.
+     */
     private void run(Job job, PlanEntry planEntry, String optionId) {
+        Outcome o;
+        int attempt = 0, total = 0, best = -1;
+        while (true) {
+            o = attempt(job, planEntry, optionId);
+            if (o.state != HlsJournal.State.INTERRUPTED || !de.evp.helfer.dl.Retry.transientReason(o.reason)
+                || job.userCancelled() || job.stopRequested || ++total > MAX_AUTO_ATTEMPTS) break;
+            int reached = job.done.get();
+            attempt = reached > best ? 1 : attempt + 1;      // Fortschritt (weitere Teile): Pausen beginnen von vorn
+            best = Math.max(best, reached);
+            boolean go;
+            try { go = retry.await(attempt, () -> job.userCancelled() || job.stopRequested, w -> { job.wait = w; listener.waiting(job.id, job.journal.title, w); }); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); go = false; }
+            finally { job.wait = de.evp.helfer.dl.Retry.Wait.NONE; }
+            // neue Abbruchkennung für den nächsten Versuch (die alte hat die anderen Abrufe beendet); danach erst prüfen,
+            // damit ein gleichzeitiger Abbruch sicher die neue trifft
+            if (go) synchronized (job) { job.cancel = new SafeHttpClient.Cancellation(); job.phase = Phase.FETCH; }
+            // Abbruch bzw. Dienstende während des Wartens: Vorrang vor dem Grund des letzten Versuchs
+            if (job.userCancelled()) { o = new Outcome(HlsJournal.State.CANCELLED, "", null); break; }
+            if (job.stopRequested) { o = new Outcome(HlsJournal.State.INTERRUPTED, "stopped", null); break; }
+            if (!go) break;
+        }
+        finish(job, o.state, o.reason, o.saved);
+    }
+
+    private Outcome attempt(Job job, PlanEntry planEntry, String optionId) {
         HlsJournal.State state = HlsJournal.State.FAILED;
         String reason = "network";
         Object saved = null;
@@ -515,7 +619,7 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
             if (job.userCancelled()) { state = HlsJournal.State.CANCELLED; reason = ""; }
             else if (job.stopRequested) { state = HlsJournal.State.INTERRUPTED; reason = "stopped"; }
         }
-        finish(job, state, reason, saved);
+        return new Outcome(state, reason, saved);
     }
 
     /** Neutraler Grund → Endzustand. Netzwerk- und Quellprobleme sind wiederaufnehmbar, alles andere nicht. */
@@ -716,6 +820,7 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
                 try { job.journal.save(job.dir, hooks); } catch (IOException ignored) { /* nächster Start: recover() */ }
                 job.active = false;
                 job.phase = Phase.NONE;
+                if (state != HlsJournal.State.INTERRUPTED) { job.source = null; job.sourceOption = null; }   // Adresse vergessen
             }
             running.decrementAndGet();
             slots.release();
@@ -856,7 +961,8 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         long bytes = s == HlsJournal.State.DONE ? Math.max(j.bytes.get(), j.journal.total) : j.bytes.get();
         return "{\"ok\":true,\"id\":\"" + j.id + "\",\"kind\":\"hls\",\"state\":\"" + state + "\",\"bytes\":" + bytes + ",\"total\":"
             + (s == HlsJournal.State.DONE ? j.journal.total : j.estimate) + ",\"done\":" + done + ",\"of\":" + of
-            + ",\"phase\":\"" + (j.active ? j.phase.name().toLowerCase(Locale.ROOT) : "") + "\",\"reason\":\"" + code(reason) + "\"}";
+            + ",\"phase\":\"" + (j.active ? j.phase.name().toLowerCase(Locale.ROOT) : "") + "\",\"reason\":\"" + code(reason) + "\""
+            + (j.active && j.wait != de.evp.helfer.dl.Retry.Wait.NONE ? ",\"wait\":\"" + (j.wait == de.evp.helfer.dl.Retry.Wait.OFFLINE ? "offline" : "retry") + "\"" : "") + "}";
     }
 
     private static String busy(String id) { return "{\"ok\":false,\"id\":\"" + id + "\",\"state\":\"busy\"}"; }

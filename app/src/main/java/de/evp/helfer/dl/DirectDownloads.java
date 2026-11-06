@@ -35,13 +35,16 @@ import de.evp.helfer.net.SafeResponse;
  *       während des Downloads und die empfangene Menge (genau Content-Length).</li>
  *   <li>Unterbrechung: Fortsetzen nur mit starkem ETag (If-Range, starker Vergleich), Status 206 und exakt passendem
  *       Content-Range; höchstens {@link #MAX_RESUMES}-mal; sonst Fehler und Entfernen des Unfertigen.</li>
+ *   <li>P4c: vor jedem erneuten Verbindungsaufbau (Fortsetzen oder erster Abruf nach Netzfehler bzw. 408/429/5xx)
+ *       wartet der Auftrag mit wachsender Pause ({@link Retry}); ohne Netz ohne Anfragen, bis es zurück ist. Nie nach
+ *       Abbruch, Sicherheitsprüfung, 401/403/404/410, geänderter Datei oder ohne starken ETag.</li>
  *   <li>Abbruch jederzeit (auch während Verbindungsaufbau); jedes Ende ohne Erfolg entfernt das Unfertige.</li>
  *   <li>Antworten, Journal und Rückmeldungen enthalten nie die URL.</li>
  * </ul>
  */
 public final class DirectDownloads implements ControlCommands.DownloadControl {
     public static final int MAX_PARALLEL = 2;
-    public static final int MAX_RESUMES = 3;
+    public static final int MAX_RESUMES = Retry.MAX_ATTEMPTS;
     public static final long MAX_FILE_BYTES = 16L << 30;
     public static final long SPACE_RESERVE_BYTES = 64L << 20;
     static final int JOURNAL_MAX = 256;
@@ -53,6 +56,8 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         void progress(String id, String title, long bytes, long total);
         /** {@code saved}: Verweis der Ablage bei "done", sonst null. */
         void finished(String id, String title, String state, String reason, Object saved);
+        /** P4c: Auftrag wartet auf Netz bzw. auf den nächsten automatischen Versuch ({@link Retry.Wait#NONE}: geht weiter). */
+        default void waiting(String id, String title, Retry.Wait wait) {}
     }
 
     enum State { RUNNING, DONE, FAILED, CANCELLED, INTERRUPTED }
@@ -65,6 +70,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         volatile String reason = "";
         volatile String ref;      // Verweis der Ablage (Journal), nie die URL
         volatile String cause = "";   // nur Diagnose (Tests/Logs): Ausnahmeklasse eines Ablagefehlers, nie im Status/Kanal
+        volatile Retry.Wait wait = Retry.Wait.NONE;   // P4c: wartet gerade auf Netz bzw. auf den nächsten Versuch
         final SafeHttpClient.Cancellation cancel = new SafeHttpClient.Cancellation();
         Job(String id, String title) { this.id = id; this.title = title; }
     }
@@ -91,6 +97,10 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     private final AtomicInteger running = new AtomicInteger();
     private final JobSlots slots;
     private boolean stopped;
+    private volatile Retry retry = Retry.DEFAULT;
+
+    /** P4c: Wiederholungen (Android: mit Verbindungsüberwachung; Tests: beschleunigt). */
+    public void setRetry(Retry r) { this.retry = r; }
 
     public DirectDownloads(SafeHttpClient http, DownloadStore store, Listener listener) throws IOException {
         this(http, store, listener, SafeHttpClient.MAX_CALL_TIMEOUT_MS, new JobSlots(MAX_PARALLEL, 2 * MAX_PARALLEL));
@@ -210,7 +220,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         try {
             // Ablage zuerst: ohne Schreibrecht (Android 8–9: Speicherberechtigung) kein Netzwerkzugriff.
             if (!store.writable()) throw new Fail("storage_permission");
-            response = http.get(url, -1, -1, MAX_FILE_BYTES, callTimeoutMs, job.cancel);
+            response = open(job, url);
             checkCancelled(job);
             if (response.code() != 200) throw new Fail("http_" + response.code());
             long total = response.contentLength();
@@ -251,13 +261,25 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
                     throw blocked;
                 } catch (IOException interrupted) {
                     checkCancelled(job);
-                    if (resumes >= MAX_RESUMES || etag == null) throw new Fail("network");
-                    resumes++;
-                    response.close();
-                    // If-Range: der Server liefert 206 nur für dieselbe Darstellung, sonst 200 (dann Fehler, nie Mischen).
-                    // Grenze = Gesamtlänge: eine falsche Antwort (200 statt 206) wird so von checkResume benannt.
-                    response = http.get(finalUrl, job.bytes, total - 1, etag, total, callTimeoutMs, job.cancel);
-                    checkCancelled(job);
+                    while (true) {
+                        if (resumes >= MAX_RESUMES || etag == null) throw new Fail("network");
+                        resumes++;
+                        response.close();
+                        pause(job, resumes);       // P4c: wachsende Pause, ohne Netz warten (Abbruch beendet sofort)
+                        // If-Range: der Server liefert 206 nur für dieselbe Darstellung, sonst 200 (dann Fehler, nie Mischen).
+                        // Grenze = Gesamtlänge: eine falsche Antwort (200 statt 206) wird so von checkResume benannt.
+                        try {
+                            response = http.get(finalUrl, job.bytes, total - 1, etag, total, callTimeoutMs, job.cancel);
+                        } catch (NetBlockedException blocked) {
+                            throw blocked;
+                        } catch (IOException again) {
+                            checkCancelled(job);
+                            continue;              // Verbindungsaufbau gescheitert: nächster Versuch (gezählt)
+                        }
+                        checkCancelled(job);
+                        if (Retry.transientStatus(response.code())) continue;   // 408/429/5xx: später erneut (gezählt)
+                        break;
+                    }
                     checkResume(response, job.bytes, total, etag);
                     in = response.body();
                     continue;
@@ -293,6 +315,40 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         }
         if (state != State.DONE && job.cancel.isCancelled()) { state = State.CANCELLED; reason = ""; }
         finish(job, state, reason, saved);    // erst nach dem Aufräumen: "beendet" heißt, nichts Unfertiges bleibt
+    }
+
+    /**
+     * Erster Abruf. Netzfehler beim Verbindungsaufbau oder 408/429/5xx: nach wachsender Pause erneut (es ist noch
+     * nichts geschrieben, also kein doppelter Download), höchstens {@link #MAX_RESUMES}-mal; jede andere Antwort
+     * geht unverändert an die Prüfungen in {@link #run}.
+     */
+    private SafeResponse open(Job job, String url) throws Exception {
+        for (int attempt = 0; ; attempt++) {
+            SafeResponse r;
+            try {
+                r = http.get(url, -1, -1, MAX_FILE_BYTES, callTimeoutMs, job.cancel);
+            } catch (NetBlockedException blocked) {
+                throw blocked;
+            } catch (IOException e) {
+                checkCancelled(job);
+                if (attempt >= MAX_RESUMES) throw e;
+                pause(job, attempt + 1);
+                continue;
+            }
+            if (!Retry.transientStatus(r.code()) || attempt >= MAX_RESUMES) return r;
+            r.close();
+            pause(job, attempt + 1);
+        }
+    }
+
+    /** Wartet vor Versuch {@code attempt}; Abbruch oder Aufgeben (zu lange ohne Netz) beendet den Auftrag. */
+    private void pause(Job job, int attempt) throws Fail {
+        boolean go;
+        try { go = retry.await(attempt, job.cancel::isCancelled, w -> { job.wait = w; listener.waiting(job.id, job.title, w); }); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); go = false; }
+        finally { job.wait = Retry.Wait.NONE; }
+        checkCancelled(job);
+        if (!go) throw new Fail("network");
     }
 
     private long freeBytes() throws Fail {
@@ -397,8 +453,10 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     // ------------------------------------------------------------------ Antworten (ohne URL)
 
     private static String json(Job j) {
+        Retry.Wait w = j.state == State.RUNNING ? j.wait : Retry.Wait.NONE;
         return "{\"ok\":true,\"id\":\"" + j.id + "\",\"state\":\"" + j.state.name().toLowerCase(Locale.ROOT) + "\",\"bytes\":" + j.bytes
-            + ",\"total\":" + j.total + ",\"reason\":\"" + j.reason + "\"}";
+            + ",\"total\":" + j.total + ",\"reason\":\"" + j.reason + "\""
+            + (w == Retry.Wait.NONE ? "" : ",\"wait\":\"" + (w == Retry.Wait.OFFLINE ? "offline" : "retry") + "\"") + "}";
     }
 
     private static String busy(String id) { return "{\"ok\":false,\"id\":\"" + id + "\",\"state\":\"busy\"}"; }

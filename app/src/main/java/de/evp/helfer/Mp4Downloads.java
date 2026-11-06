@@ -49,6 +49,10 @@ import de.evp.helfer.net.SafeHttpClient;
  */
 final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     static final String ACTION_CANCEL = "dlcancel";
+    /** P4c: „Fortsetzen“ aus der Benachrichtigung eines unterbrochenen Streams (Quelle noch im Arbeitsspeicher). */
+    static final String ACTION_RESUME = "dlresume";
+    /** P4c: kann ein unterbrochener Auftrag ohne Kadri fortgesetzt werden? (HLS setzt das, MP4 nie) */
+    static volatile java.util.function.Predicate<String> resumable = id -> false;
     static final String EXTRA_JOB = "job";
     private static final int NOTE_ID = 0x4d50;     // je Auftrag eigener Tag ("mp4-<id>")
     private static final int MAX_JOURNAL_BYTES = 256 << 10;
@@ -75,6 +79,7 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         Downloads.channel(app);
         cleanupPublicLeftovers();              // vor dem Journal: Wiederherstellung sieht nur echte Dateien
         this.engine = new DirectDownloads(http, this, this, SLOTS);
+        this.engine.setRetry(NetWatch.retry(app));       // P4c: begrenzte Wiederaufnahme mit Verbindungsüberwachung
         SLOTS.setActivity(any -> keepAwake(app, any));
     }
 
@@ -431,14 +436,47 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         if (m != null) m.notify(tag(id), NOTE_ID, n);
     }
 
+    /** P4c: wartet auf Netz bzw. auf den nächsten automatischen Versuch – der Auftrag läuft weiter (abbrechbar). */
+    @Override public void waiting(String id, String title, de.evp.helfer.dl.Retry.Wait wait) {
+        if (wait == de.evp.helfer.dl.Retry.Wait.NONE) return;    // geht weiter: der nächste Fortschritt aktualisiert
+        Intent stop = new Intent(app, HelferService.class).setAction(ACTION_CANCEL).putExtra(EXTRA_JOB, id)
+            .setData(Uri.parse("evp-mp4:" + id));
+        PendingIntent cancel = PendingIntent.getService(app, id.hashCode(), stop, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        Notification n = new Notification.Builder(app, Downloads.CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle(title)
+            .setContentText(wait == de.evp.helfer.dl.Retry.Wait.OFFLINE
+                ? Tr.t("Wartet auf Internet – setzt automatisch fort", "Waiting for internet – resumes automatically")
+                : Tr.t("Verbindung gestört – neuer Versuch in Kürze", "Connection problem – retrying shortly"))
+            .setProgress(0, 0, true)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .addAction(new Notification.Action.Builder(null, Tr.t("Abbrechen", "Cancel"), cancel).build())
+            .build();
+        NotificationManager m = nm();
+        if (m != null) m.notify(tag(id), NOTE_ID, n);
+    }
+
     @Override public void finished(String id, String title, String state, String reason, Object saved) {
         NotificationManager m = nm();
         if (m == null) return;
         if ("cancelled".equals(state)) { m.cancel(tag(id), NOTE_ID); return; }
-        if ("interrupted".equals(state)) {   // HLS: wiederaufnehmbar über Kadri ("Fortsetzen"), Daten bleiben app-privat
-            m.notify(tag(id), NOTE_ID, new Notification.Builder(app, Downloads.CHANNEL).setContentTitle(title).setAutoCancel(true)
-                .setSmallIcon(android.R.drawable.stat_sys_warning)
-                .setContentText(Tr.t("Unterbrochen – in Kadri fortsetzen: ", "Interrupted – resume in Kadri: ") + reasonText(reason)).build());
+        if ("interrupted".equals(state)) {   // HLS: wiederaufnehmbar, Daten bleiben app-privat
+            Notification.Builder ib = new Notification.Builder(app, Downloads.CHANNEL).setContentTitle(title).setAutoCancel(true)
+                .setSmallIcon(android.R.drawable.stat_sys_warning);
+            if (resumable.test(id)) {
+                // P4c: Quelle noch im Arbeitsspeicher → direkt hier fortsetzen, ohne Webseite oder Player
+                Intent go = new Intent(app, HelferService.class).setAction(ACTION_RESUME).putExtra(EXTRA_JOB, id)
+                    .setData(Uri.parse("evp-resume:" + id));
+                PendingIntent pi = PendingIntent.getService(app, id.hashCode() ^ 0x5245, go, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+                ib.setContentText(Tr.t("Unterbrochen: ", "Interrupted: ") + reasonText(reason))
+                    .setContentIntent(pi)
+                    .addAction(new Notification.Action.Builder(null, Tr.t("Fortsetzen", "Resume"), pi).build());
+            } else {
+                ib.setContentText(Tr.t("Unterbrochen – zum Fortsetzen das Video in Kadri öffnen: ", "Interrupted – open the video in Kadri to resume: ") + reasonText(reason));
+            }
+            m.notify(tag(id), NOTE_ID, ib.build());
             return;
         }
         Notification.Builder b = new Notification.Builder(app, Downloads.CHANNEL).setContentTitle(title).setAutoCancel(true);
@@ -466,6 +504,9 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         if (reason == null) return "";
         if (reason.equals("no_space")) return Tr.t("zu wenig Speicher", "not enough storage");
         if (reason.equals("network")) return Tr.t("Netzwerk unterbrochen", "network interrupted");
+        if (reason.equals("stopped")) return Tr.t("Helfer-App wurde beendet", "helper app was stopped");
+        if (reason.startsWith("http_5") || reason.equals("http_429")) return Tr.t("Server überlastet", "server busy");
+        if (reason.equals("http_403") || reason.equals("http_401")) return Tr.t("Zugriff abgelaufen", "access expired");
         if (reason.equals("not_mp4") || reason.equals("type")) return Tr.t("keine MP4-Datei", "not an MP4 file");
         if (reason.equals("too_large")) return Tr.t("Datei zu groß", "file too large");
         if (reason.startsWith("blocked_")) return Tr.t("Ziel nicht erlaubt", "target not allowed");

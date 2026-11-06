@@ -31,7 +31,13 @@ final class HarnessDownloads implements DownloadStore, DirectDownloads.Listener 
         journal = new File(stateDir, "mp4-jobs");
         for (File f : list()) if (f.getName().startsWith(".part-")) f.delete();   // Reste eines beendeten Prozesses
         engine = new DirectDownloads(LocalTestClients.loopback(mediaPort), this, this, slots);
+        engine.setRetry(retry);
     }
+
+    /** P4c: Netz des „Geräts“ (Befehl dl-net on|off) und Wiederholungen 20-fach verkürzt (100 ms … 30 s). */
+    final java.util.concurrent.atomic.AtomicBoolean online = new java.util.concurrent.atomic.AtomicBoolean(true);
+    final de.evp.helfer.dl.Retry retry = new de.evp.helfer.dl.Retry(online::get, de.evp.helfer.dl.Retry.Clock.SYSTEM, 20);
+    void net(boolean on) { online.set(on); retry.networkChanged(); }
 
     /** Gemeinsame Grenzen von MP4 und HLS wie in der App (2 Aufträge, 4 HTTP-Anfragen). */
     final de.evp.helfer.dl.JobSlots slots = new de.evp.helfer.dl.JobSlots(2, 4);
@@ -48,6 +54,7 @@ final class HarnessDownloads implements DownloadStore, DirectDownloads.Listener 
         if (hls != null) return;
         hls = new de.evp.helfer.hls.HlsEngine(LocalTestClients.loopback(mediaPort), this, this, new File(stateDir, "hls-jobs"), new ConcatRemux(),
             slots, false, 1_000_000);
+        hls.setRetry(retry);
     }
 
     /** Nur Testgerüst: verkettet die Ressourcen (kein MP4) – nie in der App. */

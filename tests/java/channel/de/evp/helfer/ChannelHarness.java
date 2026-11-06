@@ -199,6 +199,8 @@ public final class ChannelHarness implements ChannelServer.Host {
             case "storage-permission on": downloads.writable = true; return "OK";
             case "storage-permission off": downloads.writable = false; return "OK";
             case "dl-files": return downloads.files();
+            case "dl-net off": downloads.net(false); return "NET off";   // P4c: Flugmodus des Testgeräts
+            case "dl-net on": downloads.net(true); return "NET on";
             case "dl-parts": return "PARTS " + downloads.parts();
             case "dl-journal": return downloads.journalText();
             case "hls on": {   // P4b: HLS an (bleibt über einen Neustart an); Server neu, damit der Kanal es kennt

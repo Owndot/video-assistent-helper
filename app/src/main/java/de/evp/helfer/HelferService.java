@@ -111,6 +111,12 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
             else if (mp4 != null && Mp4Downloads.validJobId(job)) mp4.engine.cancel(job);
             return START_STICKY;
         }
+        if (intent != null && Mp4Downloads.ACTION_RESUME.equals(intent.getAction())) {
+            // P4c: "Fortsetzen" in der Benachrichtigung eines unterbrochenen Streams (nur mit Quelle im Arbeitsspeicher)
+            String job = intent.getStringExtra(Mp4Downloads.EXTRA_JOB);
+            if (hls != null && Mp4Downloads.validJobId(job)) hls.engine.resumeLocal(job);
+            return START_STICKY;
+        }
         if (intent != null && "test".equals(intent.getAction())) {
             // Knopf "Ausprobieren" in der App: 3 Sekunden dunkel, dann zurück
             lastBeat = System.currentTimeMillis();

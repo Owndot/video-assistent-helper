@@ -42,6 +42,13 @@ M = [
     ('de/evp/helfer/hls/HlsFetch.java', '            if (r.code() != 206) return false;', ''),
     ('de/evp/helfer/hls/HlsFetch.java', '            if (Long.parseLong(m.group(1)) != length) return false;', ''),
     ('de/evp/helfer/hls/HlsFetch.java', 'return new Fetched(total, HlsPlan.hex(sha.digest()), SafeHttpClient.isStrongEtag(etag) ? etag : null);', 'return new Fetched(total, HlsPlan.hex(sha.digest()), etag);'),
+    # P4c: automatische Wiederaufnahme
+    ('de/evp/helfer/hls/HlsEngine.java', 'if (o.state != HlsJournal.State.INTERRUPTED || !de.evp.helfer.dl.Retry.transientReason(o.reason)', 'if (true || !de.evp.helfer.dl.Retry.transientReason(o.reason)'),
+    ('de/evp/helfer/hls/HlsEngine.java', 'attempt = reached > best ? 1 : attempt + 1;', 'attempt = 1;'),
+    ('de/evp/helfer/hls/HlsEngine.java', 'if (job.userCancelled()) { o = new Outcome(HlsJournal.State.CANCELLED, "", null); break; }', ''),
+    ('de/evp/helfer/hls/HlsEngine.java', 'if (job.stopRequested) { o = new Outcome(HlsJournal.State.INTERRUPTED, "stopped", null); break; }', ''),
+    ('de/evp/helfer/dl/Retry.java', 'case "io": case "network":', 'case "http_403": case "io": case "network":'),
+    ('de/evp/helfer/dl/Retry.java', 'if (!online()) {', 'if (false) {'),
 ]
 fx = sys.argv[1]; cache = sys.argv[2] if len(sys.argv) > 2 else ''
 survived = []
