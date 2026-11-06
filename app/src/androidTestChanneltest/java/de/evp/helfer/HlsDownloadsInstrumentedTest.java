@@ -380,6 +380,8 @@ public class HlsDownloadsInstrumentedTest {
         Rig r = new Rig();
         try {
             r.st.freeOverride = 64L << 20;
+            // Zähler gilt für die ganze Klasse: erst messen, wenn keine Anfrage früherer Tests mehr offen ist
+            assertTrue("server quiet", srv.quiesce(10_000));
             int before = srv.segments.get();
             String id = id();
             String st = run(r, "ts_sep", id);
