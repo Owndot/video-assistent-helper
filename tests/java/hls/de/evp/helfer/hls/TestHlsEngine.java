@@ -418,6 +418,7 @@ public final class TestHlsEngine {
         try {
             fullRuns(s);
             progressDisplay(s);
+            vault(s);
             plans(s);
             resume(s);
             autoResume(s);
@@ -544,6 +545,131 @@ public final class TestHlsEngine {
         for (de.evp.helfer.dl.Progress p : r.events.shown) { maxDone = Math.max(maxDone, p.done); maxBytes = Math.max(maxBytes, p.bytes); }
         check("Fortschritt (Fortsetzen): höchstens alle Teile und alle Bytes – wiederverwendete Teile nicht doppelt",
             maxDone <= parts && maxBytes <= media, "maxDone=" + maxDone + "/" + parts + " maxBytes=" + maxBytes + "/" + media);
+    }
+
+    /** P2: Software-AES-GCM für die JVM-Tests (App: nicht exportierbarer Android-Keystore-Schlüssel). */
+    static final class SoftSealer implements de.evp.helfer.dl.SourceVault.Sealer {
+        final javax.crypto.SecretKey key;
+        SoftSealer() throws Exception { javax.crypto.KeyGenerator g = javax.crypto.KeyGenerator.getInstance("AES"); g.init(256); key = g.generateKey(); }
+        @Override public byte[] seal(byte[] aad, byte[] plain) throws java.security.GeneralSecurityException {
+            byte[] iv = new byte[12]; new java.security.SecureRandom().nextBytes(iv);
+            javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(javax.crypto.Cipher.ENCRYPT_MODE, key, new javax.crypto.spec.GCMParameterSpec(128, iv));
+            c.updateAAD(aad);
+            byte[] ct = c.doFinal(plain), out = new byte[12 + ct.length];
+            System.arraycopy(iv, 0, out, 0, 12); System.arraycopy(ct, 0, out, 12, ct.length);
+            return out;
+        }
+        @Override public byte[] open(byte[] aad, byte[] sealed) throws java.security.GeneralSecurityException {
+            if (sealed.length < 28) throw new java.security.GeneralSecurityException("short");
+            javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(javax.crypto.Cipher.DECRYPT_MODE, key, new javax.crypto.spec.GCMParameterSpec(128, sealed, 0, 12));
+            c.updateAAD(aad);
+            return c.doFinal(sealed, 12, sealed.length - 12);
+        }
+    }
+
+    /** Lauf bis unterbrochen (Dienstende mitten im Abruf), dann „Prozessende“ (neue Engine, Quelle nicht mehr im Speicher). */
+    static String interruptThenRestart(Rig r, Server s, de.evp.helfer.dl.SourceVault v) throws Exception {
+        String id = newId();
+        s.delayMs = 40;
+        String plan = r.engine.plan(PEER, BIND, s.url("ts_sep", "master.m3u8"));
+        r.engine.start(PEER, BIND, id, field(plan, "planId"), firstOption(plan), "Tresor");
+        long end = System.nanoTime() + 10_000_000_000L;
+        while (s.fullSegments() < 4 && System.nanoTime() < end) Thread.sleep(5);
+        r.engine.stopAll();
+        await(r.engine, id, "interrupted", "done", "failed", "cancelled");
+        r.restart();
+        r.engine.setVault(v);
+        s.delayMs = 0;
+        return id;
+    }
+
+    static void vault(Server s) throws Exception {
+        s.reset();
+        Rig r = new Rig("vault", s);
+        SoftSealer key = new SoftSealer();
+        File vdir = new File(base, "vault/src");
+        de.evp.helfer.dl.SourceVault v = new de.evp.helfer.dl.SourceVault(vdir, key, r.now::get);
+        r.engine.setVault(v);
+        String id = interruptThenRestart(r, s, v);
+        File rec = new File(vdir, id + ".src");
+        String raw = rec.isFile() ? new String(Files.readAllBytes(rec.toPath()), StandardCharsets.ISO_8859_1) : "";
+        check("Tresor: Eintrag vorhanden, ohne Klartext-Adresse, Host, Pfad oder Token", rec.isFile() && !raw.contains("127.0.0.1") && !raw.contains("dyn")
+            && !raw.contains("master") && !raw.contains("t=T1") && !raw.contains("http"), raw);
+        File journal = new File(r.dir(id), "journal");
+        check("Tresor: Journal weiterhin ohne Adresse", !new String(Files.readAllBytes(journal.toPath()), StandardCharsets.UTF_8).contains("127.0.0.1"), "");
+        check("Tresor: nach Prozessende kein Fortsetzen aus dem Arbeitsspeicher, aber aus dem Tresor", !r.engine.canResumeLocal(id) && r.engine.canResumeStored(id), "");
+        int before = s.fullSegments();
+        check("Tresor: genau ein Auftrag fortgesetzt", r.engine.resumeStored() == 1, "");
+        String st = await(r.engine, id, "done", "failed", "interrupted", "cancelled");
+        check("Tresor: ohne Webseite fertig, Inhalt exakt", "done".equals(field(st, "state")) && sameOutput(r), st + " " + r.engine.diagnostics(id));
+        check("Tresor: schon geprüfte Teile nicht neu geladen", s.fullSegments() - before < countResources("ts_sep", "v0.m3u8", "v1.m3u8"), s.fullSegments() - before);
+        check("Tresor: nach Erfolg sofort gelöscht", !rec.exists(), "");
+
+        // abgelaufen (6 h): kein Fortsetzen, Eintrag weg
+        s.reset();
+        Rig r2 = new Rig("vault-exp", s);
+        de.evp.helfer.dl.SourceVault v2 = new de.evp.helfer.dl.SourceVault(new File(base, "vault-exp/src"), key, r2.now::get);
+        r2.engine.setVault(v2);
+        String id2 = interruptThenRestart(r2, s, v2);
+        r2.now.addAndGet(de.evp.helfer.dl.SourceVault.MAX_AGE_MS);
+        int req = s.requests.get();
+        check("Tresor: nach 6 h kein Fortsetzen, keine Anfrage, Eintrag gelöscht", r2.engine.resumeStored() == 0 && s.requests.get() == req
+            && !new File(base, "vault-exp/src/" + id2 + ".src").exists() && "interrupted".equals(field(r2.engine.status(id2), "state")), r2.engine.status(id2));
+
+        // Abbruch durch den Nutzer: Eintrag sofort weg, nie automatisch fortgesetzt
+        s.reset();
+        Rig r3 = new Rig("vault-cancel", s);
+        File d3 = new File(base, "vault-cancel/src");
+        de.evp.helfer.dl.SourceVault v3 = new de.evp.helfer.dl.SourceVault(d3, key, r3.now::get);
+        r3.engine.setVault(v3);
+        String id3 = interruptThenRestart(r3, s, v3);
+        check("Tresor (Abbruch): vorher vorhanden", new File(d3, id3 + ".src").isFile(), "");
+        r3.engine.cancel(id3);
+        check("Tresor (Abbruch): sofort gelöscht, kein Fortsetzen", !new File(d3, id3 + ".src").exists() && r3.engine.resumeStored() == 0
+            && "cancelled".equals(field(r3.engine.status(id3), "state")), r3.engine.status(id3));
+
+        // beschädigt, vertauscht, falscher Schlüssel: kein Fortsetzen, kein Absturz, Eintrag weg
+        for (String mode : new String[] {"corrupt", "swapped", "wrongkey", "extended"}) {
+            s.reset();
+            Rig rm = new Rig("vault-" + mode, s);
+            File dm = new File(base, "vault-" + mode + "/src");
+            de.evp.helfer.dl.SourceVault vm = new de.evp.helfer.dl.SourceVault(dm, key, rm.now::get);
+            rm.engine.setVault(vm);
+            String a = interruptThenRestart(rm, s, vm);
+            File fa = new File(dm, a + ".src");
+            String text = new String(Files.readAllBytes(fa.toPath()), StandardCharsets.US_ASCII);
+            de.evp.helfer.dl.SourceVault use = vm;
+            if (mode.equals("corrupt")) { byte[] b = Files.readAllBytes(fa.toPath()); b[b.length - 6] ^= 0x01; Files.write(fa.toPath(), b); }
+            if (mode.equals("swapped")) {   // Eintrag eines anderen Auftrags unter dieser Kennung (AAD bindet die Kennung)
+                String other = newId();
+                vm.put(other, "hls", "http://127.0.0.1:" + s.port + "/dyn/ts_sep/master.m3u8?t=T1", "x|0|-1|-");
+                Files.copy(new File(dm, other + ".src").toPath(), fa.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            if (mode.equals("wrongkey")) { use = new de.evp.helfer.dl.SourceVault(dm, new SoftSealer(), rm.now::get); rm.engine.setVault(use); }
+            if (mode.equals("extended")) {   // Ablaufzeit im Klartext-Kopf verlängert
+                String[] l = text.split("\n", -1);
+                Files.write(fa.toPath(), (l[0] + "\n" + l[1] + "\n" + l[2] + "\n" + (Long.parseLong(l[3]) + 3_600_000L) + "\n" + l[4] + "\n").getBytes(StandardCharsets.US_ASCII));
+            }
+            int rq = s.requests.get();
+            int n = rm.engine.resumeStored();
+            check("Tresor (" + mode + "): kein Fortsetzen, keine Anfrage, Eintrag gelöscht, Auftrag bleibt unterbrochen", n == 0 && s.requests.get() == rq
+                && !fa.exists() && "interrupted".equals(field(rm.engine.status(a), "state")), n + " " + rm.engine.status(a));
+        }
+
+        // Liste geändert: fehlgeschlagen (plan_changed), Eintrag weg
+        s.reset();
+        Rig r5 = new Rig("vault-changed", s);
+        File d5 = new File(base, "vault-changed/src");
+        de.evp.helfer.dl.SourceVault v5 = new de.evp.helfer.dl.SourceVault(d5, key, r5.now::get);
+        r5.engine.setVault(v5);
+        String id5 = interruptThenRestart(r5, s, v5);
+        s.masterExtra = "#EXT-X-INDEPENDENT-SEGMENTS\n";
+        check("Tresor (Liste geändert): fortgesetzt", r5.engine.resumeStored() == 1, "");
+        String st5 = await(r5.engine, id5, "done", "failed", "interrupted", "cancelled");
+        check("Tresor (Liste geändert): failed:plan_changed, nichts veröffentlicht, Eintrag gelöscht", "failed".equals(field(st5, "state"))
+            && "plan_changed".equals(field(st5, "reason")) && r5.store.files().length == 0 && !new File(d5, id5 + ".src").exists(), st5);
     }
 
     static int countResources(String fixture, String v, String a) throws IOException {

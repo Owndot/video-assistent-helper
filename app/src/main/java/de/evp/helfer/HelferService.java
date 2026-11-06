@@ -82,6 +82,11 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
         if (mp4 != null) {
             try { hls = HlsDownloads.get(this, mp4); hls.engine.serviceStarted(); }
             catch (Exception | LinkageError e) { hls = null; }
+            // P4c-3 (P2): verschlüsselte Quelle (Keystore, höchstens 6 h, app-privat ohne Backup). Fehler → ohne Tresor.
+            if (hls != null) {
+                try { hls.attachVault(this); }
+                catch (Exception | LinkageError e) { /* kein Fortsetzen nach Prozessende, sonst unverändert */ }
+            }
         }
         String problem = startChannel();
         if (problem != null) {
@@ -98,6 +103,13 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (!running) return START_NOT_STICKY;
+        // P4c-3 (P2): gewöhnlicher Neustart durch Android nach Prozessende (START_STICKY, intent == null) oder der Nutzer
+        // öffnet die App (ACTION_RESUME_STORED): unterbrochene Downloads mit gültiger gespeicherter Quelle fortsetzen.
+        // Nie beim Einschalten des Handys (BootReceiver startet ohne diese Aktion) und nie nach einem Abbruchwunsch.
+        if (intent == null || ACTION_RESUME_STORED.equals(intent.getAction())) {
+            resumeStoredAsync();
+            if (intent != null) return START_STICKY;
+        }
         if (intent != null && "cancel".equals(intent.getAction())) {
             // "Abbrechen" in der Download-Benachrichtigung
             int cancelledId = intent.getIntExtra("id", -1);
@@ -114,7 +126,7 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
         if (intent != null && Mp4Downloads.ACTION_RESUME.equals(intent.getAction())) {
             // P4c: "Fortsetzen" in der Benachrichtigung eines unterbrochenen Streams (nur mit Quelle im Arbeitsspeicher)
             String job = intent.getStringExtra(Mp4Downloads.EXTRA_JOB);
-            if (hls != null && Mp4Downloads.validJobId(job)) hls.engine.resumeLocal(job);
+            if (hls != null && Mp4Downloads.validJobId(job) && !hls.engine.resumeLocal(job)) resumeStoredAsync();   // P2: sonst aus dem Tresor
             return START_STICKY;
         }
         if (intent != null && "test".equals(intent.getAction())) {
@@ -404,6 +416,22 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
             if (running) main.postDelayed(this, 5000);
         }
     };
+
+    static final String ACTION_RESUME_STORED = "resume-stored";
+
+    private void resumeStoredAsync() {
+        HlsDownloads h = hls;
+        if (h == null) return;
+        Thread t = new Thread(h.engine::resumeStored, "evp-resume-stored");   // Datei + Keystore nicht im Hauptthread
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** Nutzer öffnet die App: Dienst starten (falls nötig) und gespeicherte Downloads fortsetzen. */
+    static void startAndResume(Context c) {
+        if (!running) startupError = null;
+        c.startForegroundService(new Intent(c, HelferService.class).setAction(ACTION_RESUME_STORED));
+    }
 
     static void start(Context c) {
         if (!running) startupError = null;

@@ -55,6 +55,12 @@ public class ProcessRestartInstrumentedTest {
             Mp4Downloads.SLOTS, HlsDownloads.opusSupported(), HlsDownloads.sampleBudget(Runtime.getRuntime().maxMemory()));
     }
 
+    /** P2: echter Keystore-Schlüssel (nicht exportierbar), eigener Ordner dieses Tests. */
+    static de.evp.helfer.dl.SourceVault vault() throws Exception {
+        return new de.evp.helfer.dl.SourceVault(new File(HlsDownloadsInstrumentedTest.ctx.getNoBackupFilesDir(), "source-vault-restart-test"),
+            new KeystoreSealer(), System::currentTimeMillis);
+    }
+
     @Test public void phaseA_startDownloadAndPairThenTheProcessDies() throws Exception {
         assumeTrue("only in the restart run (restartPhase=A)", "A".equals(phase()));
         HlsDownloadsInstrumentedTest.setUp();
@@ -64,6 +70,7 @@ public class ProcessRestartInstrumentedTest {
         TestInitiator.free(ChannelInstrumentedTest.pairAndConfirm(id, pin));
         Mp4Downloads store = mp4();
         HlsEngine e = hls(store, new HlsDownloadsInstrumentedTest.Events());
+        e.setVault(vault());
         HlsDownloadsInstrumentedTest.srv.delayMs = 400;
         String job = HlsDownloadsInstrumentedTest.id();
         String plan = e.plan(HlsDownloadsInstrumentedTest.PEER, HlsDownloadsInstrumentedTest.BIND, HlsDownloadsInstrumentedTest.srv.url("ts_sep/master.m3u8"));
@@ -79,6 +86,7 @@ public class ProcessRestartInstrumentedTest {
         p.setProperty("pid", String.valueOf(android.os.Process.myPid()));
         p.setProperty("id", ChannelInstrumentedTest.hex(id));
         p.setProperty("pin", ChannelInstrumentedTest.hex(pin));
+        p.setProperty("port", String.valueOf(HlsDownloadsInstrumentedTest.srv.ss.getLocalPort()));
         try (FileOutputStream out = new FileOutputStream(stateFile())) { p.store(out, "restart test (test identities only)"); }
         Log.i(TAG, "RESTART_A api=" + Build.VERSION.SDK_INT + " running=true done=" + HlsDownloadsInstrumentedTest.intField(st, "done"));
         // Kein Aufräumen: der Prozess wird mitten im Download beendet (Dienst läuft, Auftrag läuft).
@@ -89,13 +97,21 @@ public class ProcessRestartInstrumentedTest {
         Properties p = new Properties();
         try (FileInputStream in = new FileInputStream(stateFile())) { p.load(in); }
         assertNotEquals("phase B runs in a new process", p.getProperty("pid"), String.valueOf(android.os.Process.myPid()));
+        HlsDownloadsInstrumentedTest.preferredPort = Integer.parseInt(p.getProperty("port"));   // gespeicherte Quelle zeigt dorthin
         HlsDownloadsInstrumentedTest.setUp();
+        HlsDownloadsInstrumentedTest.preferredPort = 0;
         HlsDownloadsInstrumentedTest.Events ev = new HlsDownloadsInstrumentedTest.Events();
         Mp4Downloads store = mp4();
         HlsEngine e = hls(store, ev);
+        de.evp.helfer.dl.SourceVault v = vault();
+        e.setVault(v);
         String old = p.getProperty("job");
         String st = e.status(old);
         assertEquals(st, "interrupted", HlsDownloadsInstrumentedTest.field(st, "state"));
+        File rec = new File(HlsDownloadsInstrumentedTest.ctx.getNoBackupFilesDir(), "source-vault-restart-test/" + old + ".src");
+        String raw = new String(java.nio.file.Files.readAllBytes(rec.toPath()), java.nio.charset.StandardCharsets.ISO_8859_1);
+        assertTrue("P2: stored source is encrypted (no host, path or scheme in the record)", !raw.contains("dl.test") && !raw.contains("m3u8") && !raw.contains("http"));
+        assertTrue("P2: resumable from the Keystore vault after the process ended", !e.canResumeLocal(old) && e.canResumeStored(old));
         assertEquals("no job or HTTP slot held after the restart", 0, Mp4Downloads.SLOTS.inUse());
         assertEquals("no job or HTTP slot held after the restart", 0, Mp4Downloads.SLOTS.httpInUse());
         try {
@@ -113,12 +129,12 @@ public class ProcessRestartInstrumentedTest {
             String ms = store.engine.status(mp4);
             while (ms.contains("\"state\":\"running\"") && System.nanoTime() < end) { Thread.sleep(50); ms = store.engine.status(mp4); }
             assertTrue(ms, ms.contains("\"state\":\"done\""));
-            // der unterbrochene Auftrag lässt sich mit neuem Plan und derselben Kennung fortsetzen
-            String p2 = e.plan(HlsDownloadsInstrumentedTest.PEER, HlsDownloadsInstrumentedTest.BIND, HlsDownloadsInstrumentedTest.srv.url("ts_sep/master.m3u8"));
-            e.start(HlsDownloadsInstrumentedTest.PEER, HlsDownloadsInstrumentedTest.BIND, old, HlsDownloadsInstrumentedTest.field(p2, "planId"), HlsDownloadsInstrumentedTest.firstOption(p2), "Restart");
+            // P2: der unterbrochene Auftrag setzt ohne Webseite und ohne neuen Plan aus dem Keystore-Tresor fort
+            assertEquals("one stored job resumed", 1, e.resumeStored());
             st = HlsDownloadsInstrumentedTest.await(e, old, 120_000);
             assertEquals(st, "done", HlsDownloadsInstrumentedTest.field(st, "state"));
             assertNotNull("resumed HLS published", ev.saved(old, 30_000));
+            assertTrue("P2: stored source deleted after success", !rec.exists());
             assertEquals("slots free after the downloads", 0, Mp4Downloads.SLOTS.inUse());
 
             // echter Dienst: lauscht wieder, gespeicherte Kopplung handelt eine neue Sitzung aus, Download-Befehle antworten
@@ -128,12 +144,13 @@ public class ProcessRestartInstrumentedTest {
             // normaler Dienst-Stopp und Neustart im selben Prozess
             ChannelInstrumentedTest.restartService();
             channelWorks(id, pin, "after service stop/start");
-            Log.i(TAG, "RESTART_B api=" + Build.VERSION.SDK_INT + " oldInterrupted=true newHls=done newMp4=done resumed=done channel=ok serviceRestart=ok");
+            Log.i(TAG, "RESTART_B api=" + Build.VERSION.SDK_INT + " oldInterrupted=true newHls=done newMp4=done resumed=vault channel=ok serviceRestart=ok");
         } finally {
             for (Object s : ev.saved.values()) HlsDownloadsInstrumentedTest.delete(s);
             e.stopAll();
             store.engine.stopAll();
             deleteTree(new File(HlsDownloadsInstrumentedTest.ctx.getNoBackupFilesDir(), "hls-jobs-restart-test"));
+            deleteTree(new File(HlsDownloadsInstrumentedTest.ctx.getNoBackupFilesDir(), "source-vault-restart-test"));
             new File(HlsDownloadsInstrumentedTest.ctx.getFilesDir(), "mp4-jobs-restart-test").delete();
             stateFile().delete();
             if (HelferService.instance != null) HelferService.instance.revoke(null);

@@ -57,6 +57,12 @@ M = [
     ('de/evp/helfer/hls/HlsEngine.java', 'boolean fin = "done".equals(state) && j.journal.total > 0;', 'boolean fin = s == HlsJournal.State.DONE && j.journal.total > 0;'),
     ('de/evp/helfer/hls/HlsEngine.java', '            if (!force && now - job.lastNote < 500_000_000L) return;', '            if (now - job.lastNote < 500_000_000L) return;'),
     ('de/evp/helfer/hls/HlsEngine.java', 'size = state == HlsJournal.State.DONE ? job.journal.total : -1;', 'size = -1;'),
+    # P4c-3 (P2): verschlüsselte Quelle – Bindung, Ablauf, Löschen nach Abbruch/Erfolg, Prüfung der Liste
+    ('de/evp/helfer/dl/SourceVault.java', 'return ("evp-source-vault/v1|" + id + "|" + kind', 'return ("evp-source-vault/v1|" + kind'),
+    ('de/evp/helfer/dl/SourceVault.java', '|| now >= expires || ', '|| '),
+    ('de/evp/helfer/hls/HlsEngine.java', '            forget(j.id);   // P2: nach ausdrücklichem Abbruch nie wieder automatisch fortsetzen\n', ''),
+    ('de/evp/helfer/hls/HlsEngine.java', 'if (state != HlsJournal.State.INTERRUPTED) forget(job.id);', ''),
+    ('de/evp/helfer/hls/HlsEngine.java', 'if (!src.sha.equals(b[0])) throw new Stop(HlsJournal.State.FAILED, "plan_changed");', ''),
 ]
 fx = sys.argv[1]; cache = sys.argv[2] if len(sys.argv) > 2 else ''
 survived = []

@@ -70,6 +70,7 @@ public class HlsDownloadsInstrumentedTest {
     static Context ctx;
     static File fx;
     static Server srv;
+    static volatile int preferredPort = 0;   // 0 = beliebig
     static Mp4Downloads store;
     static int seq;
 
@@ -600,7 +601,10 @@ public class HlsDownloadsInstrumentedTest {
         /** Gesetzt: Daten-Antworten (MP4, Segmente) warten, bis der Test freigibt – Jobs bleiben sicher aktiv. */
         volatile CountDownLatch hold;
         Server() throws IOException {
-            ss = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"));
+            // P4c-3: ProcessRestartInstrumentedTest braucht nach dem Prozessende denselben Port (gespeicherte Quelle)
+            ss = new ServerSocket();
+            ss.setReuseAddress(true);
+            ss.bind(new java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), preferredPort), 50);
             Thread t = new Thread(() -> {
                 while (true) {
                     Socket s;

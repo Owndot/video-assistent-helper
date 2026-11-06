@@ -77,7 +77,8 @@ public class MainActivity extends Activity {
         sv.addView(root);
         setContentView(sv);
         // Beim Öffnen gleich starten (solange nicht ausdrücklich gestoppt)
-        if (prefs(this).getBoolean("on", true) && !HelferService.running) HelferService.start(this);
+        // P4c-3 (P2): Öffnen der App setzt unterbrochene Downloads mit gespeicherter Quelle fort (auch nach „Stopp erzwingen“)
+        if (prefs(this).getBoolean("on", true)) HelferService.startAndResume(this);
         build();
     }
 

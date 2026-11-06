@@ -28,6 +28,7 @@ import de.evp.helfer.dl.DirectDownloads;
 import de.evp.helfer.dl.DownloadStore;
 import de.evp.helfer.dl.JobSlots;
 import de.evp.helfer.dl.Progress;
+import de.evp.helfer.dl.SourceVault;
 import de.evp.helfer.net.NetBlockedException;
 import de.evp.helfer.net.SafeHttpClient;
 
@@ -353,6 +354,133 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         catch (RuntimeException | Error e) { finish(j, HlsJournal.State.INTERRUPTED, "stopped", null); }
     }
 
+    // ================================================================== P4c-3 (P2): verschlüsselte Quelle
+
+    private volatile SourceVault vault;
+
+    /**
+     * Verschlüsselte Ablage der Hauptadresse (höchstens 6 h). Einträge ohne passenden unterbrochenen Auftrag (fertig,
+     * abgebrochen, fehlgeschlagen, unbekannt, Abbruchwunsch) werden sofort gelöscht.
+     */
+    public void setVault(SourceVault v) {
+        v.sweep();
+        List<String> keep = new ArrayList<>();
+        synchronized (this) {
+            for (Job j : jobs.values()) synchronized (j) {
+                if (j.journal.state == HlsJournal.State.INTERRUPTED && !j.journal.cancelRequested) keep.add(j.id);
+            }
+            vault = v;
+        }
+        java.io.File[] fs = v.dirForCleanup().listFiles();
+        if (fs != null) for (java.io.File f : fs) {
+            String n = f.getName();
+            if (n.endsWith(".src") && n.length() == 36 && !keep.contains(n.substring(0, 32))) v.delete(n.substring(0, 32));
+        }
+    }
+
+    /** Bindung einer gespeicherten Quelle: Hash der Liste, gewählte Variante/Tonspur (Index) und Plan-Fingerabdruck. */
+    private static String binding(String masterSha, HlsPlan.Option o, String fingerprint) {
+        return masterSha + "|" + o.variant.index + "|" + (o.audio == null ? -1 : o.audio.index) + "|" + (fingerprint == null ? "-" : fingerprint);
+    }
+
+    private void remember(Job job, PlanEntry p, String optionId, Chosen c) {
+        SourceVault v = vault;
+        HlsPlan.Option o = option(p, optionId);
+        if (v != null && o != null && !job.userCancelled()) v.put(job.id, "hls", p.sourceUrl, binding(p.masterSha, o, c.plan.fingerprint));
+    }
+
+    private void forget(String id) {
+        SourceVault v = vault;
+        if (v != null) v.delete(id);
+    }
+
+    /** Hat dieser unterbrochene Auftrag eine gültige gespeicherte Quelle (für die Benachrichtigung)? */
+    public boolean canResumeStored(String id) {
+        SourceVault v = vault;
+        Job j;
+        synchronized (this) { j = jobs.get(id); if (j == null || stopped || v == null) return false; }
+        synchronized (j) { if (j.active || j.journal.state != HlsJournal.State.INTERRUPTED || j.journal.cancelRequested) return false; }
+        return v.get(id) != null;
+    }
+
+    /**
+     * P2: unterbrochene Aufträge mit gültiger gespeicherter Quelle fortsetzen – nur auf Anlass des Dienstes (gewöhnlicher
+     * Prozessneustart durch Android) oder wenn der Nutzer die App öffnet; nie nach einem Abbruchwunsch, nie über die
+     * freien Plätze hinaus. Dieselben Prüfungen wie bei hlsstart: unveränderte Liste (Hash), gleiche Variante und
+     * Fingerabdruck, ETag/Hash jeder schon geladenen Ressource. Liefert die Zahl gestarteter Aufträge.
+     */
+    public int resumeStored() {
+        SourceVault v = vault;
+        if (v == null) return 0;
+        List<Job> cand = new ArrayList<>();
+        synchronized (this) {
+            if (stopped) return 0;
+            for (Job j : jobs.values()) synchronized (j) {
+                if (!j.active && j.journal.state == HlsJournal.State.INTERRUPTED && !j.journal.cancelRequested && j.source == null) cand.add(j);
+            }
+        }
+        int started = 0;
+        for (Job job : cand) {
+            SourceVault.Entry e = v.get(job.id);
+            if (e == null || !"hls".equals(e.kind)) continue;
+            synchronized (this) {
+                if (stopped) break;
+                synchronized (job) {
+                    if (job.active || job.journal.state != HlsJournal.State.INTERRUPTED || job.journal.cancelRequested) continue;
+                }
+                if (!slots.tryAcquire()) break;
+                running.incrementAndGet();
+                synchronized (job) {
+                    job.journal.state = HlsJournal.State.RUNNING;
+                    job.journal.reason = "";
+                    try { job.journal.save(job.dir, hooks); }
+                    catch (IOException ex) { job.journal.state = HlsJournal.State.INTERRUPTED; running.decrementAndGet(); slots.release(); continue; }
+                    job.cancel = new SafeHttpClient.Cancellation();
+                    job.stopRequested = false;
+                    job.cause = "";
+                    job.active = true;
+                    job.phase = Phase.FETCH;
+                }
+            }
+            started++;
+            final Job j = job;
+            Thread t = new Thread(() -> resumeFrom(j, e), "evp-hls-vault");
+            t.setDaemon(true);
+            try { t.start(); } catch (RuntimeException | Error ex) { finish(j, HlsJournal.State.INTERRUPTED, "stopped", null); }
+        }
+        return started;
+    }
+
+    /** Liste neu laden, gegen die gespeicherte Bindung prüfen und mit einem internen Plan wie hlsstart weitermachen. */
+    private void resumeFrom(Job job, SourceVault.Entry e) {
+        String[] b = e.binding.split("\\|", -1);
+        try {
+            if (b.length != 4) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
+            long deadline = clock.nowMs() + PLAN_DEADLINE_MS;
+            Source src = loadSource(e.url, job.cancel, deadline);
+            if (!src.sha.equals(b[0])) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
+            int vi = Integer.parseInt(b[1]), ai = Integer.parseInt(b[2]);
+            HlsPlan.Option chosen = null;
+            for (HlsPlan.Option o : src.options) if (o.variant.index == vi && (o.audio == null ? -1 : o.audio.index) == ai) chosen = o;
+            if (chosen == null) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
+            PlanEntry p = new PlanEntry(hex(randomBytes(16)), new byte[0], "vault", clock.nowMs() + PLAN_TTL_MS, e.url, src.sha, src.options, 0);
+            if (!"-".equals(b[3])) p.fingerprints.put(chosen.id, b[3]);
+            job.source = p;
+            job.sourceOption = chosen.id;
+            run(job, p, chosen.id);
+        } catch (Stop s) {
+            finish(job, s.state, s.reason, null);
+        } catch (HlsException ex) {
+            job.cause = ex.getMessage();
+            finish(job, HlsJournal.State.INTERRUPTED, "network", null);
+        } catch (NetBlockedException ex) {
+            finish(job, HlsJournal.State.FAILED, "blocked_" + ex.reason.name().toLowerCase(Locale.ROOT), null);
+        } catch (IOException | RuntimeException ex) {
+            job.cause = ex.getClass().getSimpleName();
+            finish(job, HlsJournal.State.INTERRUPTED, "network", null);
+        }
+    }
+
     /** P4c: kann ein unterbrochener Auftrag ohne Kadri fortgesetzt werden (Quelle noch im Arbeitsspeicher)? */
     public synchronized boolean canResumeLocal(String id) {
         Job j = jobs.get(id);
@@ -422,6 +550,7 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
             if (s == HlsJournal.State.DONE || s == HlsJournal.State.FAILED || s == HlsJournal.State.CANCELLED) return json(j);
             j.journal.cancelRequested = true;
             try { j.journal.save(j.dir, hooks); } catch (IOException e) { j.cause = "cancel-journal: " + e.getMessage(); }
+            forget(j.id);   // P2: nach ausdrücklichem Abbruch nie wieder automatisch fortsetzen
             if (!j.active) cleanupNow = true;
         }
         j.cancel.cancel();
@@ -517,6 +646,7 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         try {
             if (!store.writable()) throw new Stop(HlsJournal.State.FAILED, "storage_permission");
             Chosen c = recheck(job, planEntry, optionId);
+            remember(job, planEntry, optionId, c);   // P2: verschlüsselt, höchstens 6 h, nur die Hauptadresse
             List<String> vRes = c.plan.videoResources, aRes = c.plan.audioResources;
             String shape = shape(job.journal.salt, c);
             synchronized (job) {
@@ -851,6 +981,7 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
                 job.active = false;
                 job.phase = Phase.NONE;
                 if (state != HlsJournal.State.INTERRUPTED) { job.source = null; job.sourceOption = null; }   // Adresse vergessen
+                if (state != HlsJournal.State.INTERRUPTED) forget(job.id);   // P2: fertig/Fehler/Abbruch → gespeicherte Quelle sofort weg
             }
             running.decrementAndGet();
             slots.release();

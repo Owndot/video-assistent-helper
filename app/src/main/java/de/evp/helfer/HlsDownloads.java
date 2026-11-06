@@ -33,10 +33,15 @@ final class HlsDownloads {
         this.engine = new HlsEngine(http, store, store, new File(app.getNoBackupFilesDir(), dirName), new Media3HlsRemuxer(opus),
             Mp4Downloads.SLOTS, opus, sampleBudget(Runtime.getRuntime().maxMemory()));
         this.engine.setRetry(NetWatch.retry(app));       // P4c: begrenzte Wiederaufnahme mit Verbindungsüberwachung
-        Mp4Downloads.resumable = engine::canResumeLocal;
+        Mp4Downloads.resumable = id -> engine.canResumeLocal(id) || engine.canResumeStored(id);   // P2: auch aus dem Tresor
     }
 
     /** Eine Instanz je Prozess, nach {@link Mp4Downloads#get} (gleiche Ablage). */
+    /** P4c-3 (P2): verschlüsselte Quelle (Keystore-Schlüssel, app-privat in noBackupFilesDir, höchstens 6 h). */
+    void attachVault(Context c) throws java.io.IOException {
+        engine.setVault(new de.evp.helfer.dl.SourceVault(new java.io.File(c.getNoBackupFilesDir(), "source-vault"), new KeystoreSealer(), System::currentTimeMillis));
+    }
+
     static synchronized HlsDownloads get(Context c, Mp4Downloads store) throws IOException {
         if (instance == null) {
             Context app = c.getApplicationContext();
