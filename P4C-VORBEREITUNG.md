@@ -235,3 +235,10 @@ Freigabeantrag unten.
   Zugriff auf diesen Keystore-Schlüssel, z. B. gerootet/kompromittiert); Abrufe Stunden später können vom Server
   abgelehnt werden; zusätzliche Speicherlogik (nur Plattform-Krypto, keine Eigenentwicklung).
 - Offen für die Entscheidung des Eigentümers: Freigabe ja/nein, Gültigkeit (24 h / 6 h), nur HLS oder auch MP4.
+
+## 8. P4c-3 – Übergabe
+
+Zentrale Übergabe und Implementierungsplan für P4c-3 (Neustartfehler, Fortschrittsanzeige, verschlüsselte Quelle für
+die Wiederaufnahme, Regression): **`P4C3-HANDOFF.md` im Kadri-Repository**, Branch `feature/c3-helper-mp4`
+(https://github.com/Owndot/Kadri/blob/feature/c3-helper-mp4/P4C3-HANDOFF.md). Dort stehen Stände, Architektur,
+Testbefehle, Sicherheitsgrenzen, Fortschritt und der Start-Prompt für einen anderen Coding-Agenten.
