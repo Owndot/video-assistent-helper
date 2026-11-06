@@ -17,6 +17,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -283,7 +285,7 @@ public final class TestHlsEngine {
     /** Absturz-Nachbildung: ab dem Treffer wirft jede Grenze (Prozess "tot"); Error, damit nichts ihn auffängt. */
     static final class Crash extends Error { Crash(String p) { super("crash at " + p, null, false, false); } }
 
-    static final class CrashHooks implements HlsJournal.Hooks {
+    static class CrashHooks implements HlsJournal.Hooks {
         volatile String point;
         volatile int hit;           // beim n-ten Erreichen (1 = erstes)
         final AtomicInteger seen = new AtomicInteger();
@@ -520,6 +522,29 @@ public final class TestHlsEngine {
             for (de.evp.helfer.dl.Progress p : r.events.shown) phases.add(p.phase);
             check(tag + "Anzeige: Phasen zusammensetzen, prüfen, speichern gemeldet", phases.containsAll(java.util.EnumSet.of(
                 de.evp.helfer.dl.Progress.Phase.MUX, de.evp.helfer.dl.Progress.Phase.VERIFY, de.evp.helfer.dl.Progress.Phase.SAVE)), phases);
+        }
+        // Fenster „Journal schon done, Arbeiter noch nicht fertig“: weiterhin running, noch keine Größe (deterministisch)
+        {
+            s.reset();
+            Rig rw = new Rig("progress-window", s);
+            CountDownLatch reached = new CountDownLatch(1), release = new CountDownLatch(1);
+            rw.hooks = new CrashHooks() {
+                @Override public void at(String p) {
+                    if (p.equals("done-journaled")) { reached.countDown(); try { release.await(30, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); } }
+                }
+            };
+            rw.engine = new HlsEngine(rw.http, rw.store, rw.events, rw.root, rw.remux, rw.slots, false, 1_000_000, rw.hooks, rw.now::get);   // restart() setzt die Haken zurück
+            rw.engine.setRetry(rw.retry);
+            String idw = newId();
+            String pw = rw.engine.plan(PEER, BIND, s.url("ts_sep", "master.m3u8"));
+            rw.engine.start(PEER, BIND, idw, field(pw, "planId"), firstOption(pw), "Fenster");
+            boolean in = reached.await(30, TimeUnit.SECONDS);
+            String mid = rw.engine.status(idw);
+            release.countDown();
+            String fin = await(rw.engine, idw, "done", "failed", "interrupted", "cancelled");
+            check("Fortschritt: Journal fertig, Arbeiter noch nicht → running ohne Größe (total=-1)", in && "running".equals(field(mid, "state"))
+                && "-1".equals(field(mid, "total")), mid);
+            check("Fortschritt: danach done mit exakter Größe", "done".equals(field(fin, "state")) && !"-1".equals(field(fin, "total")), fin);
         }
         // Fortsetzen: wiederverwendete Teile zählen genau einmal (kein Aufblähen über alle Teile bzw. alle Bytes)
         s.reset();

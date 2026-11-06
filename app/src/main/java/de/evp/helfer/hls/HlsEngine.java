@@ -716,6 +716,7 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
                 job.journal.resources.clear();
                 try { job.journal.save(job.dir, hooks); } catch (IOException ignored) { /* Nach Neustart: isPublished → done */ }
             }
+            hooks.at("done-journaled");   // Tests: Fenster „Journal fertig, Arbeiter noch nicht“ (Status bleibt running)
             job.bytes.set(total);
             state = HlsJournal.State.DONE;
             reason = "";
