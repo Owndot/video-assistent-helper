@@ -121,8 +121,12 @@ jobs:
       matrix:
         # 34 = targetSdk; 26 = minSdk (älterer TLS-/Socket-Pfad von OkHttp: AndroidPlatform statt Android10Platform)
         # 29 (P4b): erste Stufe mit MediaStore.Downloads und Opus-Ausgabe; Heap-Messung für das HLS-Sample-Budget
-        # 37.0 (P4c-Vorbereitung): Android 17 wie auf dem Testgerät – Vordergrunddienst, Energiesparen, MediaStore
-        api: [34, 29, 26, '37.0']
+        # 37.0 (Android 17) wurde in der P4c-Vorbereitung sechsmal versucht und wieder entfernt: das Emulator-Abbild
+        # stürzt auf den Runnern ab, bevor ein Test läuft (surfaceflinger: Assertion hasReadColorBufferDma der
+        # GPU-Emulation; mit -gpu guest GL-Kontextfehler; danach "Broken pipe" des Paketdienstes beim Installieren).
+        # Kein App-Befund; Android 17 wird auf dem Testgerät geprüft (P4C-VORBEREITUNG.md). Die API-37-Einstellungen
+        # unten bleiben für einen späteren Versuch mit einem neueren Abbild.
+        api: [34, 29, 26]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

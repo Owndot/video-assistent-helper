@@ -23,11 +23,13 @@ Unverändert und unberührt: `de.evp.helfer` und `de.evp.helfer.channeltest` sam
 |---|---|---|
 | CPU bei ausgeschaltetem Bildschirm | Der Vordergrunddienst hält den Prozess, nicht die CPU. Lange Downloads hätten bei Bildschirm aus stocken und als „unterbrochen“ enden können. | Teilweise CPU-Sperre nur solange ≥ 1 Download läuft (MP4 oder HLS), 30-min-Fenster, bei jedem Fortschritt verlängert; danach sofort frei. Berechtigung `WAKE_LOCK`. JVM-Test + 3 Mutanten, Gerätetest (API 26/29/34/37). |
 | Beschreibung des Vordergrunddienstes | `specialUse`-Untertyp nannte nur Helligkeit/Lautstärke. | Nennt jetzt auch vom Nutzer gestartete Downloads. |
-| Android 17 im Emulator | Bisher API 26/29/34. | Emulator-Matrix um **API 37** ergänzt (Ergebnis siehe Bericht). |
+| Android 17 im Emulator | Bisher API 26/29/34. | **API 37 versucht, nicht testbar:** das Emulator-Abbild stürzt auf den CI-Runnern vor dem ersten Test ab (surfaceflinger: `Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma`; mit Gast-Rendering GL-Kontextfehler, danach „Broken pipe“ des Paketdienstes). Behoben auf unserer Seite: Bootzeit, Speicher, Datenpartition, Bereitschaftsprüfung (`tools/wait-device-ready.sh`), Absturzprotokoll. Kein App-Befund; Android 17 prüft erst der Gerätetest. |
 
 Geprüft, ohne Änderungsbedarf: `targetSdk 34` → die Zeitgrenzen für `dataSync`/`mediaProcessing` (ab targetSdk 35)
 und die Start-Sperren aus `BOOT_COMPLETED` für bestimmte Typen gelten nicht; `specialUse` hat keine Zeitgrenze.
-Netz bleibt im Doze-Modus für Prozesse mit Vordergrunddienst erhalten. Port 47899 fail-closed (belegt → kein Kanal,
+Netz bleibt im Doze-Modus für Prozesse mit Vordergrunddienst erhalten. Emulator API 26/34: 45/45 (inkl. CPU-Sperre),
+API 29: 44/45 (nur P4B-A10-SIZE); macOS-Signierweg auf einem macOS-15-Runner mit Bordmitteln zweimal grün
+(mit `sha256sum` und mit `shasum`-Rückfall), alle 14 Ablehnungen greifen. Port 47899 fail-closed (belegt → kein Kanal,
 kein Ausweichport). Nicht aus der Ferne prüfbar: Samsung-eigenes Energiesparen („Apps im Ruhezustand“, „Apps im
 Tiefschlaf“) und Android-17-Änderungen jenseits des Emulators → im Gerätetest (Schritte S2, T11).
 
