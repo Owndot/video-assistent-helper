@@ -417,16 +417,24 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     private static String tag(String id) { return "mp4-" + id; }
 
     @Override public void progress(String id, String title, long bytes, long total) {
+        progress(id, title, de.evp.helfer.dl.Progress.mp4(bytes, total));
+    }
+
+    /**
+     * P4c-3: Text und Balken nur aus verlässlichem Zähler/Nenner ({@link de.evp.helfer.dl.Progress}): MP4 in Prozent der
+     * exakten Länge, HLS als „12/25 Teile · 5,0 MB geladen“, danach die Phase; nie eine Schätzung als Größe.
+     */
+    @Override public void progress(String id, String title, de.evp.helfer.dl.Progress p) {
         renewAwake();                                    // Fortschritt verlängert das Zeitfenster der CPU-Sperre
         Intent stop = new Intent(app, HelferService.class).setAction(ACTION_CANCEL).putExtra(EXTRA_JOB, id)
             .setData(Uri.parse("evp-mp4:" + id));                // je Auftrag eigener PendingIntent
         PendingIntent cancel = PendingIntent.getService(app, id.hashCode(), stop, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        int pct = total > 0 ? (int) (100L * bytes / total) : 0;
+        int[] bar = p.bar();
         Notification n = new Notification.Builder(app, Downloads.CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
-            .setContentText(pct + " % · " + (bytes >> 20) + Tr.t(" von ", " of ") + (total >> 20) + " MB")
-            .setProgress(100, pct, false)
+            .setContentText(p.text(Tr.de()))
+            .setProgress(bar[0], bar[1], bar[0] == 0)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
@@ -459,6 +467,10 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     }
 
     @Override public void finished(String id, String title, String state, String reason, Object saved) {
+        finished(id, title, state, reason, saved, -1);
+    }
+
+    @Override public void finished(String id, String title, String state, String reason, Object saved, long size) {
         NotificationManager m = nm();
         if (m == null) return;
         if ("cancelled".equals(state)) { m.cancel(tag(id), NOTE_ID); return; }
@@ -482,7 +494,8 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         Notification.Builder b = new Notification.Builder(app, Downloads.CHANNEL).setContentTitle(title).setAutoCancel(true);
         if ("done".equals(state)) {
             b.setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .setContentText(Tr.t("Gespeichert in Download/", "Saved in Download/") + Downloads.FOLDER);
+                .setContentText(Tr.t("Gespeichert in Download/", "Saved in Download/") + Downloads.FOLDER
+                    + (size > 0 ? " · " + de.evp.helfer.dl.Progress.size(size, Tr.de()) : ""));   // exakt die gespeicherte Datei
             if (saved instanceof Uri && "content".equals(((Uri) saved).getScheme())) {
                 Intent open = new Intent(Intent.ACTION_VIEW).setDataAndType((Uri) saved, "video/mp4")
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);

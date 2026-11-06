@@ -49,6 +49,14 @@ M = [
     ('de/evp/helfer/hls/HlsEngine.java', 'if (job.stopRequested) { o = new Outcome(HlsJournal.State.INTERRUPTED, "stopped", null); break; }', ''),
     ('de/evp/helfer/dl/Retry.java', 'case "io": case "network":', 'case "http_403": case "io": case "network":'),
     ('de/evp/helfer/dl/Retry.java', 'if (!online()) {', 'if (false) {'),
+    # P4c-3 (P1): Anzeige nie aus der Schätzung, Endgröße exakt, Phasen sichtbar
+    ('de/evp/helfer/hls/HlsEngine.java', '+ (fin ? j.journal.total : -1) +', '+ (fin ? j.journal.total : j.estimate) +'),
+    ('de/evp/helfer/hls/HlsEngine.java', 'return Progress.hls(p, job.done.get(), of, job.bytes.get());', 'return Progress.mp4(job.bytes.get(), job.estimate);'),
+    ('de/evp/helfer/hls/HlsEngine.java', 'long bytes = fin ? j.journal.total : j.bytes.get();', 'long bytes = j.bytes.get();'),
+    ('de/evp/helfer/hls/HlsEngine.java', 'static int parts(HlsJournal j) { return NO_SHAPE.equals(j.shape) ? 0 : j.videoCount + j.audioCount; }', 'static int parts(HlsJournal j) { return j.videoCount + j.audioCount; }'),
+    ('de/evp/helfer/hls/HlsEngine.java', 'boolean fin = "done".equals(state) && j.journal.total > 0;', 'boolean fin = s == HlsJournal.State.DONE && j.journal.total > 0;'),
+    ('de/evp/helfer/hls/HlsEngine.java', '            if (!force && now - job.lastNote < 500_000_000L) return;', '            if (now - job.lastNote < 500_000_000L) return;'),
+    ('de/evp/helfer/hls/HlsEngine.java', 'size = state == HlsJournal.State.DONE ? job.journal.total : -1;', 'size = -1;'),
 ]
 fx = sys.argv[1]; cache = sys.argv[2] if len(sys.argv) > 2 else ''
 survived = []

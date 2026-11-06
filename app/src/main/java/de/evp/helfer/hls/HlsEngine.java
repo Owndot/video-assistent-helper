@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import de.evp.helfer.dl.DirectDownloads;
 import de.evp.helfer.dl.DownloadStore;
 import de.evp.helfer.dl.JobSlots;
+import de.evp.helfer.dl.Progress;
 import de.evp.helfer.net.NetBlockedException;
 import de.evp.helfer.net.SafeHttpClient;
 
@@ -256,7 +257,8 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         volatile Phase phase = Phase.NONE;
         final AtomicLong bytes = new AtomicLong();
         final AtomicInteger done = new AtomicInteger();
-        volatile long estimate = -1;
+        volatile long estimate = -1;   // nur Speicherquote, nie Anzeige
+        long lastNote;                 // unter synchronized(job)
         volatile String cause = "";    // nur Diagnose, nie im Kanal
         volatile de.evp.helfer.dl.Retry.Wait wait = de.evp.helfer.dl.Retry.Wait.NONE;   // P4c: wartet auf Netz/Versuch
         // P4c: Quelle des laufenden bzw. zuletzt unterbrochenen Laufs NUR im Arbeitsspeicher (nie im Journal), damit ein
@@ -305,7 +307,7 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
                 j.id = id;
                 j.state = HlsJournal.State.RUNNING;
                 j.salt = hex(randomBytes(16));
-                j.shape = "0".repeat(64);      // gesetzt, sobald die Listen geprüft sind
+                j.shape = NO_SHAPE;            // gesetzt, sobald die Listen geprüft sind
                 j.videoCount = 1;
                 j.title = DirectDownloads.displayTitle(name);
                 job = new Job(id, dir, j);
@@ -536,7 +538,7 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
             fetchAll(job, vRes, aRes, c.plan.estimatedBytes);
             checkStop(job);
 
-            job.phase = Phase.MUX;
+            phase(job, Phase.MUX);
             List<File> vFiles = files(job, 'v', vRes.size()), aFiles = files(job, 'a', aRes.size());
             long media = 0;
             for (File f : vFiles) media += f.length();
@@ -548,7 +550,7 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
                 hooks.at("remux-start");
                 r = remux.remux(new HlsRemux.Input(vFiles, aFiles, c.video.mapUri != null, maxSamples), out, () -> stopWanted(job));
                 checkStop(job);
-                job.phase = Phase.VERIFY;
+                phase(job, Phase.VERIFY);
                 double tol = Math.max(1.0, Math.max(c.video.targetDuration, c.audio == null ? 0 : c.audio.targetDuration));
                 remux.verify(out, r, c.plan.videoSeconds, c.audio == null ? c.plan.videoSeconds : c.plan.audioSeconds, tol, () -> stopWanted(job));
             } finally {
@@ -557,7 +559,7 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
             checkStop(job);
             hooks.at("verified");
 
-            job.phase = Phase.SAVE;
+            phase(job, Phase.SAVE);
             long total = out.length();
             if (free() < total + SPACE_RESERVE_BYTES / 4) throw new Stop(HlsJournal.State.FAILED, "no_space");
             try { target = store.create(DirectDownloads.fileName(job.journal.title), "video/mp4"); }
@@ -800,12 +802,40 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         job.journal.save(job.dir, hooks);
     }
 
-    private long lastNote;
+    /**
+     * P4c-3: Fortschritt als fertige Teile von allen Teilen (Video und Ton) und geladene Bytes – nie die Schätzung aus der
+     * Bitrate des Plans als Größe (sie kann um ein Vielfaches daneben liegen). Je Auftrag gedrosselt (zwei parallele
+     * Aufträge verdrängen sich nicht); ein Phasenwechsel wird immer gemeldet.
+     */
+    private void progress(Job job) { progress(job, false); }
 
-    private void progress(Job job) {
+    private void progress(Job job, boolean force) {
         long now = System.nanoTime();
-        synchronized (this) { if (now - lastNote < 500_000_000L) return; lastNote = now; }
-        listener.progress(job.id, job.journal.title, job.bytes.get(), job.estimate);
+        synchronized (job) {
+            if (!force && now - job.lastNote < 500_000_000L) return;
+            job.lastNote = now;
+        }
+        listener.progress(job.id, job.journal.title, snapshot(job));
+    }
+
+    /** Platzhalter-Form eines neuen Auftrags, bevor die Listen geprüft sind (Teilezahl dann noch unbekannt). */
+    static final String NO_SHAPE = "0".repeat(64);
+
+    /** Anzahl Teile (Video + Ton) oder 0, solange die Form noch nicht feststeht. Mit Sperre auf job. */
+    static int parts(HlsJournal j) { return NO_SHAPE.equals(j.shape) ? 0 : j.videoCount + j.audioCount; }
+
+    /** Stand für Anzeige und Status aus denselben Zählern. */
+    static Progress snapshot(Job job) {
+        int of;
+        synchronized (job) { of = parts(job.journal); }
+        Phase ph = job.phase;
+        Progress.Phase p = ph == Phase.MUX ? Progress.Phase.MUX : ph == Phase.VERIFY ? Progress.Phase.VERIFY : ph == Phase.SAVE ? Progress.Phase.SAVE : Progress.Phase.FETCH;
+        return Progress.hls(p, job.done.get(), of, job.bytes.get());
+    }
+
+    private void phase(Job job, Phase p) {
+        job.phase = p;
+        progress(job, true);
     }
 
     private void finish(Job job, HlsJournal.State state, String reason, Object saved) {
@@ -827,7 +857,9 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
             prune();
             notifyAll();
         }
-        listener.finished(job.id, job.journal.title, state.name().toLowerCase(Locale.ROOT), code(reason), saved);
+        long size;
+        synchronized (job) { size = state == HlsJournal.State.DONE ? job.journal.total : -1; }   // exakt die veröffentlichte Datei
+        listener.finished(job.id, job.journal.title, state.name().toLowerCase(Locale.ROOT), code(reason), saved, size);
     }
 
     // ------------------------------------------------------------------ Wiederherstellung nach Prozessende
@@ -953,14 +985,17 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         int of;
         int done;
         synchronized (j) {
-            s = j.journal.state; reason = j.journal.reason; of = j.journal.videoCount + j.journal.audioCount;
+            s = j.journal.state; reason = j.journal.reason; of = parts(j.journal);
             done = j.active ? j.done.get() : j.journal.resources.size();
         }
         // Ein Endzustand gilt erst, wenn der Arbeiter aufgeräumt hat (wie bei MP4: "beendet" heißt, nichts Unfertiges bleibt).
         String state = j.active || s == HlsJournal.State.PUBLISHING ? "running" : s.name().toLowerCase(Locale.ROOT);
-        long bytes = s == HlsJournal.State.DONE ? Math.max(j.bytes.get(), j.journal.total) : j.bytes.get();
+        // P4c-3: "total" ist nur bei done eine Größe – exakt die veröffentlichte Datei (auch "bytes"); vorher -1. Die
+        // Schätzung aus dem Plan bleibt intern (Speicherquote).
+        boolean fin = "done".equals(state) && j.journal.total > 0;   // erst gemeldet done (Arbeiter fertig), dann die Größe
+        long bytes = fin ? j.journal.total : j.bytes.get();
         return "{\"ok\":true,\"id\":\"" + j.id + "\",\"kind\":\"hls\",\"state\":\"" + state + "\",\"bytes\":" + bytes + ",\"total\":"
-            + (s == HlsJournal.State.DONE ? j.journal.total : j.estimate) + ",\"done\":" + done + ",\"of\":" + of
+            + (fin ? j.journal.total : -1) + ",\"done\":" + done + ",\"of\":" + of
             + ",\"phase\":\"" + (j.active ? j.phase.name().toLowerCase(Locale.ROOT) : "") + "\",\"reason\":\"" + code(reason) + "\""
             + (j.active && j.wait != de.evp.helfer.dl.Retry.Wait.NONE ? ",\"wait\":\"" + (j.wait == de.evp.helfer.dl.Retry.Wait.OFFLINE ? "offline" : "retry") + "\"" : "") + "}";
     }

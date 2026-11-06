@@ -54,8 +54,15 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     /** Rückmeldungen für Benachrichtigungen: nie mit URL. */
     public interface Listener {
         void progress(String id, String title, long bytes, long total);
+        /**
+         * P4c-3: Fortschritt mit verlässlichem Zähler/Nenner ({@link Progress}). Ohne eigene Umsetzung geht er an
+         * {@link #progress(String, String, long, long)} – mit der exakten Größe oder -1, nie mit einer Schätzung.
+         */
+        default void progress(String id, String title, Progress p) { progress(id, title, p.bytes, p.total); }
         /** {@code saved}: Verweis der Ablage bei "done", sonst null. */
         void finished(String id, String title, String state, String reason, Object saved);
+        /** P4c-3: wie oben, bei "done" mit der exakten Größe der veröffentlichten Datei (sonst -1). */
+        default void finished(String id, String title, String state, String reason, Object saved, long size) { finished(id, title, state, reason, saved); }
         /** P4c: Auftrag wartet auf Netz bzw. auf den nächsten automatischen Versuch ({@link Retry.Wait#NONE}: geht weiter). */
         default void waiting(String id, String title, Retry.Wait wait) {}
     }
@@ -292,7 +299,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
                     if (freeBytes() < total - job.bytes + SPACE_RESERVE_BYTES / 2) throw new Fail("no_space");
                 }
                 long now = System.nanoTime();
-                if (now - lastNote > 500_000_000L) { lastNote = now; listener.progress(job.id, job.title, job.bytes, total); }
+                if (now - lastNote > 500_000_000L) { lastNote = now; listener.progress(job.id, job.title, Progress.mp4(job.bytes, total)); }
             }
             if (in.read() != -1) throw new Fail("long_body");
             checkCancelled(job);
@@ -392,7 +399,8 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             try { saveJournal(); } catch (IOException ignored) { /* Zustand bleibt im Speicher; nächster Start: interrupted */ }
             notifyAll();
         }
-        listener.finished(job.id, job.title, state.name().toLowerCase(Locale.ROOT), reason, saved);
+        // bei done: exakte Größe (= Content-Length, vollständig geschrieben und geprüft)
+        listener.finished(job.id, job.title, state.name().toLowerCase(Locale.ROOT), reason, saved, state == State.DONE ? job.bytes : -1);
     }
 
     // ------------------------------------------------------------------ Prüfungen

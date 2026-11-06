@@ -61,6 +61,7 @@ public final class TestHlsEngine {
         volatile boolean chunked = false;          // Segmente ohne Content-Length
         volatile String changedPath = null;        // diese Ressource liefert anderen Inhalt (anderer ETag)
         volatile String masterExtra = "";          // wird an Master angehängt (Playlist-Änderung)
+        volatile String bandwidth = null;          // P4c-3: BANDWIDTH im Master ersetzen (z. B. massiv unterschätzte Bitrate)
         // P4c: so viele volle Segmentabrufe beantwortet der Server mit 503 (vorübergehend überlastet)
         final AtomicInteger fail503 = new AtomicInteger(), answered503 = new AtomicInteger(), answered403 = new AtomicInteger(), requests = new AtomicInteger();
         volatile Runnable on503 = null;            // z. B. Netz abschalten (Flugmodus) beim ersten 503
@@ -79,7 +80,7 @@ public final class TestHlsEngine {
 
         String url(String fixture, String file) { return "http://127.0.0.1:" + port + "/dyn/" + fixture + "/" + file + "?t=" + token; }
 
-        void reset() { fullGets.clear(); rangeGets.clear(); rangeMisses.clear(); rangeBroken.clear(); maxInFlight.set(0); delayMs = 0; chunked = false; changedPath = null; masterExtra = ""; etagMode = "strong"; token = "T1";
+        void reset() { fullGets.clear(); rangeGets.clear(); rangeMisses.clear(); rangeBroken.clear(); maxInFlight.set(0); delayMs = 0; chunked = false; changedPath = null; masterExtra = ""; bandwidth = null; etagMode = "strong"; token = "T1";
             fail503.set(0); answered503.set(0); answered403.set(0); on503 = null; }
 
         int full(String suffix) { int n = 0; for (Map.Entry<String, AtomicInteger> e : fullGets.entrySet()) if (e.getKey().endsWith(suffix)) n += e.getValue().get(); return n; }
@@ -160,6 +161,7 @@ public final class TestHlsEngine {
                 if (line.isEmpty()) continue;
                 if (!line.startsWith("#")) line = line + "?t=" + token;
                 else line = line.replaceAll("URI=\"([^\"]+)\"", "URI=\"$1?t=" + token + "\"");
+                if (master && bandwidth != null && line.startsWith("#")) line = line.replaceAll("BANDWIDTH=\\d+", "BANDWIDTH=" + bandwidth);
                 b.append(line).append('\n');
             }
             if (master) b.append(masterExtra);
@@ -228,6 +230,7 @@ public final class TestHlsEngine {
         volatile boolean oom;
         volatile long blockMs;
         volatile String verifyFail;
+        volatile int pad;                        // P4c-3: Ausgabe größer als die geladenen Bytes (wie echte MP4-Kopfdaten)
         final AtomicInteger concurrent = new AtomicInteger(), maxConcurrent = new AtomicInteger(), runs = new AtomicInteger();
         @Override public Result remux(Input in, File out, BooleanSupplier cancelled) throws IOException, HlsException {
             int c = concurrent.incrementAndGet();
@@ -244,6 +247,7 @@ public final class TestHlsEngine {
                 try (OutputStream o = new FileOutputStream(out)) {
                     for (File f : in.video) o.write(Files.readAllBytes(f.toPath()));
                     for (File f : in.audio) o.write(Files.readAllBytes(f.toPath()));
+                    if (pad > 0) o.write(new byte[pad]);
                 }
                 return new Result(in.video.size(), in.audio.size(), 0, 0);
             } finally {
@@ -259,10 +263,20 @@ public final class TestHlsEngine {
     static final class Events implements DirectDownloads.Listener {
         final Map<String, String> finished = new ConcurrentHashMap<>();
         final List<String> all = new CopyOnWriteArrayList<>();
+        final List<de.evp.helfer.dl.Progress> shown = new CopyOnWriteArrayList<>();   // P4c-3: was die Anzeige bekommt
+        final Map<String, Long> sizes = new ConcurrentHashMap<>();
         @Override public void progress(String id, String title, long bytes, long total) { all.add("progress " + id + " " + title + " " + bytes); }
+        @Override public void progress(String id, String title, de.evp.helfer.dl.Progress p) {
+            shown.add(p);
+            DirectDownloads.Listener.super.progress(id, title, p);
+        }
         @Override public void finished(String id, String title, String state, String reason, Object saved) {
             all.add("finished " + id + " " + title + " " + state + " " + reason);
             finished.put(id, state + (reason.isEmpty() ? "" : ":" + reason));
+        }
+        @Override public void finished(String id, String title, String state, String reason, Object saved, long size) {
+            sizes.put(id, size);
+            finished(id, title, state, reason, saved);
         }
     }
 
@@ -403,6 +417,7 @@ public final class TestHlsEngine {
         Server s = new Server();
         try {
             fullRuns(s);
+            progressDisplay(s);
             plans(s);
             resume(s);
             autoResume(s);
@@ -448,6 +463,87 @@ public final class TestHlsEngine {
         String st = run(r, s, "ts_sep", id);
         check("Ohne Content-Length: done, Inhalt vollständig", "done".equals(field(st, "state")) && r.store.files().length == 1
             && new File(r.out, r.store.files()[0]).length() == expected("ts_sep", "v0.m3u8", "v1.m3u8").length, st);
+    }
+
+    /**
+     * P4c-3 (P1): Anzeige nie aus der Schätzung. Massiv unterschätzte Bitrate (Samsung: „über 300 %“, „5 MB von 2 MB“),
+     * getrennte Tonspur, unterschiedliche Segmentgrößen, Ausgabe größer als die geladenen Bytes, Fortsetzen mit
+     * wiederverwendeten Teilen: Zähler ≤ Nenner, kein Prozent ohne exakte Größe, Phasen sichtbar, Endgröße exakt.
+     */
+    static void progressDisplay(Server s) throws Exception {
+        int parts = countResources("ts_sep", "v0.m3u8", "v1.m3u8");
+        long media = expected("ts_sep", "v0.m3u8", "v1.m3u8").length;
+        for (String bw : new String[] {"1000", null}) {     // 1000 bit/s: Schätzung ≈ 1/100 der echten Größe; null: wie im Master
+            s.reset();
+            s.bandwidth = bw;
+            s.delayMs = 15;
+            Rig r = new Rig("progress-" + bw, s);
+            r.remux.pad = 4096;
+            String id = newId();
+            String plan = r.engine.plan(PEER, BIND, s.url("ts_sep", "master.m3u8"));
+            r.engine.start(PEER, BIND, id, field(plan, "planId"), firstOption(plan), "Fortschritt");
+            String bad = null;
+            String st;
+            long end = System.nanoTime() + 30_000_000_000L;
+            do {
+                st = r.engine.status(id);
+                if ("running".equals(field(st, "state"))) {
+                    long total = Long.parseLong(field(st, "total"));
+                    int done = Integer.parseInt(field(st, "done")), of = Integer.parseInt(field(st, "of"));
+                    if (total != -1 || (of > 0 && done > of) || (of != 0 && of != parts)) bad = st;
+                }
+                Thread.sleep(3);
+            } while (!"done".equals(field(st, "state")) && !"failed".equals(field(st, "state")) && System.nanoTime() < end);
+            String tag = "Fortschritt (BANDWIDTH=" + (bw == null ? "Master" : bw) + "): ";
+            check(tag + "done", "done".equals(field(st, "state")), st + " " + r.engine.diagnostics(id));
+            check(tag + "Status während des Ladens: total=-1 (keine Schätzung), done ≤ of, of = Video+Ton", bad == null, bad);
+            long file = new File(r.out, r.store.files()[0]).length();
+            check(tag + "Ausgabe wirklich größer als die geladenen Bytes (Testvoraussetzung)", file == media + 4096, file + " vs " + media);
+            check(tag + "Status bei done: bytes = total = exakte Größe der veröffentlichten Datei",
+                Long.parseLong(field(st, "bytes")) == file && Long.parseLong(field(st, "total")) == file, st);
+            check(tag + "Benachrichtigung bei done: exakte Größe", Long.valueOf(file).equals(r.events.sizes.get(id)), r.events.sizes.get(id));
+            r.restart();                                     // neuer Prozess: Größe aus dem Journal, nicht aus dem Zähler
+            String after = r.engine.status(id);
+            check(tag + "nach Neustart: done mit exakter Größe (bytes = total)", "done".equals(field(after, "state"))
+                && Long.parseLong(field(after, "bytes")) == file && Long.parseLong(field(after, "total")) == file, after);
+            boolean ok = !r.events.shown.isEmpty();
+            String why = "";
+            for (de.evp.helfer.dl.Progress p : r.events.shown) {
+                String de = p.text(true), en = p.text(false);
+                boolean fine = p.total == -1 && p.percent() == -1 && !de.contains("%") && !de.contains(" von ") && !en.contains(" of ")
+                    && p.done <= p.of && p.of == parts && p.bytes <= media;
+                if (!fine) { ok = false; why = p + " → " + de; break; }
+            }
+            check(tag + "Anzeige: nie Prozent/„von“, Teile ≤ alle Teile, Bytes ≤ geladene Medien", ok, why);
+            java.util.Set<de.evp.helfer.dl.Progress.Phase> phases = java.util.EnumSet.noneOf(de.evp.helfer.dl.Progress.Phase.class);
+            for (de.evp.helfer.dl.Progress p : r.events.shown) phases.add(p.phase);
+            check(tag + "Anzeige: Phasen zusammensetzen, prüfen, speichern gemeldet", phases.containsAll(java.util.EnumSet.of(
+                de.evp.helfer.dl.Progress.Phase.MUX, de.evp.helfer.dl.Progress.Phase.VERIFY, de.evp.helfer.dl.Progress.Phase.SAVE)), phases);
+        }
+        // Fortsetzen: wiederverwendete Teile zählen genau einmal (kein Aufblähen über alle Teile bzw. alle Bytes)
+        s.reset();
+        s.delayMs = 40;
+        Rig r = new Rig("progress-resume", s);
+        String id = newId();
+        String plan = r.engine.plan(PEER, BIND, s.url("ts_sep", "master.m3u8"));
+        r.engine.start(PEER, BIND, id, field(plan, "planId"), firstOption(plan), "x");
+        long end = System.nanoTime() + 10_000_000_000L;
+        while (s.fullSegments() < 4 && System.nanoTime() < end) Thread.sleep(5);
+        s.token = "T2";
+        String st = await(r.engine, id, "done", "failed", "interrupted", "cancelled");
+        check("Fortschritt (Fortsetzen): erst unterbrochen", "interrupted".equals(field(st, "state")), st);
+        r.restart();
+        s.quiesce();
+        s.delayMs = 0;
+        r.events.shown.clear();
+        String p2 = r.engine.plan(PEER, BIND, s.url("ts_sep", "master.m3u8"));
+        r.engine.start(PEER, BIND, id, field(p2, "planId"), firstOption(p2), "x");
+        st = await(r.engine, id, "done", "failed", "interrupted", "cancelled");
+        check("Fortschritt (Fortsetzen): done", "done".equals(field(st, "state")), st);
+        int maxDone = 0; long maxBytes = 0;
+        for (de.evp.helfer.dl.Progress p : r.events.shown) { maxDone = Math.max(maxDone, p.done); maxBytes = Math.max(maxBytes, p.bytes); }
+        check("Fortschritt (Fortsetzen): höchstens alle Teile und alle Bytes – wiederverwendete Teile nicht doppelt",
+            maxDone <= parts && maxBytes <= media, "maxDone=" + maxDone + "/" + parts + " maxBytes=" + maxBytes + "/" + media);
     }
 
     static int countResources(String fixture, String v, String a) throws IOException {

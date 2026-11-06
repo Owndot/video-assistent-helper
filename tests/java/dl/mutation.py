@@ -14,6 +14,10 @@ DL = 'de/evp/helfer/dl/DirectDownloads.java'
 NET = 'de/evp/helfer/net/SafeHttpClient.java'
 
 MUTATIONS = [
+    # P4c-3 (P1): Prozent nur aus exaktem Zähler/Nenner (kein Abschneiden, keine Schätzung)
+    ('percent beyond the exact size', 'de/evp/helfer/dl/Progress.java', 'if (phase != Phase.FETCH || total <= 0 || bytes > total) return -1;', 'if (phase != Phase.FETCH || total <= 0) return -1;'),
+    ('percent clipped at 100', 'de/evp/helfer/dl/Progress.java', 'if (phase != Phase.FETCH || total <= 0 || bytes > total) return -1;', 'if (phase != Phase.FETCH || total <= 0) return -1;\n        if (bytes > total) return 100;'),
+    ('parts beyond all parts shown', 'de/evp/helfer/dl/Progress.java', 'public boolean partsKnown() { return phase == Phase.FETCH && of > 0 && done <= of; }', 'public boolean partsKnown() { return phase == Phase.FETCH && of > 0; }'),
     ('job slots never report idle', 'de/evp/helfer/dl/JobSlots.java', 'private void freed() { if (--used == 0) activity.active(false); }', 'private void freed() { --used; }'),
     ('job slots report every acquire', 'de/evp/helfer/dl/JobSlots.java', 'private void occupied() { if (++used == 1) activity.active(true); }', 'private void occupied() { ++used; activity.active(true); }'),
     ('late listener not told about running job', 'de/evp/helfer/dl/JobSlots.java', 'if (used > 0) activity.active(true);', ''),
