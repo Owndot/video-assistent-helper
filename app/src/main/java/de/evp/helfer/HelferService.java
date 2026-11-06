@@ -78,6 +78,9 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
         // Phase C2: direkte MP4-Downloads. Unlesbares Journal → keine Downloads (sonst wären Doppelstarts möglich).
         try { mp4 = Mp4Downloads.get(this); mp4.engine.serviceStarted(); }
         catch (Exception e) { mp4 = null; }
+        if (mp4 != null) {   // P4c-3 (P2): verschlüsselte Quelle; Fehler → ohne Fortsetzen nach Prozessende
+            try { mp4.attachVault(this); } catch (Exception | LinkageError e) { /* unverändert ohne Tresor */ }
+        }
         // P4b: HLS-VOD → MP4 (gleiche Ablage, gemeinsame Grenzen). Unlesbarer Auftragsordner → kein HLS.
         if (mp4 != null) {
             try { hls = HlsDownloads.get(this, mp4); hls.engine.serviceStarted(); }
@@ -421,8 +424,12 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
 
     private void resumeStoredAsync() {
         HlsDownloads h = hls;
-        if (h == null) return;
-        Thread t = new Thread(h.engine::resumeStored, "evp-resume-stored");   // Datei + Keystore nicht im Hauptthread
+        Mp4Downloads m = mp4;
+        if (h == null && m == null) return;
+        Thread t = new Thread(() -> {                                          // Datei + Keystore nicht im Hauptthread
+            if (m != null) m.engine.resumeStored();
+            if (h != null) h.engine.resumeStored();
+        }, "evp-resume-stored");
         t.setDaemon(true);
         t.start();
     }

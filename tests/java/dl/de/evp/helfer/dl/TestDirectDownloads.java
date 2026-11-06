@@ -387,6 +387,7 @@ public final class TestDirectDownloads {
         check("no cookies or credentials sent", TestDirectDownloads::noCredentials);
         check("stopAll cancels running downloads", TestDirectDownloads::stopAll);
         check("file name never from URL", TestDirectDownloads::names);
+        check("P4c-3 P2: encrypted source – resume after process end, changed file, cancel, no strong ETag, expiry", TestDirectDownloads::vault);
         System.out.println("dl tests: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -999,6 +1000,97 @@ public final class TestDirectDownloads {
                 expect(srv.requests.get() == 2, "exactly one request per job");
                 expect(java.util.Arrays.equals(fileSha(new File(store.dir, "Second.mp4")), expectedSha(4096)), "second hash");
             } finally { releaseFirst.countDown(); releaseSecond.countDown(); d.stopAll(); }
+        }
+    }
+
+    /** P2: Software-AES-GCM für die JVM (App: Android-Keystore). */
+    static final class SoftSealer implements SourceVault.Sealer {
+        final javax.crypto.SecretKey key;
+        SoftSealer() throws Exception { javax.crypto.KeyGenerator g = javax.crypto.KeyGenerator.getInstance("AES"); g.init(256); key = g.generateKey(); }
+        @Override public byte[] seal(byte[] aad, byte[] plain) throws java.security.GeneralSecurityException {
+            byte[] iv = new byte[12]; new java.security.SecureRandom().nextBytes(iv);
+            javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(javax.crypto.Cipher.ENCRYPT_MODE, key, new javax.crypto.spec.GCMParameterSpec(128, iv));
+            c.updateAAD(aad);
+            byte[] ct = c.doFinal(plain), out = new byte[12 + ct.length];
+            System.arraycopy(iv, 0, out, 0, 12); System.arraycopy(ct, 0, out, 12, ct.length);
+            return out;
+        }
+        @Override public byte[] open(byte[] aad, byte[] sealed) throws java.security.GeneralSecurityException {
+            javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(javax.crypto.Cipher.DECRYPT_MODE, key, new javax.crypto.spec.GCMParameterSpec(128, sealed, 0, 12));
+            c.updateAAD(aad);
+            return c.doFinal(sealed, 12, sealed.length - 12);
+        }
+    }
+
+    static void vault() throws Exception {
+        java.util.concurrent.atomic.AtomicBoolean stall = new java.util.concurrent.atomic.AtomicBoolean(true);
+        java.util.concurrent.atomic.AtomicReference<String> etag = new java.util.concurrent.atomic.AtomicReference<>("\"v1-65536\"");
+        final long total = 65536;
+        try (Server srv = new Server((r, out, i) -> {
+            String e = r.line.contains("/plain") ? null : etag.get();
+            if (stall.get()) {
+                head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: " + total, e == null ? "" : "ETag: " + e);
+                content(out, 0, 8); out.flush(); Thread.sleep(60_000);
+            } else serveFile(r, out, total, e, -1);
+        })) {
+            SoftSealer key = new SoftSealer();
+            java.util.concurrent.atomic.AtomicLong now = new java.util.concurrent.atomic.AtomicLong(1_000_000);
+            for (String mode : new String[] {"resume", "changed", "cancel", "plain", "expired"}) {
+                stall.set(true);
+                etag.set("\"v1-65536\"");
+                File vdir = new File(root, "vault-" + mode);
+                SourceVault v = new SourceVault(vdir, key, now::get);
+                DirStore store = new DirStore("vault-store-" + mode);
+                Events ev = new Events();
+                DirectDownloads d1 = engine(LocalTestClients.loopback(srv.port()), store, ev);
+                d1.setVault(v);
+                String id = newId();
+                d1.start(id, srv.url(mode.equals("plain") ? "/plain.mp4?sig=TOKEN" : "/s.mp4?sig=TOKEN"), "Tresor " + mode);
+                long until = System.currentTimeMillis() + 5_000;
+                while (store.created.get() < 1 && System.currentTimeMillis() < until) Thread.sleep(10);
+                File rec = new File(vdir, id + ".src");
+                if (mode.equals("plain")) expect(!rec.exists(), "plain: no stored source without a strong ETag");
+                else {
+                    expect(rec.isFile(), mode + ": stored");
+                    String raw = new String(Files.readAllBytes(rec.toPath()), StandardCharsets.ISO_8859_1);
+                    expect(!raw.contains("127.0.0.1") && !raw.contains("TOKEN") && !raw.contains("s.mp4") && !raw.contains("http") && !raw.contains("Tresor"), "record has no plaintext: " + raw);
+                }
+                // "Absturz": Journal mitten im Lauf, neue Engine (neuer Prozess) mit demselben Tresor
+                DirStore crashed = new DirStore("vault-crashed-" + mode);
+                crashed.journal = store.loadJournal();
+                Events ev2 = new Events();
+                DirectDownloads d2 = engine(LocalTestClients.loopback(srv.port()), crashed, ev2);
+                d2.setVault(new SourceVault(vdir, key, now::get));
+                expect(d2.status(id).contains("\"state\":\"interrupted\""), mode + ": interrupted after restart " + d2.status(id));
+                stall.set(false);
+                int req = srv.requests.get();
+                if (mode.equals("resume")) {
+                    expect(d2.canResumeStored(id) && d2.resumeStored() == 1, "resume: started");
+                    expect(ev2.await(id, 20_000).equals("done"), "resume: done");
+                    File[] fs = crashed.dir.listFiles((dd, n) -> n.endsWith(".mp4"));
+                    expect(fs != null && fs.length == 1 && fs[0].length() == total && fs[0].getName().startsWith("Tresor resume"), "resume: exact file with the stored name");
+                    expect(!rec.exists(), "resume: stored source deleted after success");
+                } else if (mode.equals("changed")) {
+                    etag.set("\"v2-65536\"");
+                    expect(d2.resumeStored() == 1, "changed: started");
+                    expect(ev2.await(id, 20_000).equals("failed:changed"), "changed: failed:changed");
+                    File[] fs = crashed.dir.listFiles((dd, n) -> n.endsWith(".mp4"));
+                    expect(fs == null || fs.length == 0, "changed: nothing published");
+                    expect(!rec.exists(), "changed: stored source deleted");
+                } else if (mode.equals("cancel")) {
+                    d2.cancel(id);
+                    expect(!rec.exists() && d2.resumeStored() == 0 && srv.requests.get() == req, "cancel: deleted at once, never resumed, no request");
+                } else if (mode.equals("plain")) {
+                    expect(d2.resumeStored() == 0 && srv.requests.get() == req, "plain: nothing to resume");
+                } else {
+                    now.addAndGet(SourceVault.MAX_AGE_MS);
+                    expect(d2.resumeStored() == 0 && srv.requests.get() == req && !rec.exists(), "expired: not resumed, deleted");
+                }
+                d1.stopAll();
+                d2.stopAll();
+            }
         }
     }
 

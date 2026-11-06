@@ -132,6 +132,11 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         return instance;
     }
 
+    /** P4c-3 (P2): verschlüsselte Quelle der MP4-Aufträge (eigener Ordner, Keystore-Schlüssel, höchstens 6 h). */
+    void attachVault(Context c) throws IOException {
+        engine.setVault(new de.evp.helfer.dl.SourceVault(new java.io.File(c.getNoBackupFilesDir(), "source-vault/mp4"), new KeystoreSealer(), System::currentTimeMillis));
+    }
+
     static boolean validJobId(String id) { return id != null && id.matches("[0-9a-f]{32}"); }
 
     // ------------------------------------------------------------------ DownloadStore

@@ -39,7 +39,7 @@ final class HlsDownloads {
     /** Eine Instanz je Prozess, nach {@link Mp4Downloads#get} (gleiche Ablage). */
     /** P4c-3 (P2): verschlüsselte Quelle (Keystore-Schlüssel, app-privat in noBackupFilesDir, höchstens 6 h). */
     void attachVault(Context c) throws java.io.IOException {
-        engine.setVault(new de.evp.helfer.dl.SourceVault(new java.io.File(c.getNoBackupFilesDir(), "source-vault"), new KeystoreSealer(), System::currentTimeMillis));
+        engine.setVault(new de.evp.helfer.dl.SourceVault(new java.io.File(c.getNoBackupFilesDir(), "source-vault/hls"), new KeystoreSealer(), System::currentTimeMillis));
     }
 
     static synchronized HlsDownloads get(Context c, Mp4Downloads store) throws IOException {

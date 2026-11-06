@@ -78,6 +78,9 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         volatile String ref;      // Verweis der Ablage (Journal), nie die URL
         volatile String cause = "";   // nur Diagnose (Tests/Logs): Ausnahmeklasse eines Ablagefehlers, nie im Status/Kanal
         volatile Retry.Wait wait = Retry.Wait.NONE;   // P4c: wartet gerade auf Netz bzw. auf den nächsten Versuch
+        // P2: Fortsetzen aus der gespeicherten Quelle – nur dieselbe Darstellung (starker ETag und exakte Länge)
+        volatile String expectEtag;
+        volatile long expectTotal = -1;
         final SafeHttpClient.Cancellation cancel = new SafeHttpClient.Cancellation();
         Job(String id, String title) { this.id = id; this.title = title; }
     }
@@ -179,8 +182,98 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         Job j;
         synchronized (this) { j = jobs.get(id); }
         if (j == null) return unknown(id);
+        forget(id);   // P2: nach ausdrücklichem Abbruch nie wieder automatisch fortsetzen
         j.cancel.cancel();
         return json(j);
+    }
+
+    // ------------------------------------------------------------------ P4c-3 (P2): verschlüsselte Quelle
+
+    private volatile SourceVault vault;
+
+    /** Ablage der Quelle (höchstens 6 h); Einträge ohne unterbrochenen Auftrag werden sofort gelöscht. */
+    public void setVault(SourceVault v) {
+        v.sweep();
+        java.util.Set<String> keep = new java.util.HashSet<>();
+        synchronized (this) {
+            for (Job j : jobs.values()) if (j.state == State.INTERRUPTED) keep.add(j.id);
+            vault = v;
+        }
+        // eigener Ordner je Engine (MP4/HLS): alles ohne unterbrochenen MP4-Auftrag oder anderer Art sofort löschen
+        java.io.File[] fs = v.dirForCleanup().listFiles();
+        if (fs != null) for (java.io.File f : fs) {
+            String n = f.getName();
+            if (!n.endsWith(".src") || n.length() != 36) continue;
+            String id = n.substring(0, 32);
+            SourceVault.Entry e = keep.contains(id) ? v.get(id) : null;
+            if (e == null || !"mp4".equals(e.kind)) v.delete(id);
+        }
+    }
+
+    private static String b64(String s) { return Base64.getUrlEncoder().withoutPadding().encodeToString(s.getBytes(StandardCharsets.UTF_8)); }
+    private static String unb64(String s) { return new String(Base64.getUrlDecoder().decode(s), StandardCharsets.UTF_8); }
+
+    /** Nur mit starkem ETag: ohne ihn lässt sich nach einem Prozessende nicht prüfen, ob es dieselbe Datei ist. */
+    private void remember(Job job, String url, String etag, long total) {
+        SourceVault v = vault;
+        if (v == null || job.cancel.isCancelled()) return;
+        if (etag == null) { v.delete(job.id); return; }
+        v.put(job.id, "mp4", url, b64(etag) + "|" + total + "|" + b64(job.title));
+    }
+
+    private void forget(String id) {
+        SourceVault v = vault;
+        if (v != null) v.delete(id);
+    }
+
+    public boolean canResumeStored(String id) {
+        SourceVault v = vault;
+        Job j;
+        synchronized (this) { j = jobs.get(id); if (j == null || stopped || v == null || j.state != State.INTERRUPTED) return false; }
+        SourceVault.Entry e = v.get(id);
+        return e != null && "mp4".equals(e.kind);
+    }
+
+    /**
+     * P2: unterbrochene MP4-Aufträge mit gültiger Quelle neu laden (ab Byte 0, derselbe Auftrag), nur bei unveränderter
+     * Darstellung (starker ETag, Länge). Nur auf Anlass des Dienstes bzw. beim Öffnen der App; nie nach Abbruch.
+     */
+    public int resumeStored() {
+        SourceVault v = vault;
+        if (v == null) return 0;
+        List<String> cand = new ArrayList<>();
+        synchronized (this) {
+            if (stopped) return 0;
+            for (Job j : jobs.values()) if (j.state == State.INTERRUPTED) cand.add(j.id);
+        }
+        int started = 0;
+        for (String id : cand) {
+            SourceVault.Entry e = v.get(id);
+            if (e == null || !"mp4".equals(e.kind)) continue;
+            String[] b = e.binding.split("\\|", -1);
+            Job job;
+            try {
+                if (b.length != 3) throw new IllegalArgumentException("binding");
+                job = new Job(id, displayTitle(unb64(b[2])));
+                job.expectEtag = unb64(b[0]);
+                job.expectTotal = Long.parseLong(b[1]);
+            } catch (IllegalArgumentException bad) { v.delete(id); continue; }
+            synchronized (this) {
+                Job known = jobs.get(id);
+                if (stopped || known == null || known.state != State.INTERRUPTED) continue;
+                if (running.get() >= MAX_PARALLEL || !slots.tryAcquireWithConnection()) break;
+                jobs.put(id, job);
+                running.incrementAndGet();
+                try { saveJournal(); }
+                catch (IOException io) { jobs.put(id, known); running.decrementAndGet(); slots.releaseWithConnection(); continue; }
+            }
+            started++;
+            final Job j = job;
+            final String url = e.url;
+            try { workers.execute(() -> run(j, url)); }
+            catch (RuntimeException rejected) { finish(j, State.INTERRUPTED, "stopped", null); }
+        }
+        return started;
     }
 
     /**
@@ -239,6 +332,9 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             // Fortsetzen nur mit starkem ETag (RFC 9110 8.8.1/13.1.5); Last-Modified und schwache ETags genügen nicht.
             String etag = strongEtag(response.etag());
             String finalUrl = response.url();
+            // P2: nach Prozessende nur dieselbe Datei (gleicher starker ETag, gleiche Länge) – sonst nichts schreiben
+            if (job.expectTotal >= 0 && (total != job.expectTotal || etag == null || !etag.equals(job.expectEtag))) throw new Fail("changed");
+            remember(job, url, etag, total);
             if (freeBytes() < total + SPACE_RESERVE_BYTES) throw new Fail("no_space");
             InputStream in = response.body();
             byte[] head = new byte[8];
@@ -391,6 +487,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     }
 
     private void finish(Job job, State state, String reason, Object saved) {
+        if (state != State.INTERRUPTED) forget(job.id);   // P2: fertig/Fehler/Abbruch → gespeicherte Quelle sofort weg
         synchronized (this) {
             job.state = state;
             job.reason = reason;

@@ -14,6 +14,10 @@ DL = 'de/evp/helfer/dl/DirectDownloads.java'
 NET = 'de/evp/helfer/net/SafeHttpClient.java'
 
 MUTATIONS = [
+    # P4c-3 (P2): MP4-Quelle nur für dieselbe Datei, nie nach Abbruch
+    ('resume from vault ignores a changed file', DL, 'if (job.expectTotal >= 0 && (total != job.expectTotal || etag == null || !etag.equals(job.expectEtag))) throw new Fail("changed");', ''),
+    ('vault kept after cancel', DL, '        forget(id);   // P2: nach ausdrücklichem Abbruch nie wieder automatisch fortsetzen\n', ''),
+    ('vault kept after success', DL, '        if (state != State.INTERRUPTED) forget(job.id);   // P2: fertig/Fehler/Abbruch → gespeicherte Quelle sofort weg\n', ''),
     # P4c-3 (P1): Prozent nur aus exaktem Zähler/Nenner (kein Abschneiden, keine Schätzung)
     ('percent beyond the exact size', 'de/evp/helfer/dl/Progress.java', 'if (phase != Phase.FETCH || total <= 0 || bytes > total) return -1;', 'if (phase != Phase.FETCH || total <= 0) return -1;'),
     ('percent clipped at 100', 'de/evp/helfer/dl/Progress.java', 'if (phase != Phase.FETCH || total <= 0 || bytes > total) return -1;', 'if (phase != Phase.FETCH || total <= 0) return -1;\n        if (bytes > total) return 100;'),
