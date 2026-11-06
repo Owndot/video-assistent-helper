@@ -23,13 +23,31 @@ adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS 2>/dev/null || tru
 # Android 8–9: READ/WRITE_EXTERNAL_STORAGE erteilt der Test selbst zur Laufzeit (wie der Dialog der App); hier nur
 # der Ausgangszustand. Ab Android 10 sind beide nicht angefordert.
 adb shell dumpsys package $PKG | grep -E 'WRITE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE' | sed 's/^/STORAGE_BEFORE /' || true
-adb shell am instrument -w -r -e class de.evp.helfer.ChannelInstrumentedTest,de.evp.helfer.net.SafeHttpInstrumentedTest,de.evp.helfer.Mp4DownloadsInstrumentedTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$REPORT/instrumentation.txt" 2>&1
+adb shell am instrument -w -r -e class de.evp.helfer.ChannelInstrumentedTest,de.evp.helfer.net.SafeHttpInstrumentedTest,de.evp.helfer.Mp4DownloadsInstrumentedTest,de.evp.helfer.HlsDownloadsInstrumentedTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$REPORT/instrumentation.txt" 2>&1
 status=0
 grep -q '^OK (' "$REPORT/instrumentation.txt" || status=1
+# P4c-3: ECHTER Prozess-Neustart (ProcessRestartInstrumentedTest). Phase A lässt Dienst + Download laufen; dann endet
+# der Prozess: (1) „am force-stop“, (2) der Start der nächsten Instrumentierung beendet den alten Prozess. Phase B läuft
+# in einem neuen Prozess (prüft die Prozesskennung selbst).
+RUNNER="$PKG.test/androidx.test.runner.AndroidJUnitRunner"
+RC=de.evp.helfer.ProcessRestartInstrumentedTest
+for mode in force-stop process-replaced; do
+  adb shell am instrument -w -r -e restartPhase A -e class "$RC#phaseA_startDownloadAndPairThenTheProcessDies" "$RUNNER" > "$REPORT/restart-$mode-A.txt" 2>&1
+  [ "$mode" = force-stop ] && adb shell am force-stop "$PKG"
+  adb shell am instrument -w -r -e restartPhase B -e class "$RC#phaseB_afterARealProcessRestart" "$RUNNER" > "$REPORT/restart-$mode-B.txt" 2>&1
+  for ph in A B; do
+    if grep -q '^OK (1 test)' "$REPORT/restart-$mode-$ph.txt"; then echo "RESTART $mode phase $ph OK" >> "$REPORT/summary.txt"
+    else echo "RESTART $mode phase $ph FAILED" >> "$REPORT/summary.txt"; status=1
+      grep -E 'AssertionError|Exception|INSTRUMENTATION_RESULT|shortMsg|longMsg' "$REPORT/restart-$mode-$ph.txt" | head -20 | sed "s/^/RESTART $mode $ph: /" >> "$REPORT/summary.txt"
+    fi
+  done
+done
 grep -E 'INSTRUMENTATION_STATUS: (test|class)=|INSTRUMENTATION_STATUS_CODE|^OK \(|FAILURES|Tests run|AssertionError|Exception' "$REPORT/instrumentation.txt" > "$REPORT/summary.txt"
 adb shell dumpsys meminfo $PKG > "$REPORT/meminfo.txt" 2>&1 || true
 adb shell top -b -n 1 -p "$(adb shell pidof $PKG | tr -d '\r')" > "$REPORT/top.txt" 2>&1 || true
-adb logcat -d -s CHANNEL_TEST:I OKHTTP_TEST:I MP4_TEST:I > "$REPORT/measurements.txt"
+adb logcat -d -s CHANNEL_TEST:I OKHTTP_TEST:I MP4_TEST:I HLS_TEST:I RESTART_TEST:I > "$REPORT/measurements.txt"
+# Abstürze des Testprozesses (z. B. "Process crashed" ohne Stacktrace im Runner-Ergebnis): Crash-Puffer sichern.
+adb logcat -d -b crash > "$REPORT/crash.txt" 2>&1 || true
 # Nichts lauscht mehr auf dem alten Port, solange der Dienst läuft.
 adb shell 'cat /proc/net/tcp /proc/net/tcp6 2>/dev/null' | awk '$4=="0A"{print $2}' > "$REPORT/listeners.txt"
 if grep -qi ':BA43$' "$REPORT/listeners.txt"; then echo "LISTENER ON 47811" >> "$REPORT/summary.txt"; status=1; fi
@@ -48,8 +66,13 @@ fi
 diff -q "$REPORT/packages-before.txt" "$REPORT/packages-after.txt" > /dev/null || { echo "package list changed" >> "$REPORT/summary.txt"; status=1; }
 tail -5 "$REPORT/summary.txt"
 grep -h 'PERSIST_AFTER_UNINSTALL' "$REPORT/summary.txt" || true
+grep -h '^RESTART' "$REPORT/summary.txt" || true
 # Fehlgeschlagene Tests mit dem Anfang ihres Stacktraces ins Job-Log (nur Testausgaben mit Wegwerfdaten).
 awk '/^INSTRUMENTATION_STATUS: test=/{t=$0} /^INSTRUMENTATION_STATUS: stack=/{print "FAILED " t; n=14} n>0{print; n--}' "$REPORT/instrumentation.txt" | head -150
-grep -E 'CHANNEL_|OKHTTP_|MP4_' "$REPORT/measurements.txt" || true
+# Runner-Ergebnis (Absturzmeldung, Liste aller Fehlschläge) und Crash-Puffer ins Job-Log.
+grep -E 'INSTRUMENTATION_RESULT|INSTRUMENTATION_FAILED|shortMsg|longMsg|Process crashed' "$REPORT/instrumentation.txt" | head -20 || true
+awk '/^There (was|were) [0-9]+ failure/{p=1} p&&/^[0-9]+\) /{n=6} p&&n>0{print; n--}' "$REPORT/instrumentation.txt" | head -60 || true
+grep -E 'FATAL|Exception|Error|^\s+at |Abort|signal|backtrace|#[0-9]+ pc' "$REPORT/crash.txt" | head -80 || true
+grep -E 'CHANNEL_|OKHTTP_|MP4_|HLS_|RESTART_' "$REPORT/measurements.txt" || true
 grep -E 'TOTAL PSS|TOTAL:|Native Heap|Java Heap' "$REPORT/meminfo.txt" | head -5 || true
 exit $status

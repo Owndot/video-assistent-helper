@@ -164,7 +164,7 @@
       // Vollbild endet wegen Bild-in-Bild (Knopf oder Wischen zum Startbildschirm): Player bleibt offen
       const pipNow = () => pipIsOurs(vid) || document.hidden || (st.pipAt && Date.now() - st.pipAt < 2500);
       if (pipNow()) { st.fsStart = false; st.fsLost = true; return; }
-      // Kurz nach DEINEM Tipp auf "Drehen" beendet? Dann war es die Webseite (z. B. Pornhub beendet das Vollbild im Hochformat),
+      // Kurz nach DEINEM Tipp auf "Drehen" beendet? Dann war es die Webseite (z. B. Seite A beendet das Vollbild im Hochformat),
       // nicht die Zurück-Taste: Player offen lassen und Vollbild sofort zurückholen (der Tipp ist noch "frisch").
       if (st.selfTurnAt && exitAt - st.selfTurnAt < 1200) {
         enterFs().then(() => {
