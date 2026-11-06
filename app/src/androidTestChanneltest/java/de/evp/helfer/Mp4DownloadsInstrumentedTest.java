@@ -495,7 +495,8 @@ public class Mp4DownloadsInstrumentedTest {
             assertEquals(proofsBefore, proofs());
             String b = newId(), tb = title("Resume");
             engine.start(b, srv.url("/etag"), tb);
-            assertEquals("done", events.await(b, 60_000));
+            String rb = events.await(b, 60_000);
+            assertEquals("cause: " + engine.diagnostics(b), "done", rb);   // P4c-3: Ursache eines seltenen failed:storage
             Uri uri = (Uri) events.saved.get(b);
             cleanup.add(uri);
             if (Build.VERSION.SDK_INT >= 29) {
