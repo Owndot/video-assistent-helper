@@ -57,5 +57,5 @@ javac -cp "$sdk:tests/java/classes:$cp_net" -d "$work/classes" \
   app/src/main/java/poc/Core.java "$src/ChannelServer.java" "$src/ControlCommands.java" "$src/HttpRequestReader.java" \
   "$src/SnapshotWriter.java" "$src/IdentityStore.java" "$src/RegistryStore.java" \
   "$src/Mp4Downloads.java" "$src/Tr.java" "$src"/dl/*.java "$src"/net/*.java \
-  "$src/HlsDownloads.java" "$src/NetWatch.java" "$src"/hls/*.java "$src"/hlsmux/*.java
-echo "PASS: actual Downloads/HelferService/Keys, Mp4Downloads, HlsDownloads, NetWatch, dl/, net/, hls/, hlsmux/ and channel classes compile against $sdk; no APK built"
+  "$src/HlsDownloads.java" "$src/KeystoreSealer.java" "$src/NetWatch.java" "$src"/hls/*.java "$src"/hlsmux/*.java
+echo "PASS: actual Downloads/HelferService/Keys, Mp4Downloads, HlsDownloads, KeystoreSealer, NetWatch, dl/, net/, hls/, hlsmux/ and channel classes compile against $sdk; no APK built"
