@@ -16,7 +16,10 @@ final class CapturedMediaInbox {
     static final class Part {
         final long length;
         final byte[] hash;
-        Part(long length, byte[] hash) { this.length = length; this.hash = hash.clone(); }
+        Part(long length, byte[] hash) throws IOException {
+            if (length <= 0 || length > MAX_PART || hash == null || hash.length != 32) throw new IOException("metadata");
+            this.length = length; this.hash = hash.clone();
+        }
     }
     private final File dir;
     private final List<Part> parts;

@@ -83,6 +83,7 @@ public final class TestCapturedMedia {
         byte[] output=decode.getInputStream().readAllBytes();
         check("independent full video/audio decode",decode.waitFor()==0&&output.length==0);
         rejects("descriptor bytes bounded before directory creation",()->new CapturedMediaInbox(root,List.of(new CapturedMediaInbox.Part(Long.MAX_VALUE,new byte[32])),20));
+        rejects("descriptor hash bounded before copy",()->new CapturedMediaInbox.Part(1,new byte[33]));
         rejects("descriptor duration finite",()->new CapturedMediaInbox(root,metadata,Double.NaN));
         CapturedMediaInbox missing=inbox(); rejects("incomplete never remuxed",()->missing.verify(new Media3HlsRemuxer(false))); check("incomplete cleaned",noMedia(missing));
         CapturedMediaInbox order=inbox(); rejects("wrong resource order",()->order.accept(1,0,new byte[1])); check("order failure cleaned",noMedia(order));

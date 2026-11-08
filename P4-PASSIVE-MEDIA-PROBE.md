@@ -1,7 +1,9 @@
 # P4 – adressfreie Medienablage, nur isolierter Versuch
 
 Stand 2026-11-08. **IN_PROGRESS**, Produktion **UNAPPROVED**. Keine neue App-Funktion,
-kein Kanalbefehl, kein Netzwerk-Endpunkt, kein MediaStore-Aufruf, keine APK.
+kein Kanalbefehl, kein Netzwerk-Endpunkt, kein MediaStore-Aufruf, keine Geräte-APK ausgeliefert.
+Die unveränderte bestehende CI baut intern kurzlebige Test-APKs für ihre Emulatorprüfungen;
+keine neue manuelle APK-/Signier-/Veröffentlichungsaktion ausgelöst.
 Maßgebliche Gesamtübergabe: [Kadri P4C3-HANDOFF.md](https://github.com/Owndot/Kadri/blob/feature/c3-helper-mp4/P4C3-HANDOFF.md).
 
 ## Nachgewiesen
@@ -28,12 +30,15 @@ Private temporäre Dateien werden intern benannt; keine Veröffentlichungsfunkti
   erfolgreicher Medienprüfung, unmittelbar vor dem Zustandswechsel, verhindert `verified`.
   Keine Aussage über bereits veröffentlichte Dateien: der Versuch veröffentlicht nichts.
 
-**DONE – 24/24 lokale Prüfungen** mit bestehenden synthetischen Fixture-Dateien.
-**DONE – 25/25 lokale Prüfungen** mit den tatsächlich im Browser erfassten, adressfrei exportierten
-Dateiblöcken aus dem Kadri-Test. Browser-Probe zuvor 51/51; Quellbasis `7904145` plus Exportoption.
+**DONE – erster Lauf 24/24** mit bestehenden synthetischen Fixture-Dateien.
+**DONE – aktuell 26/26 lokale Prüfungen** mit den tatsächlich im Browser erfassten, adressfrei exportierten
+Dateiblöcken aus dem Kadri-Test, einschließlich Metadatenbegrenzung vor dem Kopieren. Browser-Probe zuvor 51/51; Quellstand `0fa3bcbd8cad843d8cda9ea43aa78e2b5b989f4e`.
 Keine Rohdiagnose, echte Medienseite oder Benutzersitzung verwendet.
-**IN_PROGRESS – CI:** bestehende `HLS downloads (P4b)`-Pipeline führt den Test nach der bisherigen
-Remuxer-Suite aus. Gepinnte Media3-1.11.1-Artefakte und bestehende Prüfsummen unverändert.
+**IN_PROGRESS – vollständige CI:** bestehende `HLS downloads (P4b)`-Pipeline führt den Test nach der bisherigen
+Remuxer-Suite aus. Für Zwischenstand `2746b8f` sind Remuxer inklusive neuer Ablageprobe und
+aller bisherigen Remuxer-Mutationen bereits grün:
+https://github.com/Owndot/video-assistent-helper/actions/runs/42513744679.
+Aktuelle Änderung begrenzt Länge und Hash vor der Metadatenkopie; neue CI nach dem Push nachtragen. Gepinnte Media3-1.11.1-Artefakte und bestehende Prüfsummen unverändert.
 
 ## Reproduktion
 
