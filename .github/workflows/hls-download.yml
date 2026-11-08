@@ -146,5 +146,21 @@ jobs:
           bash poc/p4a-hls/tools/make-fixtures.sh "$RUNNER_TEMP/fx"
       - name: Remux + verification + source analysis (JVM, 192 MiB heap)
         run: bash tests/java/hlsmux/run.sh "$RUNNER_TEMP/fx" "$RUNNER_TEMP/deps"
+      - name: Pinned Kadri capture probe (test sources only, no extension installed)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Owndot/Kadri
+          ref: 0fa3bcbd8cad843d8cda9ea43aa78e2b5b989f4e
+          path: .capture-kadri
+          persist-credentials: false
+      - name: Actual browser capture through address-free staging and unchanged remuxer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/capture-venv"
+          "$RUNNER_TEMP/capture-venv/bin/python" -m pip install playwright==1.56.0
+          export KADRI_CAPTURE_CHROMIUM="$(command -v google-chrome)"
+          "$RUNNER_TEMP/capture-venv/bin/python" -u .capture-kadri/tests/passive_player_capture.py --export-fixture "$RUNNER_TEMP/browser-capture"
+          HLSMUX_CAPTURE_ONLY=1 HLSMUX_CAPTURE_FIXTURE="$RUNNER_TEMP/browser-capture" bash tests/java/hlsmux/run.sh "$RUNNER_TEMP/fx" "$RUNNER_TEMP/deps"
       - name: Remuxer mutation probes (each weakened copy must fail)
         run: python3 -I tests/java/hlsmux/mutation.py "$RUNNER_TEMP/fx" "$RUNNER_TEMP/deps"

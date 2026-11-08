@@ -38,7 +38,10 @@ Keine Rohdiagnose, echte Medienseite oder Benutzersitzung verwendet.
 Remuxer-Suite aus. Für Zwischenstand `2746b8f` sind Remuxer inklusive neuer Ablageprobe und
 aller bisherigen Remuxer-Mutationen bereits grün:
 https://github.com/Owndot/video-assistent-helper/actions/runs/42513744679.
-Aktuelle Änderung begrenzt Länge und Hash vor der Metadatenkopie; neue CI nach dem Push nachtragen. Gepinnte Media3-1.11.1-Artefakte und bestehende Prüfsummen unverändert.
+Die zusätzliche Metadatenbegrenzung vor dem Kopieren liegt in `60fd5ea`.
+Die aktuelle CI ergänzt den zusammengesetzten Browserexport→Ablage→Remux-Test mit Kadri fest
+auf `0fa3bcbd8cad843d8cda9ea43aa78e2b5b989f4e`; keine Erweiterung installiert, kein neuer Endpunkt.
+Vollständiges Ergebnis nach dem Push nachtragen. Gepinnte Media3-1.11.1-Artefakte und bestehende Prüfsummen unverändert.
 
 ## Reproduktion
 
