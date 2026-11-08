@@ -51,4 +51,7 @@ SRC="${APP_SRC:-$ROOT/app/src/main/java}/de/evp/helfer"   # Mutationsproben setz
 javac -nowarn -proc:none -d "$WORK/c" -cp "$ANDROID$CP" "$SRC"/hlsmux/*.java "$SRC"/hls/HlsException.java "$SRC"/hls/HlsRemux.java \
   "$HERE"/de/evp/helfer/hlsmux/*.java
 # Shims vor android-all (ersetzen native Teile); Heap bewusst klein: der Remux muss mit festen Puffern auskommen
-java -Xmx${HLSMUX_XMX:-192m} -cp "$WORK/shim:$WORK/c$CP:$ANDROID" de.evp.helfer.hlsmux.TestMedia3Remux "$FX" "$WORK/out" "$ROOT/poc/p4a-hls/tools/analyze.py"
+if [ "${HLSMUX_CAPTURE_ONLY:-0}" != 1 ]; then
+  java -Xmx${HLSMUX_XMX:-192m} -cp "$WORK/shim:$WORK/c$CP:$ANDROID" de.evp.helfer.hlsmux.TestMedia3Remux "$FX" "$WORK/out" "$ROOT/poc/p4a-hls/tools/analyze.py"
+fi
+java -Xmx${HLSMUX_XMX:-192m} -cp "$WORK/shim:$WORK/c$CP:$ANDROID" de.evp.helfer.hlsmux.TestCapturedMedia "$FX" "$WORK/capture" "${HLSMUX_CAPTURE_FIXTURE:-}"
