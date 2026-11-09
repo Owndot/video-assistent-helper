@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -21,6 +22,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -286,6 +289,8 @@ public final class TestDirectDownloads {
         final Map<String, String> finished = new ConcurrentHashMap<>();
         final List<String> all = new CopyOnWriteArrayList<>();
         @Override public void progress(String id, String title, long bytes, long total) { all.add("progress " + id + " " + title + " " + bytes + "/" + total); }
+        final List<String> waits = new CopyOnWriteArrayList<>();   // P4c: jede Pause vor einem erneuten Versuch
+        @Override public void waiting(String id, String title, Retry.Wait wait) { if (wait != Retry.Wait.NONE) waits.add(id + " " + wait); }
         @Override public synchronized void finished(String id, String title, String state, String reason, Object saved) {
             expect(state.equals("done") == (saved instanceof File), "saved handle only on done: " + state + " " + saved);
             all.add("finished " + id + " " + title + " " + state + " " + reason);
@@ -306,8 +311,21 @@ public final class TestDirectDownloads {
     static int idCounter;
     static synchronized String newId() { return String.format(Locale.ROOT, "%032x", ++idCounter); }
 
+    /** P4c: Wartezeiten 1000-fach verkürzt (2 ms … 600 ms), Netz immer da. */
+    static final Retry FAST = new Retry(Retry.Network.ALWAYS, Retry.Clock.SYSTEM, 1000);
+
     static DirectDownloads engine(SafeHttpClient c, DirStore store, Events ev) throws IOException {
-        return new DirectDownloads(c, store, ev, 60_000);
+        DirectDownloads d = new DirectDownloads(c, store, ev, 60_000);
+        d.setRetry(FAST);
+        return d;
+    }
+
+    /** Steuerbares Netz für die Wiederaufnahme-Tests. */
+    static final class Net implements Retry.Network {
+        final java.util.concurrent.atomic.AtomicBoolean on = new java.util.concurrent.atomic.AtomicBoolean(true);
+        Retry retry;
+        @Override public boolean online() { return on.get(); }
+        void set(boolean v) { on.set(v); if (retry != null) retry.networkChanged(); }
     }
 
     /** Startet einen Download und wartet auf das Ende; liefert "zustand[:grund]". */
@@ -334,13 +352,21 @@ public final class TestDirectDownloads {
         check("weak etag does not allow resume", TestDirectDownloads::weakEtag);
         check("interruption resumed with exact range, content identical", TestDirectDownloads::resumeOk);
         check("range errors: 200 to range, wrong start/end/total, length, changed etag", TestDirectDownloads::rangeErrors);
-        check("at most 3 resumes", TestDirectDownloads::maxResumes);
+        check("at most MAX_RESUMES (" + DirectDownloads.MAX_RESUMES + ") automatic resumes, then failed", TestDirectDownloads::maxResumes);
+        check("P4c: 503 then 200 on the first request: retried with pause, one file", TestDirectDownloads::retryInitial503);
+        check("P4c: 401/403/404/410 never retried (exactly one request)", TestDirectDownloads::noRetryFinal);
+        check("P4c: offline after interruption: no request while offline, resumes when back, exact content", TestDirectDownloads::offlineThenResume);
+        check("P4c: 503 on a resume request: retried, then resumed exactly", TestDirectDownloads::resume503);
+        check("P4c: cancel while waiting for the network: cancelled at once, never resumed", TestDirectDownloads::cancelWhileOffline);
+        check("P4c: offline longer than the limit: failed, partial removed", TestDirectDownloads::offlineTooLong);
+        check("P4c: no strong ETag: interruption is not retried (one request)", TestDirectDownloads::noValidatorNoRetry);
         check("If-Range honoured: changed representation answers 200, never mixed", TestDirectDownloads::ifRangeHonoured);
         check("only syntactically strong ETags allow resume", TestDirectDownloads::etagSyntax);
         check("content-encoding other than identity rejected", TestDirectDownloads::contentEncoding);
         check("storage not writable (permission): failed before any network access", TestDirectDownloads::storagePermission);
         check("crash recovery: published -> done, unpublished -> interrupted, unsure -> interrupted", TestDirectDownloads::crashRecovery);
         check("journal write failure after create: failed, partial removed", TestDirectDownloads::journalFailureAfterCreate);
+        check("job slots report activity only on 0->1 and 1->0 (CPU lock on Android)", TestDirectDownloads::slotActivity);
         check("no space before download: nothing created", TestDirectDownloads::noSpaceBefore);
         check("no space during download: stopped and cleaned", TestDirectDownloads::noSpaceDuring);
         check("write error (ENOSPC) is a storage failure, never resumed", TestDirectDownloads::writeError);
@@ -348,6 +374,9 @@ public final class TestDirectDownloads {
         check("cancel while waiting for headers (no 30 s read timeout)", TestDirectDownloads::cancelHeaders);
         check("cancel unknown id / after done", TestDirectDownloads::cancelOther);
         check("duplicate and late start: one request only", TestDirectDownloads::duplicates);
+        check("server closed the idle keep-alive connection: next download uses a new one (no retry needed)", TestDirectDownloads::staleIdleConnection);
+        check("parallel eviction leaves active body intact during redirect and strong-ETag resume", TestDirectDownloads::parallelRedirectResume);
+        check("parallel job returns a closed connection after the other job's eviction", TestDirectDownloads::parallelIdleReturn);
         check("journal across restart: done stays done, running becomes interrupted", TestDirectDownloads::journal);
         check("journal failure: start refused, nothing fetched", TestDirectDownloads::journalFailure);
         check("corrupt journal fails closed", TestDirectDownloads::corruptJournal);
@@ -358,8 +387,31 @@ public final class TestDirectDownloads {
         check("no cookies or credentials sent", TestDirectDownloads::noCredentials);
         check("stopAll cancels running downloads", TestDirectDownloads::stopAll);
         check("file name never from URL", TestDirectDownloads::names);
+        check("P4c-3 P2: encrypted source – resume after process end, changed file, cancel, no strong ETag, expiry", TestDirectDownloads::vault);
         System.out.println("dl tests: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    static void slotActivity() {
+        JobSlots s = new JobSlots(2, 4);
+        List<Boolean> ev = new ArrayList<>();
+        s.setActivity(ev::add);
+        expect(ev.isEmpty(), "no report while idle");
+        expect(s.tryAcquire(), "first");
+        expect(s.tryAcquireWithConnection(), "second");
+        expect(!s.tryAcquire(), "third refused");
+        expect(ev.equals(Arrays.asList(true)), "one 'active' for two jobs: " + ev);
+        s.release();
+        expect(ev.equals(Arrays.asList(true)), "still active with one job: " + ev);
+        s.releaseWithConnection();
+        expect(ev.equals(Arrays.asList(true, false)), "'idle' after the last job: " + ev);
+        expect(s.tryAcquireWithConnection(), "again");
+        List<Boolean> late = new ArrayList<>();
+        s.setActivity(late::add);
+        expect(late.equals(Arrays.asList(true)), "a listener set while a job runs learns it at once: " + late);
+        s.releaseWithConnection();
+        expect(late.equals(Arrays.asList(true, false)) && ev.size() == 3, "only the current listener: " + late + " " + ev);
+        expect(s.inUse() == 0 && s.httpInUse() == 0, "all free");
     }
 
     static void largeFile() throws Exception {
@@ -579,6 +631,132 @@ public final class TestDirectDownloads {
         }
     }
 
+    // ------------------------------------------------------------------ P4c: automatische Wiederaufnahme
+
+    static void retryInitial503() throws Exception {
+        long total = 256 << 10;
+        try (Server srv = new Server((r, out, i) -> {
+            if (i < 2) { head(out, "503 Service Unavailable", "Content-Length: 0"); return; }
+            serveFile(r, out, total, "\"x\"", -1);
+        })) {
+            DirStore store = new DirStore("retry503");
+            expect(run(srv, store, "/v.mp4").equals("done"), "done after 503");
+            expect(srv.requests.get() == 3, "requests " + srv.requests.get());
+            expect(store.created.get() == 1 && store.committed.get() == 1, "one file");
+        }
+    }
+
+    static void noRetryFinal() throws Exception {
+        for (String code : new String[] {"401 Unauthorized", "403 Forbidden", "404 Not Found", "410 Gone"}) {
+            try (Server srv = new Server((r, out, i) -> head(out, code, "Content-Length: 0"))) {
+                DirStore store = new DirStore("final-" + code.substring(0, 3));
+                String r = run(srv, store, "/v.mp4");
+                expect(r.equals("failed:http_" + code.substring(0, 3)), code + ": " + r);
+                expect(srv.requests.get() == 1, code + ": requests " + srv.requests.get());
+                store.expectEmpty();
+            }
+        }
+    }
+
+    /** Erster Abruf bricht bei {@code cut} ab und schaltet dabei das Netz ab; danach liefert der Server ab Range. */
+    static void offlineThenResume() throws Exception {
+        long total = 1 << 20, cut = 300_000;
+        Net net = new Net();
+        Retry retry = new Retry(net, Retry.Clock.SYSTEM, 1000);
+        net.retry = retry;
+        try (Server srv = new Server((r, out, i) -> {
+            if (i == 0) net.set(false);           // Flugmodus mitten im Download
+            serveFile(r, out, total, "\"x\"", i == 0 ? cut : -1);
+        })) {
+            DirStore store = new DirStore("offline");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            d.setRetry(retry);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4"), "Clip");
+            long until = System.currentTimeMillis() + 5_000;
+            while (!d.status(id).contains("\"wait\":\"offline\"") && System.currentTimeMillis() < until) Thread.sleep(10);
+            expect(d.status(id).contains("\"state\":\"running\"") && d.status(id).contains("\"wait\":\"offline\""), d.status(id));
+            Thread.sleep(1_500);                  // länger als alle verkürzten Pausen zusammen
+            expect(srv.requests.get() == 1, "no request while offline: " + srv.requests.get());
+            expect(ev.all.stream().noneMatch(e -> e.startsWith("finished")), "still running while offline");
+            net.set(true);
+            expect(ev.await(id, 10_000).equals("done"), "done after network returned");
+            expect(srv.requests.get() == 2, "exactly one resume: " + srv.requests.get());
+            expect(("bytes=" + cut + "-" + (total - 1)).equals(srv.seen.get(1).header("range")), "range " + srv.seen.get(1).header("range"));
+            expect("\"x\"".equals(srv.seen.get(1).header("if-range")), "If-Range");
+            expect(!d.status(id).contains("\"wait\""), d.status(id));
+            expect(java.util.Arrays.equals(fileSha(store.only()), expectedSha(total)), "sha-256 after resume");
+        }
+    }
+
+    static void resume503() throws Exception {
+        long total = 1 << 20, cut = 200_000;
+        try (Server srv = new Server((r, out, i) -> {
+            if (i == 1 || i == 2) { head(out, "503 Service Unavailable", "Content-Length: 0"); return; }
+            serveFile(r, out, total, "\"x\"", i == 0 ? cut : -1);
+        })) {
+            DirStore store = new DirStore("resume503");
+            expect(run(srv, store, "/v.mp4").equals("done"), "done");
+            expect(srv.requests.get() == 4, "requests " + srv.requests.get());
+            expect(java.util.Arrays.equals(fileSha(store.only()), expectedSha(total)), "sha-256 after resume");
+        }
+    }
+
+    static void cancelWhileOffline() throws Exception {
+        long total = 1 << 20;
+        Net net = new Net();
+        Retry retry = new Retry(net, Retry.Clock.SYSTEM, 1000);
+        net.retry = retry;
+        try (Server srv = new Server((r, out, i) -> { net.set(false); serveFile(r, out, total, "\"x\"", 100_000); })) {
+            DirStore store = new DirStore("cancel-offline");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            d.setRetry(retry);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4"), "Clip");
+            long until = System.currentTimeMillis() + 5_000;
+            while (!d.status(id).contains("\"wait\":\"offline\"") && System.currentTimeMillis() < until) Thread.sleep(10);
+            expect(d.status(id).contains("\"wait\":\"offline\""), d.status(id));
+            long t0 = System.nanoTime();
+            d.cancel(id);
+            expect(ev.await(id, 5_000).equals("cancelled"), "cancelled");
+            expect((System.nanoTime() - t0) / 1_000_000 < 1_500, "cancel took too long");
+            net.set(true);
+            Thread.sleep(800);
+            expect(srv.requests.get() == 1, "never resumed after cancel: " + srv.requests.get());
+            store.expectEmpty();
+        }
+    }
+
+    static void offlineTooLong() throws Exception {
+        long total = 1 << 20;
+        Net net = new Net();
+        Retry retry = new Retry(net, Retry.Clock.SYSTEM, 100_000);   // höchstens 72 ms ohne Netz
+        net.retry = retry;
+        try (Server srv = new Server((r, out, i) -> { net.set(false); serveFile(r, out, total, "\"x\"", 100_000); })) {
+            DirStore store = new DirStore("offline-long");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            d.setRetry(retry);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4"), "Clip");
+            expect(ev.await(id, 10_000).equals("failed:network"), "failed after offline limit");
+            expect(srv.requests.get() == 1, "requests " + srv.requests.get());
+            store.expectEmpty();
+        }
+    }
+
+    static void noValidatorNoRetry() throws Exception {
+        long total = 1 << 20;
+        try (Server srv = new Server((r, out, i) -> serveFile(r, out, total, null, 100_000))) {
+            DirStore store = new DirStore("novalidator");
+            expect(run(srv, store, "/v.mp4").equals("failed:network"), "failed");
+            expect(srv.requests.get() == 1, "requests " + srv.requests.get());
+            store.expectEmpty();
+        }
+    }
+
     static void noSpaceBefore() throws Exception {
         long total = 1 << 20;
         try (Server srv = new Server((r, out, i) -> serveFile(r, out, total, null, -1))) {
@@ -710,6 +888,209 @@ public final class TestDirectDownloads {
             expect(srv.requests.get() == 1, "requests " + srv.requests.get());
             expect(store.files().length == 1 && store.created.get() == 1, "one file");
             d.stopAll();
+        }
+    }
+
+    /**
+     * Ein Server beendet eine ruhende Keep-Alive-Verbindung (Zeitgrenze, HTTP/1.0-Server). Ohne automatische Wiederholung
+     * (SafeHttpClient) darf der nächste Download nicht über diese tote Pool-Verbindung laufen (gefunden mit Kadri, C3).
+     */
+    static void staleIdleConnection() throws Exception {
+        try (Server srv = new Server((r, out, i) -> {
+            serveFile(r, out, 4096, "\"v1\"", -1);
+            out.flush();
+            Thread.sleep(50);
+            throw new IOException("idle close");      // Verbindung nach der Antwort schließen (FIN), ohne "Connection: close"
+        })) {
+            DirStore store = new DirStore("stale");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);   // EIN Client für alle Aufträge
+            for (int n = 0; n < 3; n++) {
+                String id = newId();
+                d.start(id, srv.url("/s" + n + ".mp4"), "Clip");
+                String r = ev.await(id, 10_000);
+                expect(r.equals("done"), "download " + n + ": " + r);
+                Thread.sleep(300);                    // Server hat die Verbindung inzwischen geschlossen
+            }
+            expect(srv.requests.get() == 3 && srv.connections.get() == 3, "requests " + srv.requests.get() + ", connections " + srv.connections.get());
+            // P4c: die automatische Wiederholung darf eine tote Verbindung nicht verdecken – es gibt nichts zu wiederholen
+            expect(ev.waits.isEmpty(), "no retry needed, but paused: " + ev.waits);
+            d.stopAll();
+        }
+    }
+
+    static void awaitGate(CountDownLatch latch) {
+        try { expect(latch.await(10, TimeUnit.SECONDS), "schedule gate timed out"); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AssertionError(e); }
+    }
+
+    static void parallelRedirectResume() throws Exception {
+        CountDownLatch firstBody = new CountDownLatch(1), releaseFirst = new CountDownLatch(1);
+        try (Server srv = new Server((r, out, i) -> {
+            if (r.line.contains("/first.mp4")) {
+                head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: 65536");
+                content(out, 0, 8); out.flush(); firstBody.countDown();
+                awaitGate(releaseFirst); content(out, 8, 65536);
+            } else if (r.line.contains("/redirect")) {
+                head(out, "302 Found", "Location: /resume.mp4", "Content-Length: 0");
+            } else {
+                serveFile(r, out, 4096, "\"parallel\"", r.rangeStart() < 0 ? 1024 : -1);
+            }
+        })) {
+            DirStore store = new DirStore("parallel-redirect-resume");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            try {
+                String first = newId(), second = newId();
+                d.start(first, srv.url("/first.mp4"), "First");
+                awaitGate(firstBody);
+                d.start(second, srv.url("/redirect"), "Second");
+                expect(ev.await(second, 10_000).equals("done"), "redirect/resume job failed");
+                expect(!ev.finished.containsKey(first), "active job must still be held, not cancelled");
+                releaseFirst.countDown();
+                expect(ev.await(first, 10_000).equals("done"), "active body interrupted by other job");
+                expect(srv.requests.get() == 4, "unexpected retry/request count: " + srv.requests.get());
+                expect(srv.seen.stream().filter(r -> r.rangeStart() >= 0).allMatch(r -> "\"parallel\"".equals(r.header("if-range"))), "strong validator missing");
+                expect(srv.seen.stream().allMatch(r -> r.header("cookie") == null && r.header("authorization") == null && r.header("referer") == null), "credentials leaked");
+                expect(java.util.Arrays.equals(fileSha(new File(store.dir, "First.mp4")), expectedSha(65536)), "first hash");
+                expect(java.util.Arrays.equals(fileSha(new File(store.dir, "Second.mp4")), expectedSha(4096)), "second hash");
+            } finally { releaseFirst.countDown(); d.stopAll(); }
+        }
+    }
+
+    static void parallelIdleReturn() throws Exception {
+        CountDownLatch firstBody = new CountDownLatch(1), releaseFirst = new CountDownLatch(1);
+        CountDownLatch secondCall = new CountDownLatch(1), releaseSecond = new CountDownLatch(1);
+        Map<String, okhttp3.Connection> acquired = new ConcurrentHashMap<>();
+        try (Server srv = new Server((r, out, i) -> {
+            if (r.line.contains("/first.mp4")) {
+                head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: 4096");
+                content(out, 0, 8); out.flush(); firstBody.countDown();
+                awaitGate(releaseFirst); content(out, 8, 4096);
+            } else serveFile(r, out, 4096, null, -1);
+        })) {
+            SafeHttpClient http = LocalTestClients.loopback(srv.port());
+            LocalTestClients.observe(http, new okhttp3.EventListener() {
+                @Override public void callStart(okhttp3.Call call) {
+                    if (call.request().url().encodedPath().equals("/second.mp4")) {
+                        secondCall.countDown(); awaitGate(releaseSecond);
+                    }
+                }
+                @Override public void connectionAcquired(okhttp3.Call call, okhttp3.Connection connection) {
+                    acquired.put(call.request().url().encodedPath(), connection);
+                }
+            });
+            DirStore store = new DirStore("parallel-idle-return");
+            Events ev = new Events();
+            DirectDownloads d = engine(http, store, ev);
+            try {
+                String first = newId(), second = newId();
+                d.start(first, srv.url("/first.mp4"), "First");
+                awaitGate(firstBody);
+                Socket firstSocket = srv.open.get(0);
+                d.start(second, srv.url("/second.mp4"), "Second");
+                awaitGate(secondCall);      // second job has evicted while first connection was active
+                releaseFirst.countDown();
+                expect(ev.await(first, 10_000).equals("done"), "first job"); // connection returned to pool
+                firstSocket.close();       // server closes that now-idle connection, before second acquires
+                releaseSecond.countDown();
+                String outcome = ev.await(second, 10_000);
+                boolean reused = acquired.get("/first.mp4") == acquired.get("/second.mp4");
+                expect(outcome.equals("done"), "second=" + outcome + ", reusedClosedConnection=" + reused);
+                expect(srv.requests.get() == 2, "exactly one request per job");
+                expect(java.util.Arrays.equals(fileSha(new File(store.dir, "Second.mp4")), expectedSha(4096)), "second hash");
+            } finally { releaseFirst.countDown(); releaseSecond.countDown(); d.stopAll(); }
+        }
+    }
+
+    /** P2: Software-AES-GCM für die JVM (App: Android-Keystore). */
+    static final class SoftSealer implements SourceVault.Sealer {
+        final javax.crypto.SecretKey key;
+        SoftSealer() throws Exception { javax.crypto.KeyGenerator g = javax.crypto.KeyGenerator.getInstance("AES"); g.init(256); key = g.generateKey(); }
+        @Override public byte[] seal(byte[] aad, byte[] plain) throws java.security.GeneralSecurityException {
+            byte[] iv = new byte[12]; new java.security.SecureRandom().nextBytes(iv);
+            javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(javax.crypto.Cipher.ENCRYPT_MODE, key, new javax.crypto.spec.GCMParameterSpec(128, iv));
+            c.updateAAD(aad);
+            byte[] ct = c.doFinal(plain), out = new byte[12 + ct.length];
+            System.arraycopy(iv, 0, out, 0, 12); System.arraycopy(ct, 0, out, 12, ct.length);
+            return out;
+        }
+        @Override public byte[] open(byte[] aad, byte[] sealed) throws java.security.GeneralSecurityException {
+            javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(javax.crypto.Cipher.DECRYPT_MODE, key, new javax.crypto.spec.GCMParameterSpec(128, sealed, 0, 12));
+            c.updateAAD(aad);
+            return c.doFinal(sealed, 12, sealed.length - 12);
+        }
+    }
+
+    static void vault() throws Exception {
+        java.util.concurrent.atomic.AtomicBoolean stall = new java.util.concurrent.atomic.AtomicBoolean(true);
+        java.util.concurrent.atomic.AtomicReference<String> etag = new java.util.concurrent.atomic.AtomicReference<>("\"v1-65536\"");
+        final long total = 65536;
+        try (Server srv = new Server((r, out, i) -> {
+            String e = r.line.contains("/plain") ? null : etag.get();
+            if (stall.get()) {
+                head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: " + total, e == null ? "" : "ETag: " + e);
+                content(out, 0, 8); out.flush(); Thread.sleep(60_000);
+            } else serveFile(r, out, total, e, -1);
+        })) {
+            SoftSealer key = new SoftSealer();
+            java.util.concurrent.atomic.AtomicLong now = new java.util.concurrent.atomic.AtomicLong(1_000_000);
+            for (String mode : new String[] {"resume", "changed", "cancel", "plain", "expired"}) {
+                stall.set(true);
+                etag.set("\"v1-65536\"");
+                File vdir = new File(root, "vault-" + mode);
+                SourceVault v = new SourceVault(vdir, key, now::get);
+                DirStore store = new DirStore("vault-store-" + mode);
+                Events ev = new Events();
+                DirectDownloads d1 = engine(LocalTestClients.loopback(srv.port()), store, ev);
+                d1.setVault(v);
+                String id = newId();
+                d1.start(id, srv.url(mode.equals("plain") ? "/plain.mp4?sig=TOKEN" : "/s.mp4?sig=TOKEN"), "Tresor " + mode);
+                long until = System.currentTimeMillis() + 5_000;
+                while (store.created.get() < 1 && System.currentTimeMillis() < until) Thread.sleep(10);
+                File rec = new File(vdir, id + ".src");
+                if (mode.equals("plain")) expect(!rec.exists(), "plain: no stored source without a strong ETag");
+                else {
+                    expect(rec.isFile(), mode + ": stored");
+                    String raw = new String(Files.readAllBytes(rec.toPath()), StandardCharsets.ISO_8859_1);
+                    expect(!raw.contains("127.0.0.1") && !raw.contains("TOKEN") && !raw.contains("s.mp4") && !raw.contains("http") && !raw.contains("Tresor"), "record has no plaintext: " + raw);
+                }
+                // "Absturz": Journal mitten im Lauf, neue Engine (neuer Prozess) mit demselben Tresor
+                DirStore crashed = new DirStore("vault-crashed-" + mode);
+                crashed.journal = store.loadJournal();
+                Events ev2 = new Events();
+                DirectDownloads d2 = engine(LocalTestClients.loopback(srv.port()), crashed, ev2);
+                d2.setVault(new SourceVault(vdir, key, now::get));
+                expect(d2.status(id).contains("\"state\":\"interrupted\""), mode + ": interrupted after restart " + d2.status(id));
+                stall.set(false);
+                int req = srv.requests.get();
+                if (mode.equals("resume")) {
+                    expect(d2.canResumeStored(id) && d2.resumeStored() == 1, "resume: started");
+                    expect(ev2.await(id, 20_000).equals("done"), "resume: done");
+                    File[] fs = crashed.dir.listFiles((dd, n) -> n.endsWith(".mp4"));
+                    expect(fs != null && fs.length == 1 && fs[0].length() == total && fs[0].getName().startsWith("Tresor resume"), "resume: exact file with the stored name");
+                    expect(!rec.exists(), "resume: stored source deleted after success");
+                } else if (mode.equals("changed")) {
+                    etag.set("\"v2-65536\"");
+                    expect(d2.resumeStored() == 1, "changed: started");
+                    expect(ev2.await(id, 20_000).equals("failed:changed"), "changed: failed:changed");
+                    File[] fs = crashed.dir.listFiles((dd, n) -> n.endsWith(".mp4"));
+                    expect(fs == null || fs.length == 0, "changed: nothing published");
+                    expect(!rec.exists(), "changed: stored source deleted");
+                } else if (mode.equals("cancel")) {
+                    d2.cancel(id);
+                    expect(!rec.exists() && d2.resumeStored() == 0 && srv.requests.get() == req, "cancel: deleted at once, never resumed, no request");
+                } else if (mode.equals("plain")) {
+                    expect(d2.resumeStored() == 0 && srv.requests.get() == req, "plain: nothing to resume");
+                } else {
+                    now.addAndGet(SourceVault.MAX_AGE_MS);
+                    expect(d2.resumeStored() == 0 && srv.requests.get() == req && !rec.exists(), "expired: not resumed, deleted");
+                }
+                d1.stopAll();
+                d2.stopAll();
+            }
         }
     }
 

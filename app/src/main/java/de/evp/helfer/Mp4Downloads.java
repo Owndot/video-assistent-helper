@@ -49,10 +49,19 @@ import de.evp.helfer.net.SafeHttpClient;
  */
 final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     static final String ACTION_CANCEL = "dlcancel";
+    /** P4c: „Fortsetzen“ aus der Benachrichtigung eines unterbrochenen Streams (Quelle noch im Arbeitsspeicher). */
+    static final String ACTION_RESUME = "dlresume";
+    /** P4c: kann ein unterbrochener Auftrag ohne Kadri fortgesetzt werden? (HLS setzt das, MP4 nie) */
+    static volatile java.util.function.Predicate<String> resumable = id -> false;
     static final String EXTRA_JOB = "job";
     private static final int NOTE_ID = 0x4d50;     // je Auftrag eigener Tag ("mp4-<id>")
     private static final int MAX_JOURNAL_BYTES = 256 << 10;
     private static Mp4Downloads instance;
+    /** Nur Diagnose (Tests/Logs): Ergebnis der letzten Abbruch-Bereinigung ("deleted:n" oder "kept:…"), nie eine URL. */
+    static volatile String lastAbortOutcome = "";
+
+    /** Gemeinsame Grenzen aller Download-Arten im Prozess (MP4 und HLS): 2 Aufträge, 4 HTTP-Anfragen. */
+    static final de.evp.helfer.dl.JobSlots SLOTS = new de.evp.helfer.dl.JobSlots(DirectDownloads.MAX_PARALLEL, 4);
 
     final DirectDownloads engine;
     private final Context app;
@@ -69,8 +78,38 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         this.legacyWriteAllowed = legacyWriteAllowed;
         Downloads.channel(app);
         cleanupPublicLeftovers();              // vor dem Journal: Wiederherstellung sieht nur echte Dateien
-        this.engine = new DirectDownloads(http, this, this);
+        this.engine = new DirectDownloads(http, this, this, SLOTS);
+        this.engine.setRetry(NetWatch.retry(app));       // P4c: begrenzte Wiederaufnahme mit Verbindungsüberwachung
+        SLOTS.setActivity(any -> keepAwake(app, any));
     }
+
+    /**
+     * Teilweise CPU-Sperre, solange ein Download (MP4 oder HLS) aktiv ist: der Vordergrunddienst hält nur den Prozess,
+     * nicht die CPU wach; bei ausgeschaltetem Bildschirm würden Abrufe sonst stocken und in Zeitüberschreitungen enden.
+     * Mit Zeitlimit und Verlängerung bei jedem Fortschritt: ein hängender Auftrag hält das Gerät nicht unbegrenzt wach.
+     */
+    static final long AWAKE_WINDOW_MS = 30 * 60_000L;
+    private static android.os.PowerManager.WakeLock wake;
+
+    static synchronized void keepAwake(Context c, boolean on) {
+        if (wake == null) {
+            if (!on) return;
+            android.os.PowerManager pm = c.getSystemService(android.os.PowerManager.class);
+            if (pm == null) return;
+            wake = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "evp:downloads");
+            wake.setReferenceCounted(false);
+        }
+        if (on) wake.acquire(AWAKE_WINDOW_MS);
+        else if (wake.isHeld()) wake.release();
+    }
+
+    /** Verlängert nur eine gehaltene Sperre (ein Fortschritt nach dem Ende holt sie nie neu). */
+    static synchronized void renewAwake() {
+        if (wake != null && wake.isHeld()) wake.acquire(AWAKE_WINDOW_MS);
+    }
+
+    /** Nur Gerätetests: ob die Sperre gerade gehalten wird. */
+    static synchronized boolean awake() { return wake != null && wake.isHeld(); }
 
     /** Speicherberechtigungen für Android 8–9: beide nötig (ohne READ vergibt Android nur die Lese-/Standard-Ansicht). */
     static final String[] LEGACY_STORAGE_PERMISSIONS = {
@@ -93,6 +132,11 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         return instance;
     }
 
+    /** P4c-3 (P2): verschlüsselte Quelle der MP4-Aufträge (eigener Ordner, Keystore-Schlüssel, höchstens 6 h). */
+    void attachVault(Context c) throws IOException {
+        engine.setVault(new de.evp.helfer.dl.SourceVault(new java.io.File(c.getNoBackupFilesDir(), "source-vault/mp4"), new KeystoreSealer(), System::currentTimeMillis));
+    }
+
     static boolean validJobId(String id) { return id != null && id.matches("[0-9a-f]{32}"); }
 
     // ------------------------------------------------------------------ DownloadStore
@@ -112,18 +156,29 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         return Build.VERSION.SDK_INT >= 29 || legacyWriteAllowed.getAsBoolean();
     }
 
-    @Override public boolean isPublished(String ref, long total) {
+    @Override public boolean isPublished(String ref, long total) throws IOException {
         if (Build.VERSION.SDK_INT >= 29) {
             Uri u = Uri.parse(ref);
             if (!"content".equals(u.getScheme())) return false;
-            try (android.database.Cursor c = app.getContentResolver().query(u,
-                    new String[] {MediaStore.Downloads.IS_PENDING, MediaStore.Downloads.SIZE}, null, null, null)) {
-                return c != null && c.moveToFirst() && c.getInt(0) == 0 && c.getLong(1) == total;
+            ContentResolver cr = app.getContentResolver();
+            try (android.database.Cursor c = cr.query(u, new String[] {MediaStore.Downloads.IS_PENDING}, null, null, null)) {
+                if (c == null || !c.moveToFirst() || c.getInt(0) != 0) return false;
             }
+            // Größe der echten Datei, nicht die SIZE-Spalte: Android 10 füllt sie beim Schreiben über
+            // openOutputStream nicht (bleibt 0), ein veröffentlichter Download sähe sonst unvollständig aus.
+            return storedSize(cr, u) == total;
         }
         File f = new File(ref);
         return f.getParentFile() != null && f.getParentFile().equals(publicDir()) && f.isFile() && f.length() == total
             && !f.getName().startsWith(PART_PREFIX);
+    }
+
+    /** Tatsächliche Länge der Datei hinter einem MediaStore-Eintrag. */
+    static long storedSize(ContentResolver cr, Uri u) throws IOException {
+        try (android.os.ParcelFileDescriptor fd = cr.openFileDescriptor(u, "r")) {
+            if (fd == null) throw new IOException("open");
+            return fd.getStatSize();
+        }
     }
 
     /** MediaStore-Eintrag, bis zum Ende pending. */
@@ -171,7 +226,7 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
             cv.put(MediaStore.Downloads.DISPLAY_NAME, name);
             if (cr.update(uri, cv, null, null) != 1) throw new IOException("publish");
             finished = true;
-            Downloads.removeProof(proof);
+            cleanupPublishedProof(proof);
             return uri;
         }
 
@@ -179,10 +234,24 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
             if (finished) return;
             finished = true;
             try { out.close(); } catch (IOException ignored) { }
+            String outcome;
             try {
-                // Markierung nur nach bestätigtem Löschen entfernen; sonst räumt der nächste Prozessstart auf.
-                if (cr.delete(uri, null, null) == 1) Downloads.removeProof(proof);
-            } catch (IOException | RuntimeException ignored) { }
+                // Markierung nur nach bestätigtem Entfernen löschen; sonst räumt der nächste Prozessstart auf.
+                // "Bestätigt" heißt: der Provider meldet genau einen gelöschten Eintrag ODER der Eintrag ist nachweislich
+                // nicht mehr vorhanden (eigene Abfrage, schließt "0 gelöscht, weil schon weg" ein).
+                int n = cr.delete(uri, null, null);
+                if (n == 1 || !pendingExists(uri)) { Downloads.removeProof(proof); outcome = "deleted:" + n; }
+                else outcome = "kept:delete=" + n;
+            } catch (IOException | RuntimeException e) {
+                outcome = "kept:" + e.getClass().getSimpleName();
+            }
+            lastAbortOutcome = outcome;
+        }
+
+        private boolean pendingExists(Uri u) {
+            try (android.database.Cursor c = cr.query(MediaStore.setIncludePending(u), new String[] {MediaStore.Downloads._ID}, null, null, null)) {
+                return c == null || c.getCount() > 0;    // unbekannt (null) zählt als vorhanden: nie voreilig die Markierung löschen
+            }
         }
     }
 
@@ -245,7 +314,7 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
                 RESERVED.remove(dst.getPath());
             }
             finished = true;
-            Downloads.removeProof(proof);   // Absturz davor: Markierung ohne Teil-Datei, beim Start entfernt
+            cleanupPublishedProof(proof);
             return scan(dst);
         }
 
@@ -269,6 +338,13 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     }
 
     static final String PART_PREFIX = ".evp-pending-", PART_SUFFIX = ".part";
+    /** Veröffentlichung ist bereits verbindlich. Ein Aufräumfehler darf daraus keinen Fehlversuch machen.
+     * Die private Besitzmarkierung bleibt bei Fehler erhalten; der nächste Prozessstart entfernt sie.
+     * Dessen Bereinigung betrifft nur eigene unfertige Einträge/Teil-Dateien, nie die veröffentlichte Datei.
+     */
+    private static void cleanupPublishedProof(File proof) {
+        try { Downloads.removeProof(proof); } catch (IOException ignored) { /* beim nächsten Start nachholen */ }
+    }
     /** Im Prozess reservierte endgültige Namen (Android 8–9); geschützt durch {@link Downloads#fileNames}. */
     private static final java.util.Set<String> RESERVED = new java.util.HashSet<>();
 
@@ -346,15 +422,46 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     private static String tag(String id) { return "mp4-" + id; }
 
     @Override public void progress(String id, String title, long bytes, long total) {
+        progress(id, title, de.evp.helfer.dl.Progress.mp4(bytes, total));
+    }
+
+    /**
+     * P4c-3: Text und Balken nur aus verlässlichem Zähler/Nenner ({@link de.evp.helfer.dl.Progress}): MP4 in Prozent der
+     * exakten Länge, HLS als „12/25 Teile · 5,0 MB geladen“, danach die Phase; nie eine Schätzung als Größe.
+     */
+    @Override public void progress(String id, String title, de.evp.helfer.dl.Progress p) {
+        renewAwake();                                    // Fortschritt verlängert das Zeitfenster der CPU-Sperre
         Intent stop = new Intent(app, HelferService.class).setAction(ACTION_CANCEL).putExtra(EXTRA_JOB, id)
             .setData(Uri.parse("evp-mp4:" + id));                // je Auftrag eigener PendingIntent
         PendingIntent cancel = PendingIntent.getService(app, id.hashCode(), stop, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        int pct = total > 0 ? (int) (100L * bytes / total) : 0;
+        int[] bar = p.bar();
         Notification n = new Notification.Builder(app, Downloads.CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
-            .setContentText(pct + " % · " + (bytes >> 20) + Tr.t(" von ", " of ") + (total >> 20) + " MB")
-            .setProgress(100, pct, false)
+            .setContentText(p.text(Tr.de()))
+            .setProgress(bar[0], bar[1], bar[0] == 0)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .addAction(new Notification.Action.Builder(null, Tr.t("Abbrechen", "Cancel"), cancel).build())
+            .build();
+        NotificationManager m = nm();
+        if (m != null) m.notify(tag(id), NOTE_ID, n);
+    }
+
+    /** P4c: wartet auf Netz bzw. auf den nächsten automatischen Versuch – der Auftrag läuft weiter (abbrechbar). */
+    @Override public void waiting(String id, String title, de.evp.helfer.dl.Retry.Wait wait) {
+        if (wait == de.evp.helfer.dl.Retry.Wait.NONE) return;    // geht weiter: der nächste Fortschritt aktualisiert
+        Intent stop = new Intent(app, HelferService.class).setAction(ACTION_CANCEL).putExtra(EXTRA_JOB, id)
+            .setData(Uri.parse("evp-mp4:" + id));
+        PendingIntent cancel = PendingIntent.getService(app, id.hashCode(), stop, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        Notification n = new Notification.Builder(app, Downloads.CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle(title)
+            .setContentText(wait == de.evp.helfer.dl.Retry.Wait.OFFLINE
+                ? Tr.t("Wartet auf Internet – setzt automatisch fort", "Waiting for internet – resumes automatically")
+                : Tr.t("Verbindung gestört – neuer Versuch in Kürze", "Connection problem – retrying shortly"))
+            .setProgress(0, 0, true)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
@@ -365,13 +472,35 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     }
 
     @Override public void finished(String id, String title, String state, String reason, Object saved) {
+        finished(id, title, state, reason, saved, -1);
+    }
+
+    @Override public void finished(String id, String title, String state, String reason, Object saved, long size) {
         NotificationManager m = nm();
         if (m == null) return;
         if ("cancelled".equals(state)) { m.cancel(tag(id), NOTE_ID); return; }
+        if ("interrupted".equals(state)) {   // HLS: wiederaufnehmbar, Daten bleiben app-privat
+            Notification.Builder ib = new Notification.Builder(app, Downloads.CHANNEL).setContentTitle(title).setAutoCancel(true)
+                .setSmallIcon(android.R.drawable.stat_sys_warning);
+            if (resumable.test(id)) {
+                // P4c: Quelle noch im Arbeitsspeicher → direkt hier fortsetzen, ohne Webseite oder Player
+                Intent go = new Intent(app, HelferService.class).setAction(ACTION_RESUME).putExtra(EXTRA_JOB, id)
+                    .setData(Uri.parse("evp-resume:" + id));
+                PendingIntent pi = PendingIntent.getService(app, id.hashCode() ^ 0x5245, go, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+                ib.setContentText(Tr.t("Unterbrochen: ", "Interrupted: ") + reasonText(reason))
+                    .setContentIntent(pi)
+                    .addAction(new Notification.Action.Builder(null, Tr.t("Fortsetzen", "Resume"), pi).build());
+            } else {
+                ib.setContentText(Tr.t("Unterbrochen – zum Fortsetzen das Video in Kadri öffnen: ", "Interrupted – open the video in Kadri to resume: ") + reasonText(reason));
+            }
+            m.notify(tag(id), NOTE_ID, ib.build());
+            return;
+        }
         Notification.Builder b = new Notification.Builder(app, Downloads.CHANNEL).setContentTitle(title).setAutoCancel(true);
         if ("done".equals(state)) {
             b.setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .setContentText(Tr.t("Gespeichert in Download/", "Saved in Download/") + Downloads.FOLDER);
+                .setContentText(Tr.t("Gespeichert in Download/", "Saved in Download/") + Downloads.FOLDER
+                    + (size > 0 ? " · " + de.evp.helfer.dl.Progress.size(size, Tr.de()) : ""));   // exakt die gespeicherte Datei
             if (saved instanceof Uri && "content".equals(((Uri) saved).getScheme())) {
                 Intent open = new Intent(Intent.ACTION_VIEW).setDataAndType((Uri) saved, "video/mp4")
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -393,6 +522,9 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         if (reason == null) return "";
         if (reason.equals("no_space")) return Tr.t("zu wenig Speicher", "not enough storage");
         if (reason.equals("network")) return Tr.t("Netzwerk unterbrochen", "network interrupted");
+        if (reason.equals("stopped")) return Tr.t("Helfer-App wurde beendet", "helper app was stopped");
+        if (reason.startsWith("http_5") || reason.equals("http_429")) return Tr.t("Server überlastet", "server busy");
+        if (reason.equals("http_403") || reason.equals("http_401")) return Tr.t("Zugriff abgelaufen", "access expired");
         if (reason.equals("not_mp4") || reason.equals("type")) return Tr.t("keine MP4-Datei", "not an MP4 file");
         if (reason.equals("too_large")) return Tr.t("Datei zu groß", "file too large");
         if (reason.startsWith("blocked_")) return Tr.t("Ziel nicht erlaubt", "target not allowed");

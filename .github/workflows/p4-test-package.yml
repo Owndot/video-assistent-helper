@@ -1,0 +1,353 @@
+name: P4 test app (de.evp.helfer.p4test, throwaway signer, owner-approved Samsung test only)
+
+# Vom Eigentümer freigegeben („Kadri P4c – Samsung-Test ohne Mac und ohne dauerhaften Signierschlüssel“): EINE
+# temporär signierte Test-APK de.evp.helfer.p4test für den kontrollierten Gerätetest. Keine Produktionsfreigabe:
+# release/production-policy.json bleibt UNAPPROVED, kein Release, kein Tag, nie de.evp.helfer oder channeltest.
+#
+# Ausdrücklich getrennter, temporärer Testsignierweg (Wegwerf-Schlüssel):
+#  * Der Schlüssel entsteht in DIESEM Lauf (keytool, RSA-3072, 2 Tage gültig, DN „… throwaway“), Passwort zufällig nur
+#    im Prozess-Umfeld, nie in einer Ausgabe; signiert wird ausschließlich die P4-Test-APK über die fail-closed Prüfungen
+#    von tools/p4test/sign.sh mit einer Wegwerf-Festlegung im selben Wegwerf-Ordner; danach Schlüssel, Festlegung und
+#    Passwort gelöscht und geprüft, dass kein Schlüsselspeicher mehr existiert.
+#  * Der dauerhafte P4-Signierweg bleibt unverändert: release/p4test-signer.json (KEY_NOT_YET_CREATED, null) und
+#    tools/p4test/** werden weder geändert noch verwendet, um etwas Dauerhaftes festzulegen.
+#  * Nie der Produktionsschlüssel, nie der kompromittierte alte Signierer (ec17fab1…, wird zusätzlich abgewiesen).
+#
+# Gebaut wird exakt der Quell-Commit SOURCE_SHA; nur wenn dessen CI vollständig grün ist – einzige zugelassene
+# Ausnahme ist der dokumentierte Android-10-Befund P4B-A10-SIZE (genau ein Fehlschlag, genau dieser Test).
+# Öffentliches Actions-Artefakt mit 2 Tagen Aufbewahrung (Repository ist öffentlich).
+on:
+  push:
+    branches: [feature/c3-browser-downloads]
+    paths: ['.github/workflows/p4-test-package.yml']
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: p4-test-package
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: 8b906c504f0612ff4af69a397a2745b717f156b3
+  KADRI_PAIR_SHA: ef9a5ed22920e8bee0a204323388b9104e58892e
+  KADRI_P4_EXTENSION_ID: pcccpjllneffccpenbepmfbkjedllkkf
+  NDK_VERSION: 27.2.12479018
+  RETENTION_DAYS: 2
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scope - only this workflow differs from the exact source; production UNAPPROVED; durable P4 path unchanged
+        run: |
+          set -euo pipefail
+          WORKFLOW_SHA="$(git rev-parse HEAD)"
+          git merge-base --is-ancestor "$SOURCE_SHA" "$WORKFLOW_SHA"
+          changed="$(git diff --name-only "$SOURCE_SHA" "$WORKFLOW_SHA" | grep -vxE '\.github/workflows/p4-test-package\.yml|[^/]+\.md' || true)"
+          [ -z "$changed" ] || { echo "code differs from the approved source: $changed" >&2; exit 1; }
+          git checkout -q --detach "$SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          grep -q '"status": "UNAPPROVED"' release/production-policy.json
+          grep -qx '  "certificate_sha256": null,' release/p4test-signer.json
+          grep -qx '  "status": "KEY_NOT_YET_CREATED",' release/p4test-signer.json
+          echo "WORKFLOW_SHA=$WORKFLOW_SHA" >> "$GITHUB_ENV"
+          echo "source $SOURCE_SHA, workflow commit $WORKFLOW_SHA; production UNAPPROVED; durable P4 identity not created (unchanged)"
+      - name: Required CI on the exact source commit (only the documented Android 10 finding P4B-A10-SIZE may fail)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys
+          repo, sha = os.environ['GITHUB_REPOSITORY'], os.environ['SOURCE_SHA']
+          def api(path):
+              return json.loads(subprocess.run(['gh', 'api', path], check=True, capture_output=True, text=True).stdout)
+          runs = api(f'repos/{repo}/actions/runs?head_sha={sha}&per_page=100')['workflow_runs']
+          def latest(path):
+              a = [r for r in runs if r['path'] == path]
+              assert a, f'no run of {path} on {sha}'
+              r = max(a, key=lambda r: r['id'])
+              assert r['status'] == 'completed', f'{path} not completed'
+              return r
+          for path in ['.github/workflows/build.yml', '.github/workflows/browser-tests.yml', '.github/workflows/hls-download.yml']:
+              r = latest(path)
+              assert r['conclusion'] == 'success', f"{path}: {r['conclusion']}"
+              print(f"PASS {path}: success (run {r['id']}, attempt {r['run_attempt']})")
+          r = latest('.github/workflows/helper-channel.yml')
+          jobs = api(f"repos/{repo}/actions/runs/{r['id']}/jobs?per_page=100")['jobs']
+          assert len(jobs) == 5, [j['name'] for j in jobs]
+          bad = [j for j in jobs if j['conclusion'] != 'success']
+          for j in jobs:
+              print(f"  helper-channel job: {j['conclusion']:8} {j['name']}")
+          if bad:
+              # Einzige zulässige Ausnahme: der API-29-Lauf, nur der Instrumentierungsschritt, genau ein Fehlschlag,
+              # genau die SIZE-Prüfung (P4B-A10-SIZE; vom Eigentümer nur für den Android-17-Test hingenommen).
+              assert len(bad) == 1 and bad[0]['name'] == 'Test package de.evp.helfer.channeltest on a disposable API 29 emulator', [j['name'] for j in bad]
+              steps = [s['name'] for s in bad[0]['steps'] if s['conclusion'] not in ('success', 'skipped')]
+              assert steps == ['Instrumentation on a disposable API 29 x86_64 emulator'], steps
+              # Job-Log über die Weiterleitung zum Log-Speicher (curl schickt den Token dorthin nicht mit).
+              log = subprocess.run(['curl', '-sSfL', '--retry', '3', '-H', 'Authorization: Bearer ' + os.environ['GH_TOKEN'],
+                                    '-H', 'Accept: application/vnd.github+json',
+                                    f"https://api.github.com/repos/{repo}/actions/jobs/{bad[0]['id']}/logs"],
+                                   check=True, capture_output=True, text=True).stdout
+              assert re.search(r'Tests run: \d+,  Failures: 1\b', log), 'not exactly 1 test failed'
+              failed = sorted(set(re.findall(r'FAILED INSTRUMENTATION_STATUS: test=(\w+)', log)))
+              assert failed == ['publishesThroughMediaStoreAndReadsBack'], failed
+              assert re.search(r'AssertionError: SIZE column \(file [^)]*, length (\d+)\) expected:<\1> but was:<0>', log), 'failure is not the SIZE finding'
+              print('ACCEPTED (owner decision, Android 17 test only): P4B-A10-SIZE on API 29 - 44/45, MediaStore SIZE column 0')
+          print(f"PASS helper-channel (run {r['id']}): JVM, mutations, macOS signing self-test, API 26 and API 34 emulators green")
+          PY
+      - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Pinned toolchains (Rust from rust-toolchain.toml, NDK r27c, SDK 37.0, build-tools 36.0.0 + 34.0.0)
+        run: |
+          set -euo pipefail
+          (cd poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "platforms;android-37.0" "build-tools;36.0.0" "build-tools;34.0.0" < <(yes 2>/dev/null) > /dev/null
+          test -f "$ANDROID_HOME/ndk/$NDK_VERSION/source.properties"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Unsigned P4 test app - build A (checkout) and build B (copy in another path)
+        run: |
+          set -euo pipefail
+          bash tools/build-channel-native.sh "$RUNNER_TEMP/a"
+          bash tools/p4test/build-unsigned.sh "$RUNNER_TEMP/a" "$GITHUB_RUN_NUMBER"
+          mkdir -p "$RUNNER_TEMP/src-b" && git archive "$SOURCE_SHA" | tar -x -C "$RUNNER_TEMP/src-b"
+          (cd "$RUNNER_TEMP/src-b" && bash tools/build-channel-native.sh "$RUNNER_TEMP/b" && bash tools/p4test/build-unsigned.sh "$RUNNER_TEMP/b" "$GITHUB_RUN_NUMBER")
+          test ! -e app/build/outputs/apk/release && test ! -e app/build/outputs/apk/debug && test ! -e app/build/outputs/apk/channeltest
+      - name: Reproducibility - native libraries and every APK entry byte-identical
+        run: |
+          set -euo pipefail
+          for d in a b; do (cd "$RUNNER_TEMP/$d" && sha256sum jniLibs/*/*.so) > "$RUNNER_TEMP/$d.libs"; done
+          diff "$RUNNER_TEMP/a.libs" "$RUNNER_TEMP/b.libs"
+          entries() { python3 -c 'import hashlib,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); [print(hashlib.sha256(z.read(n)).hexdigest(), n) for n in sorted(z.namelist())]' "$1"; }
+          entries "$RUNNER_TEMP/a/p4/helper-p4test-unsigned.apk" > "$RUNNER_TEMP/a.entries"
+          entries "$RUNNER_TEMP/b/p4/helper-p4test-unsigned.apk" > "$RUNNER_TEMP/b.entries"
+          # Einzige Ausnahme: META-INF/version-control-info.textproto - AGP schreibt dort die Git-Revision hinein (Bau A im
+          # Git-Checkout, Bau B aus git archive ohne .git). Bau A muss genau den Quell-Commit nennen.
+          VCI=META-INF/version-control-info.textproto
+          grep -vx "[0-9a-f]\{64\} $VCI" "$RUNNER_TEMP/a.entries" > "$RUNNER_TEMP/a.code"
+          grep -vx "[0-9a-f]\{64\} $VCI" "$RUNNER_TEMP/b.entries" > "$RUNNER_TEMP/b.code"
+          [ "$(( $(wc -l < "$RUNNER_TEMP/a.entries") - $(wc -l < "$RUNNER_TEMP/a.code") ))" -le 1 ]
+          diff "$RUNNER_TEMP/a.code" "$RUNNER_TEMP/b.code"
+          unzip -p "$RUNNER_TEMP/a/p4/helper-p4test-unsigned.apk" "$VCI" | tee "$RUNNER_TEMP/vci.txt"
+          grep -q "$SOURCE_SHA" "$RUNNER_TEMP/vci.txt"
+          echo "REPRODUCIBLE: $(wc -l < "$RUNNER_TEMP/a.code") entries byte-identical (all but $VCI, which names $SOURCE_SHA); content hash $(sha256sum < "$RUNNER_TEMP/a.code" | cut -c1-16)"
+          rm -rf "$RUNNER_TEMP/b" "$RUNNER_TEMP/src-b"
+      - name: Temporary test signing - throwaway key created, used once for the P4 test APK, deleted
+        run: |
+          set -euo pipefail
+          umask 077
+          . tools/p4test/lib.sh
+          K="$(mktemp -d "$RUNNER_TEMP/p4-throwaway.XXXXXX")"
+          wipe() { find "$K" -type f -exec shred -u -z {} + 2>/dev/null || true; rm -rf "$K"; }
+          trap 'unset P4_KS_PASS; wipe' EXIT
+          P4_KS_PASS="$(openssl rand -hex 32)"; export P4_KS_PASS
+          keytool -genkeypair -storetype PKCS12 -keystore "$K/throwaway.p12" -alias "$P4_ALIAS" -keyalg RSA -keysize 3072 \
+            -validity 2 -dname 'CN=Helper P4 TEST ONLY - throwaway' -storepass:env P4_KS_PASS -keypass:env P4_KS_PASS >/dev/null 2>&1
+          fp="$(keystore_cert_sha256 "$K/throwaway.p12")"
+          [[ "$fp" =~ ^[0-9a-f]{64}$ ]]
+          # Wegwerf-Festlegung im Wegwerf-Ordner (Kopie der Vorlage, nur der Fingerabdruck eingesetzt) - die Datei im
+          # Repository bleibt null.
+          sed -E 's/^  "certificate_sha256": null,$/  "certificate_sha256": "'"$fp"'",/' release/p4test-signer.json > "$K/throwaway-pin.json"
+          grep -qx "  \"certificate_sha256\": \"$fp\"," "$K/throwaway-pin.json"
+          mkdir -p "$RUNNER_TEMP/signed"
+          bash tools/p4test/sign.sh "$RUNNER_TEMP/a/p4/helper-p4test-unsigned.apk" "$K/throwaway.p12" "$RUNNER_TEMP/signed/helper-p4test.apk" "$K/throwaway-pin.json"
+          unset P4_KS_PASS
+          wipe; trap - EXIT
+          test ! -e "$K"
+          left="$(find "$RUNNER_TEMP" "$GITHUB_WORKSPACE" "$HOME/.android" -xdev \( -iname '*.p12' -o -iname '*.jks' -o -iname '*.keystore' -o -iname '*.pk8' -o -iname '*.bks' \) -print 2>/dev/null || true)"
+          [ -z "$left" ] || { echo "key material left: $left" >&2; exit 1; }
+          git diff --exit-code -- release/ tools/p4test/
+          git status --porcelain --ignored -- release/ tools/p4test/ | { ! grep .; }
+          echo "$fp" > "$RUNNER_TEMP/throwaway-cert.sha256"
+          echo "PASS: signed once with a throwaway key (certificate $fp); key, pin copy and password deleted; durable P4 files unchanged"
+      - name: Verification script (package, signer, permissions, libraries; used before and after the emulator)
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/verify-p4.sh" <<'SH'
+          #!/usr/bin/env bash
+          # verify-p4.sh APK CERT_SHA256 -> facts that must stay identical; exits non-zero on any violation.
+          set -euo pipefail
+          APK="$1"; WANT_CERT="$2"; BT="$ANDROID_HOME/build-tools/34.0.0"; TC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
+          die() { echo "REFUSED: $*" >&2; exit 1; }
+          badging="$("$BT/aapt2" dump badging "$APK")"
+          grep -q "^package: name='de.evp.helfer.p4test' versionCode='$GITHUB_RUN_NUMBER' versionName='[^']*-p4test'" <<<"$badging" || die "wrong package, version code or name"
+          grep -q "application-label:'P4 TEST Helfer'" <<<"$badging" || die "unexpected label"
+          grep -q "native-code: 'arm64-v8a' 'x86_64'" <<<"$badging" || die "unexpected ABIs"
+          if grep -q "application-debuggable" <<<"$badging"; then die "debuggable"; fi
+          if grep -q "testOnly" <<<"$("$BT/aapt2" dump xmltree --file AndroidManifest.xml "$APK")"; then die "testOnly"; fi
+          perms="$(grep '^uses-permission:' <<<"$badging" | sort)"
+          want="$(sort <<'P'
+          uses-permission: name='android.permission.INTERNET'
+          uses-permission: name='android.permission.ACCESS_NETWORK_STATE'
+          uses-permission: name='android.permission.FOREGROUND_SERVICE'
+          uses-permission: name='android.permission.FOREGROUND_SERVICE_SPECIAL_USE'
+          uses-permission: name='android.permission.POST_NOTIFICATIONS'
+          uses-permission: name='android.permission.WAKE_LOCK'
+          uses-permission: name='android.permission.RECEIVE_BOOT_COMPLETED'
+          uses-permission: name='android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'
+          uses-permission: name='android.permission.SYSTEM_ALERT_WINDOW'
+          uses-permission: name='android.permission.WRITE_SETTINGS'
+          uses-permission: name='android.permission.READ_EXTERNAL_STORAGE' maxSdkVersion='28'
+          uses-permission: name='android.permission.WRITE_EXTERNAL_STORAGE' maxSdkVersion='28'
+          P
+          )"
+          [ "$perms" = "$(sed 's/^ *//' <<<"$want")" ] || { diff <(sed 's/^ *//' <<<"$want") <(echo "$perms") >&2 || true; die "permissions differ from the manifest list"; }
+          if grep -q '^permission:' <<<"$badging"; then die "declares its own permission"; fi
+          manifest="$("$BT/aapt2" dump xmltree --file AndroidManifest.xml "$APK")"
+          grep -q 'allowBackup.*=false' <<<"$manifest" || die "allowBackup not false"
+          grep -q 'dataExtractionRules' <<<"$manifest" || die "dataExtractionRules missing"
+          grep -q 'InitializationProvider' <<<"$manifest" && die "androidx startup provider present"
+          certs="$("$BT/apksigner" verify --verbose --print-certs "$APK")" || die "signature does not verify"
+          grep -qx 'Verified using v2 scheme (APK Signature Scheme v2): true' <<<"$certs" || die "no v2 signature"
+          grep -qx 'Verified using v3 scheme (APK Signature Scheme v3): true' <<<"$certs" || die "no v3 signature"
+          [ "$(grep -c '^Signer #[0-9]* certificate DN' <<<"$certs")" = 1 ] || die "not exactly one signer"
+          grep -qx 'Signer #1 certificate DN: CN=Helper P4 TEST ONLY - throwaway' <<<"$certs" || die "not the throwaway signer"
+          got="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$certs")"
+          [ "$got" = "$WANT_CERT" ] || die "signer $got is not this run's throwaway certificate"
+          [ "$got" != ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5 ] || die "compromised old signer"
+          grep -qx '  "certificate_sha256": null,' "$GITHUB_WORKSPACE/release/p4test-signer.json" || die "durable pin changed"
+          "$BT/apksigner" verify --print-certs-pem "$APK" | sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' > "$W/cert.pem"
+          start="$(openssl x509 -in "$W/cert.pem" -noout -startdate | cut -d= -f2)"; end="$(openssl x509 -in "$W/cert.pem" -noout -enddate | cut -d= -f2)"
+          days=$(( ( $(date -d "$end" +%s) - $(date -d "$start" +%s) ) / 86400 ))
+          [ "$days" -le 3 ] || die "certificate valid $days days: not a throwaway certificate"
+          libs="$(unzip -Z1 "$APK" | grep '^lib/' | sort)"
+          [ "$libs" = "$(printf 'lib/arm64-v8a/libkadri_pairing_poc.so\nlib/x86_64/libkadri_pairing_poc.so')" ] || die "unexpected native libraries: $libs"
+          if unzip -Z1 "$APK" | grep -qi 'testinit'; then die "test library inside"; fi
+          for abi in arm64-v8a x86_64; do
+            unzip -p "$APK" "lib/$abi/libkadri_pairing_poc.so" > "$W/$abi.so"
+            machine="$("$TC/llvm-readelf" -h "$W/$abi.so" | sed -n 's/^ *Machine: *//p')"
+            case "$abi:$machine" in arm64-v8a:AArch64|x86_64:*X86-64*) ;; *) die "architecture mismatch $abi:$machine" ;; esac
+            if "$TC/llvm-nm" -D --defined-only "$W/$abi.so" | grep -q Java_poc_TestInitiator_; then die "test initiator in app library"; fi
+            "$TC/llvm-nm" -D --defined-only "$W/$abi.so" | grep -q ' Java_poc_Core_hostInit$' || die "channel JNI entry points missing ($abi)"
+          done
+          echo "apk_sha256=$(sha256sum < "$APK" | cut -d' ' -f1)"
+          grep -E "^package:|^sdkVersion|^targetSdkVersion|^native-code|^application-label:" <<<"$badging"
+          echo "$perms"
+          grep -E "Number of signers|Signer #1 certificate (DN|SHA-256 digest)" <<<"$certs"
+          echo "cert_not_before=$start"; echo "cert_not_after=$end"; echo "cert_validity_days=$days"
+          for abi in arm64-v8a x86_64; do echo "lib/$abi/libkadri_pairing_poc.so sha256=$(sha256sum < "$W/$abi.so" | cut -d' ' -f1)"; done
+          SH
+          chmod +x "$RUNNER_TEMP/verify-p4.sh"
+          # Gerätetest: installieren, starten, Kanal lauscht NUR auf 127.0.0.1:47899, wieder deinstallieren.
+          cat > "$RUNNER_TEMP/smoke-p4.sh" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          APK="$1"; PKG=de.evp.helfer.p4test
+          adb wait-for-device
+          [ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" = 1 ] || [ "$(adb shell getprop ro.boot.qemu | tr -d '\r')" = 1 ] || { echo "not an emulator" >&2; exit 2; }
+          before="$(adb shell pm list packages | tr -d '\r' | sort)"
+          adb install "$APK"
+          dump="$(adb shell dumpsys package "$PKG" | tr -d '\r')"
+          grep -q "versionCode=$GITHUB_RUN_NUMBER " <<<"$dump"
+          if grep -qE 'pkgFlags=\[[^]]*(DEBUGGABLE|ALLOW_BACKUP|TEST_ONLY)' <<<"$dump"; then echo "unexpected package flags" >&2; exit 1; fi
+          if adb shell run-as "$PKG" id 2>/dev/null | grep -q uid=; then echo "run-as works: debuggable" >&2; exit 1; fi
+          adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS || true
+          adb shell am start -W -n "$PKG/de.evp.helfer.MainActivity" > /dev/null
+          # 127.0.0.1 erscheint je nach Socket als IPv4 (tcp) oder als IPv4-gemappte Adresse ::ffff:127.0.0.1 (tcp6).
+          LOOP='^(0100007F|0000000000000000FFFF00000100007F):BB1B$'
+          ok=
+          for i in $(seq 1 60); do
+            l="$(adb shell 'cat /proc/net/tcp /proc/net/tcp6 2>/dev/null' | awk '$4=="0A"{print toupper($2)}')"
+            if grep -qE "$LOOP" <<<"$l"; then ok=1; break; fi
+            sleep 1
+          done
+          if [ -z "$ok" ]; then
+            echo "channel not listening on 127.0.0.1:47899; listeners: $(tr '\n' ' ' <<<"$l")" >&2
+            adb shell dumpsys activity services "$PKG" | tr -d '\r' | head -30 || true
+            adb shell pidof "$PKG" || true
+            adb logcat -d | grep -E 'evp|helfer|Helfer|AndroidRuntime|FATAL' | tail -60 || true
+            adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1 && adb shell cat /sdcard/ui.xml | tr '>' '\n' | grep -o 'text="[^"]*"' | head -40 || true
+            exit 1
+          fi
+          if grep -E ':BB1B$' <<<"$l" | grep -vqE "$LOOP"; then echo "listens beyond 127.0.0.1: $l" >&2; exit 1; fi
+          if grep -qE ':BA43$' <<<"$l"; then echo "legacy port 47811 open" >&2; exit 1; fi
+          adb shell dumpsys activity services "$PKG" | tr -d '\r' | grep -q 'de.evp.helfer.HelferService' || { echo "foreground service not running" >&2; exit 1; }
+          echo "SMOKE: installed, service running, channel only on 127.0.0.1:47899 ($(adb shell getprop ro.build.version.release | tr -d '\r'), API $(adb shell getprop ro.build.version.sdk | tr -d '\r'))"
+          adb uninstall "$PKG"
+          [ "$before" = "$(adb shell pm list packages | tr -d '\r' | sort)" ] || { echo "package list changed" >&2; exit 1; }
+          echo "SMOKE: uninstalled, package list as before"
+          SH
+          chmod +x "$RUNNER_TEMP/smoke-p4.sh"
+      - name: Verify the signed APK and record its hash BEFORE the emulator
+        run: |
+          set -euo pipefail
+          chmod a-w "$RUNNER_TEMP/signed/helper-p4test.apk"
+          "$RUNNER_TEMP/verify-p4.sh" "$RUNNER_TEMP/signed/helper-p4test.apk" "$(cat "$RUNNER_TEMP/throwaway-cert.sha256")" | tee "$RUNNER_TEMP/before.txt"
+          sha256sum "$RUNNER_TEMP/signed/helper-p4test.apk" > "$RUNNER_TEMP/apk-before.sha256"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install smoke test of exactly this APK (disposable API 34 emulator)
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash tools/wait-device-ready.sh && bash "$RUNNER_TEMP/smoke-p4.sh" "$RUNNER_TEMP/signed/helper-p4test.apk"
+      - name: AFTER the emulator - same file, same hash, same facts
+        run: |
+          set -euo pipefail
+          sha256sum -c "$RUNNER_TEMP/apk-before.sha256"
+          "$RUNNER_TEMP/verify-p4.sh" "$RUNNER_TEMP/signed/helper-p4test.apk" "$(cat "$RUNNER_TEMP/throwaway-cert.sha256")" > "$RUNNER_TEMP/after.txt"
+          diff -u "$RUNNER_TEMP/before.txt" "$RUNNER_TEMP/after.txt"
+      - name: Delivery - APK, SHA256SUMS, evidence (certificate, commits, expiry)
+        run: |
+          set -euo pipefail
+          D="$RUNNER_TEMP/deliver"; mkdir -p "$D"
+          cp "$RUNNER_TEMP/signed/helper-p4test.apk" "$D/helper-p4test.apk"
+          apk="$(sha256sum < "$D/helper-p4test.apk" | cut -d' ' -f1)"
+          test "$apk" = "$(sed -n 's/^apk_sha256=//p' "$RUNNER_TEMP/after.txt")"
+          python3 - "$D" "$RUNNER_TEMP/after.txt" <<'PY'
+          import datetime, json, os, re, sys
+          d, facts = sys.argv[1], open(sys.argv[2]).read()
+          f = lambda k: re.search('^' + re.escape(k) + '=(.*)$', facts, re.M).group(1)
+          now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+          days = int(os.environ['RETENTION_DAYS'])
+          ev = {
+            'purpose': 'Owner-approved controlled Samsung test (P4c). NOT a release. Production stays UNAPPROVED.',
+            'package': 'de.evp.helfer.p4test', 'label': 'P4 TEST Helfer', 'version_code': int(os.environ['GITHUB_RUN_NUMBER']),
+            'apk': 'helper-p4test.apk', 'apk_sha256': f('apk_sha256'),
+            'signer': 'throwaway key generated in this workflow run, used once, deleted (never production, never the old signer)',
+            'certificate_dn': 'CN=Helper P4 TEST ONLY - throwaway',
+            'certificate_sha256': re.search(r'^Signer #1 certificate SHA-256 digest: ([0-9a-f]{64})$', facts, re.M).group(1),
+            'certificate_not_before': f('cert_not_before'), 'certificate_not_after': f('cert_not_after'),
+            'durable_p4_identity': 'KEY_NOT_YET_CREATED (release/p4test-signer.json unchanged)',
+            'native_libraries': dict(re.findall(r'^(lib/\S+) sha256=([0-9a-f]{64})$', facts, re.M)),
+            'permissions': re.findall(r"^uses-permission: name='([^']+)'", facts, re.M),
+            'helper_source_commit': os.environ['SOURCE_SHA'], 'helper_workflow_commit': os.environ['WORKFLOW_SHA'],
+            'kadri_pair_commit': os.environ['KADRI_PAIR_SHA'], 'kadri_p4_extension_id': os.environ['KADRI_P4_EXTENSION_ID'],
+            'workflow_run': f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+            'built_at': now.isoformat(), 'artifact_expires_at': (now + datetime.timedelta(days=days)).isoformat(),
+            'known_limitation': 'P4B-A10-SIZE: Android 10 MediaStore SIZE column stays 0 (accepted by the owner only for the Android 17 test).',
+            'changes': 'P4c-2: automatic resume (backoff, connectivity), notification resume while the app instance lives, screen-off/restart regression',
+            'production_status': 'UNAPPROVED',
+          }
+          open(os.path.join(d, 'p4test-evidence.json'), 'w').write(json.dumps(ev, indent=2) + '\n')
+          PY
+          (cd "$D" && sha256sum helper-p4test.apk p4test-evidence.json > SHA256SUMS)
+          chmod a-w "$D"/*
+          cat "$D/SHA256SUMS" "$D/p4test-evidence.json"
+          find "$D" -type f | sort
+          [ "$(find "$D" -type f | wc -l)" = 3 ]
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: helper-p4test-8b906c5-run${{ github.run_id }}
+          path: ${{ runner.temp }}/deliver
+          retention-days: ${{ env.RETENTION_DAYS }}
+          if-no-files-found: error

@@ -14,6 +14,17 @@ DL = 'de/evp/helfer/dl/DirectDownloads.java'
 NET = 'de/evp/helfer/net/SafeHttpClient.java'
 
 MUTATIONS = [
+    # P4c-3 (P2): MP4-Quelle nur für dieselbe Datei, nie nach Abbruch
+    ('resume from vault ignores a changed file', DL, 'if (job.expectTotal >= 0 && (total != job.expectTotal || etag == null || !etag.equals(job.expectEtag))) throw new Fail("changed");', ''),
+    ('vault kept after cancel', DL, '        forget(id);   // P2: nach ausdrücklichem Abbruch nie wieder automatisch fortsetzen\n', ''),
+    ('vault kept after success', DL, '        if (state != State.INTERRUPTED) forget(job.id);   // P2: fertig/Fehler/Abbruch → gespeicherte Quelle sofort weg\n', ''),
+    # P4c-3 (P1): Prozent nur aus exaktem Zähler/Nenner (kein Abschneiden, keine Schätzung)
+    ('percent beyond the exact size', 'de/evp/helfer/dl/Progress.java', 'if (phase != Phase.FETCH || total <= 0 || bytes > total) return -1;', 'if (phase != Phase.FETCH || total <= 0) return -1;'),
+    ('percent clipped at 100', 'de/evp/helfer/dl/Progress.java', 'if (phase != Phase.FETCH || total <= 0 || bytes > total) return -1;', 'if (phase != Phase.FETCH || total <= 0) return -1;\n        if (bytes > total) return 100;'),
+    ('parts beyond all parts shown', 'de/evp/helfer/dl/Progress.java', 'public boolean partsKnown() { return phase == Phase.FETCH && of > 0 && done <= of; }', 'public boolean partsKnown() { return phase == Phase.FETCH && of > 0; }'),
+    ('job slots never report idle', 'de/evp/helfer/dl/JobSlots.java', 'private void freed() { if (--used == 0) activity.active(false); }', 'private void freed() { --used; }'),
+    ('job slots report every acquire', 'de/evp/helfer/dl/JobSlots.java', 'private void occupied() { if (++used == 1) activity.active(true); }', 'private void occupied() { ++used; activity.active(true); }'),
+    ('late listener not told about running job', 'de/evp/helfer/dl/JobSlots.java', 'if (used > 0) activity.active(true);', ''),
     ('status not checked', DL, 'if (response.code() != 200) throw new Fail("http_" + response.code());', ''),
     ('content-length optional', DL, 'if (total <= 0) throw new Fail("no_length");', 'if (total <= 0) total = Long.MAX_VALUE;'),
     ('content type not checked', DL, 'if (!acceptedType(response.contentType())) throw new Fail("type");', ''),
@@ -23,7 +34,7 @@ MUTATIONS = [
     # Nicht als Probe: 'if (n < 0) throw new IOException("short body")' und der long_body-Test sind über OkHttp nicht
     # erreichbar (FixedLengthSource wirft bei vorzeitigem Ende ProtocolException und liefert genau Content-Length);
     # sie bleiben als zweite Absicherung. Vorzeitiges Ende prüfen 'truncated body …' und 'at most 3 resumes'.
-    ('write error resumed', DL, 'try { out.write(b, 0, n); } catch (IOException e) { throw new Fail("storage"); }', 'out.write(b, 0, n);'),
+    ('write error resumed', DL, 'try { out.write(b, 0, n); } catch (IOException e) { throw new Fail("storage", e); }', 'out.write(b, 0, n);'),
     ('resume without strong ETag', DL, 'if (resumes >= MAX_RESUMES || etag == null) throw new Fail("network");', 'if (resumes >= MAX_RESUMES) throw new Fail("network");'),
     ('weak or invalid etag accepted', DL, 'return SafeHttpClient.isStrongEtag(etag) ? etag : null;', 'return etag;'),
     ('If-Range not sent', DL, 'response = http.get(finalUrl, job.bytes, total - 1, etag, total, callTimeoutMs, job.cancel);',
@@ -31,8 +42,9 @@ MUTATIONS = [
     ('multipart 206 accepted', DL, 'if (type != null && type.trim().toLowerCase(Locale.ROOT).startsWith("multipart/")) throw new Fail("range_multipart");', ''),
     ('content-encoding unchecked', DL, 'if (!identityEncoding(response.contentEncoding())) throw new Fail("encoding");', ''),
     ('content-encoding unchecked on resume', DL, 'if (!identityEncoding(r.contentEncoding())) throw new Fail("encoding");', ''),
+    ('stale idle connection reused', DL, 'this.http = http.withoutConnectionReuse();', 'this.http = http;'),
     ('storage permission not checked', DL, 'if (!store.writable()) throw new Fail("storage_permission");', ''),
-    ('ref not journaled before writing', DL, 'try { saveJournal(); } catch (IOException e) { throw new Fail("storage"); }', ''),
+    ('ref not journaled before writing', DL, 'try { saveJournal(); } catch (IOException e) { throw new Fail("storage", e); }', ''),
     ('published file restored as interrupted', DL, 'st = j.ref != null && published(j.ref, j.total) ? State.DONE : State.INTERRUPTED;', 'st = State.INTERRUPTED;'),
     ('unchecked restore as done', DL, 'try { return total > 0 && store.isPublished(ref, total); }', 'try { return true; }'),
     ('unlimited resumes', DL, 'resumes >= MAX_RESUMES || ', ''),
@@ -42,11 +54,19 @@ MUTATIONS = [
     ('changed etag ignored', DL, 'if (etag == null || !etag.equals(strongEtag(r.etag()))) throw new Fail("changed");', ''),
     ('duplicate start allowed', DL, 'if (known != null) return json(known);           // doppelter', 'if (known != null && known.state != State.RUNNING) return json(known);           // doppelter'),
     ('start before journal', DL, 'saveJournal();                                    // erst vermerkt', '// erst vermerkt'),
-    ('parallel limit removed', DL, 'if (running.get() >= MAX_PARALLEL) return busy(id);', ''),
+    ('parallel limit removed', DL, 'if (running.get() >= MAX_PARALLEL || !slots.tryAcquireWithConnection()) return busy(id);', 'slots.tryAcquireWithConnection();'),
     ('running survives restart', DL, 'if (st == State.RUNNING) {', 'if (false) {'),
     ('no cleanup on failure', DL, 'if (target != null) target.abort();', ''),
     ('cancel does not reach the call', NET, 'if (cancellation != null) cancellation.attach(call);', ''),
     ('corrupt journal accepted', DL, 'if (fields < 0) throw new IOException("corrupt download journal");', 'if (fields < 0) return;'),
+    # P4c: automatische Wiederaufnahme (Pause, Netz, Abbruch, endgültige Fehler)
+    ('resume without pause', DL, 'pause(job, resumes);       // P4c', '// P4c'),
+    ('403 treated as transient', 'de/evp/helfer/dl/Retry.java', 'return code == 408 || code == 429', 'return code == 403 || code == 408 || code == 429'),
+    ('offline wait unbounded', 'de/evp/helfer/dl/Retry.java', 'if (now - offlineSince > MAX_OFFLINE_MS / scale) return false;', ''),
+    ('cancel ignored while waiting', 'de/evp/helfer/dl/Retry.java', 'if (stop.getAsBoolean()) return false;', ''),
+    ('offline treated as online', 'de/evp/helfer/dl/Retry.java', 'if (!online()) {', 'if (false) {'),
+    ('transient 5xx on resume not retried', DL, 'if (Retry.transientStatus(response.code())) continue;', ''),
+    ('first request not retried', DL, 'if (!Retry.transientStatus(r.code()) || attempt >= MAX_RESUMES) return r;', 'return r;'),
 ]
 
 

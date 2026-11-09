@@ -405,7 +405,7 @@
     const list = [];
     const add = (url, how) => { if (url && !list.some((x) => x.u === url)) list.push({ u: url, how: how }); };
     const single = countEligible() <= 1;
-    // Pornhub: komplette MP4 mit Ton zuerst (beste Qualität vorn), der Stream nur als Ausweich
+    // Seite A: komplette MP4 mit Ton zuerst (beste Qualität vorn), der Stream nur als Ausweich
     if (PH && phCache && phCache.length) phCache.forEach((c) => add(c.u, 'MP4 mit Ton' + (c.res ? ' · ' + c.res + 'p' : '')));
     // 1. bewiesen: die Seite lädt gerade Stücke genau dieses Streams (seit Start dieses Videos / letztem Wechsel)
     checkNav();

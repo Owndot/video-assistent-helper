@@ -35,13 +35,16 @@ import de.evp.helfer.net.SafeResponse;
  *       während des Downloads und die empfangene Menge (genau Content-Length).</li>
  *   <li>Unterbrechung: Fortsetzen nur mit starkem ETag (If-Range, starker Vergleich), Status 206 und exakt passendem
  *       Content-Range; höchstens {@link #MAX_RESUMES}-mal; sonst Fehler und Entfernen des Unfertigen.</li>
+ *   <li>P4c: vor jedem erneuten Verbindungsaufbau (Fortsetzen oder erster Abruf nach Netzfehler bzw. 408/429/5xx)
+ *       wartet der Auftrag mit wachsender Pause ({@link Retry}); ohne Netz ohne Anfragen, bis es zurück ist. Nie nach
+ *       Abbruch, Sicherheitsprüfung, 401/403/404/410, geänderter Datei oder ohne starken ETag.</li>
  *   <li>Abbruch jederzeit (auch während Verbindungsaufbau); jedes Ende ohne Erfolg entfernt das Unfertige.</li>
  *   <li>Antworten, Journal und Rückmeldungen enthalten nie die URL.</li>
  * </ul>
  */
 public final class DirectDownloads implements ControlCommands.DownloadControl {
     public static final int MAX_PARALLEL = 2;
-    public static final int MAX_RESUMES = 3;
+    public static final int MAX_RESUMES = Retry.MAX_ATTEMPTS;
     public static final long MAX_FILE_BYTES = 16L << 30;
     public static final long SPACE_RESERVE_BYTES = 64L << 20;
     static final int JOURNAL_MAX = 256;
@@ -51,8 +54,17 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     /** Rückmeldungen für Benachrichtigungen: nie mit URL. */
     public interface Listener {
         void progress(String id, String title, long bytes, long total);
+        /**
+         * P4c-3: Fortschritt mit verlässlichem Zähler/Nenner ({@link Progress}). Ohne eigene Umsetzung geht er an
+         * {@link #progress(String, String, long, long)} – mit der exakten Größe oder -1, nie mit einer Schätzung.
+         */
+        default void progress(String id, String title, Progress p) { progress(id, title, p.bytes, p.total); }
         /** {@code saved}: Verweis der Ablage bei "done", sonst null. */
         void finished(String id, String title, String state, String reason, Object saved);
+        /** P4c-3: wie oben, bei "done" mit der exakten Größe der veröffentlichten Datei (sonst -1). */
+        default void finished(String id, String title, String state, String reason, Object saved, long size) { finished(id, title, state, reason, saved); }
+        /** P4c: Auftrag wartet auf Netz bzw. auf den nächsten automatischen Versuch ({@link Retry.Wait#NONE}: geht weiter). */
+        default void waiting(String id, String title, Retry.Wait wait) {}
     }
 
     enum State { RUNNING, DONE, FAILED, CANCELLED, INTERRUPTED }
@@ -64,6 +76,11 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         volatile long bytes, total = -1;
         volatile String reason = "";
         volatile String ref;      // Verweis der Ablage (Journal), nie die URL
+        volatile String cause = "";   // nur Diagnose (Tests/Logs): Ausnahmeklasse eines Ablagefehlers, nie im Status/Kanal
+        volatile Retry.Wait wait = Retry.Wait.NONE;   // P4c: wartet gerade auf Netz bzw. auf den nächsten Versuch
+        // P2: Fortsetzen aus der gespeicherten Quelle – nur dieselbe Darstellung (starker ETag und exakte Länge)
+        volatile String expectEtag;
+        volatile long expectTotal = -1;
         final SafeHttpClient.Cancellation cancel = new SafeHttpClient.Cancellation();
         Job(String id, String title) { this.id = id; this.title = title; }
     }
@@ -71,7 +88,14 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     /** Endgültiger Ausgang eines Auftrags (für den Abbruch der Schleife). */
     static final class Fail extends Exception {
         final String reason;
-        Fail(String reason) { super(reason, null, false, false); this.reason = reason; }
+        final String cause;
+        Fail(String reason) { this(reason, null); }
+        /** Mit Ursache (nur Diagnose): Klasse und Meldung der auslösenden Ausnahme. */
+        Fail(String reason, Throwable why) {
+            super(reason, null, false, false);
+            this.reason = reason;
+            this.cause = why == null ? "" : why.getClass().getSimpleName() + ": " + why.getMessage();
+        }
     }
 
     private final SafeHttpClient http;
@@ -81,14 +105,31 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     private final ExecutorService workers;
     private final Map<String, Job> jobs = new LinkedHashMap<>();
     private final AtomicInteger running = new AtomicInteger();
+    private final JobSlots slots;
     private boolean stopped;
+    private volatile Retry retry = Retry.DEFAULT;
+
+    /** P4c: Wiederholungen (Android: mit Verbindungsüberwachung; Tests: beschleunigt). */
+    public void setRetry(Retry r) { this.retry = r; }
 
     public DirectDownloads(SafeHttpClient http, DownloadStore store, Listener listener) throws IOException {
-        this(http, store, listener, SafeHttpClient.MAX_CALL_TIMEOUT_MS);
+        this(http, store, listener, SafeHttpClient.MAX_CALL_TIMEOUT_MS, new JobSlots(MAX_PARALLEL, 2 * MAX_PARALLEL));
+    }
+
+    /** Wie oben; {@code slots}: mit anderen Download-Arten (HLS) geteilte Obergrenze aktiver Aufträge. */
+    public DirectDownloads(SafeHttpClient http, DownloadStore store, Listener listener, JobSlots slots) throws IOException {
+        this(http, store, listener, SafeHttpClient.MAX_CALL_TIMEOUT_MS, slots);
     }
 
     DirectDownloads(SafeHttpClient http, DownloadStore store, Listener listener, long callTimeoutMs) throws IOException {
-        this.http = http;
+        this(http, store, listener, callTimeoutMs, new JobSlots(MAX_PARALLEL, 2 * MAX_PARALLEL));
+    }
+
+    DirectDownloads(SafeHttpClient http, DownloadStore store, Listener listener, long callTimeoutMs, JobSlots slots) throws IOException {
+        if (slots.max > MAX_PARALLEL) throw new IllegalArgumentException("slots");
+        this.slots = slots;
+        // Jede Anfrage auf eigener Verbindung: nie eine ruhende, vom Server schon geschlossene (SafeHttpClient#withoutConnectionReuse).
+        this.http = http.withoutConnectionReuse();
         this.store = store;
         this.listener = listener;
         this.callTimeoutMs = callTimeoutMs;
@@ -110,7 +151,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             Job known = jobs.get(id);
             if (known != null) return json(known);           // doppelter oder verspäteter Start: nichts Neues
             if (stopped) return busy(id);
-            if (running.get() >= MAX_PARALLEL) return busy(id);
+            if (running.get() >= MAX_PARALLEL || !slots.tryAcquireWithConnection()) return busy(id);
             job = new Job(id, displayTitle(name));
             jobs.put(id, job);
             running.incrementAndGet();
@@ -119,6 +160,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             } catch (IOException e) {
                 jobs.remove(id);
                 running.decrementAndGet();
+                slots.releaseWithConnection();
                 return busy(id);
             }
         }
@@ -140,8 +182,98 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         Job j;
         synchronized (this) { j = jobs.get(id); }
         if (j == null) return unknown(id);
+        forget(id);   // P2: nach ausdrücklichem Abbruch nie wieder automatisch fortsetzen
         j.cancel.cancel();
         return json(j);
+    }
+
+    // ------------------------------------------------------------------ P4c-3 (P2): verschlüsselte Quelle
+
+    private volatile SourceVault vault;
+
+    /** Ablage der Quelle (höchstens 6 h); Einträge ohne unterbrochenen Auftrag werden sofort gelöscht. */
+    public void setVault(SourceVault v) {
+        v.sweep();
+        java.util.Set<String> keep = new java.util.HashSet<>();
+        synchronized (this) {
+            for (Job j : jobs.values()) if (j.state == State.INTERRUPTED) keep.add(j.id);
+            vault = v;
+        }
+        // eigener Ordner je Engine (MP4/HLS): alles ohne unterbrochenen MP4-Auftrag oder anderer Art sofort löschen
+        java.io.File[] fs = v.dirForCleanup().listFiles();
+        if (fs != null) for (java.io.File f : fs) {
+            String n = f.getName();
+            if (!n.endsWith(".src") || n.length() != 36) continue;
+            String id = n.substring(0, 32);
+            SourceVault.Entry e = keep.contains(id) ? v.get(id) : null;
+            if (e == null || !"mp4".equals(e.kind)) v.delete(id);
+        }
+    }
+
+    private static String b64(String s) { return Base64.getUrlEncoder().withoutPadding().encodeToString(s.getBytes(StandardCharsets.UTF_8)); }
+    private static String unb64(String s) { return new String(Base64.getUrlDecoder().decode(s), StandardCharsets.UTF_8); }
+
+    /** Nur mit starkem ETag: ohne ihn lässt sich nach einem Prozessende nicht prüfen, ob es dieselbe Datei ist. */
+    private void remember(Job job, String url, String etag, long total) {
+        SourceVault v = vault;
+        if (v == null || job.cancel.isCancelled()) return;
+        if (etag == null) { v.delete(job.id); return; }
+        v.put(job.id, "mp4", url, b64(etag) + "|" + total + "|" + b64(job.title));
+    }
+
+    private void forget(String id) {
+        SourceVault v = vault;
+        if (v != null) v.delete(id);
+    }
+
+    public boolean canResumeStored(String id) {
+        SourceVault v = vault;
+        Job j;
+        synchronized (this) { j = jobs.get(id); if (j == null || stopped || v == null || j.state != State.INTERRUPTED) return false; }
+        SourceVault.Entry e = v.get(id);
+        return e != null && "mp4".equals(e.kind);
+    }
+
+    /**
+     * P2: unterbrochene MP4-Aufträge mit gültiger Quelle neu laden (ab Byte 0, derselbe Auftrag), nur bei unveränderter
+     * Darstellung (starker ETag, Länge). Nur auf Anlass des Dienstes bzw. beim Öffnen der App; nie nach Abbruch.
+     */
+    public int resumeStored() {
+        SourceVault v = vault;
+        if (v == null) return 0;
+        List<String> cand = new ArrayList<>();
+        synchronized (this) {
+            if (stopped) return 0;
+            for (Job j : jobs.values()) if (j.state == State.INTERRUPTED) cand.add(j.id);
+        }
+        int started = 0;
+        for (String id : cand) {
+            SourceVault.Entry e = v.get(id);
+            if (e == null || !"mp4".equals(e.kind)) continue;
+            String[] b = e.binding.split("\\|", -1);
+            Job job;
+            try {
+                if (b.length != 3) throw new IllegalArgumentException("binding");
+                job = new Job(id, displayTitle(unb64(b[2])));
+                job.expectEtag = unb64(b[0]);
+                job.expectTotal = Long.parseLong(b[1]);
+            } catch (IllegalArgumentException bad) { v.delete(id); continue; }
+            synchronized (this) {
+                Job known = jobs.get(id);
+                if (stopped || known == null || known.state != State.INTERRUPTED) continue;
+                if (running.get() >= MAX_PARALLEL || !slots.tryAcquireWithConnection()) break;
+                jobs.put(id, job);
+                running.incrementAndGet();
+                try { saveJournal(); }
+                catch (IOException io) { jobs.put(id, known); running.decrementAndGet(); slots.releaseWithConnection(); continue; }
+            }
+            started++;
+            final Job j = job;
+            final String url = e.url;
+            try { workers.execute(() -> run(j, url)); }
+            catch (RuntimeException rejected) { finish(j, State.INTERRUPTED, "stopped", null); }
+        }
+        return started;
     }
 
     /**
@@ -152,6 +284,26 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         List<Job> snapshot;
         synchronized (this) { stopped = true; snapshot = new ArrayList<>(jobs.values()); }
         for (Job j : snapshot) if (j.state == State.RUNNING) j.cancel.cancel();
+    }
+
+    /**
+     * Wartet höchstens {@code ms}, bis kein Auftrag mehr läuft (jeder Arbeiter hat aufgeräumt und sein Ende gemeldet).
+     * Für einen geordneten Dienst-Stopp und für Tests, die den Endzustand prüfen. true = leer.
+     */
+    public synchronized boolean awaitIdle(long ms) throws InterruptedException {
+        long end = System.nanoTime() + ms * 1_000_000L;
+        while (running.get() > 0) {
+            long left = (end - System.nanoTime()) / 1_000_000L;
+            if (left <= 0) return false;
+            wait(left);
+        }
+        return true;
+    }
+
+    /** Nur Diagnose: Ursache eines Ablagefehlers dieses Auftrags (leer, wenn keiner). Nie Teil des Kanalstatus. */
+    public synchronized String diagnostics(String id) {
+        Job j = jobs.get(id);
+        return j == null ? "" : j.cause;
     }
 
     /** Dienststart: Starts wieder annehmen. */
@@ -168,7 +320,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         try {
             // Ablage zuerst: ohne Schreibrecht (Android 8–9: Speicherberechtigung) kein Netzwerkzugriff.
             if (!store.writable()) throw new Fail("storage_permission");
-            response = http.get(url, -1, -1, MAX_FILE_BYTES, callTimeoutMs, job.cancel);
+            response = open(job, url);
             checkCancelled(job);
             if (response.code() != 200) throw new Fail("http_" + response.code());
             long total = response.contentLength();
@@ -180,19 +332,22 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             // Fortsetzen nur mit starkem ETag (RFC 9110 8.8.1/13.1.5); Last-Modified und schwache ETags genügen nicht.
             String etag = strongEtag(response.etag());
             String finalUrl = response.url();
+            // P2: nach Prozessende nur dieselbe Datei (gleicher starker ETag, gleiche Länge) – sonst nichts schreiben
+            if (job.expectTotal >= 0 && (total != job.expectTotal || etag == null || !etag.equals(job.expectEtag))) throw new Fail("changed");
+            remember(job, url, etag, total);
             if (freeBytes() < total + SPACE_RESERVE_BYTES) throw new Fail("no_space");
             InputStream in = response.body();
             byte[] head = new byte[8];
             int h = readFully(in, head);
             if (h < 8 || !mp4Signature(head)) throw new Fail("not_mp4");
-            try { target = store.create(fileName(job.title), "video/mp4"); } catch (IOException e) { throw new Fail("storage"); }
+            try { target = store.create(fileName(job.title), "video/mp4"); } catch (IOException e) { throw new Fail("storage", e); }
             OutputStream out;
-            try { out = target.out(); } catch (IOException e) { throw new Fail("storage"); }
+            try { out = target.out(); } catch (IOException e) { throw new Fail("storage", e); }
             // Verweis vermerken, bevor Daten geschrieben werden: nach einem Absturz lässt sich so feststellen, ob die
             // Datei schon veröffentlicht war (dann "done") oder nicht (dann "interrupted", Reste räumt die Ablage ab).
             job.ref = target.ref();
             synchronized (this) {
-                try { saveJournal(); } catch (IOException e) { throw new Fail("storage"); }
+                try { saveJournal(); } catch (IOException e) { throw new Fail("storage", e); }
             }
             write(out, head, 8);
             job.bytes = 8;
@@ -209,13 +364,25 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
                     throw blocked;
                 } catch (IOException interrupted) {
                     checkCancelled(job);
-                    if (resumes >= MAX_RESUMES || etag == null) throw new Fail("network");
-                    resumes++;
-                    response.close();
-                    // If-Range: der Server liefert 206 nur für dieselbe Darstellung, sonst 200 (dann Fehler, nie Mischen).
-                    // Grenze = Gesamtlänge: eine falsche Antwort (200 statt 206) wird so von checkResume benannt.
-                    response = http.get(finalUrl, job.bytes, total - 1, etag, total, callTimeoutMs, job.cancel);
-                    checkCancelled(job);
+                    while (true) {
+                        if (resumes >= MAX_RESUMES || etag == null) throw new Fail("network");
+                        resumes++;
+                        response.close();
+                        pause(job, resumes);       // P4c: wachsende Pause, ohne Netz warten (Abbruch beendet sofort)
+                        // If-Range: der Server liefert 206 nur für dieselbe Darstellung, sonst 200 (dann Fehler, nie Mischen).
+                        // Grenze = Gesamtlänge: eine falsche Antwort (200 statt 206) wird so von checkResume benannt.
+                        try {
+                            response = http.get(finalUrl, job.bytes, total - 1, etag, total, callTimeoutMs, job.cancel);
+                        } catch (NetBlockedException blocked) {
+                            throw blocked;
+                        } catch (IOException again) {
+                            checkCancelled(job);
+                            continue;              // Verbindungsaufbau gescheitert: nächster Versuch (gezählt)
+                        }
+                        checkCancelled(job);
+                        if (Retry.transientStatus(response.code())) continue;   // 408/429/5xx: später erneut (gezählt)
+                        break;
+                    }
                     checkResume(response, job.bytes, total, etag);
                     in = response.body();
                     continue;
@@ -228,17 +395,18 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
                     if (freeBytes() < total - job.bytes + SPACE_RESERVE_BYTES / 2) throw new Fail("no_space");
                 }
                 long now = System.nanoTime();
-                if (now - lastNote > 500_000_000L) { lastNote = now; listener.progress(job.id, job.title, job.bytes, total); }
+                if (now - lastNote > 500_000_000L) { lastNote = now; listener.progress(job.id, job.title, Progress.mp4(job.bytes, total)); }
             }
             if (in.read() != -1) throw new Fail("long_body");
             checkCancelled(job);
-            try { out.close(); saved = target.commit(); } catch (IOException e) { throw new Fail("storage"); }
+            try { out.close(); saved = target.commit(); } catch (IOException e) { throw new Fail("storage", e); }
             job.ref = target.ref();   // nach dem Veröffentlichen (Android 8–9: endgültiger Dateiname)
             target = null;
             state = State.DONE;
             reason = "";
         } catch (Fail f) {
             reason = f.reason;
+            job.cause = f.cause;
         } catch (NetBlockedException blocked) {
             // Sicherheitsprüfung abgelehnt: Ende des Auftrags. Kein zweiter Versuch, kein anderer Abrufweg.
             reason = blocked.reason == NetBlockedException.Reason.BODY_TOO_LARGE ? "too_large" : "blocked_" + blocked.reason.name().toLowerCase(Locale.ROOT);
@@ -252,13 +420,48 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         finish(job, state, reason, saved);    // erst nach dem Aufräumen: "beendet" heißt, nichts Unfertiges bleibt
     }
 
+    /**
+     * Erster Abruf. Netzfehler beim Verbindungsaufbau oder 408/429/5xx: nach wachsender Pause erneut (es ist noch
+     * nichts geschrieben, also kein doppelter Download), höchstens {@link #MAX_RESUMES}-mal; jede andere Antwort
+     * geht unverändert an die Prüfungen in {@link #run}.
+     */
+    private SafeResponse open(Job job, String url) throws Exception {
+        for (int attempt = 0; ; attempt++) {
+            SafeResponse r;
+            try {
+                r = http.get(url, -1, -1, MAX_FILE_BYTES, callTimeoutMs, job.cancel);
+            } catch (NetBlockedException blocked) {
+                throw blocked;
+            } catch (IOException e) {
+                checkCancelled(job);
+                if (attempt >= MAX_RESUMES) throw e;
+                pause(job, attempt + 1);
+                continue;
+            }
+            if (!Retry.transientStatus(r.code()) || attempt >= MAX_RESUMES) return r;
+            r.close();
+            pause(job, attempt + 1);
+        }
+    }
+
+    /** Wartet vor Versuch {@code attempt}; Abbruch oder Aufgeben (zu lange ohne Netz) beendet den Auftrag. */
+    private void pause(Job job, int attempt) throws Fail {
+        boolean go;
+        // Obergrenze ist allein MAX_RESUMES (die Aufrufer zählen); Retry liefert nur die Pause (letzte Stufe bleibt)
+        try { go = retry.await(Math.min(attempt, Retry.MAX_ATTEMPTS), job.cancel::isCancelled, w -> { job.wait = w; listener.waiting(job.id, job.title, w); }); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); go = false; }
+        finally { job.wait = Retry.Wait.NONE; }
+        checkCancelled(job);
+        if (!go) throw new Fail("network");
+    }
+
     private long freeBytes() throws Fail {
-        try { return store.freeBytes(); } catch (IOException e) { throw new Fail("storage"); }
+        try { return store.freeBytes(); } catch (IOException e) { throw new Fail("storage", e); }
     }
 
     /** Schreibfehler (z. B. Speicher voll) sind Ablagefehler, keine Netzwerkunterbrechung: nie Fortsetzen. */
     private static void write(OutputStream out, byte[] b, int n) throws Fail {
-        try { out.write(b, 0, n); } catch (IOException e) { throw new Fail("storage"); }
+        try { out.write(b, 0, n); } catch (IOException e) { throw new Fail("storage", e); }
     }
 
     private static void checkCancelled(Job job) throws Fail {
@@ -284,13 +487,17 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     }
 
     private void finish(Job job, State state, String reason, Object saved) {
+        if (state != State.INTERRUPTED) forget(job.id);   // P2: fertig/Fehler/Abbruch → gespeicherte Quelle sofort weg
         synchronized (this) {
             job.state = state;
             job.reason = reason;
             running.decrementAndGet();
+            slots.releaseWithConnection();
             try { saveJournal(); } catch (IOException ignored) { /* Zustand bleibt im Speicher; nächster Start: interrupted */ }
+            notifyAll();
         }
-        listener.finished(job.id, job.title, state.name().toLowerCase(Locale.ROOT), reason, saved);
+        // bei done: exakte Größe (= Content-Length, vollständig geschrieben und geprüft)
+        listener.finished(job.id, job.title, state.name().toLowerCase(Locale.ROOT), reason, saved, state == State.DONE ? job.bytes : -1);
     }
 
     // ------------------------------------------------------------------ Prüfungen
@@ -333,7 +540,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     }
 
     /** Anzeigetitel (Benachrichtigung): nie aus der URL; nur sichere Zeichen. */
-    static String displayTitle(String name) {
+    public static String displayTitle(String name) {
         if (name == null) return "Video";
         StringBuilder b = new StringBuilder();
         for (int i = 0; i < name.length() && b.length() < 80; i++) {
@@ -344,7 +551,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         return t.isEmpty() ? "Video" : t;
     }
 
-    static String fileName(String title) {
+    public static String fileName(String title) {
         String t = title.replace('.', ' ').replace('/', ' ').trim();
         return (t.isEmpty() ? "Video" : t) + ".mp4";
     }
@@ -352,8 +559,10 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     // ------------------------------------------------------------------ Antworten (ohne URL)
 
     private static String json(Job j) {
+        Retry.Wait w = j.state == State.RUNNING ? j.wait : Retry.Wait.NONE;
         return "{\"ok\":true,\"id\":\"" + j.id + "\",\"state\":\"" + j.state.name().toLowerCase(Locale.ROOT) + "\",\"bytes\":" + j.bytes
-            + ",\"total\":" + j.total + ",\"reason\":\"" + j.reason + "\"}";
+            + ",\"total\":" + j.total + ",\"reason\":\"" + j.reason + "\""
+            + (w == Retry.Wait.NONE ? "" : ",\"wait\":\"" + (w == Retry.Wait.OFFLINE ? "offline" : "retry") + "\"") + "}";
     }
 
     private static String busy(String id) { return "{\"ok\":false,\"id\":\"" + id + "\",\"state\":\"busy\"}"; }

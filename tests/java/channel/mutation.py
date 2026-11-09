@@ -10,6 +10,19 @@ APP = os.path.join(ROOT, 'app', 'src', 'main', 'java')
 CC = 'de/evp/helfer/ControlCommands.java'
 CS = 'de/evp/helfer/ChannelServer.java'
 MUTANTS = [
+    # P4b: HLS-Befehle
+    ('HLS ohne Versionsprüfung', CC, 'if (!hasValue || value != 1.0 || bind == null) throw new IllegalArgumentException("hls fields");', 'if (bind == null) throw new IllegalArgumentException("hls fields");'),
+    ('HLS ohne Kanal-Sitzung', CC, 'if (hls == null || downloads == null || peer == null) return REJECTED;', 'if (hls == null || downloads == null) return REJECTED;'),
+    ('HLS übernimmt MP4-Kennung', CC, 'if (!downloads.status(r.id).contains("\\"state\\":\\"unknown\\"")) return', 'if (false) return'),
+    ('dlcancel nicht zu HLS', CC, 'case "dlcancel": return isHls ? hls.cancel(r.id) : downloads.cancel(r.id);', 'case "dlcancel": return downloads.cancel(r.id);'),
+    ('dlstart startet MP4 mit HLS-Kennung', CC, 'case "dlstart": return isHls ? hls.status(r.id) : downloads.start(r.id, r.url, r.name);', 'case "dlstart": return downloads.start(r.id, r.url, r.name);'),
+    ('hlsstart mit URL', CC, 'if (url != null || id == null || planId == null || option == null) throw new IllegalArgumentException("hls fields");', 'if (id == null || planId == null || option == null) throw new IllegalArgumentException("hls fields");'),
+    ('Bindung mit Zusatzfeld', CC, 'else throw new IllegalArgumentException("bind field");', 'else { if (peek() == \'"\') token(64); else integer(); }'),
+    ('Bindungs-Player beliebig', CC, "if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-')) throw new IllegalArgumentException(\"token\");", ''),
+    ('Plan-Kennung beliebiger Länge', CC, 'if (pos - start != n) throw new IllegalArgumentException("hex length");', ''),
+    ('HLS-Felder bei MP4', CC, 'if (planId != null || option != null || bind != null) throw new IllegalArgumentException("hls field");', ''),
+    ('hlsstart ohne Größengrenze', CC, 'if (raw.length > 1024) throw new IllegalArgumentException("size");', ''),
+    ('Sitzung nicht an HLS', CS, 'device, downloads, hls, sid)', 'device, downloads, hls, new byte[16])'),
     ('fremdes Feld wird ignoriert', CC, '} else throw new IllegalArgumentException("field");', '} else { p.string(); }'),
     ('doppeltes op erlaubt', CC, 'if (op != null) throw new IllegalArgumentException("duplicate op");', ''),
     ('Helligkeit ohne Untergrenze', CC, 'value >= 0.004 && value <= 1.0', 'value <= 1.0'),

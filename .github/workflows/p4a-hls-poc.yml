@@ -1,0 +1,103 @@
+name: P4a HLS→MP4 feasibility (isolated test app, disposable emulators, text-only report)
+
+# P4a only: strict HLS parser/plan (JVM, real SafeHttpClient) and the remux proof of concept on disposable x86_64
+# emulators (API 26, 29, 34). The isolated test app (poc/p4a-hls/android, applicationId de.evp.p4a, emulator debug
+# signature) is installed and uninstalled inside the job and never uploaded; no helper APK is built or signed here.
+# Fixtures are synthetic (tools/make-fixtures.sh). Only text results leave the job.
+on:
+  push:
+    branches: [feature/c3-browser-downloads]
+    paths: ['poc/p4a-hls/**', '.github/workflows/p4a-hls-poc.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p4a-hls-poc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  device:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [26, 29, 34]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - name: Tools (ffmpeg for fixtures and analysis; SDK platform 37, build-tools 36)
+        run: |
+          set -euo pipefail
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"; fi
+          done
+          timeout 120 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          timeout 300 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -1
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-37.0" "build-tools;36.0.0" < <(yes 2>/dev/null) > /dev/null
+      - name: Synthetic HLS fixtures (TS/fMP4, muxed/separate audio, offsets, qualities, Opus, 10-min)
+        run: |
+          set -euo pipefail
+          bash poc/p4a-hls/tools/make-fixtures.sh "$RUNNER_TEMP/fx"
+          cat "$RUNNER_TEMP/fx/FILES.txt" | wc -l
+      - name: Strict parser, plan and SafeHttpClient fetch tests (JVM)
+        if: matrix.api == 34
+        run: |
+          set -euo pipefail
+          bash poc/p4a-hls/tools/run-jvm.sh "$RUNNER_TEMP/fx" "$RUNNER_TEMP/deps"
+          python3 -I poc/p4a-hls/tools/mutation.py "$RUNNER_TEMP/fx" "$RUNNER_TEMP/deps"
+      - name: Build isolated test app and instrumentation APK (Media3 1.11.1 pinned)
+        run: |
+          set -euo pipefail
+          cd poc/p4a-hls/android
+          ./gradlew --no-daemon -q -Pp4aFixtures="$RUNNER_TEMP/fx" assembleDebug assembleDebugAndroidTest
+          ./gradlew --no-daemon -q --write-verification-metadata sha256 -Pp4aFixtures="$RUNNER_TEMP/fx" help
+          mkdir -p "$RUNNER_TEMP/apks" "$RUNNER_TEMP/out"
+          cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk "$RUNNER_TEMP/apks/"
+          grep -o 'group="androidx.media3"[^>]*' gradle/verification-metadata.xml | sort -u > "$RUNNER_TEMP/out/media3-components.txt" || true
+          cp gradle/verification-metadata.xml "$RUNNER_TEMP/out/verification-metadata-p4a.xml"
+          sha256sum "$RUNNER_TEMP"/apks/*.apk | sed 's#.*/##' > "$RUNNER_TEMP/out/apk-sha256-not-uploaded.txt"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Remux PoC on a disposable API ${{ matrix.api }} x86_64 emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash poc/p4a-hls/tools/run-device.sh "$RUNNER_TEMP/apks" "$RUNNER_TEMP/res/api${{ matrix.api }}"
+      - name: Analyse every output against its HLS source (duration, frames, tracks, A/V sync, device decode)
+        run: |
+          set -euo pipefail
+          python3 -I poc/p4a-hls/tools/evaluate.py "$RUNNER_TEMP/fx" "$RUNNER_TEMP/res" "$RUNNER_TEMP/out/summary-api${{ matrix.api }}.md"
+      - name: Collect text-only report (no APK, no media output)
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/out/api${{ matrix.api }}"
+          for f in instrumentation.txt logcat.txt install.txt api.txt pull.err files/files/p4a/results.jsonl; do
+            cp "$RUNNER_TEMP/res/api${{ matrix.api }}/$f" "$RUNNER_TEMP/out/api${{ matrix.api }}/" 2>/dev/null || true
+          done
+          cp "$RUNNER_TEMP/fx/FILES.txt" "$RUNNER_TEMP/out/fixtures-sha256.txt" 2>/dev/null || true
+          find "$RUNNER_TEMP/out" \( -name '*.apk' -o -name '*.mp4' -o -name '*.ts' -o -name '*.m4s' \) -delete
+          ls -R "$RUNNER_TEMP/out"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: p4a-report-text-only-api${{ matrix.api }}
+          path: ${{ runner.temp }}/out
+          retention-days: 7
+          if-no-files-found: warn

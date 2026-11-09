@@ -163,6 +163,123 @@ public final class ChannelChecks {
         passed++;
     }
 
+    // ------------------------------------------------------------ HLS-Befehle (P4b)
+
+    static final String PLAN = "fedcba9876543210fedcba9876543210", OPT = "00112233445566778899aabb";
+    static final String BIND = "{\"player\":\"p-1_A\",\"gen\":3,\"rev\":17}";
+    static final byte[] PEER = "session-0123456789".getBytes(StandardCharsets.US_ASCII);
+
+    static class FakeHls implements ControlCommands.HlsControl {
+        final java.util.List<String> calls = new java.util.ArrayList<>();
+        final java.util.Set<String> known = new java.util.HashSet<>();
+        @Override public synchronized String plan(byte[] peer, String bind, String url) { calls.add("plan " + new String(peer, StandardCharsets.US_ASCII) + " " + bind + " " + url); return "{\"ok\":true,\"planId\":\"" + PLAN + "\"}"; }
+        @Override public synchronized String start(byte[] peer, String bind, String id, String planId, String option, String name) {
+            calls.add("start " + new String(peer, StandardCharsets.US_ASCII) + " " + bind + " " + id + " " + planId + " " + option + " " + name);
+            known.add(id);
+            return "{\"ok\":true,\"id\":\"" + id + "\",\"kind\":\"hls\",\"state\":\"running\"}";
+        }
+        @Override public synchronized boolean knows(String id) { return known.contains(id); }
+        @Override public synchronized String status(String id) { calls.add("status " + id); return "{\"ok\":true,\"id\":\"" + id + "\",\"kind\":\"hls\",\"state\":\"running\"}"; }
+        @Override public synchronized String cancel(String id) { calls.add("cancel " + id); return "{\"ok\":true,\"id\":\"" + id + "\",\"kind\":\"hls\",\"state\":\"cancelled\"}"; }
+    }
+
+    /** MP4-Seite, die keine Kennung kennt (Status "unknown"), mit Aufrufliste. */
+    static final class UnknownDownloads implements ControlCommands.DownloadControl {
+        final java.util.List<String> calls = new java.util.ArrayList<>();
+        final java.util.Set<String> known = new java.util.HashSet<>();
+        @Override public synchronized String start(String id, String url, String name) { calls.add("start " + id); known.add(id); return "{\"ok\":true,\"id\":\"" + id + "\",\"state\":\"running\"}"; }
+        @Override public synchronized String status(String id) { calls.add("status " + id); return "{\"ok\":true,\"id\":\"" + id + "\",\"state\":\"" + (known.contains(id) ? "running" : "unknown") + "\"}"; }
+        @Override public synchronized String cancel(String id) { calls.add("cancel " + id); return "{\"ok\":true,\"id\":\"" + id + "\",\"state\":\"cancelled\"}"; }
+    }
+
+    static String hl(String json, FakeDevice d, ControlCommands.DownloadControl dl, ControlCommands.HlsControl h, byte[] peer) {
+        return ControlCommands.handle(json.getBytes(StandardCharsets.UTF_8), d, dl, h, peer);
+    }
+
+    static final String[] VALID_HLS = {
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8?t=1\",\"bind\":" + BIND + "}",
+        "{\"op\":\"hlsstart\",\"v\":1,\"id\":\"" + ID + "\",\"planId\":\"" + PLAN + "\",\"option\":\"" + OPT + "\",\"bind\":" + BIND + ",\"name\":\"Clip 1\"}",
+        "{\"bind\":{\"rev\":17,\"gen\":3,\"player\":\"p-1_A\"},\"option\":\"" + OPT + "\",\"planId\":\"" + PLAN + "\",\"id\":\"" + ID + "\",\"v\":1,\"op\":\"hlsstart\"}",
+    };
+
+    static final String[] INVALID_HLS = {
+        "{\"op\":\"hlsplan\",\"url\":\"https://a.example/m.m3u8\",\"bind\":" + BIND + "}",                       // ohne Version
+        "{\"op\":\"hlsplan\",\"v\":2,\"url\":\"https://a.example/m.m3u8\",\"bind\":" + BIND + "}",                // andere Version
+        "{\"op\":\"hlsplan\",\"v\":1.5,\"url\":\"https://a.example/m.m3u8\",\"bind\":" + BIND + "}",
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\"}",                                     // ohne Bindung
+        "{\"op\":\"hlsplan\",\"v\":1,\"bind\":" + BIND + "}",                                                    // ohne URL
+        "{\"op\":\"hlsplan\",\"v\":1,\"id\":\"" + ID + "\",\"url\":\"https://a.example/m.m3u8\",\"bind\":" + BIND + "}",
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":" + BIND + ",\"cookie\":\"a=b\"}",
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":" + BIND + ",\"referer\":\"https://a.example/\"}",
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":" + BIND + ",\"bind\":" + BIND + "}",
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":{\"player\":\"p\",\"gen\":3}}",                  // Feld fehlt
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":{\"player\":\"p\",\"gen\":3,\"rev\":1,\"x\":1}}",
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":{\"player\":\"p\",\"player\":\"q\",\"rev\":1}}",
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":{\"player\":\"p q\",\"gen\":3,\"rev\":1}}",
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":{\"player\":\"\",\"gen\":3,\"rev\":1}}",
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":{\"player\":\"" + "p".repeat(65) + "\",\"gen\":3,\"rev\":1}}",
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":{\"player\":\"p\",\"gen\":-1,\"rev\":1}}",
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":{\"player\":\"p\",\"gen\":1.5,\"rev\":1}}",
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":{\"player\":\"p\",\"gen\":1234567890,\"rev\":1}}",
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":{\"player\":\"p\",\"gen\":01,\"rev\":1}}",
+        "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":\"p|3|17\"}",
+        "{\"op\":\"hlsstart\",\"v\":1,\"planId\":\"" + PLAN + "\",\"option\":\"" + OPT + "\",\"bind\":" + BIND + "}",                 // ohne Kennung
+        "{\"op\":\"hlsstart\",\"v\":1,\"id\":\"" + ID + "\",\"option\":\"" + OPT + "\",\"bind\":" + BIND + "}",                       // ohne Plan
+        "{\"op\":\"hlsstart\",\"v\":1,\"id\":\"" + ID + "\",\"planId\":\"" + PLAN + "\",\"bind\":" + BIND + "}",                     // ohne Option
+        "{\"op\":\"hlsstart\",\"v\":1,\"id\":\"" + ID + "\",\"planId\":\"" + PLAN + "\",\"option\":\"" + OPT + "\"}",                 // ohne Bindung
+        "{\"op\":\"hlsstart\",\"v\":1,\"id\":\"" + ID + "\",\"planId\":\"" + PLAN + "\",\"option\":\"" + OPT + "\",\"bind\":" + BIND + ",\"url\":\"https://a.example/x\"}",
+        "{\"op\":\"hlsstart\",\"v\":1,\"id\":\"" + ID + "\",\"planId\":\"" + PLAN.toUpperCase() + "\",\"option\":\"" + OPT + "\",\"bind\":" + BIND + "}",
+        "{\"op\":\"hlsstart\",\"v\":1,\"id\":\"" + ID + "\",\"planId\":\"" + PLAN.substring(1) + "\",\"option\":\"" + OPT + "\",\"bind\":" + BIND + "}",
+        "{\"op\":\"hlsstart\",\"v\":1,\"id\":\"" + ID + "\",\"planId\":\"" + PLAN + "\",\"option\":\"" + OPT + "0\",\"bind\":" + BIND + "}",
+        "{\"op\":\"hlsstart\",\"v\":1,\"id\":\"" + ID + "\",\"planId\":\"" + PLAN + "\",\"option\":\"" + OPT + "\",\"bind\":" + BIND + ",\"name\":\"" + "n".repeat(121) + "\"}",
+        "{\"op\":\"hlsstart\",\"v\":1,\"id\":\"" + ID + "\",\"planId\":\"" + PLAN + "\",\"option\":\"" + OPT + "\",\"bind\":" + BIND + ",\"authorization\":\"x\"}",
+        "{\"op\":\"hlsfetch\",\"v\":1,\"url\":\"https://a.example/m.m3u8\",\"bind\":" + BIND + "}",                              // unbekannt
+        "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\",\"bind\":" + BIND + "}",                       // HLS-Feld bei MP4
+        "{\"op\":\"status\",\"planId\":\"" + PLAN + "\"}",
+    };
+
+    static void hlsCommands() {
+        // Alter Helfer bzw. HLS nicht angebunden: jede HLS-Anfrage abgelehnt, nichts erreicht.
+        for (String s : VALID_HLS) {
+            FakeDevice d = new FakeDevice();
+            UnknownDownloads u = new UnknownDownloads();
+            check(ControlCommands.REJECTED.equals(dl(s, d, u)), "hls accepted without HLS: " + s);
+            check(ControlCommands.REJECTED.equals(hl(s, d, u, null, PEER)), "hls accepted with null HLS: " + s);
+            check(ControlCommands.REJECTED.equals(hl(s, d, u, new FakeHls(), null)), "hls accepted without channel session: " + s);
+            check(u.calls.isEmpty() && d.touches() == 0, "old helper path touched something");
+        }
+        FakeDevice d = new FakeDevice();
+        UnknownDownloads u = new UnknownDownloads();
+        FakeHls h = new FakeHls();
+        check(hl(VALID_HLS[0], d, u, h, PEER).contains(PLAN), "hlsplan answer");
+        check(h.calls.get(0).equals("plan session-0123456789 p-1_A|3|17 https://a.example/m.m3u8?t=1"), h.calls.get(0));
+        check(hl(VALID_HLS[1], d, u, h, PEER).contains("\"kind\":\"hls\""), "hlsstart answer");
+        check(h.calls.get(1).equals("start session-0123456789 p-1_A|3|17 " + ID + " " + PLAN + " " + OPT + " Clip 1"), h.calls.get(1));
+        hl(VALID_HLS[2], d, u, h, PEER);
+        check(h.calls.get(2).equals("start session-0123456789 p-1_A|3|17 " + ID + " " + PLAN + " " + OPT + " null"), "field order / no name: " + h.calls.get(2));
+        // Gemeinsamer Auftragsraum: eine HLS-Kennung geht nie an MP4 (auch nicht dlstart), MP4-Kennungen nie an HLS
+        check(hl("{\"op\":\"dlstatus\",\"id\":\"" + ID + "\"}", d, u, h, PEER).contains("\"kind\":\"hls\""), "dlstatus routed to hls");
+        check(hl("{\"op\":\"dlcancel\",\"id\":\"" + ID + "\"}", d, u, h, PEER).contains("cancelled") && h.calls.contains("cancel " + ID), "dlcancel routed to hls");
+        check(hl("{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/x\"}", d, u, h, PEER).contains("\"kind\":\"hls\"") && u.calls.stream().noneMatch(c -> c.startsWith("start")), "dlstart with an HLS id started MP4");
+        String other = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        hl("{\"op\":\"dlstart\",\"id\":\"" + other + "\",\"url\":\"https://a.example/x\"}", d, u, h, PEER);
+        String clash = hl("{\"op\":\"hlsstart\",\"v\":1,\"id\":\"" + other + "\",\"planId\":\"" + PLAN + "\",\"option\":\"" + OPT + "\",\"bind\":" + BIND + "}", d, u, h, PEER);
+        check(clash.contains("id_in_use") && !h.known.contains(other), "hlsstart reused an MP4 id: " + clash);
+        check(hl("{\"op\":\"dlstatus\",\"id\":\"" + other + "\"}", d, u, h, PEER).contains("\"state\":\"running\"") && !h.calls.contains("status " + other), "MP4 id routed to hls");
+        int hc = h.calls.size(), uc = u.calls.size();
+        for (String s : INVALID_HLS) check(ControlCommands.REJECTED.equals(hl(s, d, u, h, PEER)), "accepted: " + s);
+        check(h.calls.size() == hc && u.calls.size() == uc && d.touches() == 0, "invalid HLS command reached a handler");
+        // Größe: hlsplan bis 4096 Byte (URL), hlsstart höchstens 1024 Byte
+        String padded = VALID_HLS[1].substring(0, VALID_HLS[1].length() - 1) + " ".repeat(1100) + "}";
+        check(ControlCommands.REJECTED.equals(hl(padded, d, u, h, PEER)), "oversize hlsstart accepted");
+        // Fähigkeit: nur ein Helfer mit HLS meldet sie; alte Statusform bleibt unverändert
+        String plain = ControlCommands.statusJson("1.0", true, true, 3, 15, 0.5f);
+        String caps = ControlCommands.statusJson("1.0", true, true, 3, 15, 0.5f, Boolean.FALSE);
+        check(!plain.contains("\"hls\""), "old status reports hls");
+        check(caps.equals(plain.substring(0, plain.length() - 1) + ",\"hls\":{\"v\":1,\"profiles\":[\"ts-avc-aac\",\"fmp4-avc-aac\"],\"opus\":false}}"), caps);
+        passed++;
+    }
+
     static void strictParser() {
         for (String s : VALID) ControlCommands.parse(s.getBytes(StandardCharsets.UTF_8));
         for (String s : INVALID) {
@@ -226,18 +343,20 @@ public final class ChannelChecks {
     /** Startet einen Helper; bei {@code fresh} mit neuer Identität und leerer Registrierung. */
     static void start(boolean fresh) throws Exception { start(fresh, null); }
 
-    static void start(boolean fresh, ControlCommands.DownloadControl downloads) throws Exception {
+    static void start(boolean fresh, ControlCommands.DownloadControl downloads) throws Exception { start(fresh, downloads, null); }
+
+    static void start(boolean fresh, ControlCommands.DownloadControl downloads, ControlCommands.HlsControl hls) throws Exception {
         if (server != null) server.stop();
         if (fresh || identity == null) { identity = Core.identityGenerate(); host = new Host(); }
         device = new FakeDevice();
-        ChannelServer s = new ChannelServer(host, device, downloads);
+        ChannelServer s = new ChannelServer(host, device, downloads, hls);
         synchronized (ChannelServer.CORE) {
             Core.hostInit(identity.clone(), host.disk.get(), now(), true);
             ChannelServer.coreOwner = s;
         }
         for (int i = 0; i < 30 && !s.start(); i++) {   // der JDK gibt den Port verzögert frei
             Thread.sleep(100);
-            ChannelServer n = new ChannelServer(host, device, downloads);
+            ChannelServer n = new ChannelServer(host, device, downloads, hls);
             synchronized (ChannelServer.CORE) { ChannelServer.coreOwner = n; }
             s = n;
         }
@@ -383,6 +502,32 @@ public final class ChannelChecks {
         passed++;
     }
 
+    /** HLS über den echten Kanal: der Plan wird an die vom Kern gelieferte Sitzungskennung gebunden (nie aus der Anfrage). */
+    static void hlsCommandsOverTheChannel() throws Exception {
+        UnknownDownloads u = new UnknownDownloads();
+        java.util.List<byte[]> peers = new java.util.ArrayList<>();
+        FakeHls h = new FakeHls() {
+            @Override public synchronized String plan(byte[] peer, String bind, String url) { peers.add(peer.clone()); return super.plan(peer, bind, url); }
+        };
+        start(true, u, h);
+        byte[] kadri = Core.identityGenerate();
+        byte[] pin = pair(kadri, openWindow());
+        long a = connect(kadri, pin);
+        check(request(a, VALID_HLS[0]).contains(PLAN), "hlsplan over channel");
+        check(request(a, VALID_HLS[0]).contains(PLAN), "second hlsplan, same session");
+        long b = connect(kadri, pin);
+        check(request(b, VALID_HLS[0]).contains(PLAN), "hlsplan, second session");
+        check(peers.size() == 3 && peers.get(0).length == 16, "peer size: " + peers.size());
+        check(java.util.Arrays.equals(peers.get(0), peers.get(1)), "same session must give the same peer");
+        check(!java.util.Arrays.equals(peers.get(0), peers.get(2)), "different sessions must give different peers");
+        check(!java.util.Arrays.equals(peers.get(0), new byte[16]), "peer must not be constant");
+        for (String s : INVALID_HLS) check(ControlCommands.REJECTED.equals(request(a, s)), "accepted over channel: " + s);
+        check(device.touches() == 0, "device touched by HLS commands");
+        TestInitiator.free(a);
+        TestInitiator.free(b);
+        passed++;
+    }
+
     static void wrongCodeBurnsTheWindow() throws Exception {
         start(true);
         String code = openWindow();
@@ -524,10 +669,12 @@ public final class ChannelChecks {
         Thread.setDefaultUncaughtExceptionHandler((t, e) -> { e.printStackTrace(); System.exit(1); });
         strictParser();
         downloadCommands();
+        hlsCommands();
         commandsReachTheDevice();
         statusJsonIsFixedAndSanitised();
         pairingAndControlCommands();
         downloadCommandsOverTheChannel();
+        hlsCommandsOverTheChannel();
         wrongCodeBurnsTheWindow();
         gateRefusesWebLikeRequests();
         revokeOneKeepsTheOthers();
