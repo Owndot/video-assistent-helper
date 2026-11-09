@@ -64,6 +64,8 @@ public final class TestHlsEngine {
         volatile String changedPath = null;        // diese Ressource liefert anderen Inhalt (anderer ETag)
         volatile String masterExtra = "";          // wird an Master angehängt (Playlist-Änderung)
         volatile String bandwidth = null;          // P4c-3: BANDWIDTH im Master ersetzen (z. B. massiv unterschätzte Bitrate)
+        volatile String failPath, invalidListPath, redirectPath;
+        volatile int failStatus;
         // P4c: so viele volle Segmentabrufe beantwortet der Server mit 503 (vorübergehend überlastet)
         final AtomicInteger fail503 = new AtomicInteger(), answered503 = new AtomicInteger(), answered403 = new AtomicInteger(), requests = new AtomicInteger();
         volatile Runnable on503 = null;            // z. B. Netz abschalten (Flugmodus) beim ersten 503
@@ -83,7 +85,8 @@ public final class TestHlsEngine {
         String url(String fixture, String file) { return "http://127.0.0.1:" + port + "/dyn/" + fixture + "/" + file + "?t=" + token; }
 
         void reset() { fullGets.clear(); rangeGets.clear(); rangeMisses.clear(); rangeBroken.clear(); maxInFlight.set(0); delayMs = 0; chunked = false; changedPath = null; masterExtra = ""; bandwidth = null; etagMode = "strong"; token = "T1";
-            fail503.set(0); answered503.set(0); answered403.set(0); on503 = null; }
+            fail503.set(0); answered503.set(0); answered403.set(0); on503 = null;
+            failPath = invalidListPath = redirectPath = null; failStatus = 0; }
 
         int full(String suffix) { int n = 0; for (Map.Entry<String, AtomicInteger> e : fullGets.entrySet()) if (e.getKey().endsWith(suffix)) n += e.getValue().get(); return n; }
         int fullSegments() { int n = 0; for (Map.Entry<String, AtomicInteger> e : fullGets.entrySet()) if (!e.getKey().endsWith(".m3u8")) n += e.getValue().get(); return n; }
@@ -102,10 +105,16 @@ public final class TestHlsEngine {
                 File f = new File(fx, rel);
                 if (!f.isFile() || !f.getCanonicalPath().startsWith(fx.getCanonicalPath())) { x.sendResponseHeaders(404, -1); return; }
                 if (q == null || !q.equals("t=" + token)) { answered403.incrementAndGet(); x.sendResponseHeaders(403, -1); return; }
+                if (rel.equals(failPath)) { x.sendResponseHeaders(failStatus, -1); return; }
+                if (rel.equals(redirectPath)) {
+                    x.getResponseHeaders().set("Location", url("ts_sep", "missing.m3u8"));
+                    x.sendResponseHeaders(302, -1); return;
+                }
                 if (delayMs > 0) Thread.sleep(delayMs);
                 byte[] body = Files.readAllBytes(f.toPath());
                 if (rel.endsWith(".m3u8")) {
                     body = tokenize(new String(body, StandardCharsets.UTF_8), rel.endsWith("master.m3u8")).getBytes(StandardCharsets.UTF_8);
+                    if (rel.equals(invalidListPath)) body = "PRIVATE-SYNTHETIC-NOT-A-PLAYLIST".getBytes(StandardCharsets.US_ASCII);
                     x.getResponseHeaders().set("Content-Type", "application/vnd.apple.mpegurl");
                     count(fullGets, rel);
                     x.sendResponseHeaders(200, body.length);
@@ -742,6 +751,42 @@ public final class TestHlsEngine {
         check("Plan: Produktionsregeln sperren Loopback (privates Ziel) → blocked_*", "false".equals(field(sp, "ok")) && String.valueOf(field(sp, "reason")).startsWith("blocked_"), sp);
         String bad = r.engine.plan(PEER, BIND, "http://127.0.0.1:" + s.port + "/dyn/ts_sep/missing.m3u8?t=T1");
         check("Plan: fehlende Liste → neutraler Grund ohne Adresse", "false".equals(field(bad, "ok")) && !bad.contains("127.0.0.1"), bad);
+        planDiagnostics(s);
+    }
+
+    static void planDiagnostics(Server s) throws Exception {
+        Rig r = new Rig("plan-diagnostics", s);
+        String[] files = {"master.m3u8", "v0.m3u8", "v1.m3u8"};
+        String[] phases = {"source", "video", "audio"};
+        for (int i = 0; i < files.length; i++) {
+            for (int status : new int[] {404, 412}) {
+                s.reset(); s.failPath = "ts_sep/" + files[i]; s.failStatus = status;
+                String result = r.engine.plan(PEER, BIND, s.url("ts_sep", "master.m3u8"));
+                check("Plan-Diagnose: " + phases[i] + " HTTP " + status,
+                    "false".equals(field(result, "ok")) && ("http_" + status).equals(field(result, "reason"))
+                    && (phases[i] + "_fetch").equals(field(result, "phase"))
+                    && Integer.toString(i).equals(field(result, "playlists")), result);
+                // Existing generic guard rejects the substring "http" too; strip only this exact
+                // already-asserted status field, never arbitrary error text or URL substrings.
+                noAddresses("Plan-Diagnose", r, result.replace("\"reason\":\"http_" + status + "\"", "\"reason\":\"status\""));
+                check("Plan-Diagnose: keine Segmente oder Veröffentlichung", s.fullSegments() == 0 && r.store.files().length == 0, result);
+            }
+            s.reset(); s.invalidListPath = "ts_sep/" + files[i];
+            String result = r.engine.plan(PEER, BIND, s.url("ts_sep", "master.m3u8"));
+            check("Plan-Diagnose: " + phases[i] + " Parser statt Abruf",
+                "false".equals(field(result, "ok")) && (phases[i] + "_parse").equals(field(result, "phase"))
+                && Integer.toString(i).equals(field(result, "playlists")) && !result.contains("PRIVATE"), result);
+        }
+        s.reset(); s.redirectPath = "ts_sep/master.m3u8";
+        String redirected = r.engine.plan(PEER, BIND, s.url("ts_sep", "master.m3u8"));
+        check("Plan-Diagnose: 404 nach Redirect bleibt beim Einstiegsabruf (kein Redirect-Ziel ausgegeben)",
+            "http_404".equals(field(redirected, "reason")) && "source_fetch".equals(field(redirected, "phase"))
+            && "0".equals(field(redirected, "playlists")), redirected);
+        noAddresses("Plan-Diagnose Redirect", r, redirected.replace("\"reason\":\"http_404\"", "\"reason\":\"status\""));
+        s.reset();
+        String good = r.engine.plan(PEER, BIND, s.url("ts_sep", "master.m3u8"));
+        check("Plan-Diagnose: folgender Erfolg unverändert, keine alte Diagnose", "true".equals(field(good, "ok")) && !good.contains("\"diag\""), good);
+        check("Plan-Diagnose: keine Credentials gesendet", s.leaks.isEmpty(), s.leaks);
     }
 
 

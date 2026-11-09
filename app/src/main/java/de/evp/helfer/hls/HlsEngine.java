@@ -163,12 +163,13 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
     @Override
     public String plan(byte[] peer, String bind, String url) {
         SafeHttpClient.Cancellation cancel = new SafeHttpClient.Cancellation();
+        PlanTrace trace = new PlanTrace();
         try {
             if (stoppedNow()) return planFail("stopped");
             long deadline = clock.nowMs() + PLAN_DEADLINE_MS;
-            Source src = loadSource(url, cancel, deadline);
+            Source src = loadSource(url, cancel, deadline, trace);
             HlsPlan.Option first = src.options.get(0);
-            Chosen c = choose(src, first, cancel, deadline);
+            Chosen c = choose(src, first, cancel, deadline, trace);
             String planId = hex(randomBytes(16));
             PlanEntry e = new PlanEntry(planId, peer.clone(), bind, clock.nowMs() + PLAN_TTL_MS, url, src.sha, src.options,
                 Math.max(c.plan.videoSeconds, c.plan.audioSeconds));
@@ -179,11 +180,11 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
             for (int i = 0; i < src.options.size(); i++) b.append(i > 0 ? "," : "").append(src.options.get(i).describe());
             return b.append("]}").toString();
         } catch (HlsException e) {
-            return planFail(e.getMessage());
+            return planFail(e.getMessage(), trace);
         } catch (NetBlockedException e) {
-            return planFail("blocked_" + e.reason.name().toLowerCase(Locale.ROOT));
+            return planFail("blocked_" + e.reason.name().toLowerCase(Locale.ROOT), trace);
         } catch (IOException | RuntimeException e) {
-            return planFail("network");
+            return planFail("network", trace);
         }
     }
 
@@ -207,10 +208,29 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         return "{\"ok\":false,\"reason\":\"" + code(reason) + "\"}";
     }
 
+    // Per invocation, memory only. No URL, redirect address, headers, body or identifiers.
+    // The entry URL is not necessarily a master: its type is unknown until parsing succeeds.
+    private enum PlanPhase { SOURCE_FETCH, SOURCE_PARSE, SOURCE_OPTIONS,
+        VIDEO_FETCH, VIDEO_PARSE, AUDIO_FETCH, AUDIO_PARSE, PLAN_BUILD }
+    private static final class PlanTrace {
+        PlanPhase phase = PlanPhase.SOURCE_FETCH;
+        int playlists;
+    }
+    private static String planFail(String reason, PlanTrace trace) {
+        return "{\"ok\":false,\"reason\":\"" + code(reason) + "\",\"diag\":{\"v\":1,\"phase\":\""
+            + trace.phase.name().toLowerCase(Locale.ROOT) + "\",\"playlists\":" + trace.playlists + "}}";
+    }
+
     /** Master oder Medienliste laden, streng prüfen, Optionen bilden. */
     private Source loadSource(String url, SafeHttpClient.Cancellation cancel, long deadline) throws IOException, HlsException {
+        return loadSource(url, cancel, deadline, null);
+    }
+    private Source loadSource(String url, SafeHttpClient.Cancellation cancel, long deadline, PlanTrace trace) throws IOException, HlsException {
+        if (trace != null) trace.phase = PlanPhase.SOURCE_FETCH;
         HlsFetch.Text t = manifest(url, cancel, deadline);
+        if (trace != null) trace.phase = PlanPhase.SOURCE_PARSE;
         HlsPlaylist.Parsed p = HlsPlaylist.parse(t.body, t.finalUrl);
+        if (trace != null) { trace.playlists++; trace.phase = PlanPhase.SOURCE_OPTIONS; }
         String sha = hex(sha256(t.body));
         if (p.master != null) return new Source(p.master, null, sha, HlsPlan.options(p.master, randomBytes(16), opusAllowed));
         // Direkt eine Medienliste: genau eine Option, Ton in den Segmenten (Codecs prüft der Remuxer)
@@ -221,15 +241,22 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
     }
 
     private Chosen choose(Source src, HlsPlan.Option o, SafeHttpClient.Cancellation cancel, long deadline) throws IOException, HlsException {
-        HlsPlaylist.Media video = src.media != null ? src.media : media(o.variant.uri, cancel, deadline);
-        HlsPlaylist.Media audio = o.audio == null ? null : media(o.audio.uri, cancel, deadline);
+        return choose(src, o, cancel, deadline, null);
+    }
+    private Chosen choose(Source src, HlsPlan.Option o, SafeHttpClient.Cancellation cancel, long deadline, PlanTrace trace) throws IOException, HlsException {
+        HlsPlaylist.Media video = src.media != null ? src.media : media(o.variant.uri, cancel, deadline, trace, false);
+        HlsPlaylist.Media audio = o.audio == null ? null : media(o.audio.uri, cancel, deadline, trace, true);
+        if (trace != null) trace.phase = PlanPhase.PLAN_BUILD;
         return new Chosen(o, video, audio, HlsPlan.build(video, audio, o.variant.bandwidth));
     }
 
-    private HlsPlaylist.Media media(String url, SafeHttpClient.Cancellation cancel, long deadline) throws IOException, HlsException {
+    private HlsPlaylist.Media media(String url, SafeHttpClient.Cancellation cancel, long deadline, PlanTrace trace, boolean audio) throws IOException, HlsException {
+        if (trace != null) trace.phase = audio ? PlanPhase.AUDIO_FETCH : PlanPhase.VIDEO_FETCH;
         HlsFetch.Text t = manifest(url, cancel, deadline);
+        if (trace != null) trace.phase = audio ? PlanPhase.AUDIO_PARSE : PlanPhase.VIDEO_PARSE;
         HlsPlaylist.Parsed p = HlsPlaylist.parse(t.body, t.finalUrl);
         if (p.media == null) throw new HlsException("nested-master");
+        if (trace != null) trace.playlists++;
         return p.media;
     }
 
