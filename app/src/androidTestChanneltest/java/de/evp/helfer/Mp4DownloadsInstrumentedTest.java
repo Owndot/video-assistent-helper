@@ -278,6 +278,14 @@ public class Mp4DownloadsInstrumentedTest {
         if (journalName != null) new File(ctx.getFilesDir(), journalName).delete();
     }
 
+    /**
+     * Nur Diagnose in Fehlermeldungen: vorhandene Ablage-Ursache der Engine (Ausnahmeklasse und -meldung, keine URL)
+     * und das letzte Abbruch-Ergebnis der Ablage. Ändert keine Erwartung.
+     */
+    static String storageCause(DirectDownloads e, String id) {
+        return "cause: " + e.diagnostics(id) + "; last abort: " + Mp4Downloads.lastAbortOutcome;
+    }
+
     /** Android 8–9: öffentlicher Ordner Download/Video-Assistent (bleibt nach Deinstallation). */
     static File legacyDir() { return Mp4Downloads.publicDir(); }
 
@@ -359,11 +367,20 @@ public class Mp4DownloadsInstrumentedTest {
                     try { Thread.sleep(20); } catch (InterruptedException e) { return; }
                 }
             });
+            sampler.setDaemon(true);
             sampler.start();
-            String started = engine.start(id, srv.url("/v.mp4"), t);
-            assertTrue(started, started.contains("\"state\":\"running\""));
-            assertEquals("done", events.await(id, 120_000));
-            sampler.interrupt();
+            String result;
+            try {
+                String started = engine.start(id, srv.url("/v.mp4"), t);
+                assertTrue(started, started.contains("\"state\":\"running\""));
+                result = events.await(id, 120_000);
+            } finally {
+                // Auch bei einem Fehlschlag: der Messfaden darf den nächsten Test nicht überdauern.
+                sampler.interrupt();
+                sampler.join(5_000);
+            }
+            // P4c-3: Ursache eines seltenen API-34-failed:storage (nur Diagnose, Erwartung unverändert)
+            assertEquals("publish result (" + storageCause(engine, id) + ")", "done", result);
             long ms = SystemClock.elapsedRealtime() - t0, cpuMs = android.os.Process.getElapsedCpuTime() - cpu0;
             android.os.Debug.MemoryInfo m1 = new android.os.Debug.MemoryInfo();
             android.os.Debug.getMemoryInfo(m1);
@@ -724,7 +741,7 @@ public class Mp4DownloadsInstrumentedTest {
                 String result = events.await(id, 30_000);
                 Uri savedUri = Build.VERSION.SDK_INT >= 29 ? Uri.parse(fault.publishedRef) : Uri.fromFile(new File(fault.publishedRef));
                 cleanup.add(savedUri);   // auch die Fehler-Gegenprobe räumt ihre veröffentlichte Datei auf
-                assertEquals("published file is successful despite marker failure", "done", result);
+                assertEquals("published file is successful despite marker failure (" + storageCause(engine, id) + ")", "done", result);
                 assertTrue("proof retained for next startup", fault.proof.isFile());
                 assertTrue(store.isPublished(fault.publishedRef, total));
                 String journal = new String(store.loadJournal(), StandardCharsets.US_ASCII);
@@ -762,7 +779,7 @@ public class Mp4DownloadsInstrumentedTest {
             DirectDownloads crashing = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), afterPublish, ev);
             String a = newId(), ta = title("CrashAfter");
             crashing.start(a, srv.url("/v.mp4"), ta);
-            assertEquals("done", ev.await(a, 30_000));
+            assertEquals("crash after publish (" + storageCause(crashing, a) + ")", "done", ev.await(a, 30_000));
             Uri published = (Uri) ev.saved.get(a);
             cleanup.add(published);
             if (Build.VERSION.SDK_INT < 29) cleanupFiles.add(new File(legacyDir(), ta + ".mp4"));
@@ -805,7 +822,7 @@ public class Mp4DownloadsInstrumentedTest {
             engineFor(srv);
             String id = newId(), t = "C2 Persist " + Build.VERSION.SDK_INT;
             engine.start(id, srv.url("/v.mp4"), t);
-            assertEquals("done", events.await(id, 30_000));
+            assertEquals("persist (" + storageCause(engine, id) + ")", "done", events.await(id, 30_000));
             Log.i(TAG, "MP4_PERSIST sdk=" + Build.VERSION.SDK_INT + " name=" + t + ".mp4 bytes=65536");
         }
     }

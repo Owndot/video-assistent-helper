@@ -15,6 +15,11 @@ fi
 adb shell getprop ro.build.version.release > "$REPORT/device.txt"
 adb shell getprop ro.build.version.sdk >> "$REPORT/device.txt"
 adb shell getprop ro.product.cpu.abi >> "$REPORT/device.txt"
+# Nur Befund (Text): Java-Heap-Vorgaben des Abbilds. Die Remux-Speichergrenze richtet sich nach Runtime.maxMemory();
+# ein vom Emulator verlangter, aber nicht angewendeter Heap (ART-Standard 16 MiB) verfälscht sonst Gerätetests.
+for prop in dalvik.vm.heapsize dalvik.vm.heapgrowthlimit qemu.dalvik.vm.heapsize ro.boot.qemu.dalvik.vm.heapsize ro.kernel.qemu.dalvik.vm.heapsize ro.build.fingerprint; do
+  echo "DEVICE_PROP $prop=$(adb shell getprop "$prop" | tr -d '\r')"
+done | tee -a "$REPORT/device.txt"
 adb shell pm list packages de.evp.helfer > "$REPORT/packages-before.txt"
 adb logcat -c
 adb install -r -t "$OUT/apk/helper-channeltest.apk" > /dev/null

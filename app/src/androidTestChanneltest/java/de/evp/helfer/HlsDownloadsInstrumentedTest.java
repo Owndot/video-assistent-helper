@@ -308,7 +308,8 @@ public class HlsDownloadsInstrumentedTest {
         catch (HlsException e) { reason = e.getMessage(); }
         long afterCancel = (System.nanoTime() - t0) / 1_000_000 - 200;
         Log.i(TAG, "HLS_CANCEL api=" + Build.VERSION.SDK_INT + " msAfterCancel=" + afterCancel + " result=" + reason);
-        assertEquals("cancelled", reason);
+        // Diagnose: ein "memory" vor dem Abbruch hängt vom Java-Heap des Geräts ab (Erwartung unverändert)
+        assertEquals("remux result at maxHeapMiB=" + Runtime.getRuntime().maxMemory() / (1 << 20), "cancelled", reason);
         assertTrue("cancel " + afterCancel + " ms", afterCancel < 1000);
         assertFalse(out.exists());
     }
