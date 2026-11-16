@@ -882,7 +882,8 @@ public class Mp4DownloadsInstrumentedTest {
             DirectDownloads crashing = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), afterPublish, ev);
             String a = newId(), ta = title("CrashAfter");
             crashing.start(a, srv.url("/v.mp4"), ta);
-            assertEquals("crash after publish (" + storageCause(crashing, a) + ")", "done", ev.await(a, 30_000));
+            String resultA = ev.await(a, 30_000);   // Review-Befund A: Diagnose erst nach dem Endereignis
+            assertEquals("crash after publish (" + storageCause(crashing, a) + ")", "done", resultA);
             Uri published = (Uri) ev.saved.get(a);
             cleanup.add(published);
             if (Build.VERSION.SDK_INT < 29) cleanupFiles.add(new File(legacyDir(), ta + ".mp4"));
@@ -925,7 +926,10 @@ public class Mp4DownloadsInstrumentedTest {
             engineFor(srv);
             String id = newId(), t = "C2 Persist " + Build.VERSION.SDK_INT;
             engine.start(id, srv.url("/v.mp4"), t);
-            assertEquals("persist (" + storageCause(engine, id) + "; server: " + srv.errors + ")", "done", events.await(id, 30_000));
+            // Review-Befund A: erst das Endereignis abwarten, dann die Diagnose lesen (vorher beschrieb sie den Zustand
+            // vor dem Fehler, weil Java das erste Argument zuerst auswertet).
+            String result = events.await(id, 30_000);
+            assertEquals("persist (" + storageCause(engine, id) + "; server: " + srv.errors + ")", "done", result);
             Log.i(TAG, "MP4_PERSIST sdk=" + Build.VERSION.SDK_INT + " name=" + t + ".mp4 bytes=65536");
         }
     }

@@ -14,6 +14,10 @@ DL = 'de/evp/helfer/dl/DirectDownloads.java'
 NET = 'de/evp/helfer/net/SafeHttpClient.java'
 
 MUTATIONS = [
+    # P4c-3 (Review B): Fehlerklassen unterscheidbar – Ablage, Anzeige und Netz nicht pauschal "network"
+    ('commit RuntimeException reported as network', DL, 'try { out.close(); saved = target.commit(); } catch (IOException | RuntimeException e) { throw new Fail("storage", e); }', 'try { out.close(); saved = target.commit(); } catch (IOException e) { throw new Fail("storage", e); }'),
+    ('listener failure reported as network', DL, 'catch (RuntimeException e) { throw new Fail("internal", e, true); }', 'catch (RuntimeException e) { throw new Fail("network", e, true); }'),
+    ('unexpected runtime failure reported as network', DL, '            reason = "internal";\n            job.cause = where(e);', '            reason = "network";\n            job.cause = where(e);'),
     # P4c-3 (P2): MP4-Quelle nur für dieselbe Datei, nie nach Abbruch
     ('resume from vault ignores a changed file', DL, 'if (job.expectTotal >= 0 && (total != job.expectTotal || etag == null || !etag.equals(job.expectEtag))) throw new Fail("changed");', ''),
     ('vault kept after cancel', DL, '        forget(id);   // P2: nach ausdrücklichem Abbruch nie wieder automatisch fortsetzen\n', ''),
@@ -34,8 +38,8 @@ MUTATIONS = [
     # Nicht als Probe: 'if (n < 0) throw new IOException("short body")' und der long_body-Test sind über OkHttp nicht
     # erreichbar (FixedLengthSource wirft bei vorzeitigem Ende ProtocolException und liefert genau Content-Length);
     # sie bleiben als zweite Absicherung. Vorzeitiges Ende prüfen 'truncated body …' und 'at most 3 resumes'.
-    ('write error resumed', DL, 'try { out.write(b, 0, n); } catch (IOException e) { throw new Fail("storage", e); }', 'out.write(b, 0, n);'),
-    ('resume without strong ETag', DL, 'if (resumes >= MAX_RESUMES || etag == null) throw new Fail("network");', 'if (resumes >= MAX_RESUMES) throw new Fail("network");'),
+    ('write error resumed', DL, 'try { out.write(b, 0, n); } catch (IOException | RuntimeException e) { throw new Fail("storage", e); }', 'out.write(b, 0, n);'),
+    ('resume without strong ETag', DL, 'if (resumes >= MAX_RESUMES || etag == null) throw new Fail("network", interrupted, true);', 'if (resumes >= MAX_RESUMES) throw new Fail("network", interrupted, true);'),
     ('weak or invalid etag accepted', DL, 'return SafeHttpClient.isStrongEtag(etag) ? etag : null;', 'return etag;'),
     ('If-Range not sent', DL, 'response = http.get(finalUrl, job.bytes, total - 1, etag, total, callTimeoutMs, job.cancel);',
      'response = http.get(finalUrl, job.bytes, total - 1, null, total, callTimeoutMs, job.cancel);'),

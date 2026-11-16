@@ -200,7 +200,7 @@ public final class TestDirectDownloads {
 
     // ------------------------------------------------------------------ Testablage (Ordner)
 
-    static final class DirStore implements DownloadStore {
+    static class DirStore implements DownloadStore {
         final File dir;
         final AtomicLong free = new AtomicLong(Long.MAX_VALUE / 4);
         volatile long freeAfterBytes = -1, freeLater = 0;      // ab so vielen geschriebenen Bytes: free = freeLater
@@ -213,6 +213,7 @@ public final class TestDirectDownloads {
         volatile boolean writable = true;
         volatile byte[] journalAtCreate, journalAtCommit;     // Stand des Journals bei einem "Absturz" an dieser Stelle
         volatile boolean failPublishedCheck;
+        volatile RuntimeException commitThrows;   // P4c-3: RuntimeException beim Veröffentlichen (MediaStore)
         int saves;
 
         DirStore(String name) throws IOException {
@@ -255,6 +256,8 @@ public final class TestDirectDownloads {
                 @Override public String ref() { return fin.getPath(); }
                 @Override public synchronized Object commit() throws IOException {
                     fos.close();
+                    RuntimeException boom = commitThrows;
+                    if (boom != null) throw boom;          // P4c-3: Providerfehler beim Veröffentlichen nachbilden
                     if (!part.renameTo(fin)) throw new IOException("rename");
                     done = true;
                     committed.incrementAndGet();
@@ -285,7 +288,7 @@ public final class TestDirectDownloads {
 
     // ------------------------------------------------------------------ Rückmeldungen
 
-    static final class Events implements DirectDownloads.Listener {
+    static class Events implements DirectDownloads.Listener {
         final Map<String, String> finished = new ConcurrentHashMap<>();
         final List<String> all = new CopyOnWriteArrayList<>();
         @Override public void progress(String id, String title, long bytes, long total) { all.add("progress " + id + " " + title + " " + bytes + "/" + total); }
@@ -387,6 +390,7 @@ public final class TestDirectDownloads {
         check("no cookies or credentials sent", TestDirectDownloads::noCredentials);
         check("stopAll cancels running downloads", TestDirectDownloads::stopAll);
         check("file name never from URL", TestDirectDownloads::names);
+        check("P4c-3: failure classes are distinguishable (storage commit, progress listener, real network cut)", TestDirectDownloads::failureClasses);
         check("P4c-3 P2: encrypted source – resume after process end, changed file, cancel, no strong ETag, expiry", TestDirectDownloads::vault);
         System.out.println("dl tests: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
@@ -501,6 +505,81 @@ public final class TestDirectDownloads {
             DirStore store = new DirStore("toolarge");
             expect(run(srv, store, "/huge").equals("failed:too_large"), "too large");
             expect(store.created.get() == 0, "nothing created");
+        }
+    }
+
+    /**
+     * P4c-3 (Review-Befund B): drei Fehlerquellen, drei Klassen. Vorher meldete jede RuntimeException „failed:network“,
+     * sodass ein verschwundener MediaStore-Eintrag oder eine fehlschlagende Benachrichtigung wie ein Netzabbruch aussah.
+     * Abbruch- und Sicherheitsregeln bleiben gleich: in allen Fällen nichts veröffentlicht, Teil-Datei entfernt.
+     */
+    static void failureClasses() throws Exception {
+        long total = 1 << 20;
+        // 1) RuntimeException beim Veröffentlichen (wie MediaStore „No item at …“ nach fremdem Löschen)
+        try (Server srv = new Server((r, out, i) -> serveFile(r, out, total, null, -1))) {
+            DirStore store = new DirStore("cls-commit");
+            store.commitThrows = new IllegalStateException("java.io.FileNotFoundException: No item at content://media/external/downloads/39");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4?sig=SECRET"), "Commit");
+            String r = ev.await(id, 30_000);
+            expect(r.equals("failed:storage"), "commit RuntimeException is a storage failure, got " + r);
+            String cause = d.diagnostics(id);
+            expect(cause.startsWith("IllegalStateException") && cause.contains("No item at"), "cause names the provider failure: " + cause);
+            expect(!cause.contains("SECRET") && !cause.contains("127.0.0.1"), "no source address in the cause: " + cause);
+            expect(store.committed.get() == 0 && store.aborted.get() == 1, "nothing published, partial removed");
+            store.expectEmpty();
+            expect(srv.requests.get() == 1, "no retry after a storage failure");
+            d.stopAll();
+        }
+        // 2) RuntimeException in der Fortschrittsmeldung (Benachrichtigung)
+        try (Server srv = new Server((r, out, i) -> serveFile(r, out, total, null, -1))) {
+            DirStore store = new DirStore("cls-listener");
+            Events ev = new Events() {
+                @Override public void progress(String id, String title, long bytes, long total) { throw new IllegalArgumentException("notification failed"); }
+            };
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4"), "Listener");
+            String r = ev.await(id, 30_000);
+            expect(r.equals("failed:internal"), "listener RuntimeException is internal, not network, got " + r);
+            String cause = d.diagnostics(id);
+            expect(cause.startsWith("IllegalArgumentException at ") && !cause.contains("notification failed"), "class and app location only: " + cause);
+            expect(store.committed.get() == 0 && store.aborted.get() == 1, "nothing published, partial removed");
+            store.expectEmpty();
+            d.stopAll();
+        }
+        // 2b) unerwartete RuntimeException außerhalb der Ablagegrenzen (hier: Schreibrecht-Abfrage) – „internal“
+        try (Server srv = new Server((r, out, i) -> serveFile(r, out, total, null, -1))) {
+            DirStore store = new DirStore("cls-unexpected") {
+                @Override public boolean writable() { throw new SecurityException("permission service unavailable"); }
+            };
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4"), "Unexpected");
+            String r = ev.await(id, 30_000);
+            expect(r.equals("failed:internal"), "unexpected RuntimeException is internal, got " + r);
+            expect(d.diagnostics(id).startsWith("SecurityException at "), "class and location: " + d.diagnostics(id));
+            expect(srv.requests.get() == 0 && store.created.get() == 0, "nothing fetched, nothing created");
+            d.stopAll();
+        }
+        // 3) echter Netzabbruch mitten im Body (ohne starken ETag: kein Fortsetzen)
+        try (Server srv = new Server((r, out, i) -> serveFile(r, out, total, null, 300_000))) {
+            DirStore store = new DirStore("cls-network");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4?sig=SECRET"), "Network");
+            String r = ev.await(id, 30_000);
+            expect(r.equals("failed:network"), "a cut connection stays a network failure, got " + r);
+            String cause = d.diagnostics(id);
+            expect(!cause.isEmpty() && cause.contains("Exception") && !cause.contains("SECRET") && !cause.contains("127.0.0.1"),
+                "network cause is class/location only, no address: " + cause);
+            expect(store.committed.get() == 0 && store.aborted.get() == 1, "nothing published, partial removed");
+            store.expectEmpty();
+            d.stopAll();
         }
     }
 

@@ -96,6 +96,21 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             this.reason = reason;
             this.cause = why == null ? "" : why.getClass().getSimpleName() + ": " + why.getMessage();
         }
+        /** P4c-3: Ursache ohne Meldungstext (Netz-Ausnahmen können Hostnamen tragen): Klasse und erste App-Stelle. */
+        Fail(String reason, Throwable why, boolean classOnly) {
+            super(reason, null, false, false);
+            this.reason = reason;
+            this.cause = why == null ? "" : where(why);
+        }
+    }
+
+    /** Nur Diagnose, nie im Kanal: Ausnahmeklasse und die erste Stelle im App-Code (keine Meldung, keine Adresse). */
+    static String where(Throwable e) {
+        StackTraceElement at = null;
+        for (StackTraceElement f : e.getStackTrace()) if (f.getClassName().startsWith("de.evp.helfer")) { at = f; break; }
+        if (at == null && e.getStackTrace().length > 0) at = e.getStackTrace()[0];
+        String c = at == null ? "" : at.getClassName();
+        return e.getClass().getSimpleName() + (at == null ? "" : " at " + c.substring(c.lastIndexOf('.') + 1) + "." + at.getMethodName() + ":" + at.getLineNumber());
     }
 
     private final SafeHttpClient http;
@@ -340,9 +355,9 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             byte[] head = new byte[8];
             int h = readFully(in, head);
             if (h < 8 || !mp4Signature(head)) throw new Fail("not_mp4");
-            try { target = store.create(fileName(job.title), "video/mp4"); } catch (IOException e) { throw new Fail("storage", e); }
+            try { target = store.create(fileName(job.title), "video/mp4"); } catch (IOException | RuntimeException e) { throw new Fail("storage", e); }
             OutputStream out;
-            try { out = target.out(); } catch (IOException e) { throw new Fail("storage", e); }
+            try { out = target.out(); } catch (IOException | RuntimeException e) { throw new Fail("storage", e); }
             // Verweis vermerken, bevor Daten geschrieben werden: nach einem Absturz lässt sich so feststellen, ob die
             // Datei schon veröffentlicht war (dann "done") oder nicht (dann "interrupted", Reste räumt die Ablage ab).
             job.ref = target.ref();
@@ -365,7 +380,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
                 } catch (IOException interrupted) {
                     checkCancelled(job);
                     while (true) {
-                        if (resumes >= MAX_RESUMES || etag == null) throw new Fail("network");
+                        if (resumes >= MAX_RESUMES || etag == null) throw new Fail("network", interrupted, true);
                         resumes++;
                         response.close();
                         pause(job, resumes);       // P4c: wachsende Pause, ohne Netz warten (Abbruch beendet sofort)
@@ -395,11 +410,17 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
                     if (freeBytes() < total - job.bytes + SPACE_RESERVE_BYTES / 2) throw new Fail("no_space");
                 }
                 long now = System.nanoTime();
-                if (now - lastNote > 500_000_000L) { lastNote = now; listener.progress(job.id, job.title, Progress.mp4(job.bytes, total)); }
+                if (now - lastNote > 500_000_000L) {
+                    lastNote = now;
+                    // P4c-3: ein Fehler der Anzeige (Benachrichtigung) ist ein interner Fehler, kein Netzfehler
+                    try { listener.progress(job.id, job.title, Progress.mp4(job.bytes, total)); }
+                    catch (RuntimeException e) { throw new Fail("internal", e, true); }
+                }
             }
             if (in.read() != -1) throw new Fail("long_body");
             checkCancelled(job);
-            try { out.close(); saved = target.commit(); } catch (IOException e) { throw new Fail("storage", e); }
+            // P4c-3: auch eine RuntimeException der Ablage (z. B. MediaStore „No item at …“) ist ein Ablagefehler, kein Netzfehler
+            try { out.close(); saved = target.commit(); } catch (IOException | RuntimeException e) { throw new Fail("storage", e); }
             job.ref = target.ref();   // nach dem Veröffentlichen (Android 8–9: endgültiger Dateiname)
             target = null;
             state = State.DONE;
@@ -410,8 +431,17 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         } catch (NetBlockedException blocked) {
             // Sicherheitsprüfung abgelehnt: Ende des Auftrags. Kein zweiter Versuch, kein anderer Abrufweg.
             reason = blocked.reason == NetBlockedException.Reason.BODY_TOO_LARGE ? "too_large" : "blocked_" + blocked.reason.name().toLowerCase(Locale.ROOT);
+        } catch (IOException e) {
+            // Netz (Verbindung/Antwort): Ursache nur als Klasse und Stelle, nie die Meldung (kann den Host nennen)
+            reason = "network";
+            job.cause = where(e);
+        } catch (RuntimeException e) {
+            // P4c-3: unerwarteter Fehler im eigenen Ablauf – früher pauschal "network", jetzt unterscheidbar
+            reason = "internal";
+            job.cause = where(e);
         } catch (Exception e) {
             reason = "network";
+            job.cause = where(e);
         } finally {
             if (response != null) response.close();
             if (target != null) target.abort();
@@ -456,12 +486,12 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
     }
 
     private long freeBytes() throws Fail {
-        try { return store.freeBytes(); } catch (IOException e) { throw new Fail("storage", e); }
+        try { return store.freeBytes(); } catch (IOException | RuntimeException e) { throw new Fail("storage", e); }
     }
 
     /** Schreibfehler (z. B. Speicher voll) sind Ablagefehler, keine Netzwerkunterbrechung: nie Fortsetzen. */
     private static void write(OutputStream out, byte[] b, int n) throws Fail {
-        try { out.write(b, 0, n); } catch (IOException e) { throw new Fail("storage", e); }
+        try { out.write(b, 0, n); } catch (IOException | RuntimeException e) { throw new Fail("storage", e); }
     }
 
     private static void checkCancelled(Job job) throws Fail {

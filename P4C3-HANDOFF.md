@@ -3,7 +3,10 @@
 Die Übergabe steht im Kadri-Repository: [`P4C3-HANDOFF.md`](https://github.com/Owndot/Kadri/blob/feature/c3-helper-mp4/P4C3-HANDOFF.md) (Branch `feature/c3-helper-mp4`).
 Helfer-spezifische Details: `P4C-VORBEREITUNG.md` (§6–§8), `DOWNLOADS-P4B.md`, `DOWNLOADS-C3.md`.
 
-**Neuester Stand (2026-11-16, Claude Code):** API-34-`failed:storage` lokalisiert auf
+**Codex-Review abgeglichen (2026-11-16):** [REVIEW-CODEX-P4C3.md](REVIEW-CODEX-P4C3.md) – A/B bestätigt und
+korrigiert, C Diagnose je Eintrag, D im Produktionsstart nicht möglich, E nur Vorschlag (API 29 bleibt rot).
+
+**Stand davor (2026-11-16, Claude Code):** API-34-`failed:storage` lokalisiert auf
 `IOException: publish` (MediaStore-Update beim Veröffentlichen, Lauf 43874560604); Ursache des Updates offen,
 Diagnosesonde `MediaStorePublishProbeTest`. API-29-Zusatzfehler `memory` war ein 16-MiB-Heap des Emulators.
 Lieferung weiter **BLOCKED**. Details in der Kadri-Übergabe (Abschnitt „Claude-Fortsetzung“).

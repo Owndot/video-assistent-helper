@@ -189,6 +189,16 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         private final Uri uri;
         private final OutputStream out;
         private boolean finished;
+        // P4c-3, nur Diagnose: Schritte dieses Eintrags mit gemeinsamer Folgenummer (#n, auch von der Bereinigung
+        // gezählt) und ms seit dem Anlegen; Bereinigungsläufe beim Anlegen. Keine Namen, keine Adressen.
+        private final long t0 = System.nanoTime();
+        private final StringBuilder trail = new StringBuilder();
+        private int cleanupAtInsert;
+
+        private void mark(String step) {
+            trail.append(trail.length() == 0 ? "" : ",").append(step).append('#').append(Downloads.diagSeq.incrementAndGet())
+                .append('+').append((System.nanoTime() - t0) / 1_000_000).append("ms");
+        }
 
         PendingEntry(String name, String mime) throws IOException {
             this.name = name;
@@ -202,9 +212,12 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
             Uri u = null;
             OutputStream o = null;
             try {
+                cleanupAtInsert = Downloads.cleanupRuns.get();
                 u = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
                 if (u == null) throw new IOException("insert");
+                mark("insert");
                 o = cr.openOutputStream(u, "w");
+                mark("open");
                 if (o == null) throw new IOException("open");
             } catch (IOException | RuntimeException e) {
                 if (u != null && cr.delete(u, null, null) == 1) Downloads.removeProof(proof);
@@ -221,10 +234,21 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
 
         @Override public synchronized Object commit() throws IOException {
             out.close();
+            mark("close");
             ContentValues cv = new ContentValues();
             cv.put(MediaStore.Downloads.IS_PENDING, 0);
             cv.put(MediaStore.Downloads.DISPLAY_NAME, name);
-            if (cr.update(uri, cv, null, null) != 1) throw new IOException("publish");
+            // Genau ein Versuch (kein Wiederholen, kein zweites Veröffentlichen). Bei Fehlschlag nur lesend den Zustand
+            // festhalten: Rückgabewert bzw. Ausnahme, Eintrag danach, Markierung, Bereinigung während des Eintrags.
+            int rows;
+            try {
+                rows = cr.update(uri, cv, null, null);
+            } catch (RuntimeException e) {
+                mark("update!");
+                throw new IOException(publishDiagnosis("threw=" + safeProviderError(e)), e);
+            }
+            mark("update=" + rows);
+            if (rows != 1) throw new IOException(publishDiagnosis("rows=" + rows));
             finished = true;
             cleanupPublishedProof(proof);
             return uri;
@@ -246,6 +270,30 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
                 outcome = "kept:" + e.getClass().getSimpleName();
             }
             lastAbortOutcome = outcome;
+        }
+
+        /** P4c-3, nur Diagnose: "publish <was> entry=… proof=… cleanup=… trail=…" – nur feste Wörter, Zahlen und die Inhalts-URI. */
+        private String publishDiagnosis(String what) {
+            long id = -1;
+            try { id = android.content.ContentUris.parseId(uri); } catch (RuntimeException ignored) { }
+            int runs = Downloads.cleanupRuns.get() - cleanupAtInsert;
+            return "publish " + what + " entry=" + entryState() + " proof=" + (proof.exists() ? "present" : "gone")
+                + " cleanup=" + (Downloads.removedByCleanup(id) ? "removed-this-entry" : runs > 0 ? "ran-" + runs + "x" : "none")
+                + (runs > 0 ? "(" + Downloads.lastCleanup + ")" : "") + " trail=" + trail + " uri=" + uri;
+        }
+
+        /** Zustand des eigenen Eintrags nach dem Fehlschlag (eine lesende Abfrage, auch ausstehende Einträge). */
+        private String entryState() {
+            try (android.database.Cursor c = cr.query(MediaStore.setIncludePending(uri),
+                    new String[] {MediaStore.Downloads.IS_PENDING, MediaStore.Downloads.DISPLAY_NAME}, null, null, null)) {
+                if (c == null) return "unknown";
+                if (!c.moveToFirst()) return "missing";
+                String n = c.getString(1);
+                String which = n == null ? "null" : n.startsWith(proof.getName() + "--") ? "pending-name" : n.equals(name) ? "final-name" : "other-name";
+                return "pending=" + c.getInt(0) + "/" + which;
+            } catch (RuntimeException e) {
+                return "query-" + e.getClass().getSimpleName();
+            }
         }
 
         private boolean pendingExists(Uri u) {
@@ -517,6 +565,15 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         m.notify(tag(id), NOTE_ID, b.build());
     }
 
+    /** P4c-3: Providerfehler nur mit Klasse; der Meldungstext nur in der bekannten Form „No item at content://media/…“. */
+    static String safeProviderError(Throwable e) {
+        String m = e.getMessage();
+        Throwable inner = e.getCause();
+        if ((m == null || !m.contains("No item at")) && inner != null && inner.getMessage() != null) m = inner.getMessage();
+        java.util.regex.Matcher k = m == null ? null : java.util.regex.Pattern.compile("No item at content://media/[a-z0-9_]+/[a-z]+/[0-9]+").matcher(m);
+        return e.getClass().getSimpleName() + (k != null && k.find() ? "(" + k.group() + ")" : "");
+    }
+
     /** Nur feste Texte bzw. der Grundcode – nie Server-Text oder URL. */
     static String reasonText(String reason) {
         if (reason == null) return "";
@@ -528,6 +585,8 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         if (reason.equals("not_mp4") || reason.equals("type")) return Tr.t("keine MP4-Datei", "not an MP4 file");
         if (reason.equals("too_large")) return Tr.t("Datei zu groß", "file too large");
         if (reason.startsWith("blocked_")) return Tr.t("Ziel nicht erlaubt", "target not allowed");
+        if (reason.equals("storage")) return Tr.t("Speichern fehlgeschlagen", "saving failed");
+        if (reason.equals("internal")) return Tr.t("interner Fehler der Helfer-App", "internal helper app error");
         if (reason.equals("storage_permission")) return Tr.t("Speicherzugriff fehlt – in der App erlauben", "storage access missing – allow it in the app");
         return reason;
     }

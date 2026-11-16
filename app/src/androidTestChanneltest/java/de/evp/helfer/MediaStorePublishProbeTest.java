@@ -3,6 +3,7 @@ package de.evp.helfer;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
 import android.content.ContentResolver;
@@ -136,6 +137,13 @@ public class MediaStorePublishProbeTest {
         // Mechanismus belegt nur, wenn die Bereinigung den laufenden Eintrag tatsächlich entfernt hat.
         assertFalse("process-start cleanup removed the in-flight proof", proofAfterCleanup);
         assertNotEquals("in-flight entry cannot be published after the cleanup", "published", outcome);
+        // Review C: die Publish-Diagnose ordnet genau diesen Ablauf eindeutig zu (eigene Buchführung, nicht Provider-Text):
+        // Fehlschlag beim Veröffentlichen, Markierung weg, und die Bereinigung hat DIESEN Eintrag entfernt.
+        assertTrue("publish diagnosis names the publish step: " + outcome, outcome.startsWith("IOException: publish "));
+        assertTrue("publish diagnosis attributes the failure to the cleanup: " + outcome, outcome.contains(" cleanup=removed-this-entry"));
+        assertTrue("publish diagnosis sees the removed proof: " + outcome, outcome.contains(" proof=gone "));
+        assertTrue("publish diagnosis has the per-entry order: " + outcome,
+            outcome.matches("(?s).* trail=insert#\\d+\\+\\d+ms,open#\\d+\\+\\d+ms,close#\\d+\\+\\d+ms,update.*"));
     }
 
     /** Ein Ablauf wie in der App; null = veröffentlicht (und wieder gelöscht), sonst Befundtext. */
