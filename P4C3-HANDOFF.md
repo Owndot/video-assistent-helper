@@ -10,7 +10,10 @@ lokal Koordinator 255/255 und Netzschichtwächter grün; HLS-/Kanal-JVM-CI grün
 Erste App-Codeänderung seit `8b906c5`: ausschließlich optionale Phasen-/Listenzähler in fehlgeschlagenen
 Planantworten. Kein Downloadfix behauptet, keine Netz-/Kanalgrenze verändert, noch kein Paket verteilt.
 **BLOCKED – Lieferung:** zusätzlicher API-34-Fehler `failed:storage` im MP4-Veröffentlichungstest;
-erster Job `128934502193`, gezielter unveränderter Vergleich `133224722018` läuft. Bekannter
+erster Job `128934502193`. Vergleich `133224722018` wurde durch die vorhandene CI-Concurrency-Regel
+beim Dokumentations-Push abgebrochen, kein PASS. Aktuelle Ersatzläufe und nächste Schritte stehen
+in der zentralen Claude-Übergabe; nicht erneut Dokumentations-Checkpoints während eines Vergleichs pushen.
+Bekannter
 API-29-SIZE-Fehler bleibt separat rot. Paketänderungen als [Entwurf](P4-DELIVERY-DRAFT.md) gesichert,
 aktive Workflows unverändert. Keine neue Produktionsfreigabe.
 

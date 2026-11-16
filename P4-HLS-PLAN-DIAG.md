@@ -4,7 +4,8 @@ Stand 2026-11-16. **DONE – implementiert, lokal und in HLS-/Kanal-CI geprüft;
 Produktion **UNAPPROVED**. Reale HTTP 404/412 weiterhin **OFFEN**, keine behauptete Downloadkorrektur.
 
 **BLOCKED – Lieferung:** zusätzlicher API-34-MP4-Speicherfehler im Kanalworkflow; einmalige unveränderte
-Wiederholung läuft. Aktuell und verbindlich:
+Wiederholung beim Dokumentations-Push durch bestehende CI-Concurrency abgebrochen, kein Ergebnis.
+Status nachfolgender Läufe aktuell und verbindlich:
 [Claude-Übergabe](https://github.com/Owndot/Kadri/blob/feature/c3-helper-mp4/CLAUDE-HANDOFF.md).
 Keine neue Geräte-APK verteilt; vollständiger Paketentwurf in [P4-DELIVERY-DRAFT.md](P4-DELIVERY-DRAFT.md).
 
