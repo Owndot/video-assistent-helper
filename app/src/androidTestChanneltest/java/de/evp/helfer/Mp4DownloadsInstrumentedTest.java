@@ -139,6 +139,8 @@ public class Mp4DownloadsInstrumentedTest {
         final ServerSocket ss;
         final AtomicInteger connections = new AtomicInteger(), requests = new AtomicInteger();
         final List<Socket> open = new CopyOnWriteArrayList<>();
+        /** Nur Diagnose: Ausnahmen beim Bedienen einer Verbindung (z. B. Client schloss vor dem Ende), mit Zeitpunkt. */
+        final List<String> errors = new CopyOnWriteArrayList<>();
 
         Server(Handler h) throws IOException {
             ss = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"));
@@ -170,7 +172,8 @@ public class Mp4DownloadsInstrumentedTest {
                     h.handle(line, hd, out, requests.getAndIncrement());
                     out.flush();
                 }
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                errors.add(SystemClock.elapsedRealtime() + "ms " + e.getClass().getSimpleName() + ": " + e.getMessage());
             } finally {
                 open.remove(s);
             }
@@ -286,7 +289,8 @@ public class Mp4DownloadsInstrumentedTest {
      */
     String storageCause(DirectDownloads e, String id) {
         return "cause: " + e.diagnostics(id) + "; last abort: " + Mp4Downloads.lastAbortOutcome
-            + "; store: " + (observed == null ? "" : observed.lastFailure) + "; downloadsInitialized: " + downloadsInitialized();
+            + "; store: " + (observed == null ? "" : observed.lastFailure) + "; downloadsInitialized: " + downloadsInitialized()
+            + "; now=" + SystemClock.elapsedRealtime() + "ms; cleanups: " + CLEANUP_LOG;
     }
 
     /** Nur Diagnose: ob die einmalige Prozessstart-Bereinigung (Downloads.initialize) als erledigt gilt. */
@@ -325,11 +329,20 @@ public class Mp4DownloadsInstrumentedTest {
         return n;
     }
 
+    /** Nur Diagnose: Zeitpunkte testseitiger Bereinigungen (Prozessstart-Nachbildung, Isolation), für Fehlermeldungen. */
+    static final List<String> CLEANUP_LOG = new CopyOnWriteArrayList<>();
+
+    static void logCleanup(String what) {
+        CLEANUP_LOG.add(SystemClock.elapsedRealtime() + "ms " + what + " thread=" + Thread.currentThread().getName());
+        while (CLEANUP_LOG.size() > 6) CLEANUP_LOG.remove(0);
+    }
+
     /** Neue Besitzmarkierungen dieses Tests samt ihrer pending-Einträge entfernen (nur API 29+, nur eigene Namen). */
     void isolateLeftovers() {
         java.util.Set<String> fresh = proofNames();
         fresh.removeAll(proofsAtStart);
         if (fresh.isEmpty()) return;
+        logCleanup("isolateLeftovers proofs=" + fresh.size());
         if (Build.VERSION.SDK_INT >= 29) {
             ContentResolver cr = ctx.getContentResolver();
             for (String p : fresh) {
@@ -392,7 +405,7 @@ public class Mp4DownloadsInstrumentedTest {
                 sampler.join(5_000);
             }
             // P4c-3: Ursache eines seltenen API-34-failed:storage (nur Diagnose, Erwartung unverändert)
-            assertEquals("publish result (" + storageCause(engine, id) + ")", "done", result);
+            assertEquals("publish result (" + storageCause(engine, id) + "; server: " + srv.errors + ")", "done", result);
             long ms = SystemClock.elapsedRealtime() - t0, cpuMs = android.os.Process.getElapsedCpuTime() - cpu0;
             android.os.Debug.MemoryInfo m1 = new android.os.Debug.MemoryInfo();
             android.os.Debug.getMemoryInfo(m1);
@@ -525,7 +538,7 @@ public class Mp4DownloadsInstrumentedTest {
             String b = newId(), tb = title("Resume");
             engine.start(b, srv.url("/etag"), tb);
             String rb = events.await(b, 60_000);
-            assertEquals("result (" + storageCause(engine, b) + ")", "done", rb);   // P4c-3: Ursache von failed:storage
+            assertEquals("result (" + storageCause(engine, b) + "; server: " + srv.errors + ")", "done", rb);   // P4c-3: Ursache von failed:storage
             Uri uri = (Uri) events.saved.get(b);
             cleanup.add(uri);
             if (Build.VERSION.SDK_INT >= 29) {
@@ -614,6 +627,7 @@ public class Mp4DownloadsInstrumentedTest {
             java.lang.reflect.Field f = Downloads.class.getDeclaredField("initialized");
             f.setAccessible(true);
             synchronized (Downloads.class) { f.setBoolean(null, false); }
+            logCleanup("newProcessCleanup/Downloads.initialize");
             Downloads.initialize(ctx);
         } else {
             new Mp4Downloads(ctx, journalName + "-cleanup", DeviceTestClients.loopback(1), () -> Mp4Downloads.legacyWritePermitted(ctx)).engine.stopAll();
@@ -705,21 +719,48 @@ public class Mp4DownloadsInstrumentedTest {
             try { target = real.create(name, mime); }
             catch (IOException | RuntimeException e) { lastFailure = "create " + e; throw e; }
             long created = SystemClock.elapsedRealtime();
+            File proof = proofOf(target);
             return new Target() {
-                @Override public OutputStream out() throws IOException { return target.out(); }
+                @Override public OutputStream out() throws IOException {
+                    OutputStream raw = target.out();
+                    return new OutputStream() {   // reine Durchleitung; hält nur Ausnahmen beim Schreiben/Schließen fest
+                        @Override public void write(int b) throws IOException { write(new byte[] {(byte) b}, 0, 1); }
+                        @Override public void write(byte[] b, int off, int len) throws IOException {
+                            try { raw.write(b, off, len); }
+                            catch (IOException | RuntimeException e) { lastFailure = "write " + e + " " + where(); throw e; }
+                        }
+                        @Override public void flush() throws IOException { raw.flush(); }
+                        @Override public void close() throws IOException {
+                            try { raw.close(); }
+                            catch (IOException | RuntimeException e) { lastFailure = "close " + e + " " + where(); throw e; }
+                        }
+                    };
+                }
+                private String where() {
+                    return "ageMs=" + (SystemClock.elapsedRealtime() - created) + " proofExists=" + (proof == null ? "?" : proof.exists())
+                        + " state={" + entryState(Uri.parse(target.ref())) + "}";
+                }
                 @Override public String ref() { return target.ref(); }
                 @Override public Object commit() throws IOException {
                     try { return target.commit(); }
                     catch (IOException | RuntimeException e) {
                         // RuntimeException meldet die Engine als "network": hier der eigentliche Ablagefehler
-                        lastFailure = "commit " + e + " ageMs=" + (SystemClock.elapsedRealtime() - created)
-                            + " state={" + entryState(Uri.parse(target.ref())) + "}";
+                        lastFailure = "commit " + e + " at=" + SystemClock.elapsedRealtime() + "ms " + where();
                         throw e;
                     }
                 }
                 @Override public void abort() { target.abort(); }
             };
         }
+    }
+
+    /** Besitzmarkierung des Ablageziels (Feld "proof" der App-Ziele); null, wenn nicht lesbar. */
+    static File proofOf(Object target) {
+        try {
+            java.lang.reflect.Field f = target.getClass().getDeclaredField("proof");
+            f.setAccessible(true);
+            return (File) f.get(target);
+        } catch (ReflectiveOperationException | ClassCastException e) { return null; }
     }
 
     /** Zustand eines (auch noch ausstehenden) MediaStore-Eintrags, nur für Fehlermeldungen. */
@@ -884,7 +925,7 @@ public class Mp4DownloadsInstrumentedTest {
             engineFor(srv);
             String id = newId(), t = "C2 Persist " + Build.VERSION.SDK_INT;
             engine.start(id, srv.url("/v.mp4"), t);
-            assertEquals("persist (" + storageCause(engine, id) + ")", "done", events.await(id, 30_000));
+            assertEquals("persist (" + storageCause(engine, id) + "; server: " + srv.errors + ")", "done", events.await(id, 30_000));
             Log.i(TAG, "MP4_PERSIST sdk=" + Build.VERSION.SDK_INT + " name=" + t + ".mp4 bytes=65536");
         }
     }

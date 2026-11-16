@@ -1,6 +1,8 @@
 package de.evp.helfer;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assume.assumeTrue;
 
 import android.content.ContentResolver;
@@ -81,6 +83,55 @@ public class MediaStorePublishProbeTest {
             store.engine.stopAll();
         }
         assertEquals("publication failures: " + failures, 0, failures.size());
+    }
+
+    /**
+     * Deterministische Referenz (Hypothese „Prozessstart-Bereinigung während eines laufenden Auftrags“): Ein Eintrag
+     * wird angelegt und teilweise geschrieben; dann läuft genau das, was ein erneutes {@link Downloads#initialize}
+     * täte (Flag zurückgesetzt wie in {@code newProcessCleanup()} der MP4-Tests). In der App läuft initialize nur einmal
+     * je Prozess vor dem ersten Auftrag (HelferService.onCreate vor Mp4Downloads.get; das Flag wird in App-Code nie
+     * zurückgesetzt). Ergebnis ist die Signatur, mit der reale Fehlschläge verglichen werden: Fehlertext des
+     * Veröffentlichens, Zustand des Eintrags und Besitzmarkierung. Kein Produktverhalten geändert.
+     */
+    @Test public void processStartCleanupDuringAJobSignature() throws Exception {
+        assumeTrue("MediaStore pending entries exist from API 29", Build.VERSION.SDK_INT >= 29);
+        Context ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Mp4Downloads store = new Mp4Downloads(ctx, "mp4-jobs-probe-sig-" + SystemClock.elapsedRealtimeNanos(),
+            DeviceTestClients.loopback(9), () -> true);
+        ContentResolver cr = ctx.getContentResolver();
+        byte[] chunk = new byte[64 << 10];
+        String name = de.evp.helfer.dl.DirectDownloads.fileName("C2 ProbeSig " + Long.toHexString(SystemClock.elapsedRealtimeNanos()));
+        DownloadStore.Target t = store.create(name, "video/mp4");
+        Uri uri = Uri.parse(t.ref());
+        java.lang.reflect.Field pf = t.getClass().getDeclaredField("proof");
+        pf.setAccessible(true);
+        File proof = (File) pf.get(t);
+        String outcome, stateAfterCleanup;
+        boolean proofAfterCleanup;
+        try {
+            OutputStream out = t.out();
+            for (int i = 0; i < 16; i++) out.write(chunk);
+            java.lang.reflect.Field f = Downloads.class.getDeclaredField("initialized");
+            f.setAccessible(true);
+            synchronized (Downloads.class) { f.setBoolean(null, false); }
+            Downloads.initialize(ctx);                                   // setzt das Flag bei Erfolg wieder auf true
+            proofAfterCleanup = proof.exists();
+            stateAfterCleanup = describe(cr, uri);
+            String writeOutcome = "ok";
+            try { for (int i = 0; i < 16; i++) out.write(chunk); out.close(); }
+            catch (IOException | RuntimeException e) { writeOutcome = e.getClass().getSimpleName() + ": " + e.getMessage(); }
+            try { t.commit(); outcome = "published"; }
+            catch (IOException | RuntimeException e) { outcome = e.getClass().getSimpleName() + ": " + e.getMessage(); }
+            Log.i(TAG, "PUBLISH_PROBE_SIGNATURE sdk=" + Build.VERSION.SDK_INT + " cleanupDuringJob: proofAfterCleanup="
+                + proofAfterCleanup + " stateAfterCleanup={" + stateAfterCleanup + "} write=" + writeOutcome + " commit=" + outcome
+                + " stateAfterCommit={" + describe(cr, uri) + "}");
+        } finally {
+            t.abort();
+            store.engine.stopAll();
+        }
+        // Mechanismus belegt nur, wenn die Bereinigung den laufenden Eintrag tatsächlich entfernt hat.
+        assertFalse("process-start cleanup removed the in-flight proof", proofAfterCleanup);
+        assertNotEquals("in-flight entry cannot be published after the cleanup", "published", outcome);
     }
 
     /** Ein Ablauf wie in der App; null = veröffentlicht (und wieder gelöscht), sonst Befundtext. */
