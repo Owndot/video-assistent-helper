@@ -53,7 +53,10 @@ public class MediaStorePublishProbeTest {
     static final int PAUSE_CYCLES = 20;
     static final long PAUSE_MS = 2_000;   // erste Fortsetzungspause der App (Retry.DELAYS_MS[0])
 
-    enum Variant { PLAIN, PAUSE_MID_WRITE, PAUSE_BEFORE_CLOSE, PAUSE_BEFORE_COMMIT, ABORTED_SIBLING_THEN_PAUSE_MID_WRITE }
+    enum Variant { PLAIN, PAUSE_MID_WRITE, PAUSE_BEFORE_CLOSE, PAUSE_BEFORE_COMMIT, ABORTED_SIBLING_THEN_PAUSE_MID_WRITE,
+        LARGE_DELETE_BEFORE_COMMIT, CONCURRENT_PROVIDER_LOAD }
+    /** Wie viele Zyklen die Last-Varianten haben (je 64 MiB bzw. Fremdlast; Laufzeit begrenzt). */
+    static final int LOAD_CYCLES = 15;
 
     @Test public void repeatedPublicationsOfTheAppStore() throws Exception {
         assumeTrue("MediaStore pending entries exist from API 29", Build.VERSION.SDK_INT >= 29);
@@ -64,7 +67,8 @@ public class MediaStorePublishProbeTest {
         List<String> failures = new ArrayList<>();
         try {
             for (Variant v : Variant.values()) {
-                int cycles = v == Variant.PLAIN ? CYCLES : PAUSE_CYCLES;
+                int cycles = v == Variant.PLAIN ? CYCLES
+                    : v == Variant.LARGE_DELETE_BEFORE_COMMIT || v == Variant.CONCURRENT_PROVIDER_LOAD ? LOAD_CYCLES : PAUSE_CYCLES;
                 int ok = 0, failed = 0;
                 long maxCommitMs = 0;
                 for (int c = 0; c < cycles; c++) {
@@ -158,9 +162,25 @@ public class MediaStorePublishProbeTest {
         if (v == Variant.PAUSE_BEFORE_CLOSE) SystemClock.sleep(PAUSE_MS);
         out.close();
         if (v == Variant.PAUSE_BEFORE_COMMIT) SystemClock.sleep(PAUSE_MS);
+        // Gesamtlauf-Bedingung: das @After des vorigen Tests löscht eine große, gerade veröffentlichte Datei; der
+        // MediaProvider arbeitet danach weiter (Datei, Index). Hier unmittelbar vor dem Veröffentlichen.
+        if (v == Variant.LARGE_DELETE_BEFORE_COMMIT) {
+            Uri large = publishLarge(store, chunk, c);
+            cr.delete(large, null, null);
+        }
+        Thread load = null;
+        java.util.concurrent.atomic.AtomicBoolean stopLoad = new java.util.concurrent.atomic.AtomicBoolean();
+        if (v == Variant.CONCURRENT_PROVIDER_LOAD) {
+            // Gleichzeitig andere eigene Einträge anlegen/ändern/löschen (wie parallele Aufträge und Aufräumen)
+            load = new Thread(() -> providerLoad(cr, stopLoad));
+            load.start();
+            SystemClock.sleep(50);
+        }
         long t0 = SystemClock.elapsedRealtime();
         try {
-            Uri saved = (Uri) t.commit();
+            Uri saved;
+            try { saved = (Uri) t.commit(); }
+            finally { stopLoad.set(true); if (load != null) load.join(10_000); }
             commitMs[0] = SystemClock.elapsedRealtime() - t0;
             try { cr.delete(saved, null, null); } catch (RuntimeException ignored) { }
             return null;
@@ -173,6 +193,43 @@ public class MediaStorePublishProbeTest {
             Log.i(TAG, "PUBLISH_PROBE_FAIL sdk=" + Build.VERSION.SDK_INT + " " + f);
             t.abort();   // entfernt den Eintrag (auch nach der Diagnose-Wiederholung) und die Besitzmarkierung
             return f;
+        }
+    }
+
+    /** 64 MiB über die App-Ablage veröffentlichen (Referenz für das Löschen einer großen fertigen Datei). */
+    private static Uri publishLarge(Mp4Downloads store, byte[] chunk, int c) throws IOException {
+        DownloadStore.Target big = store.create(de.evp.helfer.dl.DirectDownloads.fileName("C2 ProbeLarge " + c + " "
+            + Long.toHexString(SystemClock.elapsedRealtimeNanos())), "video/mp4");
+        OutputStream o = big.out();
+        for (long w = 0; w < (64L << 20); w += chunk.length) o.write(chunk, 0, chunk.length);
+        o.close();
+        return (Uri) big.commit();
+    }
+
+    /** Fremdlast im MediaProvider: eigene kleine Einträge anlegen, schreiben, veröffentlichen, abfragen, löschen. */
+    private static void providerLoad(ContentResolver cr, java.util.concurrent.atomic.AtomicBoolean stop) {
+        byte[] b = new byte[16 << 10];
+        while (!stop.get()) {
+            Uri u = null;
+            try {
+                ContentValues cv = new ContentValues();
+                cv.put(MediaStore.Downloads.DISPLAY_NAME, "C2 ProbeLoad " + Long.toHexString(SystemClock.elapsedRealtimeNanos()) + ".mp4");
+                cv.put(MediaStore.Downloads.MIME_TYPE, "video/mp4");
+                cv.put(MediaStore.Downloads.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/" + Downloads.FOLDER + "/");
+                cv.put(MediaStore.Downloads.IS_PENDING, 1);
+                u = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
+                if (u == null) continue;
+                try (OutputStream o = cr.openOutputStream(u, "w")) { if (o != null) o.write(b); }
+                ContentValues done = new ContentValues();
+                done.put(MediaStore.Downloads.IS_PENDING, 0);
+                cr.update(u, done, null, null);
+                try (Cursor q = cr.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI, new String[] {MediaStore.Downloads._ID}, null, null, null)) {
+                    if (q != null) q.getCount();
+                }
+            } catch (IOException | RuntimeException ignored) {
+            } finally {
+                if (u != null) { try { cr.delete(u, null, null); } catch (RuntimeException ignored) { } }
+            }
         }
     }
 
