@@ -504,6 +504,9 @@ public class Mp4DownloadsInstrumentedTest {
         long total = 8L << 20;
         try (Server srv = new Server((line, h, out, i) -> serveFile(h, out, total, line.contains("/etag") ? "\"e\"" : null, h.get("range") == null ? 3L << 20 : -1))) {
             engineFor(srv);
+            engine.stopAll();
+            CommitStateStore observed = new CommitStateStore(store);    // nur Diagnose des Veröffentlichens
+            engine = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), observed, events);
             int proofsBefore = proofs();
             String a = newId(), ta = title("NoValidator");
             engine.start(a, srv.url("/plain"), ta);
@@ -513,7 +516,7 @@ public class Mp4DownloadsInstrumentedTest {
             String b = newId(), tb = title("Resume");
             engine.start(b, srv.url("/etag"), tb);
             String rb = events.await(b, 60_000);
-            assertEquals("cause: " + engine.diagnostics(b), "done", rb);   // P4c-3: Ursache eines seltenen failed:storage
+            assertEquals("cause: " + engine.diagnostics(b) + "; commit: " + observed.lastCommitFailure, "done", rb);   // P4c-3: Ursache von failed:storage
             Uri uri = (Uri) events.saved.get(b);
             cleanup.add(uri);
             if (Build.VERSION.SDK_INT >= 29) {
@@ -675,6 +678,53 @@ public class Mp4DownloadsInstrumentedTest {
     /** Echte Dateisystemstörung: Besitzmarkierung darf nach publish nicht gelöscht werden.
      * Optional bleibt das Journal wie bei einem Prozessabsturz vor DONE stehen. Keine Produktions-Testschalter.
      */
+    /**
+     * Nur Diagnose: reicht alles an die echte Ablage durch; scheitert {@code commit()}, wird VOR dem Aufräumen der
+     * Engine der Zustand des MediaStore-Eintrags gelesen (nur Lesen, keine Wiederholung, Verhalten unverändert).
+     */
+    static final class CommitStateStore implements DownloadStore {
+        final Mp4Downloads real;
+        volatile String lastCommitFailure = "";
+        CommitStateStore(Mp4Downloads real) { this.real = real; }
+        @Override public boolean writable() { return real.writable(); }
+        @Override public long freeBytes() throws IOException { return real.freeBytes(); }
+        @Override public byte[] loadJournal() throws IOException { return real.loadJournal(); }
+        @Override public void saveJournal(byte[] data) throws IOException { real.saveJournal(data); }
+        @Override public boolean isPublished(String ref, long total) throws IOException { return real.isPublished(ref, total); }
+        @Override public Target create(String name, String mime) throws IOException {
+            Target target = real.create(name, mime);
+            long created = SystemClock.elapsedRealtime();
+            return new Target() {
+                @Override public OutputStream out() throws IOException { return target.out(); }
+                @Override public String ref() { return target.ref(); }
+                @Override public Object commit() throws IOException {
+                    try { return target.commit(); }
+                    catch (IOException e) {
+                        lastCommitFailure = e.getMessage() + " ageMs=" + (SystemClock.elapsedRealtime() - created)
+                            + " state={" + entryState(Uri.parse(target.ref())) + "}";
+                        throw e;
+                    }
+                }
+                @Override public void abort() { target.abort(); }
+            };
+        }
+    }
+
+    /** Zustand eines (auch noch ausstehenden) MediaStore-Eintrags, nur für Fehlermeldungen. */
+    static String entryState(Uri u) {
+        if (Build.VERSION.SDK_INT < 29 || !"content".equals(u.getScheme())) return "n/a";
+        try (Cursor c = ctx.getContentResolver().query(MediaStore.setIncludePending(u), new String[] {MediaStore.Downloads.IS_PENDING,
+                MediaStore.Downloads.DISPLAY_NAME, MediaStore.Downloads.SIZE, MediaStore.MediaColumns.DATA}, null, null, null)) {
+            if (c == null) return "query=null";
+            if (!c.moveToFirst()) return "rows=0";
+            File f = c.getString(3) == null ? null : new File(c.getString(3));
+            return "pending=" + c.getInt(0) + " name=" + c.getString(1) + " size=" + c.getLong(2) + " fileExists="
+                + (f != null && f.exists()) + " fileLength=" + (f == null ? -1 : f.length());
+        } catch (RuntimeException e) {
+            return "query=" + e.getClass().getSimpleName() + ": " + e.getMessage();
+        }
+    }
+
     static final class MarkerFailureStore implements DownloadStore {
         final Mp4Downloads real;
         final boolean crashAfterPublish;
