@@ -1,7 +1,12 @@
 # Adressfreie HLS-Planungsdiagnose
 
-Stand 2026-11-09. **DONE – implementiert und lokal geprüft; NEEDS_TEST – CI und Samsung.**
+Stand 2026-11-16. **DONE – implementiert, lokal und in HLS-/Kanal-CI geprüft; NEEDS_TEST – Samsung.**
 Produktion **UNAPPROVED**. Reale HTTP 404/412 weiterhin **OFFEN**, keine behauptete Downloadkorrektur.
+
+**BLOCKED – Lieferung:** zusätzlicher API-34-MP4-Speicherfehler im Kanalworkflow; einmalige unveränderte
+Wiederholung läuft. Aktuell und verbindlich:
+[Claude-Übergabe](https://github.com/Owndot/Kadri/blob/feature/c3-helper-mp4/CLAUDE-HANDOFF.md).
+Keine neue Geräte-APK verteilt; vollständiger Paketentwurf in [P4-DELIVERY-DRAFT.md](P4-DELIVERY-DRAFT.md).
 
 Der vorhandene `hlsplan` gab bei allen Listenabrufen denselben neutralen Fehlercode zurück.
 Dadurch war ein HTTP 412 der Einstiegsadresse nicht von einem HTTP 412 der Video-/Audioliste unterscheidbar.
@@ -30,10 +35,11 @@ Redirect zu fehlender Liste; danach erfolgreicher Plan ohne alte Diagnose. Keine
 bei Planfehler, keine Credentials am Testserver, keine Adressen/Token in Antworten und Journalen.
 Die Negativtests verwenden nur kontrollierte lokale Fixtures, keine realen Webseiten.
 
-**IN_PROGRESS – Kadri:** feste Phasen/Zähler an beiden Übergängen validieren, alle anderen Felder
-verwerfen; Webseitenknopf und Player verwenden denselben Diagnosepfad. Alte Helper ohne `diag` bleiben
-kompatibel und werden weiterhin als genaue Phase unbekannt dargestellt. Vor Lieferung müssen beide
-Quellstände zusammen über den tatsächlichen Kanal und in CI geprüft sein.
+**DONE – Kadri `7978a41`:** feste Phasen/Zähler an beiden Übergängen validiert, alle anderen Felder
+verworfen; Webseitenknopf und Player verwenden denselben Diagnosepfad. Alte Helper ohne `diag` bleiben
+kompatibel und werden weiterhin als genaue Phase unbekannt dargestellt. Gemeinsame echte Kanalprüfung
+103/103, Kadri-CI `42547277661` und Helper-HLS-CI `42547144187` grün. Der zusätzliche Emulatorbefund
+ist dadurch nicht erledigt und darf nicht als P4B-A10-SIZE-Ausnahme behandelt werden.
 
 **NEEDS_TEST – Samsung nach geprüfter isolierter P4-Lieferung:** Seite neu laden, beim selben Video
 „Stream speichern …“ wählen, Fehler abwarten, Erweiterungsmenü → „Diagnose anzeigen“ →
