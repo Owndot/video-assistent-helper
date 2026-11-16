@@ -245,6 +245,7 @@ public class Mp4DownloadsInstrumentedTest {
     Mp4Downloads store;
     Events events;
     DirectDownloads engine;
+    CommitStateStore observed;   // nur Diagnose: Zustand beim Scheitern von Anlegen/Veröffentlichen
     final List<Uri> cleanup = new ArrayList<>();
     final List<File> cleanupFiles = new ArrayList<>();
     String journalName;
@@ -253,7 +254,8 @@ public class Mp4DownloadsInstrumentedTest {
         journalName = "mp4-jobs-test-" + newId();
         store = new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> Mp4Downloads.legacyWritePermitted(ctx));
         events = new Events(store);
-        engine = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), store, events);
+        observed = new CommitStateStore(store);
+        engine = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), observed, events);
     }
 
     java.util.Set<String> proofsAtStart = new java.util.HashSet<>();
@@ -282,8 +284,18 @@ public class Mp4DownloadsInstrumentedTest {
      * Nur Diagnose in Fehlermeldungen: vorhandene Ablage-Ursache der Engine (Ausnahmeklasse und -meldung, keine URL)
      * und das letzte Abbruch-Ergebnis der Ablage. Ändert keine Erwartung.
      */
-    static String storageCause(DirectDownloads e, String id) {
-        return "cause: " + e.diagnostics(id) + "; last abort: " + Mp4Downloads.lastAbortOutcome;
+    String storageCause(DirectDownloads e, String id) {
+        return "cause: " + e.diagnostics(id) + "; last abort: " + Mp4Downloads.lastAbortOutcome
+            + "; store: " + (observed == null ? "" : observed.lastFailure) + "; downloadsInitialized: " + downloadsInitialized();
+    }
+
+    /** Nur Diagnose: ob die einmalige Prozessstart-Bereinigung (Downloads.initialize) als erledigt gilt. */
+    static String downloadsInitialized() {
+        try {
+            java.lang.reflect.Field f = Downloads.class.getDeclaredField("initialized");
+            f.setAccessible(true);
+            synchronized (Downloads.class) { return String.valueOf(f.getBoolean(null)); }
+        } catch (ReflectiveOperationException e) { return "unknown"; }
     }
 
     /** Android 8–9: öffentlicher Ordner Download/Video-Assistent (bleibt nach Deinstallation). */
@@ -504,9 +516,6 @@ public class Mp4DownloadsInstrumentedTest {
         long total = 8L << 20;
         try (Server srv = new Server((line, h, out, i) -> serveFile(h, out, total, line.contains("/etag") ? "\"e\"" : null, h.get("range") == null ? 3L << 20 : -1))) {
             engineFor(srv);
-            engine.stopAll();
-            CommitStateStore observed = new CommitStateStore(store);    // nur Diagnose des Veröffentlichens
-            engine = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), observed, events);
             int proofsBefore = proofs();
             String a = newId(), ta = title("NoValidator");
             engine.start(a, srv.url("/plain"), ta);
@@ -516,7 +525,7 @@ public class Mp4DownloadsInstrumentedTest {
             String b = newId(), tb = title("Resume");
             engine.start(b, srv.url("/etag"), tb);
             String rb = events.await(b, 60_000);
-            assertEquals("cause: " + engine.diagnostics(b) + "; commit: " + observed.lastCommitFailure, "done", rb);   // P4c-3: Ursache von failed:storage
+            assertEquals("result (" + storageCause(engine, b) + ")", "done", rb);   // P4c-3: Ursache von failed:storage
             Uri uri = (Uri) events.saved.get(b);
             cleanup.add(uri);
             if (Build.VERSION.SDK_INT >= 29) {
@@ -684,7 +693,7 @@ public class Mp4DownloadsInstrumentedTest {
      */
     static final class CommitStateStore implements DownloadStore {
         final Mp4Downloads real;
-        volatile String lastCommitFailure = "";
+        volatile String lastFailure = "";
         CommitStateStore(Mp4Downloads real) { this.real = real; }
         @Override public boolean writable() { return real.writable(); }
         @Override public long freeBytes() throws IOException { return real.freeBytes(); }
@@ -692,15 +701,18 @@ public class Mp4DownloadsInstrumentedTest {
         @Override public void saveJournal(byte[] data) throws IOException { real.saveJournal(data); }
         @Override public boolean isPublished(String ref, long total) throws IOException { return real.isPublished(ref, total); }
         @Override public Target create(String name, String mime) throws IOException {
-            Target target = real.create(name, mime);
+            Target target;
+            try { target = real.create(name, mime); }
+            catch (IOException | RuntimeException e) { lastFailure = "create " + e; throw e; }
             long created = SystemClock.elapsedRealtime();
             return new Target() {
                 @Override public OutputStream out() throws IOException { return target.out(); }
                 @Override public String ref() { return target.ref(); }
                 @Override public Object commit() throws IOException {
                     try { return target.commit(); }
-                    catch (IOException e) {
-                        lastCommitFailure = e.getMessage() + " ageMs=" + (SystemClock.elapsedRealtime() - created)
+                    catch (IOException | RuntimeException e) {
+                        // RuntimeException meldet die Engine als "network": hier der eigentliche Ablagefehler
+                        lastFailure = "commit " + e + " ageMs=" + (SystemClock.elapsedRealtime() - created)
                             + " state={" + entryState(Uri.parse(target.ref())) + "}";
                         throw e;
                     }
