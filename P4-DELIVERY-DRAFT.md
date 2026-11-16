@@ -1,8 +1,19 @@
 # P4-Testlieferung – gesicherter Entwurf, nicht aktiviert
 
-Stand 2026-11-16. **BLOCKED** bis zur Bewertung des zusätzlichen API-34-Speicherfehlers.
-Dieser Entwurf war lokal vorbereitet; er wurde nicht als Workflowänderung gepusht.
-Der aktive Workflow bleibt auf seinem bisherigen Stand. Kein neues Paket ausgeliefert.
+Stand 2026-11-16 (Claude-Fortsetzung). **BLOCKED** – der API-34-Speicherfehler ist lokalisiert, aber nicht behoben:
+`IOException: publish` in `Mp4Downloads.PendingEntry.commit()` (MediaStore-Update `IS_PENDING=0`/`DISPLAY_NAME`
+betraf nicht genau einen Eintrag; Lauf 43874560604, Helper `d2f3884`). Ursache des Updates offen, Diagnosesonde
+`MediaStorePublishProbeTest` ab `52702f6`. Kein Paket ausgeliefert, aktive Workflows unverändert.
+
+**Vor Aktivierung zusätzlich nötig (aus dieser Prüfung):**
+- `SOURCE_SHA` kann nicht mehr `bd5ab29` sein, sobald ein Fix oder geänderte Gerätetests gebraucht werden;
+  die Scope-Prüfung erlaubt nach `SOURCE_SHA` nur diese Workflowdatei und Root-Markdown.
+- Das CI-Gate erkennt bisher nur Fehlschläge des Hauptlaufs. Die neue Sonde läuft als eigener Schritt und
+  meldet `PUBLISH_PROBE_STATUS ok|failed|skipped`. Im API-29-Ausnahmefall muss das Gate zusätzlich
+  `PUBLISH_PROBE_STATUS ok` verlangen, sonst würde ein Sondenfehlschlag auf API 29 als P4B-A10-SIZE durchgehen.
+- API 29 lief in `43846760700` einmal mit 16 MiB Java-Heap (Emulator verlangte 512m; ART-Standardwert) und
+  scheiterte dadurch zusätzlich mit `memory` im Remux-Abbruchtest; in `43874560604` wieder 512 MiB und grün.
+  Umgebungsbefund, kein App-Befund; das Gate lässt einen solchen Lauf korrekt nicht durch.
 
 Vor Anwendung: maßgebliche `P4C3-HANDOFF.md` und Claude-Übergabe im Kadri-Repository lesen,
 alle relevanten CI-Ergebnisse des exakten Quellstands prüfen. Nur P4B-A10-SIZE ist als
