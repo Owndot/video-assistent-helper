@@ -31,6 +31,21 @@ adb shell dumpsys package $PKG | grep -E 'WRITE_EXTERNAL_STORAGE|READ_EXTERNAL_S
 adb shell am instrument -w -r -e class de.evp.helfer.ChannelInstrumentedTest,de.evp.helfer.net.SafeHttpInstrumentedTest,de.evp.helfer.Mp4DownloadsInstrumentedTest,de.evp.helfer.HlsDownloadsInstrumentedTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$REPORT/instrumentation.txt" 2>&1
 status=0
 grep -q '^OK (' "$REPORT/instrumentation.txt" || status=1
+# Diagnose (API 29+): wiederholte Veröffentlichungen über die echte App-Ablage (MediaStorePublishProbeTest). Eigener
+# Lauf, eigene Datei; im Job-Log nur eindeutig markierte Zeilen. Ein Fehlschlag ist ein Befund und macht den Job rot.
+PROBE_STATUS=skipped
+if [ "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" -ge 29 ]; then
+  adb shell am instrument -w -r -e class de.evp.helfer.MediaStorePublishProbeTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$REPORT/publish-probe.txt" 2>&1
+  adb logcat -d -s MP4_TEST:I | grep -E 'PUBLISH_PROBE' | sed 's/^.*\(PUBLISH_PROBE\)/\1/' | tee "$REPORT/publish-probe-lines.txt"
+  if grep -q '^OK (' "$REPORT/publish-probe.txt"; then PROBE_STATUS=ok
+  else
+    PROBE_STATUS=failed; status=1
+    grep -E 'AssertionError|Exception|shortMsg' "$REPORT/publish-probe.txt" | head -5 | sed 's/^/PUBLISH_PROBE_RESULT: /'
+    # Systemseite des Fehlschlags (nur Ablage-/MediaProvider-Meldungen; Testdateinamen sind synthetisch)
+    adb logcat -d | grep -E 'MediaProvider|FuseDaemon|MediaStore' | grep -iE 'C2 Probe|rename|update|pending|fail|error' | tail -40 | sed 's/^/PUBLISH_PROBE_SYSTEM: /'
+  fi
+fi
+echo "PUBLISH_PROBE_STATUS $PROBE_STATUS"
 # P4c-3: ECHTER Prozess-Neustart (ProcessRestartInstrumentedTest). Phase A lässt Dienst + Download laufen; dann endet
 # der Prozess: (1) „am force-stop“, (2) der Start der nächsten Instrumentierung beendet den alten Prozess. Phase B läuft
 # in einem neuen Prozess (prüft die Prozesskennung selbst).
