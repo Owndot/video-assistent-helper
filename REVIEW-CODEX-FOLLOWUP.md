@@ -95,6 +95,11 @@ und `listener.finished` ungeschützt); die gemeinsame Platzfreigabe ist über `J
   - `isolateLeftovers()` entfernt eine Markierung nur, wenn der Rest nachweislich weg ist: Provider-Abfrage = 0 Zeilen (API 29+) bzw. `.part`-Datei weg (API 26–28).
 - **Mutationsläufer (alle fünf):** gemeinsame strenge Bewertung `tests/java/mutation_verdict.py`. Nur ein sichtbar gescheiterter Test ist „KILLED“; Übersetzungsfehler (INVALID), Infrastruktur (INFRA), Zeitüberschreitung (TIMEOUT), unklarer Abbruch (UNCLASSIFIED) und veraltete Anker (STALE) zählen getrennt und machen den Lauf rot. Negativer Selbsttest `tests/java/mutation_verdict_selftest.py` (in CI).
 - **Gefundene ungültige Mutanten (früher als „erkannt“ gezählt):** dl `write error resumed`, `unchecked restore as done`, `start before journal`, `first request not retried` (alle nicht übersetzbar) → mit gleicher Absicht gültig neu formuliert, jetzt erkannt. Die Kanal-Probe zählte Zeitüberschreitungen als erkannt → behoben.
+  hls: `segment-size` (nicht übersetzbar) → gültig neu formuliert. Kanal: „HLS ohne Kanal-Sitzung“ wurde nur zufällig
+  durch eine NullPointerException im Test-Double „erkannt“ → Double null-sicher, ausdrückliche Prüfung „kein Aufruf ohne Sitzung“.
+- **Lokale Läufe mit strenger Bewertung:** dl 57/57 (vorher 52 + 4 INVALID + 1 SURVIVED, alle 5 korrigiert und einzeln
+  erneut geprüft), net 29/29, channel 31/31 (nach Korrektur), hls 55/55 (nach Korrektur der einen ungültigen Probe).
+  hlsmux nur in CI (Media3 hier nicht ladbar).
 
 ## 4. Phase 4 – Liefer-Gate
 

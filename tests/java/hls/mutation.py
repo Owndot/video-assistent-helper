@@ -14,7 +14,8 @@ M = [
     ('de/evp/helfer/hls/HlsUri.java', 'if (!"http".equals(p.scheme) && !"https".equals(p.scheme)) throw new HlsException("uri-scheme");', ''),
     ('de/evp/helfer/hls/HlsPlan.java', 'if (n > MAX_PLAN_SEGMENTS) throw new HlsException("segments-limit");', ''),
     ('de/evp/helfer/hls/HlsPlan.java', 'if (Math.abs(video.totalSeconds - audio.totalSeconds) > tol) throw new HlsException("av-duration-mismatch");', ''),
-    ('de/evp/helfer/hls/HlsFetch.java', 'if (total > maxBytes) throw new HlsException("segment-size");', ''),
+    # Review P3: früher nicht übersetzbar (catch ohne werfende Anweisung) und trotzdem als "erkannt" gezählt – gleiche Absicht, gültig
+    ('de/evp/helfer/hls/HlsFetch.java', 'if (total > maxBytes) throw new HlsException("segment-size");', 'if (false) throw new HlsException("segment-size");'),
     ('de/evp/helfer/hls/HlsFetch.java', 'return new Text(out.toByteArray(), r.url());', 'return new Text(out.toByteArray(), url);'),
     # P4b-3/5: Koordinator, Journal, Wiederaufnahme
     ('de/evp/helfer/hls/HlsEngine.java', 'try { ok = fetch.unchanged(url, known.length, known.etag); }', 'try { ok = true; }'),
