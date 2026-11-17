@@ -14,6 +14,7 @@ CLASSES = {
                                                   'cpuStaysAwakeOnlyWhileDownloading', 'crashConsistencyBetweenJournalAndStorage'],
     'de.evp.helfer.HlsDownloadsInstrumentedTest': ['remuxesTs', 'remuxesFmp4'],
 }
+MP4 = CLASSES['de.evp.helfer.Mp4DownloadsInstrumentedTest']
 PROBES = ['repeatedPublicationsOfTheAppStore', 'processStartCleanupDuringAJobSignature', 'cleanupAttributionIsConservative',
           'concurrentDeletionDuringPublishRace']
 VARIANTS = ['PLAIN', 'PAUSE_MID_WRITE', 'PAUSE_BEFORE_CLOSE', 'PAUSE_BEFORE_COMMIT', 'ABORTED_SIBLING_THEN_PAUSE_MID_WRITE',
@@ -56,7 +57,7 @@ def section(name, body):
 
 
 def job(api=34, main=None, probe_status='ok', probe=None, probe_lines=None, restart_fail=None, restart_drop=None, crash=(),
-        repeat='passed=22 failed=0', regression=True, script_status=None, drop_api=False, extra=(), truncate=False):
+        repeat='passed=22 failed=0', repeat_reports=(), regression=True, script_status=None, drop_api=False, extra=(), truncate=False):
     main = instr(CLASSES) if main is None else main
     L = ['DEVICE_READY after 11 s']
     if regression:
@@ -95,6 +96,8 @@ def job(api=34, main=None, probe_status='ok', probe=None, probe_lines=None, rest
     L += section('restart-summary', rs)
     L += section('crash', list(crash))
     L += ['GATE-SCRIPT-STATUS %d' % status]
+    for label, body in repeat_reports:
+        L += section('repeat-' + label, body)
     L += ['REPEAT api=%d runs=22 %s' % (api, repeat)] if repeat else []
     if truncate:
         L = L[:L.index('GATE-END main')]
@@ -106,6 +109,17 @@ CASES = {
     'pass_api34': (34, 'PASS', job(34)),
     'pass_api26_no_probe': (26, 'PASS', job(26, probe_status='skipped')),
     'size_only_api29': (29, 'ACCEPTED_SIZE_ONLY', job(29, main=instr(CLASSES, {'publishesThroughMediaStoreAndReadsBack': SIZE_STACK}))),
+    # wie in CI auf e5fb290: die zwei Läufe der ganzen MP4-Klasse scheitern nur an SIZE (Belege vollständig im Log)
+    'size_only_with_class_repeats_api29': (29, 'ACCEPTED_SIZE_ONLY', job(29, main=instr(CLASSES, {'publishesThroughMediaStoreAndReadsBack': SIZE_STACK}),
+        repeat='passed=20 failed=2', repeat_reports=[(l, instr({'de.evp.helfer.Mp4DownloadsInstrumentedTest': MP4}, {'publishesThroughMediaStoreAndReadsBack': SIZE_STACK})) for l in ('class-1', 'class-2')])),
+    'repeat_publish_failure_api29': (29, 'REJECT', job(29, main=instr(CLASSES, {'publishesThroughMediaStoreAndReadsBack': SIZE_STACK}),
+        repeat='passed=20 failed=2', repeat_reports=[('class-1', instr({'de.evp.helfer.Mp4DownloadsInstrumentedTest': MP4}, {'publishesThroughMediaStoreAndReadsBack': SIZE_STACK})),
+                                                     ('class-2', instr({'de.evp.helfer.Mp4DownloadsInstrumentedTest': MP4}, {'publishesThroughMediaStoreAndReadsBack': PUBLISH_STACK}))])),
+    'repeat_without_evidence_api29': (29, 'REJECT', job(29, main=instr(CLASSES, {'publishesThroughMediaStoreAndReadsBack': SIZE_STACK}), repeat='passed=20 failed=2')),
+    'repeat_size_but_main_green_api29': (29, 'REJECT', job(29, repeat='passed=21 failed=1',
+        repeat_reports=[('class-1', instr({'de.evp.helfer.Mp4DownloadsInstrumentedTest': MP4}, {'publishesThroughMediaStoreAndReadsBack': SIZE_STACK}))])),
+    'repeat_three_failed_api29': (29, 'REJECT', job(29, main=instr(CLASSES, {'publishesThroughMediaStoreAndReadsBack': SIZE_STACK}), repeat='passed=21 failed=1',
+        repeat_reports=[('three-7', instr({'de.evp.helfer.Mp4DownloadsInstrumentedTest': ['duplicateAndLateStartsFetchOnce']}, {'duplicateAndLateStartsFetchOnce': OTHER_STACK}))])),
     # nie automatisch akzeptiert
     'size_on_api34_rejected': (34, 'REJECT', job(34, main=instr(CLASSES, {'publishesThroughMediaStoreAndReadsBack': SIZE_STACK}))),
     'publish_rows0_api29': (29, 'REJECT', job(29, main=instr(CLASSES, {'publishesThroughMediaStoreAndReadsBack': PUBLISH_STACK}))),

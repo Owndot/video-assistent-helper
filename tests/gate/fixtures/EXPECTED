@@ -10,10 +10,15 @@ probe_variant_missing_api34 34 REJECT
 publish_rows0_api29 29 REJECT
 regression_not_shown_api34 34 REJECT
 repeat_failed_api34 34 REJECT
+repeat_publish_failure_api29 29 REJECT
+repeat_size_but_main_green_api29 29 REJECT
+repeat_three_failed_api29 29 REJECT
+repeat_without_evidence_api29 29 REJECT
 restart_failed_api34 34 REJECT
 restart_missing_api34 34 REJECT
 size_on_api34_rejected 34 REJECT
 size_only_api29 29 ACCEPTED_SIZE_ONLY
+size_only_with_class_repeats_api29 29 ACCEPTED_SIZE_ONLY
 size_plus_publish_api29 29 REJECT
 size_plus_unknown_api29 29 REJECT
 system_crash_api29 29 REJECT

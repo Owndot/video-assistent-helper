@@ -19,7 +19,11 @@ fail=0; pass=0
 run() {   # run LABEL CLASSSPEC
   local log="$REPORT/repeat-$1.txt"
   adb shell am instrument -w -r -e class "$2" "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$log" 2>&1
-  if grep -q '^OK (' "$log"; then pass=$((pass+1)); rm -f "$log"; else fail=$((fail+1)); grep -E 'test=|AssertionError|ComparisonFailure|Exception' "$log" | head -20 >> "$REPORT/repeat-failures.txt"; fi
+  if grep -q '^OK (' "$log"; then pass=$((pass+1)); rm -f "$log"
+  else fail=$((fail+1)); grep -E 'test=|AssertionError|ComparisonFailure|Exception' "$log" | head -20 >> "$REPORT/repeat-failures.txt"
+    # Review P4: vollständiger Beleg jedes gescheiterten Laufs im Job-Log (tools/device_gate.py bewertet ihn)
+    echo "GATE-BEGIN repeat-$1"; cat "$log"; echo "GATE-END repeat-$1"
+  fi
 }
 for i in $(seq 1 "$N"); do
   run "three-$i" "$T#duplicateAndLateStartsFetchOnce,$T#leftoversAfterProcessDeathAreRemovedOnNextStart,$T#cancelRemovesEverything"

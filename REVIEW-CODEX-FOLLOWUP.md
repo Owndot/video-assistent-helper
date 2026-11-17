@@ -120,7 +120,12 @@ und `listener.finished` ungeschützt); die gemeinsame Platzfreigabe ist über `J
   - abgeschnittene Ausgabe.
 
   **Einzige Ausnahme:** P4B-A10-SIZE, nur auf API 29, nur genau dieser Test mit genau der SIZE-Abweichung. Sie wird als `ACCEPTED_SIZE_ONLY` ausgewiesen, nie als PASS, und ist **keine Android-10-Freigabe**.
-- **Synthetische Fixtures:** `tests/gate/fixtures` (21 Fälle, erzeugt von `make_fixtures.py`), geprüft von `test_device_gate.py` in CI, einschließlich Exit-Codes und Job-Ergebnis.
+- **Wiederholungen auf API 29 (CI `e5fb290`):** Die zwei Läufe der ganzen MP4-Klasse scheiterten (20/22), die 20 Kurzläufe
+  bestanden. Die Klasse enthält den SIZE-Test; Belege standen aber nur im Artefakt. Jetzt druckt `run-flaky-repeat.sh` jeden
+  gescheiterten Lauf vollständig ins Job-Log. Das Gate akzeptiert ihn nur auf API 29 und nur, wenn er ausschließlich an
+  P4B-A10-SIZE scheiterte; fehlende Belege, ein anderer Test, ein Veröffentlichungsfehler oder SIZE ohne SIZE im Hauptlauf
+  werden abgelehnt. Der echte Log von `e5fb290` wird deshalb (fehlende Belege) abgelehnt – fail-closed.
+- **Synthetische Fixtures:** `tests/gate/fixtures` (26 Fälle, erzeugt von `make_fixtures.py`), geprüft von `test_device_gate.py` in CI, einschließlich Exit-Codes und Job-Ergebnis.
 - **`tools/run-channel-instrumentation.sh`:**
   - gibt alle Berichte vollständig zwischen `GATE-BEGIN`/`GATE-END` aus;
   - **Fehler behoben:** Die Neustart-Ergebnisse gingen bisher verloren, weil `summary.txt` danach überschrieben wurde.

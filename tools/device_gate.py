@@ -91,6 +91,7 @@ def evaluate(log, api, job_conclusion=None):
     lines = [strip(l) for l in log.splitlines()]
     text = '\n'.join(lines)
     reasons, size_exception = [], False
+    repeat_size_only = False
     secs, dup, open_sec = sections(lines)
     if dup:
         reasons.append('section reported twice: %s' % dup)
@@ -189,10 +190,31 @@ def evaluate(log, api, job_conclusion=None):
 
     # 5) Wiederholungen und erwarteter Mutantenfehler (Veröffentlichungs-Regression)
     rep = re.findall(r'(?m)^REPEAT api=(\d+) runs=(\d+) passed=(\d+) failed=(\d+)$', text)
+    rsecs = {n: b for n, b in secs.items() if n.startswith('repeat-')}
     if len(rep) != 1:
         reasons.append('flaky repeat result missing or repeated: %d lines' % len(rep))
-    elif rep[0][3] != '0' or rep[0][1] != rep[0][2] or int(rep[0][1]) < 1:
-        reasons.append('flaky repeat failed: %s' % ' '.join(rep[0]))
+    elif int(rep[0][1]) < 1 or int(rep[0][2]) + int(rep[0][3]) != int(rep[0][1]):
+        reasons.append('flaky repeat counts inconsistent: %s' % ' '.join(rep[0]))
+    elif rep[0][3] != '0':
+        # Ein gescheiterter Wiederholungslauf zählt nur auf API 29 und nur, wenn er nachweislich AUSSCHLIESSLICH an
+        # P4B-A10-SIZE scheiterte (die ganze MP4-Klasse enthält den SIZE-Test); jeder Lauf muss vollständig belegt sein.
+        if api != 29:
+            reasons.append('flaky repeat failed: %s' % ' '.join(rep[0]))
+        elif len(rsecs) != int(rep[0][3]):
+            reasons.append('flaky repeat failed %s times but %d failure reports in the log' % (rep[0][3], len(rsecs)))
+        else:
+            for n, body in sorted(rsecs.items()):
+                _, rt, _, _, rf, rfin = instrumentation(body)
+                rfailed = sorted(t for t, (c, _) in rt.items() if c in CODE_FAIL)
+                rst = rt.get(SIZE_TEST, ('', ''))[1]
+                bt = '\n'.join(body)
+                if not (rfin and rfailed == [SIZE_TEST] and rf == 1 and SIZE_RE.search(rst) and not PUBLISH_FAILURE.search(rst)
+                        and not SYSTEM_CRASH.search(bt)):
+                    reasons.append('flaky repeat %s failed for another reason than P4B-A10-SIZE: %s' % (n, rfailed or 'unknown'))
+                else:
+                    repeat_size_only = True
+    if rsecs and (not rep or rep[0][3] == '0'):
+        reasons.append('repeat failure reports present although no repeat failed')
     if 'PASS: previous cleanup fails the publication regression (failed:storage instead of done)' not in text:
         reasons.append('expected mutant failure (publication regression) not shown')
 
@@ -211,6 +233,8 @@ def evaluate(log, api, job_conclusion=None):
         if not size_exception and job_conclusion != 'success':
             reasons.append('all evidence green but job conclusion %s' % job_conclusion)
 
+    if repeat_size_only and not size_exception:
+        reasons.append('repeat runs failed by SIZE but the main run did not show the documented SIZE finding')
     if reasons:
         return 'REJECT', reasons
     return ('ACCEPTED_SIZE_ONLY' if size_exception else 'PASS'), []
