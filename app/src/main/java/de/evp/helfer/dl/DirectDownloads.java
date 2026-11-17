@@ -172,7 +172,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             running.incrementAndGet();
             try {
                 saveJournal();                                    // erst vermerkt, dann gestartet (at most once)
-            } catch (IOException e) {
+            } catch (IOException | RuntimeException e) {          // P1: auch eine RuntimeException darf nichts reserviert lassen
                 jobs.remove(id);
                 running.decrementAndGet();
                 slots.releaseWithConnection();
@@ -280,7 +280,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
                 jobs.put(id, job);
                 running.incrementAndGet();
                 try { saveJournal(); }
-                catch (IOException io) { jobs.put(id, known); running.decrementAndGet(); slots.releaseWithConnection(); continue; }
+                catch (IOException | RuntimeException io) { jobs.put(id, known); running.decrementAndGet(); slots.releaseWithConnection(); continue; }
             }
             started++;
             final Job j = job;
@@ -332,6 +332,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         State state = State.FAILED;
         String reason = "network";
         Object saved = null;
+        Error fatal = null;
         try {
             // Ablage zuerst: ohne Schreibrecht (Android 8–9: Speicherberechtigung) kein Netzwerkzugriff.
             if (!store.writable()) throw new Fail("storage_permission");
@@ -421,10 +422,14 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             checkCancelled(job);
             // P4c-3: auch eine RuntimeException der Ablage (z. B. MediaStore „No item at …“) ist ein Ablagefehler, kein Netzfehler
             try { out.close(); saved = target.commit(); } catch (IOException | RuntimeException e) { throw new Fail("storage", e); }
-            job.ref = target.ref();   // nach dem Veröffentlichen (Android 8–9: endgültiger Dateiname)
+            // P1: veröffentlicht ist verbindlich – ab hier nie mehr abbrechen, kein späterer Fehler macht daraus "failed"
+            DownloadStore.Target published = target;
             target = null;
             state = State.DONE;
             reason = "";
+            // nach dem Veröffentlichen (Android 8–9: endgültiger Dateiname); scheitert das, bleibt der beim Anlegen
+            // reservierte Verweis im Journal (derselbe endgültige Name bzw. dieselbe Uri)
+            try { job.ref = published.ref(); } catch (RuntimeException e) { secondary(job, "ref", e); }
         } catch (Fail f) {
             reason = f.reason;
             job.cause = f.cause;
@@ -442,12 +447,35 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         } catch (Exception e) {
             reason = "network";
             job.cause = where(e);
+        } catch (Error e) {
+            // P1: auch ein Error (z. B. OutOfMemoryError) führt zu Aufräumen, Endzustand und Freigabe; danach weiterwerfen
+            fatal = e;
+            if (state != State.DONE) { reason = "internal"; job.cause = where(e); }
         } finally {
-            if (response != null) response.close();
-            if (target != null) target.abort();
+            // P1: jeder Schritt läuft unabhängig vom anderen; ein Fehler dabei wird vermerkt, überdeckt aber nie die Ursache
+            Throwable c1 = quietly(response == null ? null : response::close);
+            Throwable c2 = quietly(target == null ? null : target::abort);
+            if (c1 != null) secondary(job, "close", c1);
+            if (c2 != null) secondary(job, "abort", c2);
+            if (fatal == null) fatal = c1 instanceof Error ? (Error) c1 : c2 instanceof Error ? (Error) c2 : null;
         }
         if (state != State.DONE && job.cancel.isCancelled()) { state = State.CANCELLED; reason = ""; }
         finish(job, state, reason, saved);    // erst nach dem Aufräumen: "beendet" heißt, nichts Unfertiges bleibt
+        if (fatal != null) throw fatal;
+    }
+
+    private interface Step { void run() throws Exception; }
+
+    /** P1: führt einen Aufräumschritt aus und liefert seinen Fehler, statt ihn weiterzuwerfen. */
+    private static Throwable quietly(Step step) {
+        if (step == null) return null;
+        try { step.run(); return null; } catch (Exception | Error e) { return e; }
+    }
+
+    /** P1: Folgefehler nur als Zusatz zur Diagnose (Klasse und Stelle); die erste Ursache bleibt vorn. */
+    private static void secondary(Job job, String step, Throwable e) {
+        String note = step + ": " + where(e);
+        job.cause = job.cause.isEmpty() ? "cleanup " + note : job.cause + "; cleanup " + note;
     }
 
     /**
@@ -516,18 +544,27 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         if (etag == null || !etag.equals(strongEtag(r.etag()))) throw new Fail("changed");
     }
 
+    /**
+     * Endzustand, Freigaben, Journal, Meldung. P1: jeder Schritt läuft, auch wenn ein vorheriger scheitert (Tresor,
+     * Plätze/CPU-Sperre, Journal, Anzeige); der Endzustand selbst steht vor allen Schritten fest.
+     */
     private void finish(Job job, State state, String reason, Object saved) {
-        if (state != State.INTERRUPTED) forget(job.id);   // P2: fertig/Fehler/Abbruch → gespeicherte Quelle sofort weg
+        if (state != State.INTERRUPTED) {
+            // P2: fertig/Fehler/Abbruch → gespeicherte Quelle sofort weg
+            Throwable v = quietly(() -> forget(job.id));
+            if (v != null) secondary(job, "vault", v);
+        }
         synchronized (this) {
             job.state = state;
             job.reason = reason;
             running.decrementAndGet();
-            slots.releaseWithConnection();
-            try { saveJournal(); } catch (IOException ignored) { /* Zustand bleibt im Speicher; nächster Start: interrupted */ }
+            try { slots.releaseWithConnection(); } catch (RuntimeException e) { secondary(job, "slots", e); }
+            try { saveJournal(); } catch (IOException | RuntimeException ignored) { /* Zustand bleibt im Speicher; nächster Start: interrupted */ }
             notifyAll();
         }
         // bei done: exakte Größe (= Content-Length, vollständig geschrieben und geprüft)
-        listener.finished(job.id, job.title, state.name().toLowerCase(Locale.ROOT), reason, saved, state == State.DONE ? job.bytes : -1);
+        try { listener.finished(job.id, job.title, state.name().toLowerCase(Locale.ROOT), reason, saved, state == State.DONE ? job.bytes : -1); }
+        catch (RuntimeException e) { secondary(job, "listener", e); }
     }
 
     // ------------------------------------------------------------------ Prüfungen

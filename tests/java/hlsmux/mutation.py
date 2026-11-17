@@ -20,18 +20,19 @@ M = [
     (R, 'if (Math.abs(spanSeconds(v) - videoSeconds) > toleranceSeconds) throw new HlsException("verify-duration");', ''),
     (R, 'if (v == null || a == null || v.format == null || a.format == null) throw new HlsException("verify-tracks");', 'if (v == null) throw new HlsException("verify-tracks");'),
 ]
+sys.path.insert(0, os.path.join(here, '..'))
+import mutation_verdict as mv  # noqa: E402
+KILLED = [r'^FAIL ', r'RESULT hlsmux passed=\d+ failed=[1-9]', r'AssertionError']
 fx = sys.argv[1]; cache = sys.argv[2] if len(sys.argv) > 2 else ''
-survived = []
+tally = mv.Tally('hlsmux-mutations')
 for f, a, b in M:
+    name = a[:90].replace('\n', ' ')
     with tempfile.TemporaryDirectory() as t:
         shutil.copytree(src, os.path.join(t, 'java'))
         p = os.path.join(t, 'java', f); s = open(p).read()
-        assert s.count(a) == 1, ('anchor', f, a[:60])
+        if s.count(a) != 1:
+            tally.add('%s (fragment found %d times)' % (name, s.count(a)), 'STALE'); continue
         open(p, 'w').write(s.replace(a, b))
-        r = subprocess.run(['bash', os.path.join(here, 'run.sh'), fx] + ([cache] if cache else []), env=dict(os.environ, APP_SRC=os.path.join(t, 'java')),
-                           capture_output=True, text=True)
-        killed = r.returncode != 0
-        print(('killed   ' if killed else 'SURVIVED ') + a[:90])
-        if not killed: survived.append(a)
-if survived: print('FAIL: %d mutation(s) survived' % len(survived)); sys.exit(1)
-print('PASS: all %d mutations killed' % len(M))
+        v, out = mv.run(['bash', os.path.join(here, 'run.sh'), fx] + ([cache] if cache else []), dict(os.environ, APP_SRC=os.path.join(t, 'java')), 900, KILLED)
+        tally.add(name, v, out)
+sys.exit(tally.finish())

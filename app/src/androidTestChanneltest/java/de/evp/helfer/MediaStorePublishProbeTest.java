@@ -12,6 +12,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.util.Log;
@@ -144,6 +145,119 @@ public class MediaStorePublishProbeTest {
         assertTrue("publish diagnosis sees the removed proof: " + outcome, outcome.contains(" proof=gone "));
         assertTrue("publish diagnosis has the per-entry order: " + outcome,
             outcome.matches("(?s).* trail=insert#\\d+\\+\\d+ms,open#\\d+\\+\\d+ms,close#\\d+\\+\\d+ms,update.*"));
+    }
+
+    /**
+     * Review P2 (deterministisch): Die Zuordnung zur Bereinigung ist konservativ. Ein fremdes Entfernen ohne jede
+     * Bereinigung heißt "not-observed" (nie "removed-this-entry", nie "none"); läuft in diesem Prozess gerade eine
+     * Bereinigung (hier: Zähler wie während {@link Downloads#initialize}), heißt es "overlap-observed" – auch wenn sie
+     * den Eintrag (noch) nicht als entfernt vermerkt hat. Die Diagnose fragt den Provider dabei nicht ab.
+     */
+    @Test public void cleanupAttributionIsConservative() throws Exception {
+        assumeTrue("MediaStore pending entries exist from API 29", Build.VERSION.SDK_INT >= 29);
+        Context ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Mp4Downloads store = new Mp4Downloads(ctx, "mp4-jobs-probe-attr-" + SystemClock.elapsedRealtimeNanos(),
+            DeviceTestClients.loopback(9), () -> true);
+        ContentResolver cr = ctx.getContentResolver();
+        try {
+            String quiet = publishAfterForeignDelete(store, cr);
+            Log.i(TAG, "PUBLISH_PROBE_ATTRIBUTION sdk=" + Build.VERSION.SDK_INT + " foreignDelete: " + quiet);
+            assertTrue("foreign deletion fails the publication: " + quiet, quiet.startsWith("IOException: publish "));
+            assertTrue("no cleanup ran: not observed, never attributed: " + quiet, quiet.contains(" cleanup=not-observed"));
+            assertFalse("no provider query on the failure path (no entry= field): " + quiet, quiet.contains(" entry="));
+            String overlap;
+            Downloads.cleanupActive.incrementAndGet();      // wie während einer laufenden Bereinigung in diesem Prozess
+            try { overlap = publishAfterForeignDelete(store, cr); }
+            finally { Downloads.cleanupActive.decrementAndGet(); }
+            Log.i(TAG, "PUBLISH_PROBE_ATTRIBUTION sdk=" + Build.VERSION.SDK_INT + " duringCleanup: " + overlap);
+            assertTrue("a running cleanup is reported as overlap, not as not-observed: " + overlap, overlap.contains(" cleanup=overlap-observed("));
+        } finally {
+            store.engine.stopAll();
+        }
+    }
+
+    /** Eintrag anlegen, schreiben, schließen; dann entfernt ein Dritter die Zeile; dann veröffentlichen. Liefert die Ausnahme. */
+    private static String publishAfterForeignDelete(Mp4Downloads store, ContentResolver cr) throws Exception {
+        String name = de.evp.helfer.dl.DirectDownloads.fileName("C2 ProbeForeign " + Long.toHexString(SystemClock.elapsedRealtimeNanos()));
+        DownloadStore.Target t = store.create(name, "video/mp4");
+        try {
+            OutputStream out = t.out();
+            out.write(new byte[64 << 10]);
+            out.close();
+            assertEquals("foreign deletion removed the pending row", 1, cr.delete(Uri.parse(t.ref()), null, null));
+            try { t.commit(); return "published"; }
+            catch (IOException | RuntimeException e) { return e.getClass().getSimpleName() + ": " + e.getMessage(); }
+        } finally {
+            t.abort();
+        }
+    }
+
+    /**
+     * Review P2, Hypothese H1 („Eintrag verschwindet während der Update-Folge des Providers“): kontrollierte Wettläufe –
+     * ein zweiter Faden entfernt die eigene ausstehende Zeile 0–4 ms nach dem Start des Veröffentlichens. Ergebnisse
+     * werden nach Art (veröffentlicht / rows=… / threw=…) und Zustand danach (Downloads, Files mit derselben ID, Endname
+     * unter anderer ID, Dateien) gezählt und protokolliert (PUBLISH_RACE). Ein Wettlauf kann ein Muster nur zeigen oder
+     * nicht zeigen – er beweist nicht die Ursache eines CI-Fehlers. Geprüft wird nur, dass jeder Zyklus ein eingeordnetes
+     * Ergebnis hat; ein nach dem Veröffentlichen entfernter Eintrag ist eine eigene Klasse ("published-then-deleted").
+     */
+    @Test public void concurrentDeletionDuringPublishRace() throws Exception {
+        assumeTrue("MediaStore pending entries exist from API 29", Build.VERSION.SDK_INT >= 29);
+        Context ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Mp4Downloads store = new Mp4Downloads(ctx, "mp4-jobs-probe-race-" + SystemClock.elapsedRealtimeNanos(),
+            DeviceTestClients.loopback(9), () -> true);
+        ContentResolver cr = ctx.getContentResolver();
+        java.util.Map<String, Integer> outcomes = new java.util.TreeMap<>();
+        byte[] chunk = new byte[64 << 10];
+        try {
+            for (int c = 0; c < RACE_CYCLES; c++) {
+                String name = de.evp.helfer.dl.DirectDownloads.fileName("C2 ProbeRace " + Long.toHexString(SystemClock.elapsedRealtimeNanos()));
+                DownloadStore.Target t = store.create(name, "video/mp4");
+                File proof = Mp4DownloadsInstrumentedTest.proofOf(t);
+                Uri uri = Uri.parse(t.ref());
+                OutputStream out = t.out();
+                for (int i = 0; i < 64; i++) out.write(chunk);        // 4 MiB: das Veröffentlichen verschiebt eine echte Datei
+                out.close();
+                java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+                final int delayMs = c % 5;
+                Thread deleter = new Thread(() -> {
+                    try { go.await(); SystemClock.sleep(delayMs); cr.delete(uri, null, null); } catch (Exception ignored) { }
+                }, "probe-race-deleter");
+                deleter.start();
+                String kind;
+                go.countDown();
+                Uri saved = null;
+                try { saved = (Uri) t.commit(); kind = "published"; }
+                catch (IOException | RuntimeException e) {
+                    String m = String.valueOf(e.getMessage());
+                    kind = m.startsWith("publish rows=") ? m.substring(8, m.indexOf(' ', 8) < 0 ? m.length() : m.indexOf(' ', 8))
+                        : m.startsWith("publish threw=") ? "threw=" + m.substring(14, m.indexOf('(', 14) < 0 ? Math.min(m.length(), 40) : m.indexOf('(', 14))
+                        : e.getClass().getSimpleName();
+                }
+                deleter.join(5_000);
+                if (saved != null && !published(cr, saved)) kind = "published-then-deleted";
+                String state = kind.startsWith("published") ? "" : " " + Mp4DownloadsInstrumentedTest.providerState(cr, uri, name, proof)
+                    .replaceAll("\\(\\d+\\)", "");
+                outcomes.merge(kind + state, 1, Integer::sum);
+                t.abort();
+                if (kind.startsWith("published")) { try { cr.delete(uri, null, null); } catch (RuntimeException ignored) { } }
+                new File(new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), Downloads.FOLDER), name).delete();
+            }
+        } finally {
+            store.engine.stopAll();
+        }
+        for (java.util.Map.Entry<String, Integer> e : outcomes.entrySet())
+            Log.i(TAG, "PUBLISH_RACE sdk=" + Build.VERSION.SDK_INT + " count=" + e.getValue() + " outcome=" + e.getKey());
+        int n = 0;
+        for (int v : outcomes.values()) n += v;
+        assertEquals("every race cycle has a classified outcome", RACE_CYCLES, n);
+    }
+
+    static final int RACE_CYCLES = 30;
+
+    private static boolean published(ContentResolver cr, Uri u) {
+        try (Cursor c = cr.query(u, new String[] {MediaStore.Downloads.IS_PENDING}, null, null, null)) {
+            return c != null && c.moveToFirst() && c.getInt(0) == 0;
+        }
     }
 
     /** Ein Ablauf wie in der App; null = veröffentlicht (und wieder gelöscht), sonst Befundtext. */

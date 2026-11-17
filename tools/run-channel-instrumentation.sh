@@ -36,7 +36,7 @@ grep -q '^OK (' "$REPORT/instrumentation.txt" || status=1
 PROBE_STATUS=skipped
 if [ "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" -ge 29 ]; then
   adb shell am instrument -w -r -e class de.evp.helfer.MediaStorePublishProbeTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$REPORT/publish-probe.txt" 2>&1
-  adb logcat -d -s MP4_TEST:I | grep -E 'PUBLISH_PROBE' | sed 's/^.*\(PUBLISH_PROBE\)/\1/' | tee "$REPORT/publish-probe-lines.txt"
+  adb logcat -d -s MP4_TEST:I | grep -E 'PUBLISH_PROBE|PUBLISH_RACE' | sed -E 's/^.*(PUBLISH_PROBE|PUBLISH_RACE)/\1/' | tee "$REPORT/publish-probe-lines.txt"
   if grep -q '^OK (' "$REPORT/publish-probe.txt"; then PROBE_STATUS=ok
   else
     PROBE_STATUS=failed; status=1
@@ -56,9 +56,10 @@ for mode in force-stop process-replaced; do
   [ "$mode" = force-stop ] && adb shell am force-stop "$PKG"
   adb shell am instrument -w -r -e restartPhase B -e class "$RC#phaseB_afterARealProcessRestart" "$RUNNER" > "$REPORT/restart-$mode-B.txt" 2>&1
   for ph in A B; do
-    if grep -q '^OK (1 test)' "$REPORT/restart-$mode-$ph.txt"; then echo "RESTART $mode phase $ph OK" >> "$REPORT/summary.txt"
-    else echo "RESTART $mode phase $ph FAILED" >> "$REPORT/summary.txt"; status=1
-      grep -E 'AssertionError|Exception|INSTRUMENTATION_RESULT|shortMsg|longMsg' "$REPORT/restart-$mode-$ph.txt" | head -20 | sed "s/^/RESTART $mode $ph: /" >> "$REPORT/summary.txt"
+    # Review P4: eigene Datei – summary.txt wird unten neu geschrieben (die Ergebnisse gingen dort bisher verloren)
+    if grep -q '^OK (1 test)' "$REPORT/restart-$mode-$ph.txt"; then echo "RESTART $mode phase $ph OK" >> "$REPORT/restart-summary.txt"
+    else echo "RESTART $mode phase $ph FAILED" >> "$REPORT/restart-summary.txt"; status=1
+      grep -E 'AssertionError|Exception|INSTRUMENTATION_RESULT|shortMsg|longMsg' "$REPORT/restart-$mode-$ph.txt" | head -20 | sed "s/^/RESTART $mode $ph: /" >> "$REPORT/restart-summary.txt"
     fi
   done
 done
@@ -86,7 +87,8 @@ fi
 diff -q "$REPORT/packages-before.txt" "$REPORT/packages-after.txt" > /dev/null || { echo "package list changed" >> "$REPORT/summary.txt"; status=1; }
 tail -5 "$REPORT/summary.txt"
 grep -h 'PERSIST_AFTER_UNINSTALL' "$REPORT/summary.txt" || true
-grep -h '^RESTART' "$REPORT/summary.txt" || true
+cat "$REPORT/restart-summary.txt" 2>/dev/null || echo "RESTART results missing"
+cat "$REPORT/restart-summary.txt" >> "$REPORT/summary.txt" 2>/dev/null || true
 # Fehlgeschlagene Tests mit dem Anfang ihres Stacktraces ins Job-Log (nur Testausgaben mit Wegwerfdaten).
 awk '/^INSTRUMENTATION_STATUS: test=/{t=$0} /^INSTRUMENTATION_STATUS: stack=/{print "FAILED " t; n=14} n>0{print; n--}' "$REPORT/instrumentation.txt" | head -150
 # Runner-Ergebnis (Absturzmeldung, Liste aller Fehlschläge) und Crash-Puffer ins Job-Log.
@@ -95,4 +97,14 @@ awk '/^There (was|were) [0-9]+ failure/{p=1} p&&/^[0-9]+\) /{n=6} p&&n>0{print; 
 grep -E 'FATAL|Exception|Error|^\s+at |Abort|signal|backtrace|#[0-9]+ pc' "$REPORT/crash.txt" | head -80 || true
 grep -E 'CHANNEL_|OKHTTP_|MP4_|HLS_|RESTART_' "$REPORT/measurements.txt" || true
 grep -E 'TOTAL PSS|TOTAL:|Native Heap|Java Heap' "$REPORT/meminfo.txt" | head -5 || true
+# Review P4: vollständige, eindeutig abgegrenzte Berichte für tools/device_gate.py (nur Testausgaben mit Wegwerfdaten).
+# Das Gate bewertet nur diese Abschnitte – nie Zeilen, die zufällig an anderer Stelle im Job-Log stehen.
+gate_section() { echo "GATE-BEGIN $1"; if [ -f "$2" ]; then cat "$2"; else echo "GATE-MISSING $1"; fi; echo "GATE-END $1"; }
+echo "GATE-API $(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+gate_section main "$REPORT/instrumentation.txt"
+if [ "$PROBE_STATUS" != skipped ]; then gate_section probe "$REPORT/publish-probe.txt"; gate_section probe-lines "$REPORT/publish-probe-lines.txt"; fi
+for mode in force-stop process-replaced; do for ph in A B; do gate_section "restart-$mode-$ph" "$REPORT/restart-$mode-$ph.txt"; done; done
+gate_section restart-summary "$REPORT/restart-summary.txt"
+gate_section crash "$REPORT/crash.txt"
+echo "GATE-SCRIPT-STATUS $status"
 exit $status

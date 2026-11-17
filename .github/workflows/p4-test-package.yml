@@ -14,7 +14,12 @@ name: P4 test app (de.evp.helfer.p4test, throwaway signer, owner-approved Samsun
 #  * Nie der Produktionsschlüssel, nie der kompromittierte alte Signierer (ec17fab1…, wird zusätzlich abgewiesen).
 #
 # Gebaut wird exakt der Quell-Commit SOURCE_SHA; nur wenn dessen CI vollständig grün ist – einzige zugelassene
-# Ausnahme ist der dokumentierte Android-10-Befund P4B-A10-SIZE (genau ein Fehlschlag, genau dieser Test).
+# Ausnahme ist der dokumentierte Android-10-Befund P4B-A10-SIZE (genau ein Fehlschlag, genau dieser Test, nur API 29).
+# Review P4: jeder Emulator-Job (API 26, 29, 34) wird – ob grün oder rot – von tools/device_gate.py (aus SOURCE_SHA)
+# bewertet: vollständiger Gerätetest, Veröffentlichungssonden, echter Prozessneustart, Wiederholungen, erwarteter
+# Mutantenfehler, Absturzpuffer. Nie akzeptiert: Veröffentlichungsfehler (publish rows=… usw.), PUBLISH_PROBE_STATUS
+# failed, fehlende/unvollständige Sondenergebnisse, Emulator-/Systemabsturz, unbekannte weitere Fehlschläge.
+# Eine Lieferung startet nur mit DELIVERY_REQUESTED: 'yes' (ausdrückliche Freigabe des Eigentümers je Lieferung).
 # Öffentliches Actions-Artefakt mit 2 Tagen Aufbewahrung (Repository ist öffentlich).
 on:
   push:
@@ -30,6 +35,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # Review P4: 'yes' NUR nach ausdrücklicher Freigabe einer bestimmten Lieferung; sonst endet der Lauf vor jedem Build.
+  DELIVERY_REQUESTED: 'no'
   SOURCE_SHA: 8b906c504f0612ff4af69a397a2745b717f156b3
   KADRI_PAIR_SHA: ef9a5ed22920e8bee0a204323388b9104e58892e
   KADRI_P4_EXTENSION_ID: pcccpjllneffccpenbepmfbkjedllkkf
@@ -37,10 +44,28 @@ env:
   RETENTION_DAYS: 2
 
 jobs:
+  # Review P4: ohne ausdrückliche Lieferfreigabe wird der Paket-Job übersprungen (neutral, nichts gebaut/hochgeladen).
+  request:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.r.outputs.go }}
+    steps:
+      - id: r
+        run: |
+          if [ "$DELIVERY_REQUESTED" = yes ]; then echo go=yes >> "$GITHUB_OUTPUT"
+          else echo "No delivery requested (DELIVERY_REQUESTED=$DELIVERY_REQUESTED): package job skipped."; echo go=no >> "$GITHUB_OUTPUT"; fi
   package:
+    needs: request
+    if: needs.request.outputs.go == 'yes'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
+      - name: Delivery explicitly requested by the owner (otherwise stop before checkout and build)
+        run: |
+          if [ "$DELIVERY_REQUESTED" != yes ]; then
+            echo "No delivery requested (DELIVERY_REQUESTED=$DELIVERY_REQUESTED): nothing is built or uploaded." >&2
+            exit 1
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
@@ -59,7 +84,7 @@ jobs:
           grep -qx '  "status": "KEY_NOT_YET_CREATED",' release/p4test-signer.json
           echo "WORKFLOW_SHA=$WORKFLOW_SHA" >> "$GITHUB_ENV"
           echo "source $SOURCE_SHA, workflow commit $WORKFLOW_SHA; production UNAPPROVED; durable P4 identity not created (unchanged)"
-      - name: Required CI on the exact source commit (only the documented Android 10 finding P4B-A10-SIZE may fail)
+      - name: Required CI on the exact source commit; device gate on every emulator job (only P4B-A10-SIZE on API 29 may fail)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -83,26 +108,30 @@ jobs:
           r = latest('.github/workflows/helper-channel.yml')
           jobs = api(f"repos/{repo}/actions/runs/{r['id']}/jobs?per_page=100")['jobs']
           assert len(jobs) == 5, [j['name'] for j in jobs]
-          bad = [j for j in jobs if j['conclusion'] != 'success']
           for j in jobs:
               print(f"  helper-channel job: {j['conclusion']:8} {j['name']}")
-          if bad:
-              # Einzige zulässige Ausnahme: der API-29-Lauf, nur der Instrumentierungsschritt, genau ein Fehlschlag,
-              # genau die SIZE-Prüfung (P4B-A10-SIZE; vom Eigentümer nur für den Android-17-Test hingenommen).
-              assert len(bad) == 1 and bad[0]['name'] == 'Test package de.evp.helfer.channeltest on a disposable API 29 emulator', [j['name'] for j in bad]
-              steps = [s['name'] for s in bad[0]['steps'] if s['conclusion'] not in ('success', 'skipped')]
-              assert steps == ['Instrumentation on a disposable API 29 x86_64 emulator'], steps
+          emu = {}
+          for j in jobs:
+              m = re.match(r'Test package de\.evp\.helfer\.channeltest on a disposable API (\d+) emulator$', j['name'])
+              if m:
+                  emu[int(m.group(1))] = j
+          assert sorted(emu) == [26, 29, 34], sorted(emu)
+          other = [j for j in jobs if j not in emu.values()]
+          assert all(j['conclusion'] == 'success' for j in other), [(j['name'], j['conclusion']) for j in other]
+          # Review P4: JEDER Emulator-Job wird vollständig bewertet (tools/device_gate.py aus SOURCE_SHA), nicht nur rote.
+          # Einzige zulässige Ausnahme bleibt P4B-A10-SIZE auf API 29 (Gate-Exit 3); API 26 und 34 müssen PASS sein.
+          for apilevel, j in sorted(emu.items()):
+              assert j['conclusion'] in ('success', 'failure'), (apilevel, j['conclusion'])
               # Job-Log über die Weiterleitung zum Log-Speicher (curl schickt den Token dorthin nicht mit).
               log = subprocess.run(['curl', '-sSfL', '--retry', '3', '-H', 'Authorization: Bearer ' + os.environ['GH_TOKEN'],
-                                    '-H', 'Accept: application/vnd.github+json',
-                                    f"https://api.github.com/repos/{repo}/actions/jobs/{bad[0]['id']}/logs"],
+                                    '-H', 'Accept: application/vnd.github+json', f"https://api.github.com/repos/{repo}/actions/jobs/{j['id']}/logs"],
                                    check=True, capture_output=True, text=True).stdout
-              assert re.search(r'Tests run: \d+,  Failures: 1\b', log), 'not exactly 1 test failed'
-              failed = sorted(set(re.findall(r'FAILED INSTRUMENTATION_STATUS: test=(\w+)', log)))
-              assert failed == ['publishesThroughMediaStoreAndReadsBack'], failed
-              assert re.search(r'AssertionError: SIZE column \(file [^)]*, length (\d+)\) expected:<\1> but was:<0>', log), 'failure is not the SIZE finding'
-              print('ACCEPTED (owner decision, Android 17 test only): P4B-A10-SIZE on API 29 - 44/45, MediaStore SIZE column 0')
-          print(f"PASS helper-channel (run {r['id']}): JVM, mutations, macOS signing self-test, API 26 and API 34 emulators green")
+              path = os.path.join(os.environ['RUNNER_TEMP'], f'device-api{apilevel}.log')
+              open(path, 'w').write(log)
+              g = subprocess.run([sys.executable, '-I', 'tools/device_gate.py', path, '--api', str(apilevel), '--job-conclusion', j['conclusion']])
+              allowed = (0, 3) if apilevel == 29 else (0,)
+              assert g.returncode in allowed, f'device gate rejected API {apilevel} (exit {g.returncode})'
+          print(f"PASS helper-channel (run {r['id']}): JVM, mutations, macOS signing self-test; device gate API 26/34 PASS, API 29 PASS or only P4B-A10-SIZE")
           PY
       - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4

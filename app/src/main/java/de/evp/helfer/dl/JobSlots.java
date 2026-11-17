@@ -22,12 +22,24 @@ public final class JobSlots {
     /** Android: CPU-Sperre während aktiver Aufträge. Ist bereits ein Auftrag aktiv, wird das sofort gemeldet. */
     public synchronized void setActivity(Activity a) {
         activity = a == null ? any -> { } : a;
-        if (used > 0) activity.active(true);
+        if (used > 0) report(true);
     }
 
-    private void occupied() { if (++used == 1) activity.active(true); }
+    /** P1: Nur Diagnose – letzter Fehler der Aktivitätsmeldung (z. B. CPU-Sperre); nie ein Grund, Zähler offen zu lassen. */
+    public volatile String lastActivityFailure = "";
 
-    private void freed() { if (--used == 0) activity.active(false); }
+    private void occupied() { if (++used == 1) report(true); }
+
+    private void freed() { if (--used == 0) report(false); }
+
+    /**
+     * P1: Die Meldung ist nur eine Begleitmaßnahme (CPU-Sperre). Wirft sie (z. B. DeadSystemException beim Freigeben),
+     * bleiben Zähler, Benachrichtigung der Wartenden und der Abschluss des Auftrags unberührt.
+     */
+    private void report(boolean any) {
+        try { activity.active(any); }
+        catch (RuntimeException e) { lastActivityFailure = (any ? "acquire " : "release ") + e.getClass().getSimpleName(); }
+    }
 
     public JobSlots(int max) { this(max, 2 * max); }
 

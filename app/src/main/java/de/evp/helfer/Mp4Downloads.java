@@ -91,21 +91,30 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
     static final long AWAKE_WINDOW_MS = 30 * 60_000L;
     private static android.os.PowerManager.WakeLock wake;
 
+    /** P1: Nur Diagnose – letzter Fehler der CPU-Sperre (Klasse); die Sperre ist Begleitmaßnahme, nie Abbruchgrund. */
+    static volatile String lastAwakeFailure = "";
+
     static synchronized void keepAwake(Context c, boolean on) {
-        if (wake == null) {
-            if (!on) return;
-            android.os.PowerManager pm = c.getSystemService(android.os.PowerManager.class);
-            if (pm == null) return;
-            wake = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "evp:downloads");
-            wake.setReferenceCounted(false);
+        try {
+            if (wake == null) {
+                if (!on) return;
+                android.os.PowerManager pm = c.getSystemService(android.os.PowerManager.class);
+                if (pm == null) return;
+                wake = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "evp:downloads");
+                wake.setReferenceCounted(false);
+            }
+            if (on) wake.acquire(AWAKE_WINDOW_MS);
+            else if (wake.isHeld()) wake.release();
+        } catch (RuntimeException e) {
+            // z. B. DeadSystemException beim Freigeben: Auftrag, Plätze und Endmeldung dürfen daran nicht hängen
+            lastAwakeFailure = (on ? "acquire " : "release ") + e.getClass().getSimpleName();
         }
-        if (on) wake.acquire(AWAKE_WINDOW_MS);
-        else if (wake.isHeld()) wake.release();
     }
 
     /** Verlängert nur eine gehaltene Sperre (ein Fortschritt nach dem Ende holt sie nie neu). */
     static synchronized void renewAwake() {
-        if (wake != null && wake.isHeld()) wake.acquire(AWAKE_WINDOW_MS);
+        try { if (wake != null && wake.isHeld()) wake.acquire(AWAKE_WINDOW_MS); }
+        catch (RuntimeException e) { lastAwakeFailure = "renew " + e.getClass().getSimpleName(); }
     }
 
     /** Nur Gerätetests: ob die Sperre gerade gehalten wird. */
@@ -189,11 +198,11 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         private final Uri uri;
         private final OutputStream out;
         private boolean finished;
-        // P4c-3, nur Diagnose: Schritte dieses Eintrags mit gemeinsamer Folgenummer (#n, auch von der Bereinigung
-        // gezählt) und ms seit dem Anlegen; Bereinigungsläufe beim Anlegen. Keine Namen, keine Adressen.
+        // P4c-3, nur Diagnose: Schritte dieses Eintrags mit gemeinsamer Folgenummer (#n) und ms seit dem Anlegen;
+        // Stand der Bereinigungszähler vor dem Anlegen. Keine Namen, keine Adressen.
         private final long t0 = System.nanoTime();
         private final StringBuilder trail = new StringBuilder();
-        private int cleanupAtInsert;
+        private int cleanupStartedAtInsert, cleanupActiveAtInsert;
 
         private void mark(String step) {
             trail.append(trail.length() == 0 ? "" : ",").append(step).append('#').append(Downloads.diagSeq.incrementAndGet())
@@ -212,7 +221,8 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
             Uri u = null;
             OutputStream o = null;
             try {
-                cleanupAtInsert = Downloads.cleanupRuns.get();
+                cleanupStartedAtInsert = Downloads.cleanupStarted.get();
+                cleanupActiveAtInsert = Downloads.cleanupActive.get();
                 u = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
                 if (u == null) throw new IOException("insert");
                 mark("insert");
@@ -238,8 +248,8 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
             ContentValues cv = new ContentValues();
             cv.put(MediaStore.Downloads.IS_PENDING, 0);
             cv.put(MediaStore.Downloads.DISPLAY_NAME, name);
-            // Genau ein Versuch (kein Wiederholen, kein zweites Veröffentlichen). Bei Fehlschlag nur lesend den Zustand
-            // festhalten: Rückgabewert bzw. Ausnahme, Eintrag danach, Markierung, Bereinigung während des Eintrags.
+            // Genau ein Versuch (kein Wiederholen, kein zweites Veröffentlichen). Bei Fehlschlag nur festhalten, was ohne
+            // weiteren Provider-Aufruf sicher bekannt ist (P2: keine blockierende Abfrage auf dem Fehlerweg).
             int rows;
             try {
                 rows = cr.update(uri, cv, null, null);
@@ -257,7 +267,8 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         @Override public synchronized void abort() {
             if (finished) return;
             finished = true;
-            try { out.close(); } catch (IOException ignored) { }
+            // P1: ein Fehler beim Schließen darf das Entfernen des Eintrags nicht verhindern
+            try { out.close(); } catch (IOException | RuntimeException ignored) { }
             String outcome;
             try {
                 // Markierung nur nach bestätigtem Entfernen löschen; sonst räumt der nächste Prozessstart auf.
@@ -272,28 +283,26 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
             lastAbortOutcome = outcome;
         }
 
-        /** P4c-3, nur Diagnose: "publish <was> entry=… proof=… cleanup=… trail=…" – nur feste Wörter, Zahlen und die Inhalts-URI. */
+        /**
+         * Nur Diagnose: "publish <was> proof=… cleanup=… trail=… uri=…". Ausschließlich bereits bekannte Werte (Rückgabewert
+         * bzw. Ausnahmeklasse, Markierungsdatei, Zähler im Prozess) – kein Provider-Aufruf, kann weder blockieren noch die
+         * eigentliche Ausnahme ersetzen. "not-observed" heißt nur: in diesem Prozess nicht beobachtet, nicht "ausgeschlossen".
+         */
         private String publishDiagnosis(String what) {
-            long id = -1;
-            try { id = android.content.ContentUris.parseId(uri); } catch (RuntimeException ignored) { }
-            int runs = Downloads.cleanupRuns.get() - cleanupAtInsert;
-            return "publish " + what + " entry=" + entryState() + " proof=" + (proof.exists() ? "present" : "gone")
-                + " cleanup=" + (Downloads.removedByCleanup(id) ? "removed-this-entry" : runs > 0 ? "ran-" + runs + "x" : "none")
-                + (runs > 0 ? "(" + Downloads.lastCleanup + ")" : "") + " trail=" + trail + " uri=" + uri;
+            try {
+                return "publish " + what + " proof=" + (proof.exists() ? "present" : "gone") + " cleanup=" + cleanupVerdict()
+                    + " trail=" + trail + " uri=" + uri;
+            } catch (RuntimeException e) {
+                return "publish " + what + " (diagnosis " + e.getClass().getSimpleName() + ")";
+            }
         }
 
-        /** Zustand des eigenen Eintrags nach dem Fehlschlag (eine lesende Abfrage, auch ausstehende Einträge). */
-        private String entryState() {
-            try (android.database.Cursor c = cr.query(MediaStore.setIncludePending(uri),
-                    new String[] {MediaStore.Downloads.IS_PENDING, MediaStore.Downloads.DISPLAY_NAME}, null, null, null)) {
-                if (c == null) return "unknown";
-                if (!c.moveToFirst()) return "missing";
-                String n = c.getString(1);
-                String which = n == null ? "null" : n.startsWith(proof.getName() + "--") ? "pending-name" : n.equals(name) ? "final-name" : "other-name";
-                return "pending=" + c.getInt(0) + "/" + which;
-            } catch (RuntimeException e) {
-                return "query-" + e.getClass().getSimpleName();
-            }
+        private String cleanupVerdict() {
+            if (Downloads.removedByCleanup(proof.getName())) return "removed-this-entry(proof-match)";
+            int started = Downloads.cleanupStarted.get() - cleanupStartedAtInsert, active = Downloads.cleanupActive.get();
+            if (started > 0 || active > 0 || cleanupActiveAtInsert > 0)
+                return "overlap-observed(started=" + started + ",active=" + active + ",activeAtInsert=" + cleanupActiveAtInsert + ")";
+            return Downloads.cleanupHistoryTruncated ? "not-observed(history-truncated)" : "not-observed";
         }
 
         private boolean pendingExists(Uri u) {
@@ -378,10 +387,10 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
         @Override public synchronized void abort() {
             if (finished) return;
             finished = true;
-            try { file.close(); } catch (IOException ignored) { }
+            try { file.close(); } catch (IOException | RuntimeException ignored) { }
             synchronized (Downloads.fileNames) { RESERVED.remove(dst.getPath()); }
             // Markierung nur entfernen, wenn die Teil-Datei sicher weg ist; sonst räumt der nächste Start auf.
-            try { if (part.delete() || !part.exists()) Downloads.removeProof(proof); } catch (IOException ignored) { }
+            try { if (part.delete() || !part.exists()) Downloads.removeProof(proof); } catch (IOException | RuntimeException ignored) { }
         }
     }
 
@@ -391,7 +400,7 @@ final class Mp4Downloads implements DownloadStore, DirectDownloads.Listener {
      * Dessen Bereinigung betrifft nur eigene unfertige Einträge/Teil-Dateien, nie die veröffentlichte Datei.
      */
     private static void cleanupPublishedProof(File proof) {
-        try { Downloads.removeProof(proof); } catch (IOException ignored) { /* beim nächsten Start nachholen */ }
+        try { Downloads.removeProof(proof); } catch (IOException | RuntimeException ignored) { /* beim nächsten Start nachholen */ }
     }
     /** Im Prozess reservierte endgültige Namen (Android 8–9); geschützt durch {@link Downloads#fileNames}. */
     private static final java.util.Set<String> RESERVED = new java.util.HashSet<>();

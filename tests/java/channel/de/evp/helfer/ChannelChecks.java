@@ -172,9 +172,11 @@ public final class ChannelChecks {
     static class FakeHls implements ControlCommands.HlsControl {
         final java.util.List<String> calls = new java.util.ArrayList<>();
         final java.util.Set<String> known = new java.util.HashSet<>();
-        @Override public synchronized String plan(byte[] peer, String bind, String url) { calls.add("plan " + new String(peer, StandardCharsets.US_ASCII) + " " + bind + " " + url); return "{\"ok\":true,\"planId\":\"" + PLAN + "\"}"; }
+        // Review P3: null-sicher – ein Aufruf ohne Sitzung muss an einer Prüfung scheitern, nicht zufällig an einer NPE hier
+        static String who(byte[] peer) { return peer == null ? "<no-session>" : new String(peer, StandardCharsets.US_ASCII); }
+        @Override public synchronized String plan(byte[] peer, String bind, String url) { calls.add("plan " + who(peer) + " " + bind + " " + url); return "{\"ok\":true,\"planId\":\"" + PLAN + "\"}"; }
         @Override public synchronized String start(byte[] peer, String bind, String id, String planId, String option, String name) {
-            calls.add("start " + new String(peer, StandardCharsets.US_ASCII) + " " + bind + " " + id + " " + planId + " " + option + " " + name);
+            calls.add("start " + who(peer) + " " + bind + " " + id + " " + planId + " " + option + " " + name);
             known.add(id);
             return "{\"ok\":true,\"id\":\"" + id + "\",\"kind\":\"hls\",\"state\":\"running\"}";
         }
@@ -245,7 +247,9 @@ public final class ChannelChecks {
             UnknownDownloads u = new UnknownDownloads();
             check(ControlCommands.REJECTED.equals(dl(s, d, u)), "hls accepted without HLS: " + s);
             check(ControlCommands.REJECTED.equals(hl(s, d, u, null, PEER)), "hls accepted with null HLS: " + s);
-            check(ControlCommands.REJECTED.equals(hl(s, d, u, new FakeHls(), null)), "hls accepted without channel session: " + s);
+            FakeHls noSession = new FakeHls();
+            check(ControlCommands.REJECTED.equals(hl(s, d, u, noSession, null)), "hls accepted without channel session: " + s);
+            check(noSession.calls.isEmpty(), "hls reached without channel session: " + noSession.calls);
             check(u.calls.isEmpty() && d.touches() == 0, "old helper path touched something");
         }
         FakeDevice d = new FakeDevice();

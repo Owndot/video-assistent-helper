@@ -64,18 +64,19 @@ M = [
     ('de/evp/helfer/hls/HlsEngine.java', 'if (state != HlsJournal.State.INTERRUPTED) forget(job.id);', ''),
     ('de/evp/helfer/hls/HlsEngine.java', 'if (!src.sha.equals(b[0])) throw new Stop(HlsJournal.State.FAILED, "plan_changed");', ''),
 ]
+sys.path.insert(0, os.path.join(here, '..'))
+import mutation_verdict as mv  # noqa: E402
+KILLED = [r'^FAIL ', r'RESULT passed=\d+ failed=[1-9]']
 fx = sys.argv[1]; cache = sys.argv[2] if len(sys.argv) > 2 else ''
-survived = []
+tally = mv.Tally('hls-mutations')
 for i, (f, a, b) in enumerate(M):
+    name = f.split('/')[-1] + ': ' + a[:70].replace('\n', ' ')
     with tempfile.TemporaryDirectory() as t:
         shutil.copytree(src, os.path.join(t, 'java'))
         p = os.path.join(t, 'java', f); s = open(p).read()
-        assert s.count(a) == 1, ('anchor', f, a[:60])
+        if s.count(a) != 1:
+            tally.add('%s (fragment found %d times)' % (name, s.count(a)), 'STALE'); continue
         open(p, 'w').write(s.replace(a, b))
-        r = subprocess.run(['bash', os.path.join(here, 'run.sh'), fx] + ([cache] if cache else []), env=dict(os.environ, APP_SRC=os.path.join(t, 'java')),
-                           capture_output=True, text=True)
-        killed = r.returncode != 0
-        print(('killed   ' if killed else 'SURVIVED ') + f.split('/')[-1] + ': ' + a[:70].replace('\n', ' '))
-        if not killed: survived.append(a)
-if survived: print('FAIL: %d mutation(s) survived' % len(survived)); sys.exit(1)
-print('PASS: all %d mutations killed' % len(M))
+        v, out = mv.run(['bash', os.path.join(here, 'run.sh'), fx] + ([cache] if cache else []), dict(os.environ, APP_SRC=os.path.join(t, 'java')), 900, KILLED)
+        tally.add(name, v, out)
+sys.exit(tally.finish())

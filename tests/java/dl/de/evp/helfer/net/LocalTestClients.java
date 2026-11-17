@@ -21,6 +21,26 @@ public final class LocalTestClients {
     /** Test-only scheduling/observation at callStart, after the engine's eviction and before connection acquisition.
      * The copied builder preserves every guard, timeout, retry policy and the original pool.
      */
+    /** P1 (Abschlussfehler): Test-only – das Schließen jeder Antwort wirft nach dem echten Schließen {@code failure}.
+     * Alle Prüfschichten bleiben unverändert; es wird nur der Antwortkörper umhüllt.
+     */
+    public static void closeThrows(SafeHttpClient http, java.util.function.Supplier<RuntimeException> failure) throws Exception {
+        java.lang.reflect.Field f = SafeHttpClient.class.getDeclaredField("client");
+        f.setAccessible(true);
+        okhttp3.OkHttpClient client = (okhttp3.OkHttpClient) f.get(http);
+        f.set(http, client.newBuilder().addInterceptor(chain -> {
+            okhttp3.Response r = chain.proceed(chain.request());
+            okhttp3.ResponseBody body = r.body();
+            okhttp3.ResponseBody wrapped = new okhttp3.ResponseBody() {
+                @Override public okhttp3.MediaType contentType() { return body.contentType(); }
+                @Override public long contentLength() { return body.contentLength(); }
+                @Override public okio.BufferedSource source() { return body.source(); }
+                @Override public void close() { body.close(); throw failure.get(); }
+            };
+            return r.newBuilder().body(wrapped).build();
+        }).build());
+    }
+
     public static void observe(SafeHttpClient http, okhttp3.EventListener listener) throws Exception {
         java.lang.reflect.Field f = SafeHttpClient.class.getDeclaredField("client");
         f.setAccessible(true);
