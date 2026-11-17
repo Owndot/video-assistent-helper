@@ -142,6 +142,30 @@ Evidenz.
   ist eine Lieferung von `546af14` deshalb **derzeit gesperrt**, bis der Eigentümer über diesen Befund entscheidet.
   Ein grüner Wiederholungslauf hebt den roten nicht auf.
 
+### Weitere Befunde auf `b18a355` (Anwendungscode = `546af14`), Lauf 44093078605
+
+- **API 34:** `duplicateAndLateStartsFetchOnce` scheiterte mit `publish rows=0 proof=present cleanup=not-observed`.
+  - Kein Speicherengpass: App-Heap 192 MiB, kein Systemabsturz. Die Wiederholungen waren 22/22 grün.
+  - Provider-Schnappschuss: `downloads=absent filesSameId=absent finalNameOtherIds=0 diskFinal=exists(65536) diskPending=absent`.
+  - Das Gate weist den Lauf ab.
+- **API 29:** Der Emulator lief mit 16 MiB App-Heap (ungültige Testumgebung, zwei HLS-Speichertests rot). Das Gate
+  weist den Lauf ab.
+
+**Korrektur früherer Aussagen zu `publish rows=0`.** Bisher hieß es „sauber beendet, keine Reste“. Das ist widerlegt.
+
+- In beiden CI-Fällen mit Provider-Schnappschuss (API 29 `f3bf6a4`, API 34 `b18a355`; der frühere API-34-Fall `e5fb290`
+  hatte noch keinen Schnappschuss) liegt die vollständige Datei unter dem Endnamen auf der Platte. Es gibt aber keine MediaStore-Zeile mehr und keine
+  ausstehende Datei.
+- Die Datei wurde also nicht gelöscht: Der MediaProvider hat sie umbenannt, die Zeile ging verloren, und das Update
+  meldete 0.
+- Damit erklärt H1 (Löschen während des Updates; in der Sonde bleibt dabei nichts zurück) die CI-Fehler **nicht**.
+  Die Belege sprechen für eine Ursache auf der Provider-Seite (H2/H3). Bewiesen ist sie nicht.
+- **Folge im Produkt:** Die App meldet „Speichern fehlgeschlagen“, die fertige Datei bleibt aber ohne Eintrag im
+  Download-Ordner. Sie ist für die Galerie unsichtbar, bis neu gescannt wird, und ein neuer Download erzeugt eine
+  zweite Datei.
+- **Häufigkeit** unter dem gleichen Code seit `546af14`: API 34 in 1 von 3 Läufen, API 29 in 1 von 3 Läufen (dort
+  zusammen mit dem System-OOM).
+
 ## P2 – Liefermetadaten
 
 - Der Artefaktname wird aus `SOURCE_SHA` und der Freigabe-ID gebildet; alte, fest kodierte Namen sind entfernt.
@@ -169,7 +193,9 @@ Evidenz.
 
 ## Restrisiken (unverändert, keine Produktänderung in dieser Runde)
 
-- Der sporadische MediaStore-Veröffentlichungsfehler (`publish rows=0`) ist nicht ursächlich erklärt.
+- Der sporadische MediaStore-Veröffentlichungsfehler (`publish rows=0`) ist nicht ursächlich erklärt und tritt auf API 29
+  und API 34 auf. Dabei bleibt die fertige Datei ohne MediaStore-Eintrag zurück, während die App den Fehler meldet.
+- Die API-29-Testumgebung ist instabil (sporadisch 16 MiB Heap für App oder Systemprozess).
 - Die HLS-Engine besitzt noch ein separates, nicht vollständig abgesichertes Abschlussmuster.
 - Bekannte Android-10-Abweichung: SIZE-Spalte 0, und die Ablehnung eines belegten Endnamens. Keine Android-10-Freigabe.
 - Die realen HTTP-404/412-Probleme sind das nächste Produktarbeitspaket.
