@@ -36,8 +36,8 @@ import java.util.List;
  *
  * Der Test lädt über die echte Engine ({@link DirectDownloads}) und die echte App-Ablage ({@link Mp4Downloads}) einen
  * anderen, bekannten Inhalt unter demselben Titel und protokolliert vorher/nachher alle MediaStore-Zeilen mit diesem
- * Namensanfang (ID, Name, Größe, SHA-256 des Inhalts) sowie den Abschlussstatus. Er löscht danach nur die Zeilen, die
- * während des Tests NEU entstanden sind und den erwarteten neuen Inhalt haben; die verwaiste Datei rührt er nie an.
+ * Namen (ID, Name, Größe, SHA-256 des Inhalts, Dateiname) sowie den Abschlussstatus. Er räumt nichts auf und rührt die
+ * verwaiste Datei nie an; der Host nimmt danach den Ordner auf und entfernt erst dann die eigenen synthetischen Dateien.
  * Bewertet wird auf dem Host (Überschreiben/Datenverlust); hier wird nur die Integrität des neuen Inhalts geprüft.
  */
 @RunWith(AndroidJUnit4.class)
@@ -60,12 +60,13 @@ public class OrphanNameCollisionProbeTest {
 
     static String sha(byte[] b) throws Exception { return hex(MessageDigest.getInstance("SHA-256").digest(b)); }
 
-    /** Alle sichtbaren und ausstehenden Zeilen, deren Name mit dem Titel beginnt: "id|name|size|sha" (sha nur lesbar bei eigenen Zeilen). */
+    /** Alle sichtbaren und ausstehenden Zeilen mit dem Titel im Namen: "id|name|size|sha|path" (sha nur lesbar bei eigenen Zeilen). */
     static List<String> rows(ContentResolver cr, String title, List<Long> ids) {
         List<String> out = new ArrayList<>();
         Uri base = Build.VERSION.SDK_INT >= 29 ? MediaStore.Downloads.EXTERNAL_CONTENT_URI : MediaStore.Files.getContentUri("external");
         if (Build.VERSION.SDK_INT >= 29) base = MediaStore.setIncludePending(base);
-        try (Cursor c = cr.query(base, new String[] {MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE},
+        try (Cursor c = cr.query(base, new String[] {MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE,
+                    MediaStore.MediaColumns.DATA},
                 MediaStore.MediaColumns.DISPLAY_NAME + " LIKE ?", new String[] {"%" + title + "%"}, MediaStore.MediaColumns._ID)) {
             while (c != null && c.moveToNext()) {
                 long id = c.getLong(0);
@@ -80,7 +81,8 @@ public class OrphanNameCollisionProbeTest {
                     h = "unreadable:" + e.getClass().getSimpleName();
                 }
                 ids.add(id);
-                out.add(id + "|" + c.getString(1) + "|" + c.getLong(2) + "|" + h);
+                String path = c.getString(3);
+                out.add(id + "|" + c.getString(1) + "|" + c.getLong(2) + "|" + h + "|" + (path == null ? "-" : path.replaceAll(".*/", "")));
             }
         }
         return out;
@@ -122,21 +124,15 @@ public class OrphanNameCollisionProbeTest {
         String reason = status.replaceAll(".*\"reason\":\"([^\"]*)\".*", "$1");
         Log.i(TAG, "ORPHAN_PROBE sdk=" + Build.VERSION.SDK_INT + " state=" + state + " reason=" + reason + " newSha=" + want
             + " rowsBefore=" + rowsBefore + " rowsAfter=" + rowsAfter.toString().replace(title, "<title>"));
-        // Aufräumen: nur in diesem Test neu entstandene Zeilen mit genau dem neuen Inhalt (nie die verwaiste Datei)
-        for (String r : rowsAfter) {
-            String[] f = r.split("\\|");
-            long id = Long.parseLong(f[0]);
-            if (!before.contains(id) && f[3].equals(want)) {
-                Uri base = Build.VERSION.SDK_INT >= 29 ? MediaStore.Downloads.EXTERNAL_CONTENT_URI : MediaStore.Files.getContentUri("external");
-                cr.delete(ContentUris.withAppendedId(base, id), null, null);
-            }
-        }
+        // Kein Aufräumen hier: der Host nimmt danach den Ordner auf (Namen, Größen, Hashes) und entfernt erst dann die
+        // eigenen synthetischen Dateien. Zurückbleibende Zeilen betreffen nur den Wegwerf-Emulator.
         // Die Sonde ist nur aussagekräftig, wenn der Download die Veröffentlichung tatsächlich erreicht hat.
         assertTrue("probe must reach the publication step (done or a storage failure), got " + state + "/" + reason,
             state.equals("done") || (state.equals("failed") && (reason.equals("storage") || reason.equals("internal"))));
         if (state.equals("done")) {
             boolean found = false;
-            for (String r : rowsAfter) found |= r.endsWith("|" + SIZE + "|" + want);
+            // Inhalt über den SHA-256 prüfen; die SIZE-Spalte ist auf API 29 bekanntlich 0 (P4B-A10-SIZE)
+            for (String r : rowsAfter) found |= r.split("\\|")[3].equals(want);
             assertTrue("a completed download must be readable with exactly the served content: " + rowsAfter, found);
         }
     }

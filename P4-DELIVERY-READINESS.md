@@ -55,6 +55,32 @@ Beide Lieferworkflows bleiben `LOCKED`. Keine APK, kein ZIP, keine Signierung, k
   - Ergebnis siehe unten bzw. im Abschlussbericht.
 - **Diagnoseausnahme:** nur als Entwurf in [P4-APPROVAL-PROPOSAL.md](P4-APPROVAL-PROPOSAL.md). Nicht aktiviert.
 
+**CI-Stand Runde 3 (Helper `9d6b716`, gleicher Anwendungscode wie `546af14`, Lauf 44108658790):**
+
+- **API 26 und API 34:** Gate `PASS` mit 22 einzeln belegten Wiederholungen. Das sind die ersten vollständigen
+  Positivbelege im neuen Format.
+- **API 29:** `REJECT`. `duplicateAndLateStartsFetchOnce` scheitert mit `publish rows=0`; die vollständige Datei
+  (`diskFinal=exists(65536)`) liegt ohne MediaStore-Zeile auf der Platte. App-Heap 512 MiB, kein Systemabsturz: Auch
+  auf API 29 tritt der Fehler also ohne Speicherengpass auf.
+- **Lieferung:** Nach den Regeln weiter gesperrt (`ci_evidence.py`: REJECT wegen API 29 und der älteren Fälle).
+
+**Sonde verwaiste Datei / gleicher Name** (Lauf 44108642683, Wegwerf-Emulatoren, synthetische Datei mit bekanntem
+SHA-256 ohne MediaStore-Zeile, danach echter Download desselben Titels mit anderem Inhalt):
+
+- **API 34:**
+  - Der Download ist `done` und wird als `<title> (1).mp4` veröffentlicht, mit genau dem neuen Inhalt.
+  - Die verwaiste Datei bleibt bytegleich, andere Dateien sind unverändert.
+  - Kein Überschreiben, kein Datenverlust.
+- **API 29:**
+  - Der Download ist `done`, die MediaStore-Zeile trägt **denselben** Anzeigenamen `<title>.mp4` und liefert genau
+    den neuen Inhalt.
+  - Laut Host bleibt die verwaiste Datei bytegleich erhalten.
+  - Unter welchem Dateinamen der neue Inhalt tatsächlich liegt, war in dieser Fassung nicht belegt: Der Test entfernte
+    seine Datei vor der Aufnahme durch den Host.
+  - Die nächste Fassung protokolliert den Dateipfad der Zeile, räumt erst nach der Host-Aufnahme auf und prüft den
+    Inhalt nur über den SHA-256 (die SIZE-Spalte ist auf API 29 bekanntlich 0).
+- **Erster Lauf (`cb45ca2`/`7513ae9`):** nicht aussagekräftig. Er brach mit `not_mp4` vor der Veröffentlichung ab.
+
 ## Verbindliche Quellen (Pins)
 
 | Rolle | Commit |
