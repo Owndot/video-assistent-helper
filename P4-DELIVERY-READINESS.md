@@ -63,6 +63,10 @@ Beide Lieferworkflows bleiben `LOCKED`. Keine APK, kein ZIP, keine Signierung, k
   (`diskFinal=exists(65536)`) liegt ohne MediaStore-Zeile auf der Platte. App-Heap 512 MiB, kein Systemabsturz: Auch
   auf API 29 tritt der Fehler also ohne Speicherengpass auf.
 - **Lieferung:** Nach den Regeln weiter gesperrt (`ci_evidence.py`: REJECT wegen API 29 und der älteren Fälle).
+- **Auf `4fd7350` (Lauf 44113835443):**
+  - API 26 und API 34 `PASS`, API 29 `ACCEPTED_SIZE_ONLY`.
+  - `ci_evidence.py` über alle 10 Commits mit gleichem Code: Positivbelege API 26 ×3, API 29 ×1, API 34 ×2.
+  - Gesamturteil weiterhin REJECT: fünf abgewiesene Läufe mit Veröffentlichungsfehlern bzw. ungültiger Umgebung.
 
 **Sonde verwaiste Datei / gleicher Name** (Lauf 44108642683, Wegwerf-Emulatoren, synthetische Datei mit bekanntem
 SHA-256 ohne MediaStore-Zeile, danach echter Download desselben Titels mit anderem Inhalt):
@@ -72,13 +76,15 @@ SHA-256 ohne MediaStore-Zeile, danach echter Download desselben Titels mit ander
   - Die verwaiste Datei bleibt bytegleich, andere Dateien sind unverändert.
   - Kein Überschreiben, kein Datenverlust.
 - **API 29:**
-  - Der Download ist `done`, die MediaStore-Zeile trägt **denselben** Anzeigenamen `<title>.mp4` und liefert genau
-    den neuen Inhalt.
-  - Laut Host bleibt die verwaiste Datei bytegleich erhalten.
-  - Unter welchem Dateinamen der neue Inhalt tatsächlich liegt, war in dieser Fassung nicht belegt: Der Test entfernte
-    seine Datei vor der Aufnahme durch den Host.
-  - Die nächste Fassung protokolliert den Dateipfad der Zeile, räumt erst nach der Host-Aufnahme auf und prüft den
-    Inhalt nur über den SHA-256 (die SIZE-Spalte ist auf API 29 bekanntlich 0).
+  - Der Download ist `done`; die verwaiste Datei bleibt bytegleich erhalten.
+  - Der neue Inhalt liegt als eigene Datei `<title> (1).mp4`.
+  - Die MediaStore-Zeile trägt aber den Anzeigenamen `<title>.mp4`, während ihre Datei `<title> (1).mp4` heißt.
+- **Endgültige Fassung `4fd7350` (Lauf 44113819135):** Pfad je Zeile protokolliert, Aufnahme durch den Host vor dem
+  Aufräumen.
+  - Auf **beiden** APIs gilt: verwaiste Datei unverändert, neuer Download als eigene Datei, andere Dateien unverändert.
+  - Kein Überschreiben und kein Datenverlust nachgewiesen. Ein Fixvorschlag gegen Überschreiben ist deshalb nicht nötig.
+  - Restrisiko: Die verwaiste Datei bleibt dauerhaft ohne Eintrag liegen.
+  - Auf Android 10 weichen zusätzlich Anzeigename und Dateiname voneinander ab.
 - **Erster Lauf (`cb45ca2`/`7513ae9`):** nicht aussagekräftig. Er brach mit `not_mp4` vor der Veröffentlichung ab.
 
 ## Verbindliche Quellen (Pins)
