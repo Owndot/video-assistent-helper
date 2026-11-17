@@ -85,6 +85,21 @@ SHA-256 ohne MediaStore-Zeile, danach echter Download desselben Titels mit ander
   - Kein Überschreiben und kein Datenverlust nachgewiesen. Ein Fixvorschlag gegen Überschreiben ist deshalb nicht nötig.
   - Restrisiko: Die verwaiste Datei bleibt dauerhaft ohne Eintrag liegen.
   - Auf Android 10 weichen zusätzlich Anzeigename und Dateiname voneinander ab.
+- **Bewertung der Sonde** (`tools/delivery/orphan_verdict.py`, nach dem Codex-Hinweis zur Sondenschwäche):
+  - **PASS (Exit 0)** nur, wenn alles zusammen gilt:
+    - gültige Ausgangslage: genau die verwaiste Datei mit bekanntem SHA-256;
+    - Test genau einmal `OK (1 test)`;
+    - `state=done`;
+    - eine neue Datei mit genau dem neuen SHA-256 unter einem anderen Namen;
+    - die verwaiste Datei ist bytegleich;
+    - alle übrigen Dateien sind unverändert.
+  - **DATA_LOSS (3):** Die verwaiste Datei fehlt oder wurde verändert, oder andere Dateien haben sich verändert.
+  - **INVALID (2):** jede ungültige oder unvollständige Sonde, darunter `failed:storage`/`failed:internal` und keine
+    neue Datei. Das ist nie ein Sicherheits-PASS.
+  - Der Test selbst verlangt `done`.
+  - Beide Aufnahmen werden mit SHA-256 vor dem Aufräumen ins Log geschrieben.
+  - Aufgeräumt werden in jedem Fall nur die synthetischen Dateien mit dem zufälligen Sondennamen.
+  - 33 Selbsttests in `tests/delivery/test_orphan_verdict.py`.
 - **Erster Lauf (`cb45ca2`/`7513ae9`):** nicht aussagekräftig. Er brach mit `not_mp4` vor der Veröffentlichung ab.
 
 ## Verbindliche Quellen (Pins)

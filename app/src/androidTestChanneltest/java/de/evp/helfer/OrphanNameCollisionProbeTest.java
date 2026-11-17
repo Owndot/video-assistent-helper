@@ -126,14 +126,12 @@ public class OrphanNameCollisionProbeTest {
             + " rowsBefore=" + rowsBefore + " rowsAfter=" + rowsAfter.toString().replace(title, "<title>"));
         // Kein Aufräumen hier: der Host nimmt danach den Ordner auf (Namen, Größen, Hashes) und entfernt erst dann die
         // eigenen synthetischen Dateien. Zurückbleibende Zeilen betreffen nur den Wegwerf-Emulator.
-        // Die Sonde ist nur aussagekräftig, wenn der Download die Veröffentlichung tatsächlich erreicht hat.
-        assertTrue("probe must reach the publication step (done or a storage failure), got " + state + "/" + reason,
-            state.equals("done") || (state.equals("failed") && (reason.equals("storage") || reason.equals("internal"))));
-        if (state.equals("done")) {
-            boolean found = false;
-            // Inhalt über den SHA-256 prüfen; die SIZE-Spalte ist auf API 29 bekanntlich 0 (P4B-A10-SIZE)
-            for (String r : rowsAfter) found |= r.split("\\|")[3].equals(want);
-            assertTrue("a completed download must be readable with exactly the served content: " + rowsAfter, found);
-        }
+        // Nur ein abgeschlossener, veröffentlichter Download ist ein Integritätsnachweis. Ein Fehlschlag (auch storage/
+        // internal) beweist keine ausgeführte Veröffentlichung: die Sonde ist dann ungültig, nie ein Sicherheits-PASS.
+        assertTrue("probe requires a completed publication (state done), got " + state + "/" + reason, state.equals("done"));
+        boolean found = false;
+        // Inhalt über den SHA-256 prüfen; die SIZE-Spalte ist auf API 29 bekanntlich 0 (P4B-A10-SIZE)
+        for (String r : rowsAfter) found |= r.split("\\|")[3].equals(want);
+        assertTrue("a completed download must be readable with exactly the served content: " + rowsAfter, found);
     }
 }
