@@ -1,5 +1,8 @@
 # P4-Testlieferung – gesicherter Entwurf, nicht aktiviert
 
+> **Überholt (2026-11-17):** maßgeblich ist [P4-DELIVERY-READINESS.md](P4-DELIVERY-READINESS.md). Die Pins unten
+> (`bd5ab29` als Helper-Quelle) und `DELIVERY_REQUESTED` gelten nicht mehr; der Workflow nutzt die Freigabesperre.
+
 Stand 2026-11-16 (Claude-Fortsetzung). **BLOCKED** – der API-34-Speicherfehler ist lokalisiert, aber nicht behoben:
 `IOException: publish` in `Mp4Downloads.PendingEntry.commit()` (MediaStore-Update `IS_PENDING=0`/`DISPLAY_NAME`
 betraf nicht genau einen Eintrag; Lauf 43874560604, Helper `d2f3884`). Ursache des Updates offen, Diagnosesonde

@@ -6,10 +6,10 @@ name: Helper secure channel (test package only, nothing published)
 # eine Veröffentlichung) – nur Text-Berichte und Hashes.
 on:
   pull_request:
-    paths: ['poc/p4a-hls/tools/**', 'app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/device_gate.py', 'tests/gate/**', 'tools/wait-device-ready.sh', 'tools/check-network-layer.sh', 'tools/p4test/**', 'release/p4test-signer.json', 'gradle/**', '.github/workflows/helper-channel.yml']
+    paths: ['poc/p4a-hls/tools/**', 'app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/device_gate.py', 'tests/gate/**', 'tools/delivery/**', 'tests/delivery/**', '.github/workflows/p4-test-package.yml', 'tools/wait-device-ready.sh', 'tools/check-network-layer.sh', 'tools/p4test/**', 'release/p4test-signer.json', 'gradle/**', '.github/workflows/helper-channel.yml']
   push:
     branches: [feature/helper-channel-control]
-    paths: ['poc/p4a-hls/tools/**', 'app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/device_gate.py', 'tests/gate/**', 'tools/wait-device-ready.sh', 'tools/check-network-layer.sh', 'tools/p4test/**', 'release/p4test-signer.json', 'gradle/**', '.github/workflows/helper-channel.yml']
+    paths: ['poc/p4a-hls/tools/**', 'app/**', 'poc/pake-channel/**', 'tests/java/**', 'tools/build-channel-*.sh', 'tools/run-channel-*.sh', 'tools/run-flaky-repeat.sh', 'tools/device_gate.py', 'tests/gate/**', 'tools/delivery/**', 'tests/delivery/**', '.github/workflows/p4-test-package.yml', 'tools/wait-device-ready.sh', 'tools/check-network-layer.sh', 'tools/p4test/**', 'release/p4test-signer.json', 'gradle/**', '.github/workflows/helper-channel.yml']
   workflow_dispatch:
 
 permissions:
@@ -81,13 +81,19 @@ jobs:
         run: cd poc/pake-channel/core && cargo test --locked
       - name: Channel checks against the real ChannelServer/ControlCommands and the Rust core (JNI)
         run: bash tests/java/channel/run.sh "$RUNNER_TEMP/desk"
-      - name: Self-tests - mutation verdicts (compile/infra/timeout never count as killed) and delivery gate (synthetic job logs)
+      - name: Self-tests - mutation verdicts (compile/infra/timeout never count as killed) and device gate (synthetic job logs, source consistency)
         run: |
           set -euo pipefail
           python3 -I tests/java/mutation_verdict_selftest.py
           python3 -I tests/gate/make_fixtures.py
           git diff --exit-code tests/gate/fixtures   # committed fixtures equal the generator
           python3 -I tests/gate/test_device_gate.py
+      - name: Delivery lock self-test (P4 package workflow stays closed; negative decisions; nothing built or signed)
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/lockvenv"
+          "$RUNNER_TEMP/lockvenv/bin/pip" install -q --only-binary :all: pyyaml==6.0.2
+          "$RUNNER_TEMP/lockvenv/bin/python" -I tests/delivery/test_lock.py .github/workflows/p4-test-package.yml feature/c3-browser-downloads "SOURCE_SHA KADRI_PAIR_SHA"
       - name: Mutation probes (each weakened copy must fail the checks)
         run: python3 -I tests/java/channel/mutation.py "$RUNNER_TEMP/desk"
       - name: Reviewed JVM checks (F1, F3, F4) against the app copies of SnapshotWriter and HttpRequestReader

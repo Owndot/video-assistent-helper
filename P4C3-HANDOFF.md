@@ -3,6 +3,12 @@
 Die Übergabe steht im Kadri-Repository: [`P4C3-HANDOFF.md`](https://github.com/Owndot/Kadri/blob/feature/c3-helper-mp4/P4C3-HANDOFF.md) (Branch `feature/c3-helper-mp4`).
 Helfer-spezifische Details: `P4C-VORBEREITUNG.md` (§6–§8), `DOWNLOADS-P4B.md`, `DOWNLOADS-C3.md`.
 
+**Codex-Release-Readiness (CONDITIONAL GO, 2026-11-17) vorbereitet:** [P4-DELIVERY-READINESS.md](P4-DELIVERY-READINESS.md)
+– Freigabesperre in beiden Lieferworkflows (standardmäßig geschlossen, einmalig, an SHAs gebunden), Pins
+Helper `546af14` ↔ Kadri `7978a41` (WASM-Herkunft `bd5ab29` getrennt), vollständiges Geräte-Gate, korrigierte
+Liefermetadaten (Ersatz der P4-App und Neukopplung nötig). **Keine Lieferung gestartet**, Freigabe nur durch den
+Eigentümer nach dem letzten Codex-Review.
+
 **Codex-Folgereview von `291cff1` (CHANGES REQUIRED) abgearbeitet (2026-11-17):** [REVIEW-CODEX-FOLLOWUP.md](REVIEW-CODEX-FOLLOWUP.md)
 – P1 Abschluss trotz Aufräumfehlern, P2 Diagnose ohne Blockade/konservative Zuordnung, P3 Testisolation und strenge
 Mutationsbewertung, P4 Liefer-Gate. **Korrektur:** API 29 auf `291cff1` war NICHT „nur SIZE“ – Versuch 2 hatte zusätzlich
