@@ -7,8 +7,8 @@ Diese Datei ist die maßgebliche Kopie. Der Job "gate" der Lieferworkflows enth�
 Standard: gesperrt. DELIVERY_APPROVAL: 'none' -> go=no, nichts wird ausgecheckt, gebaut, signiert oder hochgeladen.
 
 Eine Freigabe ist genau ein Wert der env-Variable DELIVERY_APPROVAL in der Workflowdatei, in einfachen Anführungszeichen:
-    SOURCE_SHA=<40hex>;<PAAR>=<40hex>[;...];ID=<id>;UNTIL=<YYYY-MM-DDTHH:MMZ>
-Die Schlüssel sind genau die in LOCK_BIND genannten Pins plus ID und UNTIL. Jeder Wert muss dem Pin derselben
+    SOURCE_SHA=<40hex>;<PAAR>=<40hex>[;...];SCOPE=<Lieferumfang>;ID=<id>;UNTIL=<YYYY-MM-DDTHH:MMZ>
+Die Schlüssel sind genau die in LOCK_BIND genannten Pins plus SCOPE (= LOCK_SCOPE, der Lieferumfang), ID und UNTIL. Jeder Wert muss dem Pin derselben
 Workflowdatei gleichen. Wer einen Pin ändert, ohne die Freigabe neu zu erteilen, sperrt damit die Lieferung.
 
 Die Freigabe gilt nur einmal und nur für den Push, der sie einführt:
@@ -19,7 +19,13 @@ Die Freigabe gilt nur einmal und nur für den Push, der sie einführt:
   * kein anderer Lauf dieses Workflows (irgendein Branch, irgendein Ergebnis) trägt dieselbe ID oder denselben Commit.
     Eine einmal benutzte ID ist verbraucht, auch wenn die Lieferung danach scheiterte;
   * UNTIL liegt in der Zukunft und höchstens 72 Stunden entfernt.
+  * das GitHub-Environment LOCK_ENVIRONMENT existiert und verlangt Required Reviewers (die menschliche Zustimmung
+    selbst erteilt GitHub beim Start des Paketjobs; diese Prüfung stellt nur sicher, dass der Schutz eingerichtet ist).
 Jede nicht prüfbare Bedingung (API-Fehler, fehlende Ereignisdaten) zählt als nicht erfüllt (fail closed).
+
+Codex Release-Readiness 2: Dieselbe Prüfung läuft im Paketjob erneut (LOCK_REQUIRE_GO=1) – vor dem Checkout, vor dem
+Signieren und vor dem Upload. Ein Re-Run eines fehlgeschlagenen Paketjobs (GITHUB_RUN_ATTEMPT > 1, Gate-Ausgabe
+wiederverwendet), eine inzwischen abgelaufene Freigabe oder eine anderweitig verbrauchte ID sperren dort fail closed.
 
 Exit 0 mit go=no: gesperrt (Normalzustand). Exit 0 mit go=yes: freigegeben.
 Exit 1 mit go=no: Freigabe eingetragen, aber ungültig (sichtbar roter Lauf).
@@ -60,13 +66,22 @@ def parse(value, bind):
         if k in out:
             raise ValueError('duplicate approval key %s' % k)
         out[k] = v
-    want = set(bind) | {'ID', 'UNTIL'}
+    want = set(bind) | {'SCOPE', 'ID', 'UNTIL'}
     if set(out) != want:
         raise ValueError('approval keys %s, expected %s' % (sorted(out), sorted(want)))
     return out
 
 
-def decide(ctx, fetch_workflow_at, list_runs, now):
+def protected(env_info):
+    """Environment-Antwort der GitHub-API -> (geschützt, Grund)."""
+    rules = (env_info or {}).get('protection_rules') or []
+    reviewers = [r for rule in rules if rule.get('type') == 'required_reviewers' for r in (rule.get('reviewers') or [])]
+    if not reviewers:
+        return False, 'environment has no required reviewers'
+    return True, '%d required reviewer(s)' % len(reviewers)
+
+
+def decide(ctx, fetch_workflow_at, list_runs, now, fetch_environment=None):
     """-> (go, reasons, approval_id). Reine Funktion; fetch_workflow_at/list_runs dürfen Ausnahmen werfen."""
     value = ctx['approval']
     if value in CLOSED:
@@ -85,6 +100,8 @@ def decide(ctx, fetch_workflow_at, list_runs, now):
             reasons.append('approved %s is not a full commit SHA' % name)
         elif a[name] != pin:
             reasons.append('approved %s %s differs from the pinned %s' % (name, a[name], pin or '(missing)'))
+    if a['SCOPE'] != ctx.get('scope'):
+        reasons.append('approval scope %r is not this delivery (%r)' % (a['SCOPE'], ctx.get('scope')))
     if not UNTIL_RE.match(a['UNTIL']):
         reasons.append('UNTIL %r has the wrong form' % a['UNTIL'])
     else:
@@ -117,6 +134,15 @@ def decide(ctx, fetch_workflow_at, list_runs, now):
         else:
             if prev == value:
                 reasons.append('approval not introduced by this push (already present at %s)' % before)
+    if not ctx.get('environment'):
+        reasons.append('no protected environment configured for the package job')
+    else:
+        try:
+            ok, why = protected(fetch_environment(ctx['environment']) if fetch_environment else None)
+        except Exception as e:  # fail closed
+            ok, why = False, 'cannot read environment %s: %s' % (ctx['environment'], e)
+        if not ok:
+            reasons.append('environment %s not protected: %s' % (ctx['environment'], why))
     try:
         runs = list_runs()
     except Exception as e:  # fail closed
@@ -155,6 +181,7 @@ def main():
         'sha': env.get('GITHUB_SHA', ''), 'before': event.get('before', ''), 'run_attempt': env.get('GITHUB_RUN_ATTEMPT', ''),
         'run_id': env.get('GITHUB_RUN_ID', ''), 'actor': env.get('GITHUB_ACTOR', ''),
         'owner': env.get('GITHUB_REPOSITORY_OWNER', ''), 'head_id': head.get('id', ''), 'head_message': head.get('message', ''),
+        'scope': env.get('LOCK_SCOPE', ''), 'environment': env.get('LOCK_ENVIRONMENT', ''),
     }
 
     def fetch_workflow_at(sha):
@@ -176,15 +203,20 @@ def main():
                 return out
         raise RuntimeError('more than 3000 runs: cannot prove the approval is unused')
 
+    def fetch_environment(name):
+        return gh_json('repos/%s/environments/%s' % (repo, name))
+
     now = datetime.datetime.now(datetime.timezone.utc)
-    go, reasons, aid = decide(ctx, fetch_workflow_at, list_runs, now)
+    go, reasons, aid = decide(ctx, fetch_workflow_at, list_runs, now, fetch_environment)
     for r in reasons:
         print('DELIVERY_LOCK ' + r)
-    print('DELIVERY_LOCK verdict=%s approval_id=%s pins=%s' % ('GO' if go else 'LOCKED', aid or '-',
+    print('DELIVERY_LOCK stage=%s verdict=%s approval_id=%s pins=%s' % (env.get('LOCK_STAGE', 'gate'), 'GO' if go else 'LOCKED', aid or '-',
                                                                ' '.join('%s=%s' % (n, ctx['pins'][n]) for n in bind)))
     if env.get('GITHUB_OUTPUT'):
         with open(env['GITHUB_OUTPUT'], 'a') as f:
             f.write('go=%s\napproval_id=%s\n' % ('yes' if go else 'no', aid if go else ''))
+    if env.get('LOCK_REQUIRE_GO') == '1' and not go:
+        sys.exit(1)   # Paketjob: ohne gültige Freigabe JETZT kein Schritt weiter (auch nach Re-Run oder Ablauf)
     sys.exit(0 if go or ctx['approval'] in CLOSED else 1)
 
 

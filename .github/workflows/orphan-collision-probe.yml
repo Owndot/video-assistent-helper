@@ -1,0 +1,76 @@
+name: Orphan final-name collision probe (disposable emulators only, nothing published)
+
+# Codex Release-Readiness 2, Punkt 7: Bleibt eine verwaiste Enddatei (Datei ohne MediaStore-Zeile, wie nach
+# "publish rows=0" beobachtet) beim erneuten Download unter demselben Titel erhalten? Nur Wegwerf-Emulatoren, nur
+# synthetische Dateien mit eindeutigem Namen; kein APK-Upload, keine Lieferung, keine Produktänderung.
+on:
+  push:
+    branches: [feature/c3-browser-downloads]
+    paths: [.github/workflows/orphan-collision-probe.yml, tools/run-orphan-collision-probe.sh, app/src/androidTestChanneltest/java/de/evp/helfer/OrphanNameCollisionProbeTest.java]
+permissions:
+  contents: read
+concurrency:
+  group: orphan-collision-probe-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  probe:
+    name: Orphan collision probe on a disposable API ${{ matrix.api }} emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [34, 29]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - name: Pinned toolchains (Rust from rust-toolchain.toml, NDK r27c, SDK 37.0, build-tools 36.0.0 + 34.0.0)
+        run: |
+          set -euo pipefail
+          (cd poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018" "platforms;android-37.0" "build-tools;36.0.0" "build-tools;34.0.0" < <(yes 2>/dev/null) > /dev/null
+          test -f "$ANDROID_HOME/ndk/27.2.12479018/source.properties"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Native channel libraries (API 26 linker, arm64-v8a + x86_64)
+        # pipefail: ein Fehler im Skript darf nicht hinter tee verschwinden.
+        run: set -o pipefail; bash tools/build-channel-native.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/native.txt"
+      - name: Synthetic HLS fixtures for the device tests (own content, ffmpeg; test APK assets only)
+        run: |
+          set -euo pipefail
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"; fi
+          done
+          timeout 120 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          timeout 300 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends ffmpeg
+          bash poc/p4a-hls/tools/make-fixtures.sh "$RUNNER_TEMP/hlsfx"
+          echo "HLS_FIXTURES=$RUNNER_TEMP/hlsfx" >> "$GITHUB_ENV"
+      - name: Test APKs with a throwaway signer (deleted after the build)
+        # pipefail: ein Fehler im Skript darf nicht hinter tee verschwinden.
+        run: set -o pipefail; bash tools/build-channel-apk.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/apk.txt"
+      - name: Only the test variant was built (no release or debug APK of de.evp.helfer)
+        run: |
+          set -euo pipefail
+          ls app/build/outputs/apk
+          test ! -e app/build/outputs/apk/release
+          test ! -e app/build/outputs/apk/debug
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Orphan collision probe on a disposable API ${{ matrix.api }} x86_64 emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          emulator-boot-timeout: 1200
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash tools/wait-device-ready.sh && bash tools/run-orphan-collision-probe.sh "$RUNNER_TEMP/a"

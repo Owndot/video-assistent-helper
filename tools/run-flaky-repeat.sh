@@ -16,14 +16,17 @@ adb install -r -t "$OUT/apk/helper-channeltest.apk" > /dev/null
 adb install -r -t "$OUT/apk/helper-channeltest-androidTest.apk" > /dev/null
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS 2>/dev/null || true
 fail=0; pass=0
-run() {   # run LABEL CLASSSPEC
+API="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+# Codex Release-Readiness P2: JEDER der Läufe (auch erfolgreiche) wird vollständig mit eindeutiger Kennung und API
+# ins Job-Log geschrieben; tools/device_gate.py prüft Anzahl, Kennungen, Testmengen und Ergebnis jedes Laufs.
+echo "REPEAT-FORMAT 2"
+run() {   # run LABEL CLASSSPEC [NOTCLASS]
   local log="$REPORT/repeat-$1.txt"
   adb shell am instrument -w -r -e class "$2" ${3:+-e notClass "$3"} "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$log" 2>&1
-  if grep -q '^OK (' "$log"; then pass=$((pass+1)); rm -f "$log"
+  if grep -q '^OK (' "$log"; then pass=$((pass+1))
   else fail=$((fail+1)); grep -E 'test=|AssertionError|ComparisonFailure|Exception' "$log" | head -20 >> "$REPORT/repeat-failures.txt"
-    # Review P4: vollständiger Beleg jedes gescheiterten Laufs im Job-Log (tools/device_gate.py bewertet ihn)
-    echo "GATE-BEGIN repeat-$1"; cat "$log"; echo "GATE-END repeat-$1"
   fi
+  echo "GATE-BEGIN repeat-$1"; echo "REPEAT-RUN label=$1 api=$API"; cat "$log"; echo "GATE-END repeat-$1"
 }
 for i in $(seq 1 "$N"); do
   run "three-$i" "$T#duplicateAndLateStartsFetchOnce,$T#leftoversAfterProcessDeathAreRemovedOnNextStart,$T#cancelRemovesEverything"
@@ -34,5 +37,5 @@ done
 for i in 1 2; do run "class-$i" "$T" "$T#publicFileForUninstallCheck"; done
 adb uninstall "$PKG.test" > /dev/null || true
 adb uninstall "$PKG" > /dev/null || true
-echo "REPEAT api=$(adb shell getprop ro.build.version.sdk | tr -d '\r') runs=$((pass+fail)) passed=$pass failed=$fail" | tee -a "$REPORT/summary.txt"
+echo "REPEAT api=$API runs=$((pass+fail)) passed=$pass failed=$fail" | tee -a "$REPORT/summary.txt"
 [ "$fail" = 0 ]

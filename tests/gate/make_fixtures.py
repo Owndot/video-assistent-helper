@@ -79,6 +79,7 @@ def probe_lines(api, cycles=None, drop=None, dup=None):
 def job(api=34, main=None, probe=None, plines=None, probe_status=None, restarts=None, crash=(), heap=512, heap_line=True,
         repeat=None, repeat_reports=(), mutant=None, mutant_pass=True, command_n=G.REPEAT_N, gate_api=None, extra=(),
         errors=None, script_status=None, end=True, truncate_at=None, move_repeat_before_status=False, unknown_section=False,
+        old_repeat_format=False, repeat_header_api=None, drop_repeat=None, dup_repeat=None, raw_extra=(),
         persist=True):
     main = instr(MAIN) if main is None else main
     main_failed = 'FAILURES!!!' in main
@@ -101,7 +102,7 @@ def job(api=34, main=None, probe=None, plines=None, probe_status=None, restarts=
     L += rs
     if heap_line:
         L += ['11-17 10:39:38.062  6241  6260 I HLS_TEST: HLS_MEASURE api=%d samples=43126 ms=4475 points=41 retainedFixedKiB=0 retainedEndKiB=3409 bytesPerSample=42 maxHeapMiB=%d budgetSamples=1000000 budgetHeapMiB=40' % (api, heap)]
-    L += list(extra)
+    L += list(extra) + list(raw_extra)
     L += ['GATE-API %d' % (gate_api if gate_api is not None else api)]
     L += section('main', main)
     if api >= 29 and status != 'skipped':
@@ -119,11 +120,23 @@ def job(api=34, main=None, probe=None, plines=None, probe_status=None, restarts=
     L += section('crash', list(crash))
     if unknown_section:
         L += section('debug-extra', ['nothing'])
-    failed_repeats = len(repeat_reports)
+    # Wiederholungen (Format 2): JEDER Lauf als Bericht mit Kennung und API; repeat_reports überschreibt einzelne Läufe.
+    overrides = dict(repeat_reports)
+    failed_repeats = 0
+    rep_lines = [] if old_repeat_format else [G.REPEAT_FORMAT]
+    labels = ['three-%d' % i for i in range(1, G.REPEAT_N + 1)] + ['class-%d' % i for i in range(1, G.REPEAT_CLASS_RUNS + 1)]
+    for label in labels + ([dup_repeat] if dup_repeat else []):
+        if label == drop_repeat:
+            continue
+        body = overrides.get(label) or instr(THREE if label.startswith('three-') else CLASS_REPEAT)
+        failed = 'FAILURES!!!' in body or not any(l.startswith('OK (') for l in body)
+        failed_repeats += 1 if failed and label != dup_repeat else 0
+        if old_repeat_format:
+            if failed:
+                rep_lines += section('repeat-' + label, body)
+            continue
+        rep_lines += section('repeat-' + label, ['REPEAT-RUN label=%s api=%d' % (label, repeat_header_api or api)] + body)
     sst = script_status if script_status is not None else (1 if main_failed or status == 'failed' or 'fail' in restarts.values() else 0)
-    rep_lines = []
-    for label, body in repeat_reports:
-        rep_lines += section('repeat-' + label, body)
     if move_repeat_before_status:
         L += rep_lines + ['GATE-SCRIPT-STATUS %d' % sst]
     else:
@@ -223,6 +236,42 @@ CASES = {
     'truncated_log_api34': (34, 'REJECT', job(34, truncate_at='GATE-END main')),
     'job_log_without_end_api34': (34, 'REJECT', job(34, end=False)),
     'old_script_without_sections_api29': (29, 'REJECT', job(29, main=SIZE_MAIN, gate_api=-1).replace('GATE-API -1', 'nothing')),
+    # Codex Release-Readiness 2: konkrete Gegenbeispiele (müssen alle REJECT sein)
+    'mutant_without_end_code_api34': (34, 'REJECT', job(34, mutant=instr({MP4: [G.MUTANT_TEST]}, {G.MUTANT_TEST: MUTANT_STACK}, finish=False))),
+    'mutant_wrong_reason_api34': (34, 'REJECT', job(34, mutant=instr({MP4: [G.MUTANT_TEST]}, {G.MUTANT_TEST: OTHER_STACK}))),
+    'extra_publish_rows0_outside_sections_api34': (34, 'REJECT', job(34, raw_extra=[
+        '11-17 13:37:20.581  4597  5046 I MP4_TEST: MP4_STORE_FAILURE sdk=34 commit java.io.IOException: publish rows=0 proof=present cleanup=not-observed'])),
+    'size_plus_publish_outside_sections_api29': (29, 'REJECT', job(29, main=SIZE_MAIN, raw_extra=[
+        '11-17 13:21:18.900  5826  5845 I MP4_TEST: MP4_STORE_FAILURE sdk=29 commit java.io.IOException: publish rows=0 proof=present cleanup=not-observed'])),
+    'extra_incomplete_block_outside_sections_api34': (34, 'REJECT', job(34, raw_extra=[
+        'INSTRUMENTATION_STATUS: class=de.evp.helfer.Mp4DownloadsInstrumentedTest', 'INSTRUMENTATION_STATUS: test=hiddenExtraTest',
+        'INSTRUMENTATION_STATUS_CODE: 1'])),
+    'extra_failure_copy_contradicts_main_api34': (34, 'REJECT', job(34, raw_extra=[
+        'FAILED INSTRUMENTATION_STATUS: test=cancelRemovesEverything', 'INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: x',
+        'INSTRUMENTATION_STATUS_CODE: -2'])),
+    'extra_incomplete_block_in_main_api34': (34, 'REJECT', job(34, main=instr(MAIN) + [
+        'INSTRUMENTATION_STATUS: class=de.evp.helfer.ChannelInstrumentedTest', 'INSTRUMENTATION_STATUS: test=pairingAndControlCommands'])),
+    'second_run_in_main_section_api34': (34, 'REJECT', job(34, main=instr(MAIN) + instr({MP4: ['cancelRemovesEverything']}))),
+    'app_fatal_outside_crash_section_api34': (34, 'REJECT', job(34, raw_extra=['11-17 13:21:19.606  2042  2042 E AndroidRuntime: FATAL EXCEPTION: main'])),
+    'app_fatal_in_restart_area_api34': (34, 'REJECT', job(34, extra=['11-17 13:21:19.606  6000  6000 E AndroidRuntime: Process: de.evp.helfer.channeltest, PID: 6000',
+                                                                     '11-17 13:21:19.606  6000  6000 E AndroidRuntime: FATAL EXCEPTION: evp-dl'])),
+    'oom_outside_sections_api34': (34, 'REJECT', job(34, raw_extra=['11-17 13:21:19.341  1876  6827 E AndroidRuntime: java.lang.OutOfMemoryError: Failed to allocate'])),
+    # Wiederholungen Format 2: jeder der 22 Läufe muss belegt und korrekt sein
+    'repeat_v2_wrong_api_header_api34': (34, 'REJECT', job(34, repeat_header_api=29)),
+    'repeat_v2_missing_run_api34': (34, 'REJECT', job(34, drop_repeat='three-13')),
+    'repeat_v2_duplicate_label_api34': (34, 'REJECT', job(34, dup_repeat='three-4')),
+    'repeat_v2_ok_zero_tests_api34': (34, 'REJECT', job(34, repeat_reports=[('three-2', ['INSTRUMENTATION_RESULT: stream=', '', 'Time: 0.01', 'OK (0 tests)', '', '', 'INSTRUMENTATION_CODE: -1'])])),
+    'repeat_v2_skipped_test_api34': (34, 'REJECT', job(34, repeat_reports=[('three-9', instr(THREE, codes={'cancelRemovesEverything': '-3'}))])),
+    'repeat_v2_assumption_skip_api26': (26, 'REJECT', job(26, repeat_reports=[('class-2', instr(CLASS_REPEAT, codes={'storageWritableAfterRuntimeGrant': '-4'}))])),
+    'repeat_v2_class_wrong_set_api34': (34, 'REJECT', job(34, repeat_reports=[('class-1', instr({MP4: MAIN[MP4]}))])),
+    'repeat_v2_three_wrong_set_api34': (34, 'REJECT', job(34, repeat_reports=[('three-1', instr({MP4: G.REPEAT_THREE[:2]}))])),
+    'repeat_v2_summary_mismatch_api34': (34, 'REJECT', job(34, repeat='REPEAT api=34 runs=22 passed=22 failed=0',
+                                                           repeat_reports=[('three-5', instr(THREE, {'cancelRemovesEverything': OTHER_STACK}))], errors=[G.SIZE_ERROR])),
+    'repeat_v2_unfinished_run_api34': (34, 'REJECT', job(34, repeat_reports=[('three-6', instr(THREE, finish=False))])),
+    # altes Wiederholungsformat: nie PASS (grün = unzureichend, mit Fehler = REJECT)
+    'repeat_old_format_green_api34': (34, 'INSUFFICIENT_EVIDENCE', job(34, old_repeat_format=True)),
+    'repeat_old_format_size_api29': (29, 'INSUFFICIENT_EVIDENCE', job(29, main=SIZE_MAIN, old_repeat_format=True, repeat_reports=SIZE_CLASS)),
+    'repeat_old_format_failure_api34': (34, 'REJECT', job(34, old_repeat_format=True, repeat_reports=[('three-3', instr(THREE, {'duplicateAndLateStartsFetchOnce': PUBLISH_STACK}))])),
 }
 
 

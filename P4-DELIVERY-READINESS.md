@@ -4,6 +4,57 @@ Stand 2026-11-17. Codex-Urteil: **CONDITIONAL GO** für eine isolierte Samsung-A
 Diese Vorbereitung behebt die Lieferketten- und Gate-Blocker. **Keine Lieferung gestartet**, beide Freigaben
 geschlossen (`DELIVERY_APPROVAL: 'none'`), Produktion **UNAPPROVED**.
 
+## Runde 3 – Codex NO-GO abgearbeitet (2026-11-17, maßgeblich vor allem Folgenden)
+
+Beide Lieferworkflows bleiben `LOCKED`. Keine APK, kein ZIP, keine Signierung, kein Upload. Anwendungscode unverändert
+(Helper `546af14`, Kadri `7978a41`).
+
+- **Freigabesperre gegen Re-Runs (P1).**
+  - Der Paketjob führt die volle Sperre selbst erneut aus (`LOCK_REQUIRE_GO=1`): vor dem Checkout, vor dem Signieren,
+    vor dem Upload.
+  - Dabei wird jedes Mal geprüft: `GITHUB_RUN_ATTEMPT` = 1, Ablauf, Einmaligkeit der ID, Neueinführung,
+    Pins, Lieferumfang und geschütztes Environment.
+  - Ein Re-Run des Paketjobs mit wiederverwendeter Gate-Ausgabe oder eine inzwischen abgelaufene Freigabe sperrt.
+- **Unabhängige menschliche Freigabe (P1).** Mit den heutigen Rechten nicht technisch durchsetzbar: Der Agent handelt
+  mit `admin: true`. Neu ist die Pflicht `environment: p4-delivery` mit Required Reviewers; die Sperre prüft sie fail
+  closed. Der manuelle Einrichtungsschritt steht in [P4-APPROVAL-PROPOSAL.md](P4-APPROVAL-PROPOSAL.md).
+- **CI-Evidenz (`tools/delivery/ci_evidence.py`).**
+  - Vollständige Pagination und jeder Versuch einzeln abgefragt.
+  - Abgebrochene Jobs werden auf vorhandene Fehlerbelege geprüft.
+  - Laufende Läufe, auch ohne gelistete Jobs, sperren.
+  - Abdeckung von API 26, 29 und 34 verlangt.
+  - Fehlende Logs, API-Fehler und Widersprüche sperren.
+  - Positivbelege zählen nur, wenn der getestete Merge-Baum nachweislich dem Commit entspricht.
+  - 30 Regressionstests mit Attrappen.
+- **Geräte-Gate (`tools/device_gate.py`).**
+  - Globale Prüfung des gesamten Logs auf Abstürze, auch App-FATAL außerhalb des Crash-Abschnitts und OOM, und auf
+    Veröffentlichungsfehler. Ausgenommen sind nur der erwartete Mutantenlauf und die Sonden-Belegzeilen.
+  - Der Mutantenlauf muss vollständig sein und aus genau dem erwarteten Grund scheitern.
+  - Statuszeilen außerhalb der Abschnitte dürfen dem Hauptbericht nicht widersprechen.
+  - Kein weiterer oder unvollständiger Block nach dem Runner-Ende.
+  - Parserfehler führen zur Ablehnung.
+  - 87 Fixtures: die bisherigen 63 und 24 neue Gegenbeispiele.
+- **Alle 22 Wiederholungen belegt.**
+  - `tools/run-flaky-repeat.sh` schreibt jeden Lauf mit Kennung und API ins Log.
+  - Das Gate prüft Anzahl, Kennungen, API, Testmengen, kein `OK (0 tests)`, keine übersprungenen Tests und die
+    Zusammenfassung.
+  - Logs im alten Format ergeben `INSUFFICIENT_EVIDENCE` (Exit 4). Das ist nie PASS: Bisher grüne Läufe gelten
+    deshalb nicht mehr als Beleg. Rote bleiben REJECT.
+- **Kadri-Freigabepfad.** Die normale CI unterscheidet jetzt LOCKED (`none`), eine gültige noch nicht ausgeführte
+  Freigabe (PENDING, wird nicht abgelehnt) und eine ungültige Freigabe (Fehler). Der positive Pfad ist nur mit
+  Attrappen getestet.
+- **Veröffentlichungsfehler sind kein Android-10-Thema.**
+  - `publish rows=0` bzw. `IOException: publish` tritt auf API 34 und API 29 auf. Er ist nicht behoben und nicht
+    mit SIZE gleichzusetzen.
+  - Eine OOM-Ursache ist nicht belegt: Auf API 34 lag kein Speicherengpass vor.
+  - Alle bekannten Logs sind mit Run-, Attempt- und Job-ID sowie SHA-256 gesichert:
+    [evidence/publish-failures/INDEX.md](evidence/publish-failures/INDEX.md).
+- **Verwaiste Datei und Namenskollision.** Gezielter Test nur auf Wegwerf-Emulatoren:
+  - Testklasse `OrphanNameCollisionProbeTest`, aufgerufen von `tools/run-orphan-collision-probe.sh`, Workflow
+    `orphan-collision-probe.yml`.
+  - Ergebnis siehe unten bzw. im Abschlussbericht.
+- **Diagnoseausnahme:** nur als Entwurf in [P4-APPROVAL-PROPOSAL.md](P4-APPROVAL-PROPOSAL.md). Nicht aktiviert.
+
 ## Verbindliche Quellen (Pins)
 
 | Rolle | Commit |

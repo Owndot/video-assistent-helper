@@ -35,11 +35,19 @@ def cli(name, api, conclusion=None):
 for name, api, conclusion, want in [('pass_api34', 34, 'success', 0), ('size_only_api29', 29, 'failure', 3),
                                     ('size_only_api29', 29, 'success', 1), ('pass_api34', 34, 'failure', 1),
                                     ('publish_rows0_api29', 29, 'failure', 1), ('size_only_api29', 34, None, 1),
-                                    ('pass_api26_no_probe', 26, 'success', 0), ('probe_cycles_zero_api34', 34, 'success', 1)]:
+                                    ('pass_api26_no_probe', 26, 'success', 0), ('probe_cycles_zero_api34', 34, 'success', 1),
+                                    ('repeat_old_format_green_api34', 34, 'success', 4), ('mutant_wrong_reason_api34', 34, 'success', 1)]:
     rc = cli(name, api, conclusion)
     ok = rc == want
     fails += 0 if ok else 1
     print('%s cli %-20s api=%d conclusion=%s exit=%d (want %d)' % ('PASS' if ok else 'FAIL', name, api, conclusion, rc, want))
+
+# Parser-/Programmfehler im Gate führen immer zur Ablehnung (fail closed)
+for bad_input in [None, 12345, b'GATE-API 34']:
+    got, reasons = device_gate.evaluate(bad_input, 34)
+    ok = got == 'REJECT' and reasons and reasons[0].startswith('gate parser error')
+    fails += 0 if ok else 1
+    print('%s parser error on %r input -> %s' % ('PASS' if ok else 'FAIL', type(bad_input).__name__, got))
 
 # Erwartete Testmengen des Gates == Quellstand der Gerätetests (keine stille Abweichung nach Teständerungen)
 import re  # noqa: E402
@@ -71,7 +79,8 @@ print('%s source probe variants and positive cycle counts match the gate %s' % (
 rep = open(os.path.join(ROOT, 'tools', 'run-flaky-repeat.sh'), encoding='utf-8').read()
 three = re.search(r'run "three-\$i" "([^"]+)"', rep).group(1)
 ok = ([x.split('#')[1] for x in three.split(',')] == device_gate.REPEAT_THREE and 'for i in 1 2; do run "class-$i" "$T" "$T#%s"' % device_gate.REPEAT_CLASS_EXCLUDED in rep
-      and device_gate.REPEAT_CLASS_RUNS == 2)
+      and device_gate.REPEAT_CLASS_RUNS == 2 and 'echo "%s"' % device_gate.REPEAT_FORMAT in rep
+      and 'echo "REPEAT-RUN label=$1 api=$API"' in rep)
 fails += 0 if ok else 1
 print('%s run-flaky-repeat.sh: three-test runs and class runs match the gate' % ('PASS' if ok else 'FAIL'))
 wf = open(os.path.join(ROOT, '.github', 'workflows', 'helper-channel.yml'), encoding='utf-8').read()
