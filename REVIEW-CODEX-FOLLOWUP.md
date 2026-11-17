@@ -197,3 +197,17 @@ Folgen:
 
 - Dieser Test hinterlässt absichtlich eine Datei für die Deinstallationsprüfung und ist deshalb nicht wiederholbar. Er wird nur aus den Klassen-Wiederholungen ausgenommen; im Hauptlauf läuft er unverändert.
 - **Mögliches Produktrisiko (Android 10, außerhalb des Android-17-Tests):** Ein zweiter Download desselben Titels könnte so scheitern. Die neue deterministische Sonde `sameFinalNameTwice` protokolliert für jede Android-Version, was dabei geschieht (`PUBLISH_PROBE_SAMENAME`). Sie prüft nur, dass ein Fehlschlag keinen ausstehenden Eintrag hinterlässt. Das Gate verlangt diesen Beleg.
+
+## 8. Endstand CI auf `546af14` (alle Läufe abgeschlossen)
+
+| Prüfung | Ergebnis |
+|---|---|
+| Helper safe validation, Browser-Tests, HLS (Kern-JVM + strenge hls-/hlsmux-Mutationen), Media3-Lieferkette | grün |
+| JVM-Job inkl. Selbsttests, strenger Mutationsproben channel/net/**dl (57)** | grün |
+| API 26 | grün, Gate **PASS** |
+| API 34 | grün, Gate **PASS**; Wiederholungen 22/22 |
+| API 29 | rot nur durch SIZE; Gate **ACCEPTED_SIZE_ONLY** (Heap 512 MiB, Sonden 5/5, Neustart 4/4, Klassen-Wiederholungen nur SIZE) |
+
+**H4-Sonde:** Ein zweites Veröffentlichen desselben Endnamens gelingt auf API 34 (`<title> (1).mp4`, automatisch umbenannt) und auf API 29 (`<title>.mp4`). Die Ausnahme in CI tritt also nur auf, wenn unter dem Endnamen eine Datei OHNE eigenen MediaStore-Eintrag liegt.
+
+**Offen bleibt die Ursache des konkreten `rows=0`-Vorfalls in `duplicateAndLateStartsFetchOnce`:** Mechanismus H1 reproduziert, Löscher nicht identifiziert. In diesem Lauf trat kein `rows=0` auf.
