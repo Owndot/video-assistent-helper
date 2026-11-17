@@ -16,7 +16,7 @@ CLASSES = {
 }
 MP4 = CLASSES['de.evp.helfer.Mp4DownloadsInstrumentedTest']
 PROBES = ['repeatedPublicationsOfTheAppStore', 'processStartCleanupDuringAJobSignature', 'cleanupAttributionIsConservative',
-          'concurrentDeletionDuringPublishRace']
+          'concurrentDeletionDuringPublishRace', 'sameFinalNameTwice']
 VARIANTS = ['PLAIN', 'PAUSE_MID_WRITE', 'PAUSE_BEFORE_CLOSE', 'PAUSE_BEFORE_COMMIT', 'ABORTED_SIBLING_THEN_PAUSE_MID_WRITE',
             'LARGE_DELETE_BEFORE_COMMIT', 'CONCURRENT_PROVIDER_LOAD']
 SIZE_STACK = ['INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: SIZE column (file /storage/emulated/0/Download/Video-Assistent/C2 Publish 1.mp4, length 67108864) expected:<67108864> but was:<0>',
@@ -71,7 +71,8 @@ def job(api=34, main=None, probe_status='ok', probe=None, probe_lines=None, rest
             + ['PUBLISH_PROBE_ATTRIBUTION sdk=%d foreignDelete: IOException: publish threw=IllegalStateException(No item at content://media/external/downloads/40) proof=present cleanup=not-observed' % api,
                'PUBLISH_PROBE_ATTRIBUTION sdk=%d duringCleanup: IOException: publish threw=IllegalStateException(No item at content://media/external/downloads/41) proof=present cleanup=overlap-observed(started=0,active=1,activeAtInsert=0)' % api]
             + ['PUBLISH_PROBE sdk=%d variant=%s cycles=20 ok=20 failed=0 maxCommitMs=15' % (api, v) for v in VARIANTS]
-            + ['PUBLISH_RACE sdk=%d count=30 outcome=threw=IllegalStateException downloads=absent filesSameId=absent finalNameOtherIds=0 diskFinal=absent diskPending=absent' % api])
+            + ['PUBLISH_RACE sdk=%d count=30 outcome=threw=IllegalStateException downloads=absent filesSameId=absent finalNameOtherIds=0 diskFinal=absent diskPending=absent' % api]
+            + ['PUBLISH_PROBE_SAMENAME sdk=%d second=published name=<title> (1).mp4' % api])
         L += lines
     L += ['PUBLISH_PROBE_STATUS ' + probe_status]
     L += ['RESTART force-stop phase A OK', 'RESTART force-stop phase B OK', 'RESTART process-replaced phase A OK', 'RESTART process-replaced phase B OK']
@@ -82,7 +83,7 @@ def job(api=34, main=None, probe_status='ok', probe=None, probe_lines=None, rest
     L += section('main', main)
     if api >= 29:
         L += section('probe', probe if probe is not None else instr({'de.evp.helfer.MediaStorePublishProbeTest': PROBES}))
-        L += section('probe-lines', probe_lines if probe_lines is not None else [l for l in L if l.startswith(('PUBLISH_PROBE ', 'PUBLISH_PROBE_SIGNATURE', 'PUBLISH_PROBE_ATTRIBUTION', 'PUBLISH_RACE'))])
+        L += section('probe-lines', probe_lines if probe_lines is not None else [l for l in L if l.startswith(('PUBLISH_PROBE ', 'PUBLISH_PROBE_SIGNATURE', 'PUBLISH_PROBE_ATTRIBUTION', 'PUBLISH_RACE', 'PUBLISH_PROBE_SAMENAME'))])
     rs = []
     for mode in ('force-stop', 'process-replaced'):
         for ph in 'AB':
@@ -129,11 +130,11 @@ CASES = {
     'unknown_failure_api34': (34, 'REJECT', job(34, main=instr(CLASSES, {'channelRoundTrip': OTHER_STACK}))),
     'probe_status_failed_api29': (29, 'REJECT', job(29, main=instr(CLASSES, {'publishesThroughMediaStoreAndReadsBack': SIZE_STACK}), probe_status='failed')),
     'probe_variant_failed_api34': (34, 'REJECT', job(34, probe_lines=['PUBLISH_PROBE_SIGNATURE sdk=34 x', 'PUBLISH_PROBE_ATTRIBUTION sdk=34 foreignDelete: x',
-                                                                      'PUBLISH_PROBE_ATTRIBUTION sdk=34 duringCleanup: x', 'PUBLISH_RACE sdk=34 count=30 outcome=x']
+                                                                      'PUBLISH_PROBE_ATTRIBUTION sdk=34 duringCleanup: x', 'PUBLISH_RACE sdk=34 count=30 outcome=x', 'PUBLISH_PROBE_SAMENAME sdk=34 second=x']
                                                      + ['PUBLISH_PROBE sdk=34 variant=%s cycles=20 ok=%d failed=%d maxCommitMs=1' % (v, 19 if v == 'PLAIN' else 20, 1 if v == 'PLAIN' else 0) for v in VARIANTS])),
     'probe_variant_missing_api34': (34, 'REJECT', job(34, probe_lines=['PUBLISH_PROBE sdk=34 variant=%s cycles=20 ok=20 failed=0 maxCommitMs=1' % v for v in VARIANTS[:-1]]
                                                       + ['PUBLISH_PROBE_SIGNATURE sdk=34 x', 'PUBLISH_PROBE_ATTRIBUTION sdk=34 foreignDelete: x',
-                                                         'PUBLISH_PROBE_ATTRIBUTION sdk=34 duringCleanup: x', 'PUBLISH_RACE sdk=34 count=30 outcome=x'])),
+                                                         'PUBLISH_PROBE_ATTRIBUTION sdk=34 duringCleanup: x', 'PUBLISH_RACE sdk=34 count=30 outcome=x', 'PUBLISH_PROBE_SAMENAME sdk=34 second=x'])),
     'probe_test_missing_api34': (34, 'REJECT', job(34, probe=instr({'de.evp.helfer.MediaStorePublishProbeTest': PROBES[:2]}))),
     'probe_status_missing_api34': (34, 'REJECT', job(34, probe_status='')),
     'system_crash_api29': (29, 'REJECT', job(29, main=instr(CLASSES, crash='cpuStaysAwakeOnlyWhileDownloading'),

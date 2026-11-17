@@ -185,3 +185,15 @@ der Update-Folge des Providers erzeugt auf API 34 nachweislich genau `rows=0`. E
 Jede testseitige Löschung per Uri steht deshalb jetzt mit ID in der Zeitleiste der Fehlermeldung.
 
 Die Android-10-Beobachtung (Datei umbenannt, Zeile weg) ist ein anderer Ablauf und bleibt offen.
+
+## 7. CI auf `2157122`
+
+- **API 26:** Build-Abbruch an Maven Central (HTTP 429), kein Test gelaufen; ein Re-Run folgt.
+- **API 29:** gültige Umgebung (App-Heap 512 MiB). Hauptlauf 45/46, nur SIZE; Sonden OK; Neustart 4/4 OK. Gate: **REJECT** allein wegen `publicFileForUninstallCheck` in einer Klassen-Wiederholung.
+
+**H4 für diesen Fall belegt:** Der Test-Snapshot zeigt `diskFinal=exists(65536) finalNameOtherIds=0`. Die Datei mit dem festen Namen `C2 Persist 29.mp4` aus dem Hauptlauf lag noch auf dem Datenträger, und Android 10 lehnt das Veröffentlichen auf den belegten Namen mit `SQLiteConstraintException` ab. Der Abbruch entfernte den ausstehenden Eintrag sauber (`deleted:1`).
+
+Folgen:
+
+- Dieser Test hinterlässt absichtlich eine Datei für die Deinstallationsprüfung und ist deshalb nicht wiederholbar. Er wird nur aus den Klassen-Wiederholungen ausgenommen; im Hauptlauf läuft er unverändert.
+- **Mögliches Produktrisiko (Android 10, außerhalb des Android-17-Tests):** Ein zweiter Download desselben Titels könnte so scheitern. Die neue deterministische Sonde `sameFinalNameTwice` protokolliert für jede Android-Version, was dabei geschieht (`PUBLISH_PROBE_SAMENAME`). Sie prüft nur, dass ein Fehlschlag keinen ausstehenden Eintrag hinterlässt. Das Gate verlangt diesen Beleg.

@@ -254,6 +254,64 @@ public class MediaStorePublishProbeTest {
 
     static final int RACE_CYCLES = 30;
 
+    /**
+     * Review P2, Hypothese H4 („Zielname belegt“): zweimal hintereinander unter DEMSELBEN Endnamen veröffentlichen (wie
+     * ein zweiter Download desselben Titels). Auf Android 10 scheiterte das Veröffentlichen auf einen belegten Namen in CI
+     * mit SQLiteConstraintException. Protokolliert wird, was jede Android-Version tut (PUBLISH_PROBE_SAMENAME); geprüft
+     * wird nur, was immer gelten muss: der erste Eintrag ist veröffentlicht, und scheitert der zweite, bleibt von ihm kein
+     * ausstehender Eintrag zurück. Kein Produktverhalten geändert.
+     */
+    @Test public void sameFinalNameTwice() throws Exception {
+        assumeTrue("MediaStore pending entries exist from API 29", Build.VERSION.SDK_INT >= 29);
+        Context ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Mp4Downloads store = new Mp4Downloads(ctx, "mp4-jobs-probe-same-" + SystemClock.elapsedRealtimeNanos(),
+            DeviceTestClients.loopback(9), () -> true);
+        ContentResolver cr = ctx.getContentResolver();
+        String name = de.evp.helfer.dl.DirectDownloads.fileName("C2 ProbeSame " + Long.toHexString(SystemClock.elapsedRealtimeNanos()));
+        Uri first = null, second = null;
+        String outcome;
+        File secondProof = null;
+        try {
+            DownloadStore.Target t1 = store.create(name, "video/mp4");
+            OutputStream o1 = t1.out();
+            o1.write(new byte[64 << 10]);
+            o1.close();
+            first = (Uri) t1.commit();
+            assertTrue("first publication is published", published(cr, first));
+            DownloadStore.Target t2 = store.create(name, "video/mp4");
+            secondProof = Mp4DownloadsInstrumentedTest.proofOf(t2);
+            OutputStream o2 = t2.out();
+            o2.write(new byte[64 << 10]);
+            o2.close();
+            try {
+                second = (Uri) t2.commit();
+                outcome = "published name=" + displayName(cr, second).replace(name.substring(0, name.length() - 4), "<title>");
+            } catch (IOException | RuntimeException e) {
+                outcome = "failed " + e.getClass().getSimpleName() + ": " + String.valueOf(e.getMessage()).replaceAll("uri=\\S+", "");
+            } finally {
+                t2.abort();
+            }
+            Log.i(TAG, "PUBLISH_PROBE_SAMENAME sdk=" + Build.VERSION.SDK_INT + " second=" + outcome);
+            if (second == null && secondProof != null) {
+                Uri all = MediaStore.setIncludePending(MediaStore.Downloads.EXTERNAL_CONTENT_URI);
+                try (Cursor c = cr.query(all, new String[] {MediaStore.Downloads._ID}, "owner_package_name=? AND _display_name LIKE ?",
+                        new String[] {ctx.getPackageName(), secondProof.getName() + "--%"}, null)) {
+                    assertEquals("failed second publication leaves no pending entry", 0, c == null ? -1 : c.getCount());
+                }
+            }
+        } finally {
+            if (first != null) try { cr.delete(first, null, null); } catch (RuntimeException ignored) { }
+            if (second != null) try { cr.delete(second, null, null); } catch (RuntimeException ignored) { }
+            store.engine.stopAll();
+        }
+    }
+
+    private static String displayName(ContentResolver cr, Uri u) {
+        try (Cursor c = cr.query(u, new String[] {MediaStore.Downloads.DISPLAY_NAME}, null, null, null)) {
+            return c != null && c.moveToFirst() ? String.valueOf(c.getString(0)) : "?";
+        }
+    }
+
     private static boolean published(ContentResolver cr, Uri u) {
         try (Cursor c = cr.query(u, new String[] {MediaStore.Downloads.IS_PENDING}, null, null, null)) {
             return c != null && c.moveToFirst() && c.getInt(0) == 0;

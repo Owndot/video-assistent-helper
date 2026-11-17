@@ -20,7 +20,7 @@ import sys
 MAIN_CLASSES = ['de.evp.helfer.ChannelInstrumentedTest', 'de.evp.helfer.net.SafeHttpInstrumentedTest',
                 'de.evp.helfer.Mp4DownloadsInstrumentedTest', 'de.evp.helfer.HlsDownloadsInstrumentedTest']
 PROBE_TESTS = ['repeatedPublicationsOfTheAppStore', 'processStartCleanupDuringAJobSignature',
-               'cleanupAttributionIsConservative', 'concurrentDeletionDuringPublishRace']
+               'cleanupAttributionIsConservative', 'concurrentDeletionDuringPublishRace', 'sameFinalNameTwice']
 PROBE_VARIANTS = ['PLAIN', 'PAUSE_MID_WRITE', 'PAUSE_BEFORE_CLOSE', 'PAUSE_BEFORE_COMMIT', 'ABORTED_SIBLING_THEN_PAUSE_MID_WRITE',
                   'LARGE_DELETE_BEFORE_COMMIT', 'CONCURRENT_PROVIDER_LOAD']
 RESTARTS = ['restart-force-stop-A', 'restart-force-stop-B', 'restart-process-replaced-A', 'restart-process-replaced-B']
@@ -161,7 +161,8 @@ def evaluate(log, api, job_conclusion=None):
                 elif mm.group(3) != '0' or mm.group(1) != mm.group(2):
                     reasons.append('publish probe variant %s failed %s of %s' % (v, mm.group(3), mm.group(1)))
             for need in ('PUBLISH_PROBE_SIGNATURE sdk=%d' % api, 'PUBLISH_PROBE_ATTRIBUTION sdk=%d foreignDelete:' % api,
-                         'PUBLISH_PROBE_ATTRIBUTION sdk=%d duringCleanup:' % api, 'PUBLISH_RACE sdk=%d' % api):
+                         'PUBLISH_PROBE_ATTRIBUTION sdk=%d duringCleanup:' % api, 'PUBLISH_RACE sdk=%d' % api,
+                         'PUBLISH_PROBE_SAMENAME sdk=%d' % api):
                 if need not in pl:
                     reasons.append('publish probe evidence missing: %s' % need)
     elif status != ['skipped']:
