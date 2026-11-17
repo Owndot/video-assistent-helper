@@ -136,3 +136,28 @@ und `listener.finished` ungeschützt); die gemeinsame Platzfreigabe ist über `J
   - Das Gate ruft für alle drei Emulator-Jobs `tools/device_gate.py` aus `SOURCE_SHA` auf.
   - Ohne `DELIVERY_REQUESTED: 'yes'` wird der Paket-Job übersprungen. Diese Änderung startet also **keine** Lieferung.
   - `SOURCE_SHA` bleibt unverändert; der alte Stand hätte das neue Gate ohnehin nicht (fail-closed).
+
+## 5. CI auf `e5fb290` (erster Lauf mit neuer Diagnose und neuem Gate)
+
+| Prüfung | Ergebnis |
+|---|---|
+| API 26 | **grün** |
+| API 29 | Hauptlauf 45/46, nur SIZE. Sonden OK (4 Tests, 165 Veröffentlichungen ohne Fehler). Neustart 4/4 OK (erstmals sichtbar). Wiederholungen 20/22: die zwei Läufe der ganzen Klasse, Belege nur im Artefakt. Gate: **REJECT** (fehlende Belege) |
+| API 34 | **REJECT**: `duplicateAndLateStartsFetchOnce` mit `IOException: publish rows=0 proof=present cleanup=not-observed trail=insert#7+4ms,open#8+6ms,close#9+501ms,update=0#10+505ms`, Abbruch `deleted:0`. Sonden OK (alle Varianten fehlerfrei). |
+| Wettlauf-Sonde (H1) | API 29: 30/30 veröffentlicht, danach entfernt (kein Überholen). API 34: 28× veröffentlicht, 2× überholt → jedes Mal `threw=IllegalStateException`, Zeile überall weg (`downloads=absent filesSameId=absent`), keine Datei. **Kein einziges `rows=0`.** |
+
+**Bewertung `rows=0` (API 34):**
+
+- **Belegt:** Es tritt in einem regulären Test auf, ohne Bereinigung in diesem Prozess während der Lebenszeit des Eintrags (`not-observed`). Eine fremde Löschung vor oder während des Veröffentlichens führte in allen kontrollierten Fällen zu einer Ausnahme, nicht zu `rows=0`.
+- **Nicht belegt:**
+  - Ursache H2 (Zeile nur in `MediaStore.Files`) bzw. H3 (Provider/Binder);
+  - ob die Datei unter dem Endnamen zurückblieb.
+
+  Der Test gab den Provider-Zustand nicht aus.
+
+  **Nachgerüstet:**
+  - Der Test zeigt jetzt `storageCause()`.
+  - Jeder Ablagefehler jedes MP4-Tests erscheint als `MP4_STORE_FAILURE … provider={…}` im Job-Log.
+  - Bei rotem Hauptlauf erscheinen die MediaProvider-Zeilen (`MAIN_SYSTEM:`).
+
+  Damit trennt das nächste Auftreten H1/H2/H3.

@@ -30,7 +30,12 @@ adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS 2>/dev/null || tru
 adb shell dumpsys package $PKG | grep -E 'WRITE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE' | sed 's/^/STORAGE_BEFORE /' || true
 adb shell am instrument -w -r -e class de.evp.helfer.ChannelInstrumentedTest,de.evp.helfer.net.SafeHttpInstrumentedTest,de.evp.helfer.Mp4DownloadsInstrumentedTest,de.evp.helfer.HlsDownloadsInstrumentedTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$REPORT/instrumentation.txt" 2>&1
 status=0
-grep -q '^OK (' "$REPORT/instrumentation.txt" || status=1
+if ! grep -q '^OK (' "$REPORT/instrumentation.txt"; then
+  status=1
+  # Review P2: Systemseite eines gescheiterten Hauptlaufs (nur Ablage-/MediaProvider-Meldungen, synthetische Testnamen),
+  # z. B. ob der MediaProvider beim Veröffentlichen die Datei schon umbenannt hat ("Moving … to …").
+  adb logcat -d | grep -E 'MediaProvider|FuseDaemon|MediaStore' | grep -iE 'C2 |rename|moving|update|pending|fail|error' | tail -60 | sed 's/^/MAIN_SYSTEM: /'
+fi
 # Diagnose (API 29+): wiederholte Veröffentlichungen über die echte App-Ablage (MediaStorePublishProbeTest). Eigener
 # Lauf, eigene Datei; im Job-Log nur eindeutig markierte Zeilen. Ein Fehlschlag ist ein Befund und macht den Job rot.
 PROBE_STATUS=skipped

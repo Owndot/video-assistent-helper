@@ -612,7 +612,7 @@ public class Mp4DownloadsInstrumentedTest {
             engine.start(id, srv.url("/v.mp4"), t);
             engine.start(id, srv.url("/other.mp4"), "Other");
             String r = events.await(id, 30_000);
-            assertEquals("result (cause: " + engine.diagnostics(id) + "; last abort: " + Mp4Downloads.lastAbortOutcome + ")", "done", r);
+            assertEquals("result (" + storageCause(engine, id) + ")", "done", r);   // Review P2: inkl. Provider-Zustand
             cleanup.add((Uri) events.saved.get(id));
             if (Build.VERSION.SDK_INT < 29) cleanupFiles.add(new File(legacyDir(), t + ".mp4"));
             assertTrue(engine.start(id, srv.url("/v.mp4"), t).contains("\"state\":\"done\""));
@@ -770,6 +770,9 @@ public class Mp4DownloadsInstrumentedTest {
                         // RuntimeException meldet die Engine als "network": hier der eigentliche Ablagefehler
                         lastFailure = "commit " + e + " at=" + SystemClock.elapsedRealtime() + "ms " + where()
                             + " provider={" + providerState(ctx.getContentResolver(), Uri.parse(target.ref()), name, proof) + "}";
+                        // Review P2: jeder Ablagefehler jedes MP4-Tests landet so im Job-Log (Messzeilen), auch wenn die
+                        // Assertion des Tests ihn nicht ausgibt – Grundlage für die Trennung der Hypothesen H1/H2/H3.
+                        Log.i(TAG, "MP4_STORE_FAILURE sdk=" + Build.VERSION.SDK_INT + " " + lastFailure);
                         throw e;
                     }
                 }
