@@ -45,9 +45,10 @@ public class OrphanNameCollisionProbeTest {
     private static final String TAG = "MP4_TEST";
     static final int SIZE = 256 << 10;
 
+    /** Gültiger MP4-Anfang (ftyp) wie in den übrigen Gerätetests; sonst bricht die Engine vor der Ablage ab (not_mp4). */
     static byte[] newContent() {
         byte[] b = new byte[SIZE];
-        for (int i = 0; i < SIZE; i++) b[i] = (byte) ((i * 31 + 7) % 251);
+        for (int i = 0; i < SIZE; i++) b[i] = (byte) Mp4DownloadsInstrumentedTest.at(i);
         return b;
     }
 
@@ -130,6 +131,9 @@ public class OrphanNameCollisionProbeTest {
                 cr.delete(ContentUris.withAppendedId(base, id), null, null);
             }
         }
+        // Die Sonde ist nur aussagekräftig, wenn der Download die Veröffentlichung tatsächlich erreicht hat.
+        assertTrue("probe must reach the publication step (done or a storage failure), got " + state + "/" + reason,
+            state.equals("done") || (state.equals("failed") && (reason.equals("storage") || reason.equals("internal"))));
         if (state.equals("done")) {
             boolean found = false;
             for (String r : rowsAfter) found |= r.endsWith("|" + SIZE + "|" + want);
