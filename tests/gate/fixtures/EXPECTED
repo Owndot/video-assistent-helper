@@ -21,6 +21,7 @@ size_only_api29 29 ACCEPTED_SIZE_ONLY
 size_only_with_class_repeats_api29 29 ACCEPTED_SIZE_ONLY
 size_plus_publish_api29 29 REJECT
 size_plus_unknown_api29 29 REJECT
+small_app_heap_api29 29 REJECT
 system_crash_api29 29 REJECT
 truncated_log_api34 34 REJECT
 unknown_failure_api34 34 REJECT

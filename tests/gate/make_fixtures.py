@@ -139,6 +139,8 @@ CASES = {
     'system_crash_api29': (29, 'REJECT', job(29, main=instr(CLASSES, crash='cpuStaysAwakeOnlyWhileDownloading'),
                                              crash=['11-16 22:59:20.364  1904  6709 E AndroidRuntime: *** FATAL EXCEPTION IN SYSTEM PROCESS: Thread-123',
                                                     '11-16 22:59:20.364  1904  6709 E AndroidRuntime: java.lang.OutOfMemoryError: Failed to allocate a 4194320 byte allocation'])),
+    'small_app_heap_api29': (29, 'REJECT', job(29, main=instr(CLASSES, {'publishesThroughMediaStoreAndReadsBack': SIZE_STACK}),
+        extra=['11-17 09:44:58.000  6138  6156 I HLS_TEST: HLS_MEASURE api=29 samples=43126 ms=3727 points=41 retainedFixedKiB=0 retainedEndKiB=3424 bytesPerSample=42 maxHeapMiB=16 budgetSamples=1000000 budgetHeapMiB=40'])),
     'app_crash_in_buffer_api34': (34, 'REJECT', job(34, crash=['11-16 22:59:20.392  5758  6712 E AndroidRuntime: FATAL EXCEPTION: evp-mp4'])),
     'restart_failed_api34': (34, 'REJECT', job(34, restart_fail='restart-process-replaced-B')),
     'restart_missing_api34': (34, 'REJECT', job(34, restart_drop='restart-force-stop-A')),

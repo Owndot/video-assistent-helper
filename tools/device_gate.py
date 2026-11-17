@@ -188,6 +188,12 @@ def evaluate(log, api, job_conclusion=None):
     if re.search(r'FATAL EXCEPTION IN SYSTEM PROCESS|System has crashed|DeadSystemException', text):
         reasons.append('emulator/system crash in this job')
 
+    # 4b) Testumgebung: Heap des App-Prozesses (HLS_MEASURE); auf API 29 wurde sporadisch 16 MiB statt 512 MiB beobachtet –
+    # dann sind Ergebnisse nicht aussagekräftig (Speicherfehler in HLS-Tests, OOM in Prüfschritten). Nie akzeptiert.
+    heaps = [int(h) for h in re.findall(r'HLS_MEASURE api=\d+ .*?maxHeapMiB=(\d+)', text)]
+    if heaps and min(heaps) < 128:
+        reasons.append('invalid emulator environment: app heap %d MiB (expected >= 128)' % min(heaps))
+
     # 5) Wiederholungen und erwarteter Mutantenfehler (Veröffentlichungs-Regression)
     rep = re.findall(r'(?m)^REPEAT api=(\d+) runs=(\d+) passed=(\d+) failed=(\d+)$', text)
     rsecs = {n: b for n, b in secs.items() if n.startswith('repeat-')}

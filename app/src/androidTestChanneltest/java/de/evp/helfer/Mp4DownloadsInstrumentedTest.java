@@ -78,9 +78,23 @@ public class Mp4DownloadsInstrumentedTest {
 
     /** URL, Host und Token der Testserver dürfen nie im Logcat stehen (auch nicht in Fehlermeldungen). */
     @org.junit.AfterClass public static void logcatHasNoUrl() throws Exception {
-        String logcat = shell("logcat -d");
-        assertFalse("URL token found in logcat", logcat.contains(SECRET));
-        assertFalse("test host found in logcat", logcat.contains("dl.test:"));
+        java.util.Set<String> found = shellScan("logcat -d", SECRET, "dl.test:");
+        assertFalse("URL token found in logcat", found.contains(SECRET));
+        assertFalse("test host found in logcat", found.contains("dl.test:"));
+    }
+
+    /**
+     * Review P3: zeilenweise Suche in einer Shell-Ausgabe (z. B. logcat), ohne alles in den Speicher zu laden – mit dem
+     * auf API 29 beobachteten 16-MiB-Heap des Emulators scheiterte das Puffern (OutOfMemoryError). Gleiche Prüfung.
+     */
+    static java.util.Set<String> shellScan(String cmd, String... needles) throws Exception {
+        java.util.Set<String> found = new java.util.HashSet<>();
+        ParcelFileDescriptor pfd = InstrumentationRegistry.getInstrumentation().getUiAutomation().executeShellCommand(cmd);
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(
+                new ParcelFileDescriptor.AutoCloseInputStream(pfd), StandardCharsets.UTF_8))) {
+            for (String line; (line = r.readLine()) != null; ) for (String n : needles) if (line.contains(n)) found.add(n);
+        }
+        return found;
     }
 
     static String shell(String cmd) throws Exception {

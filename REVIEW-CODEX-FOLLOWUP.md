@@ -161,3 +161,13 @@ und `listener.finished` ungeschützt); die gemeinsame Platzfreigabe ist über `J
   - Bei rotem Hauptlauf erscheinen die MediaProvider-Zeilen (`MAIN_SYSTEM:`).
 
   Damit trennt das nächste Auftreten H1/H2/H3.
+
+## 6. CI auf `39b249a`
+
+API 29 – Gate **REJECT** mit eindeutigen Gründen:
+
+- **Testumgebung ungültig:** App-Heap **16 MiB** statt 512 MiB (`HLS_MEASURE … maxHeapMiB=16`, `OutOfMemoryError … growth limit 16777216`). Folgen:
+  - zwei HLS-Tests melden `memory` statt des erwarteten Ergebnisses;
+  - zwei Kurz-Wiederholungen scheitern an einem OOM im eigenen Logcat-Prüfschritt (`logcatHasNoUrl` las den ganzen Logcat in den Speicher).
+  Das ist der bekannte sporadische Emulator-Zustand. Das Gate nennt ihn jetzt ausdrücklich („invalid emulator environment“) und akzeptiert ihn nie. Beide Logcat-Prüfungen (MP4, Kanal) lesen jetzt zeilenweise; die Prüfung selbst ist unverändert.
+- **Neue Beobachtung H4 (Namenskonflikt):** In der Klassen-Wiederholung scheiterte `publicFileForUninstallCheck` mit `publish threw=SQLiteConstraintException`. Der Test veröffentlicht unter einem **festen** Namen (`C2 Persist 29.mp4`), den der Hauptlauf für die Deinstallationsprüfung bereits angelegt hatte. Android 10 lehnt das Umbenennen auf einen vorhandenen Namen mit einer Ausnahme ab. Für den API-34-Fall (`rows=0`, eindeutiger Titel) ist das **keine** Erklärung; ob API 34 einen solchen Konflikt als `rows=0` statt als Ausnahme meldet, ist **offen** und als nächster gezielter Gerätetest vorgesehen.

@@ -103,9 +103,13 @@ public class ChannelInstrumentedTest {
 
     @AfterClass public static void scanLogcat() throws Exception {
         Log.i(TAG, "CHANNEL_MEASURE end " + memory());
-        String logcat = shell("logcat -d");
-        for (String s : SECRETS) assertFalse("secret material found in logcat", logcat.contains(s));
-        assertTrue("log scan saw our own test output", logcat.contains("CHANNEL_MEASURE"));
+        // Review P3: zeilenweise (kein Puffern der ganzen Ausgabe; 16-MiB-Heap auf API 29 beobachtet), gleiche Prüfungen
+        List<String> all = new ArrayList<>(SECRETS);
+        all.add("CHANNEL_MEASURE");
+        String[] needles = all.toArray(new String[0]);
+        java.util.Set<String> found = Mp4DownloadsInstrumentedTest.shellScan("logcat -d", needles);
+        for (String s : SECRETS) assertFalse("secret material found in logcat", found.contains(s));
+        assertTrue("log scan saw our own test output", found.contains("CHANNEL_MEASURE"));
     }
 
     static String memory() {
