@@ -308,55 +308,15 @@ jobs:
           echo "DEVICE_GATE_SHA256=$(sha256sum < "$RUNNER_TEMP/device_gate.py" | cut -d' ' -f1)" >> "$GITHUB_ENV"
           echo "WORKFLOW_SHA=$WORKFLOW_SHA" >> "$GITHUB_ENV"
           echo "source $SOURCE_SHA, workflow commit $WORKFLOW_SHA; production UNAPPROVED; durable P4 identity not created (unchanged)"
-      - name: Required CI on the exact source commit; device gate on every emulator job (only P4B-A10-SIZE on API 29 may fail)
+      - name: Required CI - source commit complete; device gate on EVERY emulator job of the same application code (only P4B-A10-SIZE on API 29)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json, os, re, subprocess, sys
-          repo, sha = os.environ['GITHUB_REPOSITORY'], os.environ['SOURCE_SHA']
-          def api(path):
-              return json.loads(subprocess.run(['gh', 'api', path], check=True, capture_output=True, text=True).stdout)
-          runs = api(f'repos/{repo}/actions/runs?head_sha={sha}&per_page=100')['workflow_runs']
-          def latest(path):
-              a = [r for r in runs if r['path'] == path]
-              assert a, f'no run of {path} on {sha}'
-              r = max(a, key=lambda r: r['id'])
-              assert r['status'] == 'completed', f'{path} not completed'
-              return r
-          for path in ['.github/workflows/build.yml', '.github/workflows/browser-tests.yml', '.github/workflows/hls-download.yml']:
-              r = latest(path)
-              assert r['conclusion'] == 'success', f"{path}: {r['conclusion']}"
-              print(f"PASS {path}: success (run {r['id']}, attempt {r['run_attempt']})")
-          r = latest('.github/workflows/helper-channel.yml')
-          jobs = api(f"repos/{repo}/actions/runs/{r['id']}/jobs?per_page=100")['jobs']
-          assert len(jobs) == 5, [j['name'] for j in jobs]
-          for j in jobs:
-              print(f"  helper-channel job: {j['conclusion']:8} {j['name']}")
-          emu = {}
-          for j in jobs:
-              m = re.match(r'Test package de\.evp\.helfer\.channeltest on a disposable API (\d+) emulator$', j['name'])
-              if m:
-                  emu[int(m.group(1))] = j
-          assert sorted(emu) == [26, 29, 34], sorted(emu)
-          other = [j for j in jobs if j not in emu.values()]
-          assert all(j['conclusion'] == 'success' for j in other), [(j['name'], j['conclusion']) for j in other]
-          # JEDER Emulator-Job wird vollständig bewertet (tools/device_gate.py aus dem Workflow-Commit), nicht nur rote.
-          # Einzige zulässige Ausnahme bleibt P4B-A10-SIZE auf API 29 (Gate-Exit 3); API 26 und 34 müssen PASS sein.
-          for apilevel, j in sorted(emu.items()):
-              assert j['conclusion'] in ('success', 'failure'), (apilevel, j['conclusion'])
-              # Job-Log über die Weiterleitung zum Log-Speicher (curl schickt den Token dorthin nicht mit).
-              log = subprocess.run(['curl', '-sSfL', '--retry', '3', '-H', 'Authorization: Bearer ' + os.environ['GH_TOKEN'],
-                                    '-H', 'Accept: application/vnd.github+json', f"https://api.github.com/repos/{repo}/actions/jobs/{j['id']}/logs"],
-                                   check=True, capture_output=True, text=True).stdout
-              path = os.path.join(os.environ['RUNNER_TEMP'], f'device-api{apilevel}.log')
-              open(path, 'w').write(log)
-              g = subprocess.run([sys.executable, '-I', os.path.join(os.environ['RUNNER_TEMP'], 'device_gate.py'), path, '--api', str(apilevel), '--job-conclusion', j['conclusion']])
-              allowed = (0, 3) if apilevel == 29 else (0,)
-              assert g.returncode in allowed, f'device gate rejected API {apilevel} (exit {g.returncode})'
-          print(f"PASS helper-channel (run {r['id']}): JVM, mutations, macOS signing self-test; device gate API 26/34 PASS, API 29 PASS or only P4B-A10-SIZE")
-          PY
+          # tools/delivery/ci_evidence.py aus dem Workflow-Commit: alle Läufe und Versuche aller Commits mit gleichem
+          # Anwendungscode zählen, damit ein späterer roter Lauf nicht durch einen grünen auf SOURCE_SHA verdeckt wird.
+          git show "$WORKFLOW_SHA:tools/delivery/ci_evidence.py" > "$RUNNER_TEMP/ci_evidence.py"
+          python3 -I "$RUNNER_TEMP/ci_evidence.py" --repo "$GITHUB_REPOSITORY" --source "$SOURCE_SHA" --workflow-sha "$WORKFLOW_SHA" --gate "$RUNNER_TEMP/device_gate.py"
       - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:

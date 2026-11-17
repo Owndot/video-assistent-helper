@@ -113,6 +113,35 @@ Belege (`tests/gate/test_device_gate.py`):
 Der Paketjob nimmt das Gate aus dem Workflow-Commit (nicht aus `SOURCE_SHA`) und schreibt dessen SHA-256 in die
 Evidenz.
 
+**CI-Belege ohne Rosinenpicken** (`tools/delivery/ci_evidence.py`, im Paketjob nach der Sperre):
+
+- Nicht nur der Lauf auf `SOURCE_SHA` zählt, sondern **jeder** abgeschlossene Emulator-Job aller helper-channel-Läufe
+  und aller Versuche auf jedem Commit mit gleichem Anwendungscode (`SOURCE_SHA` bis zum Workflow-Commit).
+- Jeder dieser Jobs muss das Gate bestehen. Ein späterer roter Lauf desselben Codes lässt sich weder durch einen
+  grünen Lauf noch durch einen Re-Run verdecken.
+- Abgebrochene Jobs zählen nicht als Beleg und werden ausgewiesen; ein laufender Job sperrt.
+- Trockenlauf gegen die echten Läufe (nur lesend): 8 Emulator-Jobs auf `546af14`, `261b77c` und `f3bf6a4` bewertet,
+  Ergebnis **REJECT**, weil API 29 auf `f3bf6a4` abgewiesen wird (siehe unten).
+
+### Neuer Befund: API 29 auf `f3bf6a4` (Anwendungscode = `546af14`), Lauf 44090927478
+
+- **`publish rows=0`** in `interruptionFailsCleanOrResumesExactly`, `proof=present cleanup=not-observed`.
+  Der Provider-Schnappschuss lautet `downloads=absent filesSameId=absent finalNameOtherIds=0 diskFinal=exists(8388608)
+  diskPending=absent`. Die vollständige Datei liegt also unter dem Endnamen auf der Platte, ohne MediaStore-Zeile.
+  Der MediaProvider hatte sie vorher umbenannt ("Moving …pending--C2 Resume … to …C2 Resume …").
+- **Etwa 0,6 s später OOM im Systemprozess** (`FATAL EXCEPTION IN SYSTEM PROCESS`, Wachstumslimit 16 MiB), danach
+  `DeadSystemException`. Hauptlauf und Sonden wurden abgebrochen.
+- **Gleiches Muster wie `291cff1`** (API 29, Versuch 2: `publish rows=0` und System-OOM mit 16 MiB). In grünen
+  API-29-Läufen hat der App-Prozess 512 MiB; die Geräte-Properties sind identisch.
+- **Hypothese, nicht bewiesen:** Auf API 29 entsteht `rows=0` in Emulator-Starts mit Systemspeicher-Engpass
+  (MediaProvider bricht nach dem Umbenennen ab, H3).
+- **Folge für die Wiederherstellung:** Eine solche Datei bleibt ohne Eintrag im Download-Ordner, während die App
+  „Speichern fehlgeschlagen“ meldet.
+- Für API 34 (`e5fb290`) ist kein Speicherengpass belegt.
+- Das Gate weist den Lauf korrekt ab (Veröffentlichungsfehler, Systemabsturz, unvollständige Tests). Nach den Regeln
+  ist eine Lieferung von `546af14` deshalb **derzeit gesperrt**, bis der Eigentümer über diesen Befund entscheidet.
+  Ein grüner Wiederholungslauf hebt den roten nicht auf.
+
 ## P2 – Liefermetadaten
 
 - Der Artefaktname wird aus `SOURCE_SHA` und der Freigabe-ID gebildet; alte, fest kodierte Namen sind entfernt.
@@ -133,8 +162,8 @@ Evidenz.
 - Reproduzierbarer Bau (zwei Wege) und Wegwerf-Signierung samt Schlüssellöschung.
 - Prüfung der signierten APK vor und nach dem Emulator: Paket, Berechtigungen, Signierer, Bibliotheken.
 - Installations-Rauchtest auf API 34 und der Upload.
-- Das tatsächliche Gate-Urteil über die CI-Logs auf `SOURCE_SHA` innerhalb des Paketjobs. Lokal mit identischer
-  Logik und den echten Logs geprüft.
+- Das tatsächliche Urteil von `ci_evidence.py` im Paketjob (Log-Abruf mit dem Workflow-Token). Lokal mit identischer
+  Logik, `gh` lesend und den echten Logs geprüft; Ergebnis derzeit REJECT.
 - Der positive Pfad der Freigabesperre gegen die echte GitHub-API. Bisher nur mit Attrappen geprüft; die negativen
   Pfade laufen auch in der CI.
 
