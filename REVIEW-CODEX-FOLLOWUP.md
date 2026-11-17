@@ -171,3 +171,17 @@ API 29 – Gate **REJECT** mit eindeutigen Gründen:
   - zwei Kurz-Wiederholungen scheitern an einem OOM im eigenen Logcat-Prüfschritt (`logcatHasNoUrl` las den ganzen Logcat in den Speicher).
   Das ist der bekannte sporadische Emulator-Zustand. Das Gate nennt ihn jetzt ausdrücklich („invalid emulator environment“) und akzeptiert ihn nie. Beide Logcat-Prüfungen (MP4, Kanal) lesen jetzt zeilenweise; die Prüfung selbst ist unverändert.
 - **Neue Beobachtung H4 (Namenskonflikt):** In der Klassen-Wiederholung scheiterte `publicFileForUninstallCheck` mit `publish threw=SQLiteConstraintException`. Der Test veröffentlicht unter einem **festen** Namen (`C2 Persist 29.mp4`), den der Hauptlauf für die Deinstallationsprüfung bereits angelegt hatte. Android 10 lehnt das Umbenennen auf einen vorhandenen Namen mit einer Ausnahme ab. Für den API-34-Fall (`rows=0`, eindeutiger Titel) ist das **keine** Erklärung; ob API 34 einen solchen Konflikt als `rows=0` statt als Ausnahme meldet, ist **offen** und als nächster gezielter Gerätetest vorgesehen.
+
+API 34 und API 26 auf `39b249a`: **grün**; das Gate liefert für beide echten Logs **PASS** (keine Fehlablehnung grüner Läufe).
+
+**Wichtigster neuer Beleg zu H1 (API 34, Wettlauf-Sonde):** `PUBLISH_RACE sdk=34 count=2 outcome=rows=0 downloads=absent
+filesSameId=absent finalNameOtherIds=0 diskFinal=absent diskPending=absent`. Ein Entfernen der ausstehenden Zeile WÄHREND
+der Update-Folge des Providers erzeugt auf API 34 nachweislich genau `rows=0`. Ein Entfernen kurz davor erzeugt dagegen
+`threw=IllegalStateException` (Lauf `e5fb290`). Danach bleibt nichts zurück: keine Zeile, keine Datei.
+
+- **Belegt:** H1 ist ein reproduzierter Mechanismus für `rows=0` auf API 34.
+- **Nicht belegt:** wer im CI-Fall (`duplicateAndLateStartsFetchOnce`, `proof=present`, keine laufende Prozessstart-Bereinigung) die Zeile entfernte. Der eigene Prozessstart-Cleanup ist durch `proof=present` und die Zähler praktisch ausgeschlossen, ein anderer Löscher (z. B. eine verspätete Löschung per wiederverwendeter Zeilen-ID, Provider-intern) nicht.
+
+Jede testseitige Löschung per Uri steht deshalb jetzt mit ID in der Zeitleiste der Fehlermeldung.
+
+Die Android-10-Beobachtung (Datei umbenannt, Zeile weg) ist ein anderer Ablauf und bleibt offen.

@@ -302,7 +302,14 @@ public class Mp4DownloadsInstrumentedTest {
         if (busy.isEmpty()) {
             isolateLeftovers();
             ContentResolver cr = ctx.getContentResolver();
-            for (Uri u : cleanup) { try { if ("content".equals(u.getScheme())) cr.delete(u, null, null); } catch (RuntimeException ignored) { } }
+            for (Uri u : cleanup) {
+                try {
+                    if (!"content".equals(u.getScheme())) continue;
+                    // Review P2: jede testseitige Löschung per Uri (mit ID) in die Zeitleiste – Zeilen-IDs können wiederverwendet
+                    // werden; so ließe sich ein späteres "rows=0" einer verspäteten Löschung zuordnen
+                    logCleanup("after-delete " + u.getLastPathSegment() + " rows=" + cr.delete(u, null, null));
+                } catch (RuntimeException ignored) { }
+            }
             for (File f : cleanupFiles) f.delete();
             if (journalName != null) new File(ctx.getFilesDir(), journalName).delete();
         } else {
@@ -362,7 +369,7 @@ public class Mp4DownloadsInstrumentedTest {
 
     static void logCleanup(String what) {
         CLEANUP_LOG.add(SystemClock.elapsedRealtime() + "ms " + what + " thread=" + Thread.currentThread().getName());
-        while (CLEANUP_LOG.size() > 6) CLEANUP_LOG.remove(0);
+        while (CLEANUP_LOG.size() > 40) CLEANUP_LOG.remove(0);   // Review P2: genug für Löschungen per Uri
     }
 
     /** Neue Besitzmarkierungen dieses Tests samt ihrer pending-Einträge entfernen (nur API 29+, nur eigene Namen). */
