@@ -16,7 +16,12 @@ Prüft:
      Environments und falschem Lieferumfang; nur die vollständige Freigabe öffnet (Positivkontrolle).
   5. Mutationsprobe: jede Abschwächung einer Sperrbedingung wird erkannt.
   6. Ende-zu-Ende mit dem eingebetteten Skript: gesperrt → im Gate Exit 0/go=no, im Paketjob (LOCK_REQUIRE_GO=1) Exit 1.
+  Codex NO-GO 3: "irgendein Required Reviewer" genügt nicht. Gesperrt wird auch, wenn der einzige/ein Reviewer der
+  auslösende Eigentümer ist, Administratoren umgehen dürfen (can_admins_bypass), Prevent self-review fehlt, die
+  Reviewer nicht genau die im Workflow festgelegte Identität (LOCK_REVIEWERS) sind, und im Paketjob, wenn für DIESEN
+  Lauf keine Zustimmung eines festgelegten Reviewers (≠ Auslöser) für p4-delivery vorliegt (z. B. Admin-Umgehung).
 """
+import inspect
 import datetime
 import os
 import re
@@ -79,10 +84,14 @@ check(pkg.get('environment') == 'p4-delivery', 'package job waits for the requir
 steps = pkg.get('steps', [])
 
 
+check('LOCK_REVIEWERS' in genv, 'gate names the pinned reviewer identity LOCK_REVIEWERS (empty = locked)')
+
+
 def is_lock_rerun(s, stage):
     e = s.get('env', {}) or {}
     return (e.get('LOCK_REQUIRE_GO') == '1' and e.get('LOCK_STAGE') == stage and e.get('LOCK_SCOPE') == SCOPE
             and e.get('LOCK_BIND') == ' '.join(BIND) and e.get('LOCK_ENVIRONMENT') == 'p4-delivery'
+            and e.get('LOCK_REVIEWERS') == genv.get('LOCK_REVIEWERS')
             and 'python3 -I "$RUNNER_TEMP/delivery_lock.py"' in (s.get('run') or ''))
 
 
@@ -134,7 +143,24 @@ NOW = datetime.datetime(2026, 11, 17, 12, 0, tzinfo=datetime.timezone.utc)
 PINS = {n: ('%x' % (i + 10)) * 40 for i, n in enumerate(BIND)}
 PINS = {n: v[:40] for n, v in PINS.items()}
 OWNER, SHA, BEFORE = 'owner', 'c' * 40, 'b' * 40
-PROTECTED = {'name': 'p4-delivery', 'protection_rules': [{'type': 'required_reviewers', 'reviewers': [{'type': 'User', 'reviewer': {'login': 'owner'}}]}]}
+REVIEWER = 'release-reviewer'
+
+
+def env_info(reviewers=(REVIEWER,), bypass=False, self_review=True, team=False, drop=()):
+    rule = {'type': 'required_reviewers', 'prevent_self_review': self_review,
+            'reviewers': [{'type': 'Team', 'reviewer': {'slug': r}} if team else {'type': 'User', 'reviewer': {'login': r}} for r in reviewers]}
+    e = {'name': 'p4-delivery', 'can_admins_bypass': bypass, 'protection_rules': [rule]}
+    for k in drop:
+        e.pop(k, None)
+        rule.pop(k, None)
+    return e
+
+
+PROTECTED = env_info()
+
+
+def approvals(state='approved', login=REVIEWER, env='p4-delivery'):
+    return lambda: [{'state': state, 'user': {'login': login}, 'environments': [{'name': env}], 'comment': 'ok'}]
 
 
 def approval(**over):
@@ -147,7 +173,8 @@ def approval(**over):
 def ctx(**over):
     c = {'approval': approval(), 'bind': BIND, 'pins': dict(PINS), 'event_name': 'push', 'ref': 'refs/heads/' + BRANCH,
          'branch': BRANCH, 'sha': SHA, 'before': BEFORE, 'run_attempt': '1', 'run_id': '900', 'actor': OWNER, 'owner': OWNER,
-         'head_id': SHA, 'head_message': 'deliver\n\nDelivery-Approval: p4-test-0001\n', 'scope': SCOPE, 'environment': 'p4-delivery'}
+         'head_id': SHA, 'head_message': 'deliver\n\nDelivery-Approval: p4-test-0001\n', 'scope': SCOPE, 'environment': 'p4-delivery',
+         'reviewers': [REVIEWER], 'stage': 'gate', 'require_review': False}
     c.update(over)
     return c
 
@@ -164,8 +191,14 @@ def boom(*a):
     raise RuntimeError('API unreachable')
 
 
-def verdict(c, fetch=prev_file('none'), lr=runs(), now=NOW, envf=lambda name: PROTECTED, dec=None):
-    return (dec or decide)(c, fetch, lr, now, envf)
+def verdict(c, fetch=prev_file('none'), lr=runs(), now=NOW, envf=lambda name: PROTECTED, dec=None, apf=approvals()):
+    d = dec or decide
+    if 'fetch_approvals' in inspect.signature(d).parameters:
+        return d(c, fetch, lr, now, envf, apf)
+    return d(c, fetch, lr, now, envf)
+
+
+PKG = dict(stage='package-start', require_review=True)
 
 
 go, why, _ = verdict(ctx(approval='none'))
@@ -178,6 +211,8 @@ go, _, _ = verdict(ctx(), fetch=lambda sha: None)
 check(go, 'positive control: workflow file absent before the push counts as newly introduced')
 go, _, _ = verdict(ctx(approval=valid_pending.replace(PINS_WF[BIND[0]], PINS[BIND[0]]).replace(PINS_WF[BIND[-1]], PINS[BIND[-1]]) if len(BIND) == 2 else approval()))
 check(go, 'positive control: the PENDING form accepted by CI is also accepted by the decision (fakes only)')
+go, why, _ = verdict(ctx(**PKG))
+check(go and not why, 'positive control: package stage with an approval of the pinned reviewer (not the actor) for p4-delivery -> go (fakes only)')
 
 NEG = [
     ('pin changed after the approval', ctx(pins=dict(PINS, **{BIND[0]: 'd' * 40})), {}),
@@ -215,6 +250,24 @@ NEG = [
     ('environment without required reviewers', ctx(), {'envf': lambda n: {'name': n, 'protection_rules': [{'type': 'wait_timer', 'wait_timer': 5}]}}),
     ('environment with an empty reviewer list', ctx(), {'envf': lambda n: {'name': n, 'protection_rules': [{'type': 'required_reviewers', 'reviewers': []}]}}),
     ('environment unreadable (API error)', ctx(), {'envf': boom}),
+    # Codex NO-GO 3: Required Reviewer allein ist keine menschliche Unabhängigkeit
+    ('NO-GO3: the only reviewer is the pushing owner (no independent human)', ctx(reviewers=[OWNER]), {'envf': lambda n: env_info((OWNER,))}),
+    ('NO-GO3: administrators may bypass the environment protection', ctx(), {'envf': lambda n: env_info(bypass=True)}),
+    ('NO-GO3: admin bypass setting unknown (field missing)', ctx(), {'envf': lambda n: env_info(drop=('can_admins_bypass',))}),
+    ('NO-GO3: prevent self-review disabled', ctx(), {'envf': lambda n: env_info(self_review=False)}),
+    ('NO-GO3: prevent self-review unknown (field missing)', ctx(), {'envf': lambda n: env_info(drop=('prevent_self_review',))}),
+    ('NO-GO3: reviewer is not the pinned reviewer identity', ctx(), {'envf': lambda n: env_info(('someone-else',))}),
+    ('NO-GO3: the pushing owner is an additional reviewer', ctx(), {'envf': lambda n: env_info((REVIEWER, OWNER))}),
+    ('NO-GO3: pinned reviewer list contains the owner', ctx(reviewers=[REVIEWER, OWNER]), {'envf': lambda n: env_info((REVIEWER, OWNER))}),
+    ('NO-GO3: reviewer identity not pinned in the workflow', ctx(reviewers=[]), {}),
+    ('NO-GO3: team reviewer (approver membership not provable)', ctx(), {'envf': lambda n: env_info(team=True)}),
+    ('NO-GO3: package stage without an approval record for this run (admin bypass)', ctx(**PKG), {'apf': lambda: []}),
+    ('NO-GO3: package stage approved by the pushing owner', ctx(**PKG), {'apf': approvals(login=OWNER)}),
+    ('NO-GO3: package stage approved by an unpinned account', ctx(**PKG), {'apf': approvals(login='someone-else')}),
+    ('NO-GO3: package stage approval rejected', ctx(**PKG), {'apf': approvals(state='rejected')}),
+    ('NO-GO3: package stage approval for another environment', ctx(**PKG), {'apf': approvals(env='other-env')}),
+    ('NO-GO3: package stage approvals unreadable (API error)', ctx(**PKG), {'apf': boom}),
+    ('NO-GO3: package stage rejected and approved records mixed', ctx(**PKG), {'apf': lambda: approvals()() + approvals(state='rejected')()}),
 ]
 for what, c, kw in NEG:
     go, why, _ = verdict(c, **kw)
@@ -223,7 +276,7 @@ for what, c, kw in NEG:
 
 def decision_failures(dec):
     bad = 0
-    for c, kw, want in [(ctx(approval='none'), {}, False), (ctx(), {}, True)] + [(c, kw, False) for _, c, kw in NEG]:
+    for c, kw, want in [(ctx(approval='none'), {}, False), (ctx(), {}, True), (ctx(**PKG), {}, True)] + [(c, kw, False) for _, c, kw in NEG]:
         try:
             go = verdict(c, dec=dec, **kw)[0]
         except Exception:
@@ -249,6 +302,12 @@ MUTANTS = {
     'previous state error ignored': ("reasons.append('cannot read the previous approval at %s: %s' % (before, e))", "pass"),
     'environment protection ignored': ("        if not ok:\n            reasons.append('environment %s not protected: %s' % (ctx['environment'], why))", "        pass"),
     'environment API error ignored': ("ok, why = False, 'cannot read environment %s: %s' % (ctx['environment'], e)", "ok, why = True, 'x'"),
+    'admin bypass allowed': ("if env_info.get('can_admins_bypass') is not False:", "if False:"),
+    'self-review allowed': ("if rule.get('prevent_self_review') is not True:", "if False:"),
+    'any reviewer identity': ("if sorted(set(logins)) != sorted(set(expected)) or len(logins) != len(set(logins)):", "if False:"),
+    'actor may review': ("if actor and actor in logins:", "if False:"),
+    'no approval record needed': ("if ctx.get('require_review'):", "if False:"),
+    'approval by anyone': ("and (a.get('user') or {}).get('login') in ctx.get('reviewers', [])", ""),
 }
 check(decision_failures(decide) == 0, 'unmutated lock answers every decision case correctly')
 for what, (a, b) in MUTANTS.items():
@@ -267,7 +326,7 @@ with tempfile.TemporaryDirectory() as tmp:
     event = os.path.join(tmp, 'event.json')
     open(event, 'w').write('{"before": "%s", "head_commit": {"id": "%s", "message": "x\\nDelivery-Approval: p4-test-0001"}}' % (BEFORE, SHA))
     base = dict(PATH=os.path.join(tmp, 'nobin'), GITHUB_REPOSITORY='o/r', LOCK_WORKFLOW=WORKFLOW, LOCK_BIND=' '.join(BIND),
-                LOCK_BRANCH=BRANCH, LOCK_SCOPE=SCOPE, LOCK_ENVIRONMENT='p4-delivery', GITHUB_EVENT_NAME='push',
+                LOCK_BRANCH=BRANCH, LOCK_SCOPE=SCOPE, LOCK_ENVIRONMENT='p4-delivery', LOCK_REVIEWERS=REVIEWER, GITHUB_EVENT_NAME='push',
                 GITHUB_REF='refs/heads/' + BRANCH, GITHUB_SHA=SHA, GITHUB_RUN_ATTEMPT='1', GITHUB_RUN_ID='900', GITHUB_ACTOR=OWNER,
                 GITHUB_REPOSITORY_OWNER=OWNER, GITHUB_EVENT_PATH=event, GITHUB_OUTPUT=out, **PINS)
     soon = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).strftime('%Y-%m-%dT%H:%MZ')

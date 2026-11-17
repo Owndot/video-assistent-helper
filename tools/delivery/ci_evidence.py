@@ -13,13 +13,21 @@ Regeln (alle müssen gelten, sonst Exit 1):
        * ein noch laufender Lauf oder Job sperrt – auch ein Lauf ohne gelistete Jobs;
        * success/failure: Log Pflicht (fehlt es → Sperre), Geräte-Gate: REJECT sperrt, INSUFFICIENT_EVIDENCE ist
          kein Beleg, PASS (bzw. auf API 29 ACCEPTED_SIZE_ONLY) ist ein Beleg;
-       * cancelled/timed_out/…: Log wird trotzdem auf Fehlerbelege geprüft (Veröffentlichungsfehler, Absturz,
-         gescheiterte Tests) – gefunden → Sperre; ein gestarteter Job ohne lesbares Log → Sperre;
+       * cancelled/timed_out/Runner-Verlust im Geräteschritt: nie ein Positivbeleg; das Log wird mit DERSELBEN
+         Klassifikation wie im Geräte-Gate geprüft (device_gate.failure_evidence: publish/crash/test-failure sperren,
+         ein streng gültiger Mutantenlauf ist ausgenommen, P4B-A10-SIZE auf API 29 ist ausgewiesen, aber kein Beleg);
+         ein gestarteter Job ohne lesbares Log → Sperre; vor dem Geräteschritt gescheitert → kein Beleg (ausgewiesen);
+       * vollständige Logs: zusätzlich dieselbe Klassifikation; widerspricht sie dem Gate-Urteil → Sperre;
        * skipped bzw. nie gestartet: kein Beleg (ausgewiesen);
        * unerwartete Jobnamen, widersprüchliche Zählungen oder Lauf-Ergebnisse → Sperre.
-  3. Ein Positivbeleg zählt nur, wenn der getestete Code nachweislich dem Commit entspricht: Bei pull_request-Läufen
-     nennt der Checkout „Merge <head> into <base>“; <head> muss der Lauf-Commit sein und <base> ein Vorgänger davon
-     (dann ist der Merge-Baum gleich dem Commit). Sonst kein Positivbeleg (Fehlschläge zählen trotzdem).
+     Codex NO-GO 3: Pflichtjobs (REQUIRED_OTHER: Core/JVM-/Sicherheits-/Mutationsprüfungen, Signierpfad) jedes Versuchs:
+       gescheitert mit Prüfungsergebnis oder unbekannter Ursache → Sperre; nur Infrastruktur (z. B. Maven 429) bzw.
+       Abbruch ohne Prüfungsergebnis → der Versuch liefert KEINEN Positivbeleg; fehlend → Sperre.
+  3. Ein Positivbeleg zählt nur, wenn der tatsächlich getestete Dateibaum nachweislich der des Lauf-Commits ist (Codex
+     NO-GO 3, P2): genau EIN Checkout (ein Fetch, ein "git checkout", ein "git log -1 --format=%H" mit derselben
+     vollständigen SHA), keine weitere git-Änderung des Arbeitsbaums; push: Checkout-SHA = Lauf-Commit; pull_request:
+     der Merge-Commit (Checkout-SHA, per GitHub-API) hat den Lauf-Commit als Elternteil UND exakt dessen Dateibaum.
+     Nicht nachweisbar → kein Positivbeleg (fail closed; Fehlschläge zählen trotzdem).
   4. Abdeckung: für API 26, 29 und 34 je mindestens ein Positivbeleg auf gleichem Anwendungscode.
 """
 import argparse
@@ -32,7 +40,7 @@ import sys
 # Nur Liefer-/Prüfwerkzeuge, die nicht in die Test-APK de.evp.helfer.p4test eingehen. Die Orphan-Sonde ist eine einzelne
 # zusätzliche Testklasse des channeltest-Test-APK, die im normalen Gerätelauf nicht ausgeführt wird.
 ALLOWED = re.compile(r'^(\.github/workflows/(p4-test-package|helper-channel|orphan-collision-probe)\.yml|tools/device_gate\.py'
-                     r'|tools/delivery/[^/]+\.py|tools/run-flaky-repeat\.sh|tools/run-orphan-collision-probe\.sh'
+                     r'|tools/delivery/[^/]+\.py|tools/run-flaky-repeat\.sh|tools/run-channel-publication-regression\.sh|tools/run-orphan-collision-probe\.sh'
                      r'|app/src/androidTestChanneltest/java/de/evp/helfer/OrphanNameCollisionProbeTest\.java'
                      r'|tests/(gate|delivery)/.+|evidence/.+|[^/]+\.md)$')
 EMU = re.compile(r'^Test package de\.evp\.helfer\.channeltest on a disposable API (\d+) emulator$')
@@ -42,9 +50,23 @@ PLAIN_WORKFLOWS = ['.github/workflows/build.yml', '.github/workflows/browser-tes
 CHANNEL = '.github/workflows/helper-channel.yml'
 DEVICE_STEP = 'Instrumentation on a disposable API'
 APIS = (26, 29, 34)
-FAILURE_EVIDENCE = re.compile(r'publish rows=0|IOException: publish rows|FATAL EXCEPTION|OutOfMemoryError|DeadSystemException'
-                              r'|Process crashed|INSTRUMENTATION_ABORTED|^FAILURES!!!$|INSTRUMENTATION_STATUS_CODE: -[12]$', re.M)
-MERGE = re.compile(r'(?m)^(?:\S+Z )?HEAD is now at [0-9a-f]+ Merge ([0-9a-f]{40}) into ([0-9a-f]{40})')
+# Codex NO-GO 3 (P1): Pflichtjobs außer den Emulatoren (Core/JVM/Sicherheits-/Mutationsprüfungen, Signierpfad). Ein
+# Positivbeleg eines Laufversuchs zählt nur, wenn ALLE Pflichtjobs dieses Versuchs erfolgreich waren.
+REQUIRED_OTHER = sorted(KNOWN_OTHER)
+# Nur Infrastruktur (vor/ohne Prüfungsergebnis): Abhängigkeits-Download, Netzwerk, Runner-Verlust
+INFRA = re.compile(r'Received status code (429|5\d\d)|Could not GET |Could not resolve all (artifacts|dependencies|files)|Could not resolve [\w.-]+:[\w.-]+:'
+                   r'|Connection reset|Read timed out|ETIMEDOUT|ECONNRESET|429 Too Many Requests|The runner has received a shutdown signal'
+                   r'|lost communication with the server|The hosted runner encountered an error')
+# Ergebnis einer Prüfung (Test, Selbsttest, Mutation, Kompilierung): nie Infrastruktur
+PRODUCT = re.compile(r'AssertionError|ComparisonFailure|panicked at|test result: FAILED|FAILURES!!!|Tests run: \d+,\s+Failures: [1-9]'
+                     r'|\bSURVIVED\b|\bsurvived\b|SELFTEST FAIL|selftest FAIL|^FAIL |\bFAIL: |RESULT \S+ FAIL|error\[E\d{4}\]|error: could not compile'
+                     r'|cannot find symbol|Compilation failed|compileJava FAILED|FATAL EXCEPTION|OutOfMemoryError|publish rows=|publish threw=', re.M)
+# Getesteter Code: genau EIN Checkout (actions/checkout) mit vollständiger SHA; jede weitere Arbeitsbaum-Änderung per git
+CHECKOUT_FETCH = re.compile(r'^\[command\]/usr/bin/git -c protocol\.version=2 fetch .* origin \+?([0-9a-f]{40}):(\S+)$')
+CHECKOUT_CMD = re.compile(r'^\[command\]/usr/bin/git checkout --progress --force \S+')
+TREE_CHANGE = re.compile(r'(^|[\s;&|(`])git(\s+-C\s+\S+)?\s+(checkout|switch|reset|restore|stash|merge|rebase|cherry-pick|am|apply|pull|read-tree|worktree|clone|fetch)\b')
+HEAD_AT = re.compile(r'^HEAD is now at ([0-9a-f]{7,40}) (.*)$')
+ANSI = re.compile(r'\x1b\[[0-9;]*m|\[[0-9;]*m')
 PER_PAGE = 100
 MAX_PAGES = 50
 
@@ -81,6 +103,9 @@ class Git:
             if all(ALLOWED.match(f) for f in changed):
                 out.append(c)
         return out
+
+    def tree(self, sha):
+        return self.run('rev-parse', sha + '^{tree}').strip()
 
     def is_ancestor(self, a, b):
         return subprocess.run(['git', 'merge-base', '--is-ancestor', a, b], capture_output=True).returncode == 0
@@ -119,26 +144,94 @@ def gate_verdict(gate, log, api, conclusion, tmpdir, job_id):
     return verdict, '; '.join(l.strip() for l in g.stdout.splitlines()[1:4])
 
 
-def tested_code_matches(git, log, head_sha, event):
-    """(ok, Erklärung): entspricht der getestete Baum nachweislich dem Lauf-Commit?"""
-    m = MERGE.findall(log)
-    if event == 'pull_request':
-        if len(set(m)) != 1:
-            return False, 'merge checkout line missing or ambiguous'
-        head, base = m[0]
-        if head != head_sha:
-            return False, 'log tested %s, run says %s' % (head[:7], head_sha[:7])
-        if not git.is_ancestor(base, head):
-            return False, 'base %s is not an ancestor of %s (merge tree differs)' % (base[:7], head[:7])
-        return True, 'merge of %s into its own ancestor %s' % (head[:7], base[:7])
-    if m:
-        return False, 'unexpected merge checkout in a %s run' % event
-    return (re.search(r'(?m)^(?:\S+Z )?HEAD is now at %s ' % head_sha[:7], log) is not None), 'checkout of %s' % head_sha[:7]
+def load_gate(path):
+    """Gemeinsame Fehlerklassifikation aus dem Geräte-Gate (failure_evidence), damit vollständige und abgebrochene Logs
+    nach denselben Mustern bewertet werden."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('device_gate_for_ci_evidence', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.failure_evidence, mod.BLOCKING
 
 
-def evaluate(gh, git, source, workflow_sha, gate, tmpdir, out=print):
+def strip_ts(line):
+    return ANSI.sub('', re.sub(r'^﻿?\d{4}-\d\d-\d\dT[\d:.]+Z ', '', line.rstrip('\r')))
+
+
+def checkout_of(log):
+    """-> (vollständige Checkout-SHA, Erklärung) oder (None, Grund). Genau ein actions/checkout: ein Fetch der SHA, ein
+    "git checkout", ein "git log -1 --format=%H" mit derselben SHA; keine weitere Arbeitsbaum-Änderung per git."""
+    lines = [strip_ts(l) for l in log.splitlines()]
+    fetch = [m for m in (CHECKOUT_FETCH.match(l) for l in lines) if m]
+    cmds = [i for i, l in enumerate(lines) if CHECKOUT_CMD.match(l)]
+    logs = [i for i, l in enumerate(lines) if l == '[command]/usr/bin/git log -1 --format=%H']
+    if len(fetch) != 1 or len(cmds) != 1 or len(logs) != 1:
+        return None, 'expected exactly one checkout (fetch %d, checkout %d, git log %d)' % (len(fetch), len(cmds), len(logs))
+    nxt = next((l for l in lines[logs[0] + 1:] if l.strip()), '')
+    if not re.match(r'^[0-9a-f]{40}$', nxt):
+        return None, 'checkout SHA not printed'
+    if nxt != fetch[0].group(1):
+        return None, 'checked-out %s differs from the fetched %s' % (nxt[:7], fetch[0].group(1)[:7])
+    other = [l for i, l in enumerate(lines) if i != cmds[0] and TREE_CHANGE.search(l) and not CHECKOUT_FETCH.match(l)]
+    if other:
+        return None, 'further git command that can change the tested tree: %s' % other[0][:100]
+    heads = [m for m in (HEAD_AT.match(l) for l in lines) if m]
+    if len(heads) > 1 or (heads and not nxt.startswith(heads[0].group(1))):
+        return None, 'checkout lines contradict each other (%d "HEAD is now at")' % len(heads)
+    return nxt, heads[0].group(2) if heads else ''
+
+
+def tested_code_matches(gh, git, log, head_sha, event):
+    """(ok, Erklärung): der tatsächlich getestete Dateibaum ist nachweislich der des Lauf-Commits. Fail closed."""
+    try:
+        sha, subject = checkout_of(log)
+        if sha is None:
+            return False, subject
+        if event == 'push':
+            return (sha == head_sha), 'checkout %s, run commit %s' % (sha[:7], head_sha[:7])
+        if event != 'pull_request':
+            return False, 'unsupported event %s' % event
+        m = re.match(r'^Merge ([0-9a-f]{40}) into ([0-9a-f]{40})$', subject)
+        if not m or m.group(1) != head_sha:
+            return False, 'merge checkout of another head (%s)' % subject[:60]
+        c = gh.get('git/commits/%s' % sha)
+        tree, parents = c['tree']['sha'], [x['sha'] for x in c.get('parents', [])]
+        if head_sha not in parents:
+            return False, 'merge commit %s does not have %s as a parent' % (sha[:7], head_sha[:7])
+        want = git.tree(head_sha)
+        if tree != want:
+            return False, 'merge tree %s differs from the tree %s of %s' % (tree[:7], want[:7], head_sha[:7])
+        return True, 'merge commit %s has exactly the tree of %s' % (sha[:7], head_sha[:7])
+    except Exception as e:  # noqa: BLE001 - kein Nachweis
+        return False, 'tested tree not provable: %s: %s' % (type(e).__name__, str(e)[:100])
+
+
+def required_job_failure(log, conclusion, steps):
+    """Fehlgeschlagener/abgebrochener Pflichtjob -> 'product' (sperrt) | 'infra' | 'cancelled' (beides: kein Beleg).
+    Bewertet wird nur die Ausgabe des GESCHEITERTEN Schritts (vom letzten "##[group]Run" bis zu seinem "##[error]"),
+    nicht das ganze Log: Selbsttests geben absichtlich Wörter wie SURVIVED/FAIL für ihre Negativfälle aus.
+      * kein Schritt mit "failure" und Job abgebrochen -> 'cancelled' (kein Prüfungsergebnis);
+      * jeder gescheiterte Schritt zeigt NUR Infrastrukturmerkmale (z. B. Maven 429) -> 'infra';
+      * sonst (Prüfungsergebnis, unbekannte Ursache, kein zuordenbarer Fehler) -> 'product' (fail closed)."""
+    failed_steps = [x for x in steps or [] if x.get('conclusion') == 'failure']
+    lines = [strip_ts(l) for l in log.splitlines()]
+    errors = [i for i, l in enumerate(lines) if l.startswith('##[error]Process completed with exit code')]
+    if not failed_steps and not errors:
+        return 'cancelled' if conclusion in ('cancelled', 'timed_out') else 'product'
+    if not errors:
+        return 'product'
+    for i in errors:
+        start = max([k for k in range(i) if lines[k].startswith('##[group]Run ')] or [0])
+        segment = '\n'.join(lines[start:i])
+        if PRODUCT.search(segment) or not INFRA.search(segment):
+            return 'product'
+    return 'infra'
+
+
+def evaluate(gh, git, source, workflow_sha, gate, tmpdir, out=print, classifier=None):
     fails, ignored, covered = [], [], {a: [] for a in APIS}
     try:
+        classify, blocking = classifier or load_gate(gate)
         src_runs = paged(gh, 'actions/runs?head_sha=%s' % source, 'workflow_runs')
         for path in PLAIN_WORKFLOWS:
             rs = [r for r in src_runs if r['path'] == path]
@@ -165,12 +258,36 @@ def evaluate(gh, git, source, workflow_sha, gate, tmpdir, out=print):
                     jobs = paged(gh, 'actions/runs/%d/attempts/%d/jobs' % (r['id'], attempt), 'jobs')
                     if not jobs:
                         fails.append('run %d attempt %d lists no jobs' % (r['id'], attempt))
-                    apis = []
+                    apis, candidates, required_ok, seen_required = [], [], True, set()
                     for j in jobs:
                         m = EMU.match(j['name'])
                         if not m:
                             if j['name'] not in KNOWN_OTHER:
                                 fails.append('unexpected job %r in run %d' % (j['name'], r['id']))
+                                continue
+                            # Pflichtjob (Core/JVM/Sicherheit/Signierpfad)
+                            where = '%s run %d attempt %d %r (job %d)' % (c[:7], r['id'], attempt, j['name'], j['id'])
+                            seen_required.add(j['name'])
+                            if j['status'] != 'completed':
+                                fails.append('required job not completed: %s' % where)
+                                required_ok = False
+                            elif j['conclusion'] == 'success':
+                                pass
+                            elif j['conclusion'] == 'skipped' or not j.get('started_at'):
+                                required_ok = False
+                                ignored.append('%s: required job %s, never ran - no evidence for this attempt' % (where, j['conclusion']))
+                            else:
+                                required_ok = False
+                                try:
+                                    jlog = gh.log(j['id'])
+                                except Exception as e:  # noqa: BLE001 - fail closed
+                                    fails.append('log unavailable for failed required job %s: %s' % (where, e))
+                                    continue
+                                kind = required_job_failure(jlog, j['conclusion'], j.get('steps'))
+                                if kind == 'product':
+                                    fails.append('required job failed: %s (%s)' % (where, j['conclusion']))
+                                else:
+                                    ignored.append('%s: required job %s (%s, no check result) - no evidence for this attempt' % (where, j['conclusion'], kind))
                             continue
                         api = int(m.group(1))
                         apis.append(api)
@@ -193,27 +310,40 @@ def evaluate(gh, git, source, workflow_sha, gate, tmpdir, out=print):
                         if len(dev) != 1:
                             fails.append('device step missing or ambiguous in %s' % where)
                             continue
-                        if dev[0].get('conclusion') in (None, 'skipped') and concl != 'success':
+                        dstep = dev[0].get('conclusion')
+                        if dstep in (None, 'skipped') and concl != 'success':
                             # Bau/Vorbereitung scheiterte, kein Gerätetest lief: kein Beleg über die App (ausgewiesen)
                             failed = [s.get('name') for s in j.get('steps') or [] if s.get('conclusion') == 'failure']
                             ignored.append('%s: %s before the device step ran (failed step %s) - no device evidence' % (where, concl, failed))
+                            continue
+                        if dstep in (None, 'skipped'):
+                            fails.append('device step %s in a successful job (contradictory): %s' % (dstep, where))
                             continue
                         try:
                             log = gh.log(j['id'])
                         except Exception as e:  # fail closed
                             fails.append('log unavailable for %s: %s' % (where, e))
                             continue
-                        if concl not in ('success', 'failure'):
-                            # abgebrochen/Zeitüberschreitung: kein Urteil, aber vorhandene Fehlerbelege zählen
-                            ev = FAILURE_EVIDENCE.search('\n'.join(l for l in log.splitlines() if 'PUBLISH_PROBE_ATTRIBUTION' not in l
-                                                                   and 'PUBLISH_PROBE_SIGNATURE' not in l and 'PUBLISH_RACE' not in l
-                                                                   and 'previous cleanup fails the publication regression' not in l))
-                            if ev:
-                                fails.append('failure evidence in %s job %s: %s' % (concl, where, ev.group(0)))
+                        try:
+                            ev = classify(log, api)
+                        except Exception as e:  # noqa: BLE001 - fail closed
+                            fails.append('failure classification error for %s: %s' % (where, e))
+                            continue
+                        block = [e for e in ev if e[0] in blocking]
+                        if concl not in ('success', 'failure') or dstep not in ('success', 'failure'):
+                            # abgebrochen/Zeitüberschreitung/Runner-Verlust im Geräteschritt: nie ein Positivbeleg; vorhandene
+                            # Fehlerbelege (gleiche Klassifikation wie das Gate) sperren
+                            if block:
+                                fails.append('failure evidence in %s job %s: %s line %d: %s' % (concl, where, block[0][0], block[0][1], block[0][2][:100]))
+                            elif ev:
+                                ignored.append('%s: %s, only the documented P4B-A10-SIZE finding - no evidence' % (where, concl))
                             else:
-                                ignored.append('%s: %s without failure evidence' % (where, concl))
+                                ignored.append('%s: %s without failure evidence (expected mutant run only or nothing) - no evidence' % (where, concl))
                             continue
                         verdict, detail = gate_verdict(gate, log, api, concl, tmpdir, j['id'])
+                        if block and verdict != 'REJECT':
+                            fails.append('failure evidence contradicts gate verdict %s in %s: %s' % (verdict, where, block[0][2][:100]))
+                            continue
                         if verdict == 'REJECT':
                             fails.append('device gate rejected %s: %s' % (where, detail))
                         elif verdict == 'INSUFFICIENT_EVIDENCE':
@@ -221,12 +351,21 @@ def evaluate(gh, git, source, workflow_sha, gate, tmpdir, out=print):
                         elif verdict == 'ACCEPTED_SIZE_ONLY' and api != 29:
                             fails.append('SIZE exception outside API 29: %s' % where)
                         else:
-                            ok, why = tested_code_matches(git, log, c, r.get('event', ''))
+                            ok, why = tested_code_matches(gh, git, log, c, r.get('event', ''))
                             if ok:
-                                covered[api].append(where)
+                                candidates.append((api, where))
                             else:
                                 ignored.append('%s: %s, tested code not proven (%s)' % (where, verdict, why))
                         out('%s %s: %s' % ('REJECT' if verdict == 'REJECT' else 'NOTE', where, verdict))
+                    missing_required = [n for n in REQUIRED_OTHER if n not in seen_required]
+                    if jobs and missing_required:
+                        fails.append('run %d attempt %d: required jobs missing %s' % (r['id'], attempt, missing_required))
+                        required_ok = False
+                    for api, where in candidates:
+                        if required_ok:
+                            covered[api].append(where)
+                        else:
+                            ignored.append('%s: device evidence not counted, a required job of this attempt did not succeed' % where)
                     if sorted(apis) != list(APIS):
                         fails.append('run %d attempt %d emulator APIs %s, expected %s' % (r['id'], attempt, sorted(apis), list(APIS)))
                     if r['conclusion'] == 'success' and attempt == int(r['run_attempt']) and any(

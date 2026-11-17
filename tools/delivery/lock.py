@@ -17,10 +17,20 @@ Die Freigabe gilt nur einmal und nur für den Push, der sie einführt:
   * am Stand vor dem Push (event.before) stand ein anderer DELIVERY_APPROVAL-Wert. Ein späterer Doku-Commit, eine
     Pin-Korrektur oder ein anderer Push erbt die Zeile unverändert und wird deshalb abgewiesen;
   * kein anderer Lauf dieses Workflows (irgendein Branch, irgendein Ergebnis) trägt dieselbe ID oder denselben Commit.
-    Eine einmal benutzte ID ist verbraucht, auch wenn die Lieferung danach scheiterte;
+    Eine benutzte ID ist verbraucht, auch wenn die Lieferung danach scheiterte – GRENZE (Codex NO-GO 3): geprüft wird
+    die Actions-Historie; wer Läufe löschen kann (Repo-Admin, auch ein Agent mit Adminrechten), kann eine ID wieder
+    "frei" machen. Dauerhafte Einmaligkeit ist damit NICHT gewährleistet; Vorschlag einer gegen Agentenänderungen
+    geschützten Verbrauchsregistrierung: P4-APPROVAL-PROPOSAL.md (nicht umgesetzt, nicht aktiviert);
   * UNTIL liegt in der Zukunft und höchstens 72 Stunden entfernt.
-  * das GitHub-Environment LOCK_ENVIRONMENT existiert und verlangt Required Reviewers (die menschliche Zustimmung
-    selbst erteilt GitHub beim Start des Paketjobs; diese Prüfung stellt nur sicher, dass der Schutz eingerichtet ist).
+  * das GitHub-Environment LOCK_ENVIRONMENT existiert, Administratoren dürfen es NICHT umgehen (can_admins_bypass
+    false), "Prevent self-review" ist an, die Required Reviewers sind GENAU die im Workflow festgelegten Benutzer
+    (LOCK_REVIEWERS, nur Benutzer, keine Teams) und keiner davon ist der Auslöser/Eigentümer. "Irgendein Reviewer" genügt
+    nicht (Codex NO-GO 3);
+  * nur im Paketjob (LOCK_REQUIRE_GO=1): für DIESEN Lauf liegt eine Zustimmung ("approved") eines festgelegten Reviewers
+    (≠ Auslöser) für LOCK_ENVIRONMENT vor und keine Ablehnung – eine Umgehung ohne Zustimmung sperrt.
+Diese Prüfungen belegen nur die EINRICHTUNG und die ZUSTIMMUNG einer anderen GitHub-Identität. Dass hinter ihr ein
+unabhängiger Mensch steht, dessen Zugang kein Agent besitzt, kann kein Workflow prüfen (Pflicht des Eigentümers, siehe
+P4-APPROVAL-PROPOSAL.md).
 Jede nicht prüfbare Bedingung (API-Fehler, fehlende Ereignisdaten) zählt als nicht erfüllt (fail closed).
 
 Codex Release-Readiness 2: Dieselbe Prüfung läuft im Paketjob erneut (LOCK_REQUIRE_GO=1) – vor dem Checkout, vor dem
@@ -72,16 +82,48 @@ def parse(value, bind):
     return out
 
 
-def protected(env_info):
-    """Environment-Antwort der GitHub-API -> (geschützt, Grund)."""
-    rules = (env_info or {}).get('protection_rules') or []
-    reviewers = [r for rule in rules if rule.get('type') == 'required_reviewers' for r in (rule.get('reviewers') or [])]
+def protected(env_info, expected, actor):
+    """Environment-Antwort der GitHub-API -> (geschützt, Grund). Codex NO-GO 3: Required Reviewers allein genügen nicht.
+    Verlangt: keine Admin-Umgehung, Prevent self-review an, Reviewer = genau die festgelegten Benutzer, Auslöser keiner davon."""
+    env_info = env_info or {}
+    rules = [r for r in env_info.get('protection_rules') or [] if r.get('type') == 'required_reviewers']
+    if len(rules) != 1:
+        return False, 'environment has no (or more than one) required reviewers rule'
+    rule = rules[0]
+    reviewers = rule.get('reviewers') or []
     if not reviewers:
         return False, 'environment has no required reviewers'
-    return True, '%d required reviewer(s)' % len(reviewers)
+    if env_info.get('can_admins_bypass') is not False:
+        return False, 'administrators may bypass the environment protection (can_admins_bypass %s)' % env_info.get('can_admins_bypass')
+    if rule.get('prevent_self_review') is not True:
+        return False, 'prevent self-review is not enabled (%s)' % rule.get('prevent_self_review')
+    if any(r.get('type') != 'User' for r in reviewers):
+        return False, 'reviewers must be individual users (team membership of an approver is not provable)'
+    logins = [(r.get('reviewer') or {}).get('login') for r in reviewers]
+    if not expected:
+        return False, 'no reviewer identity pinned in the workflow (LOCK_REVIEWERS)'
+    if sorted(set(logins)) != sorted(set(expected)) or len(logins) != len(set(logins)):
+        return False, 'reviewers %s are not exactly the pinned reviewers %s' % (sorted(logins), sorted(expected))
+    if actor and actor in logins:
+        return False, 'the triggering owner %s is a reviewer (no second identity)' % actor
+    return True, 'reviewers %s (pinned), no admin bypass, self-review prevented' % sorted(logins)
 
 
-def decide(ctx, fetch_workflow_at, list_runs, now, fetch_environment=None):
+def reviewed(records, ctx):
+    """Zustimmungen des Laufs (GET actions/runs/<id>/approvals) -> (zugestimmt, Grund)."""
+    env = ctx['environment']
+    mine = [a for a in records or [] if env in [e.get('name') for e in a.get('environments') or []]]
+    if any(a.get('state') != 'approved' for a in mine):
+        return False, 'a review of this run for %s is not "approved"' % env
+    ok = [a for a in mine if a.get('state') == 'approved'
+          and (a.get('user') or {}).get('login') in ctx.get('reviewers', [])
+          and (a.get('user') or {}).get('login') != ctx['actor']]
+    if not ok:
+        return False, 'no approval of this run for %s by a pinned reviewer other than %s' % (env, ctx['actor'] or '(missing)')
+    return True, 'approved by %s' % ok[0]['user']['login']
+
+
+def decide(ctx, fetch_workflow_at, list_runs, now, fetch_environment=None, fetch_approvals=None):
     """-> (go, reasons, approval_id). Reine Funktion; fetch_workflow_at/list_runs dürfen Ausnahmen werfen."""
     value = ctx['approval']
     if value in CLOSED:
@@ -138,11 +180,18 @@ def decide(ctx, fetch_workflow_at, list_runs, now, fetch_environment=None):
         reasons.append('no protected environment configured for the package job')
     else:
         try:
-            ok, why = protected(fetch_environment(ctx['environment']) if fetch_environment else None)
+            ok, why = protected(fetch_environment(ctx['environment']) if fetch_environment else None, ctx.get('reviewers') or [], ctx['actor'])
         except Exception as e:  # fail closed
             ok, why = False, 'cannot read environment %s: %s' % (ctx['environment'], e)
         if not ok:
             reasons.append('environment %s not protected: %s' % (ctx['environment'], why))
+        if ctx.get('require_review'):
+            try:
+                rok, rwhy = reviewed(fetch_approvals() if fetch_approvals else None, ctx)
+            except Exception as e:  # fail closed
+                rok, rwhy = False, 'cannot read the approvals of this run: %s' % e
+            if not rok:
+                reasons.append('package stage without the reviewer approval: %s' % rwhy)
     try:
         runs = list_runs()
     except Exception as e:  # fail closed
@@ -182,6 +231,8 @@ def main():
         'run_id': env.get('GITHUB_RUN_ID', ''), 'actor': env.get('GITHUB_ACTOR', ''),
         'owner': env.get('GITHUB_REPOSITORY_OWNER', ''), 'head_id': head.get('id', ''), 'head_message': head.get('message', ''),
         'scope': env.get('LOCK_SCOPE', ''), 'environment': env.get('LOCK_ENVIRONMENT', ''),
+        'reviewers': env.get('LOCK_REVIEWERS', '').split(), 'stage': env.get('LOCK_STAGE', 'gate'),
+        'require_review': env.get('LOCK_REQUIRE_GO') == '1',
     }
 
     def fetch_workflow_at(sha):
@@ -206,8 +257,11 @@ def main():
     def fetch_environment(name):
         return gh_json('repos/%s/environments/%s' % (repo, name))
 
+    def fetch_approvals():
+        return gh_json('repos/%s/actions/runs/%s/approvals' % (repo, ctx['run_id']))
+
     now = datetime.datetime.now(datetime.timezone.utc)
-    go, reasons, aid = decide(ctx, fetch_workflow_at, list_runs, now, fetch_environment)
+    go, reasons, aid = decide(ctx, fetch_workflow_at, list_runs, now, fetch_environment, fetch_approvals)
     for r in reasons:
         print('DELIVERY_LOCK ' + r)
     print('DELIVERY_LOCK stage=%s verdict=%s approval_id=%s pins=%s' % (env.get('LOCK_STAGE', 'gate'), 'GO' if go else 'LOCKED', aid or '-',

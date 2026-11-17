@@ -76,7 +76,21 @@ want = {v: consts['CYCLES'] if v == 'PLAIN' else consts['LOAD_CYCLES'] if v in (
 ok = want == device_gate.PROBE_CYCLES and all(n > 0 for n in want.values())
 fails += 0 if ok else 1
 print('%s source probe variants and positive cycle counts match the gate %s' % ('PASS' if ok else 'FAIL', want))
+race = re.search(r'static final int RACE_CYCLES = (\d+);', src)
+ok = race is not None and int(race.group(1)) == device_gate.RACE_CYCLES > 0
+fails += 0 if ok else 1
+print('%s source PUBLISH_RACE cycle count matches the gate (%s)' % ('PASS' if ok else 'FAIL', race and race.group(1)))
 rep = open(os.path.join(ROOT, 'tools', 'run-flaky-repeat.sh'), encoding='utf-8').read()
+# Codex NO-GO 3: Crash-Puffer nach den Wiederholungen (Format 3) und strenge Mutanten-Shellprüfung
+ok = ('adb logcat -d -b crash > "$REPORT/repeat-crash.txt"' in rep and 'echo "GATE-BEGIN %s"' % device_gate.REPEAT_CRASH in rep
+      and rep.index('repeat-crash.txt') > rep.index('run "class-$i"'))
+fails += 0 if ok else 1
+print('%s run-flaky-repeat.sh reads the crash buffer again after all repeat runs' % ('PASS' if ok else 'FAIL'))
+mut = open(os.path.join(ROOT, 'tools', 'run-channel-publication-regression.sh'), encoding='utf-8').read()
+ok = ("echo '%s'" % device_gate.MUTANT_PASS in mut and 'Cannot remove pending download ownership; last abort: ; store: ;' in mut
+      and 'publish rows=|publish threw=|IOException: publish' in mut and mut.index('publish rows=|') < mut.index(device_gate.MUTANT_PASS))
+fails += 0 if ok else 1
+print('%s run-channel-publication-regression.sh requires the marker-cleanup cause and refuses publish failures' % ('PASS' if ok else 'FAIL'))
 three = re.search(r'run "three-\$i" "([^"]+)"', rep).group(1)
 ok = ([x.split('#')[1] for x in three.split(',')] == device_gate.REPEAT_THREE and 'for i in 1 2; do run "class-$i" "$T" "$T#%s"' % device_gate.REPEAT_CLASS_EXCLUDED in rep
       and device_gate.REPEAT_CLASS_RUNS == 2 and 'echo "%s"' % device_gate.REPEAT_FORMAT in rep

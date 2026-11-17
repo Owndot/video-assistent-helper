@@ -26,8 +26,19 @@ SIZE_STACK = ['java.lang.AssertionError: SIZE column (file /storage/emulated/0/D
 PUBLISH_STACK = ['org.junit.ComparisonFailure: publish result (cause: IOException: publish rows=0 proof=present cleanup=not-observed trail=insert#19+1ms,open#20+3ms,close#21+384ms,update=0#22+387ms uri=content://media/external/downloads/18) expected:<[don]e> but was:<[failed:storag]e>',
                  '\tat org.junit.Assert.assertEquals(Assert.java:117)']
 OTHER_STACK = ['java.lang.AssertionError: channel answer', '\tat de.evp.helfer.ChannelInstrumentedTest.pairingAndControlCommands(ChannelInstrumentedTest.java:88)']
-MUTANT_STACK = ['org.junit.ComparisonFailure: published file is successful despite marker failure (cause: IOException: Cannot remove pending download ownership) expected:<[don]e> but was:<[failed:storag]e>',
-                '\tat de.evp.helfer.Mp4DownloadsInstrumentedTest.publishedFileSurvivesMarkerFailureAndRestart(Mp4DownloadsInstrumentedTest.java:932)']
+# Wortlaut wie in den echten Läufen (API 26/29/34): Ursache ist allein die absichtlich manipulierte Markierungsbereinigung
+MUTANT_CAUSE = 'cause: IOException: Cannot remove pending download ownership; last abort: ; store: ; downloadsInitialized: false; now=27187ms; cleanups: []'
+
+
+def mutant_stack(cause=MUTANT_CAUSE):
+    return ['org.junit.ComparisonFailure: published file is successful despite marker failure (%s) expected:<[don]e> but was:<[failed:storag]e>' % cause,
+            '\tat org.junit.Assert.assertEquals(Assert.java:117)',
+            '\tat de.evp.helfer.Mp4DownloadsInstrumentedTest.publishedFileSurvivesMarkerFailureAndRestart(Mp4DownloadsInstrumentedTest.java:932)']
+
+
+MUTANT_STACK = mutant_stack()
+ROWS0_CAUSE = ('cause: IOException: publish rows=0 proof=present cleanup=not-observed trail=insert#1+3ms,update=0#4+5ms; last abort: deleted:1; '
+               'store: ; downloadsInitialized: false; now=27187ms; cleanups: []')
 
 
 def instr(classes, fails=None, codes=None, crash=None, finish=True, claim=None, dup=None):
@@ -59,20 +70,42 @@ def instr(classes, fails=None, codes=None, crash=None, finish=True, claim=None, 
     return out
 
 
+def shell_copy(main, appended):
+    """Was tools/run-channel-instrumentation.sh außerhalb der Abschnitte aus dem Hauptbericht ausgibt (tail -5 summary.txt,
+    FAILED-Auszüge, Runner-Ergebnis, Fehlerliste) - wie die Shell, unabhängig vom Gate nachgebildet."""
+    keys = ('INSTRUMENTATION_STATUS: test=', 'INSTRUMENTATION_STATUS: class=', 'INSTRUMENTATION_STATUS_CODE', 'OK (', 'FAILURES', 'Tests run',
+            'AssertionError', 'Exception')
+    summary = [l for l in main if any((l.startswith(k) if k == 'OK (' else k in l) for k in keys)] + list(appended)
+    out = summary[-5:]
+    t, n, failed = '', 0, []
+    for l in main:
+        if l.startswith('INSTRUMENTATION_STATUS: test='):
+            t = l
+        if l.startswith('INSTRUMENTATION_STATUS: stack='):
+            failed.append('FAILED ' + t)
+            n = 14
+        if n > 0:
+            failed.append(l)
+            n -= 1
+    out += failed[:150]
+    out += [l for l in main if any(k in l for k in ('INSTRUMENTATION_RESULT', 'INSTRUMENTATION_FAILED', 'shortMsg', 'longMsg', 'Process crashed'))][:20]
+    return out
+
+
 def section(name, body):
     return ['GATE-BEGIN ' + name] + body + ['GATE-END ' + name]
 
 
-def probe_lines(api, cycles=None, drop=None, dup=None):
+def probe_lines(api, cycles=None, drop=None, dup=None, race=None, samename_twice=False):
     cycles = dict(G.PROBE_CYCLES, **(cycles or {}))
     L = ['PUBLISH_PROBE_ATTRIBUTION sdk=%d foreignDelete: IOException: publish threw=IllegalStateException(No item at content://media/external/downloads/39) proof=present cleanup=not-observed trail=insert#1+7ms' % api,
          'PUBLISH_PROBE_ATTRIBUTION sdk=%d duringCleanup: IOException: publish threw=IllegalStateException(No item at content://media/external/downloads/40) proof=present cleanup=overlap-observed(started=0,active=1,activeAtInsert=1)' % api,
          'PUBLISH_PROBE_SIGNATURE sdk=%d cleanupDuringJob: proofAfterCleanup=false stateAfterCleanup={rows=0} write=ok commit=IOException: publish threw=IllegalStateException(No item at content://media/external/downloads/41) proof=gone' % api,
-         'PUBLISH_RACE sdk=%d count=30 outcome=published-then-deleted' % api]
+        ] + ['PUBLISH_RACE sdk=%d count=%d outcome=%s' % (api, c, o) for c, o in (race if race is not None else [(30, 'published-then-deleted')])]
     for v, (c, ok, f) in [(v, n if isinstance(n, tuple) else (n, n, 0)) for v, n in cycles.items()]:
         if v != drop:
             L += ['PUBLISH_PROBE sdk=%d variant=%s cycles=%d ok=%d failed=%d maxCommitMs=21' % (api, v, c, ok, f)] * (2 if v == dup else 1)
-    L += ['PUBLISH_PROBE_SAMENAME sdk=%d second=published name=<title>.mp4' % api]
+    L += ['PUBLISH_PROBE_SAMENAME sdk=%d second=published name=<title>.mp4' % api] * (2 if samename_twice else 1)
     return L
 
 
@@ -80,7 +113,7 @@ def job(api=34, main=None, probe=None, plines=None, probe_status=None, restarts=
         repeat=None, repeat_reports=(), mutant=None, mutant_pass=True, command_n=G.REPEAT_N, gate_api=None, extra=(),
         errors=None, script_status=None, end=True, truncate_at=None, move_repeat_before_status=False, unknown_section=False,
         old_repeat_format=False, repeat_header_api=None, drop_repeat=None, dup_repeat=None, raw_extra=(),
-        persist=True):
+        persist=True, repeat_format=G.REPEAT_FORMAT, repeat_crash=(), drop_repeat_crash=False, repeat_extra_header=None):
     main = instr(MAIN) if main is None else main
     main_failed = 'FAILURES!!!' in main
     L = ['Current runner version: \'2.338.2\'', '##[group]Run reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d',
@@ -102,6 +135,10 @@ def job(api=34, main=None, probe=None, plines=None, probe_status=None, restarts=
     L += rs
     if heap_line:
         L += ['11-17 10:39:38.062  6241  6260 I HLS_TEST: HLS_MEASURE api=%d samples=43126 ms=4475 points=41 retainedFixedKiB=0 retainedEndKiB=3409 bytesPerSample=42 maxHeapMiB=%d budgetSamples=1000000 budgetHeapMiB=40' % (api, heap)]
+    # Kopien des Hauptberichts außerhalb der Abschnitte, wie sie die Shell ausgibt
+    appended = [l for l in extra if l == 'LISTENER ON 47811'] + (['PERSIST_AFTER_UNINSTALL ok: C2 Persist %d.mp4 (65536 bytes)' % api] if persist
+                else ['PERSIST_AFTER_UNINSTALL missing']) + [l for l in extra if l == 'package list changed']
+    L += shell_copy(main, appended)
     L += list(extra) + list(raw_extra)
     L += ['GATE-API %d' % (gate_api if gate_api is not None else api)]
     L += section('main', main)
@@ -123,7 +160,7 @@ def job(api=34, main=None, probe=None, plines=None, probe_status=None, restarts=
     # Wiederholungen (Format 2): JEDER Lauf als Bericht mit Kennung und API; repeat_reports überschreibt einzelne Läufe.
     overrides = dict(repeat_reports)
     failed_repeats = 0
-    rep_lines = [] if old_repeat_format else [G.REPEAT_FORMAT]
+    rep_lines = [] if old_repeat_format else [repeat_format]
     labels = ['three-%d' % i for i in range(1, G.REPEAT_N + 1)] + ['class-%d' % i for i in range(1, G.REPEAT_CLASS_RUNS + 1)]
     for label in labels + ([dup_repeat] if dup_repeat else []):
         if label == drop_repeat:
@@ -135,7 +172,12 @@ def job(api=34, main=None, probe=None, plines=None, probe_status=None, restarts=
             if failed:
                 rep_lines += section('repeat-' + label, body)
             continue
-        rep_lines += section('repeat-' + label, ['REPEAT-RUN label=%s api=%d' % (label, repeat_header_api or api)] + body)
+        head = ['REPEAT-RUN label=%s api=%d' % (label, repeat_header_api or api)]
+        if repeat_extra_header and label == repeat_extra_header[0]:
+            head.append(repeat_extra_header[1])
+        rep_lines += section('repeat-' + label, head + body)
+    if not old_repeat_format and repeat_format == G.REPEAT_FORMAT and not drop_repeat_crash:
+        rep_lines += section(G.REPEAT_CRASH, list(repeat_crash))
     sst = script_status if script_status is not None else (1 if main_failed or status == 'failed' or 'fail' in restarts.values() else 0)
     if move_repeat_before_status:
         L += rep_lines + ['GATE-SCRIPT-STATUS %d' % sst]
@@ -268,6 +310,31 @@ CASES = {
     'repeat_v2_summary_mismatch_api34': (34, 'REJECT', job(34, repeat='REPEAT api=34 runs=22 passed=22 failed=0',
                                                            repeat_reports=[('three-5', instr(THREE, {'cancelRemovesEverything': OTHER_STACK}))], errors=[G.SIZE_ERROR])),
     'repeat_v2_unfinished_run_api34': (34, 'REJECT', job(34, repeat_reports=[('three-6', instr(THREE, finish=False))])),
+    # Codex NO-GO 3 (P1): Mutantennachweis nur bei erfolgreicher Veröffentlichung + manipulierter Markierungsbereinigung
+    'mutant_publish_rows0_api34': (34, 'REJECT', job(34, mutant=instr({MP4: [G.MUTANT_TEST]}, {G.MUTANT_TEST: mutant_stack(ROWS0_CAUSE)}))),
+    'mutant_publish_threw_api29': (29, 'REJECT', job(29, main=SIZE_MAIN, mutant=instr({MP4: [G.MUTANT_TEST]}, {G.MUTANT_TEST: mutant_stack(
+        ROWS0_CAUSE.replace('publish rows=0', 'publish threw=IllegalStateException(No item at content://media/external/downloads/38)'))}))),
+    'mutant_abort_after_publish_api34': (34, 'REJECT', job(34, mutant=instr({MP4: [G.MUTANT_TEST]}, {G.MUTANT_TEST: mutant_stack(
+        MUTANT_CAUSE.replace('last abort: ;', 'last abort: deleted:1;'))}))),
+    'mutant_store_failure_line_in_region_api34': (34, 'REJECT', job(34, mutant=instr({MP4: [G.MUTANT_TEST]}, {G.MUTANT_TEST: MUTANT_STACK})[:-4] + [
+        '11-17 19:30:00.000  4000  4001 I MP4_TEST: MP4_STORE_FAILURE sdk=34 commit java.io.IOException: publish rows=0 proof=present']
+        + instr({MP4: [G.MUTANT_TEST]}, {G.MUTANT_TEST: MUTANT_STACK})[-4:])),
+    # Codex NO-GO 3 (P2): weitere Lücken des Geräte-Gates
+    'raw_incomplete_block_without_code_api34': (34, 'REJECT', job(34, raw_extra=[
+        'INSTRUMENTATION_STATUS: class=de.evp.helfer.ChannelInstrumentedTest', 'INSTRUMENTATION_STATUS: test=pairingAndControlCommands'])),
+    'raw_contradicting_minus4_api34': (34, 'REJECT', job(34, raw_extra=[
+        'INSTRUMENTATION_STATUS: class=de.evp.helfer.Mp4DownloadsInstrumentedTest', 'INSTRUMENTATION_STATUS: test=cancelRemovesEverything',
+        'INSTRUMENTATION_STATUS_CODE: -4'])),
+    'repeat_second_header_api34': (34, 'REJECT', job(34, repeat_extra_header=('three-5', 'REPEAT-RUN label=class-9 api=29'))),
+    'publish_race_count_zero_api34': (34, 'REJECT', job(34, plines=probe_lines(34, race=[(0, 'published-then-deleted')]))),
+    'publish_race_sum_mismatch_api29': (29, 'REJECT', job(29, main=SIZE_MAIN, plines=probe_lines(29, race=[(29, 'published-then-deleted')]))),
+    'publish_race_missing_api34': (34, 'REJECT', job(34, plines=probe_lines(34, race=[]))),
+    'publish_samename_twice_api34': (34, 'REJECT', job(34, plines=probe_lines(34, samename_twice=True))),
+    'crash_after_repeats_api34': (34, 'REJECT', job(34, repeat_crash=['--------- beginning of crash',
+                                                                     '11-17 19:50:01.000  7001  7020 E AndroidRuntime: Process: de.evp.helfer.channeltest, PID: 7001'])),
+    'repeat_crash_report_missing_api34': (34, 'REJECT', job(34, drop_repeat_crash=True)),
+    'repeat_format2_without_crash_report_api34': (34, 'INSUFFICIENT_EVIDENCE', job(34, repeat_format='REPEAT-FORMAT 2')),
+    'repeat_format2_size_api29': (29, 'INSUFFICIENT_EVIDENCE', job(29, main=SIZE_MAIN, repeat_format='REPEAT-FORMAT 2', repeat_reports=SIZE_CLASS)),
     # altes Wiederholungsformat: nie PASS (grün = unzureichend, mit Fehler = REJECT)
     'repeat_old_format_green_api34': (34, 'INSUFFICIENT_EVIDENCE', job(34, old_repeat_format=True)),
     'repeat_old_format_size_api29': (29, 'INSUFFICIENT_EVIDENCE', job(29, main=SIZE_MAIN, old_repeat_format=True, repeat_reports=SIZE_CLASS)),

@@ -16,6 +16,12 @@ ANR, Instrumentierungsabbrüche) und Veröffentlichungsfehler geprüft. Ausgenom
 außerhalb der Abschnitte dürfen dem Hauptbericht nicht widersprechen. Jeder Abschnitt endet mit genau einem Runner-Ende,
 ohne weitere oder unvollständige Blöcke. Alle 22 Wiederholungen werden einzeln mit Kennung und API geprüft.
 
+Codex NO-GO 3: Der Mutantenlauf zählt nur mit GENAU der Ursache der manipulierten Markierungsbereinigung nach erfolgreicher
+Veröffentlichung (MUTANT_EVIDENCE); jeder Veröffentlichungsfehler auch im Mutantenbereich ist REJECT. Protokollzeilen
+außerhalb der Abschnitte müssen exakt die Kopie des Hauptberichts sein (raw_copy). Je Wiederholungsbericht genau ein
+Kopf; PUBLISH_RACE-Zähler positiv mit Summe RACE_CYCLES; Crash-Puffer nach den 22 Wiederholungen erneut ausgelesen
+(Format 3, Abschnitt repeat-crash, muss leer sein; Format 2 = INSUFFICIENT_EVIDENCE).
+
 Bewertet wird gegen eine FESTE erwartete Testmenge (Quellstand der Gerätetests, siehe EXPECTED_*). Bewertet werden:
   * Gerätebefehl: genau der erwartete Befehl (Mutantenprobe, Gerätetest, 20 Dreier- und 2 Klassen-Wiederholungen);
   * Mutantenprobe: genau ein Lauf mit genau dem erwarteten Fehlschlag, getrennt vor dem Gerätetest;
@@ -101,13 +107,153 @@ CRASH_ANYWHERE = re.compile(r'FATAL EXCEPTION|Fatal signal \d|ANR in |Process cr
 # Erwartete Belegzeilen der Veröffentlichungssonden, die absichtlich "IOException: publish …" enthalten
 PROBE_EVIDENCE_LINE = re.compile(r'(^|: )(PUBLISH_PROBE_ATTRIBUTION|PUBLISH_PROBE_SIGNATURE|PUBLISH_RACE) sdk=\d+ ')
 MUTANT_REASON = 'published file is successful despite marker failure'
-REPEAT_FORMAT = 'REPEAT-FORMAT 2'
+# Codex NO-GO 3 (P1): Der Mutantennachweis gilt nur, wenn die Ursache GENAU die absichtlich manipulierte nachgelagerte
+# Bereinigung der Besitzmarkierung ist. Diese Ursache entsteht im Produktcode ausschließlich NACH dem erfolgreichen
+# Veröffentlichen (Mp4Downloads: "finished = true; cleanupPublishedProof(proof)" nach rows == 1 bzw. nach dem Verschieben
+# unter API 29). "last abort" leer = kein Abbruch/Rückbau nach dem Veröffentlichen; "store" leer = kein Fehler der Ablage.
+# Eine bloß passende Beschriftung, "failed:storage" oder Code -2 genügt nicht; "publish rows=0" o. ä. ist immer REJECT.
+MUTANT_EVIDENCE = re.compile(r'(^|INSTRUMENTATION_STATUS: stack=)org\.junit\.ComparisonFailure: published file is successful despite marker '
+                             r'failure \(cause: IOException: Cannot remove pending download ownership; last abort: ; store: ; '
+                             r'downloadsInitialized: (true|false); now=\d+ms; cleanups: \[\]\) expected:<\[don\]e> but was:<\[failed:storag\]e>$')
+# Veröffentlichungsfehler ohne die erwartete Beschriftung des Mutanten (failed:storage steht auch in dessen Beleg)
+PUBLISH_CAUSE = re.compile(r'publish rows=|publish threw=|IOException: publish|publish result \(cause|MP4_STORE_FAILURE')
+REPEAT_FORMAT = 'REPEAT-FORMAT 3'   # 3: zusätzlich Crash-Puffer NACH den 22 Wiederholungen (Abschnitt repeat-crash)
+REPEAT_FORMAT_OLD = {'REPEAT-FORMAT 2'}
+REPEAT_CRASH = 'repeat-crash'
+RACE_CYCLES = 30   # MediaStorePublishProbeTest.RACE_CYCLES: Summe aller PUBLISH_RACE-Zähler
+# Kopien des Hauptberichts außerhalb der Abschnitte (tools/run-channel-instrumentation.sh): exakt nachgebildet
+SUMMARY_GREP = re.compile(r'INSTRUMENTATION_STATUS: (test|class)=|INSTRUMENTATION_STATUS_CODE|^OK \(|FAILURES|Tests run|AssertionError|Exception')
+RESULT_GREP = re.compile(r'INSTRUMENTATION_RESULT|INSTRUMENTATION_FAILED|shortMsg|longMsg|Process crashed')
 CODE_FAIL = {'-1', '-2'}   # AndroidJUnitRunner: -1 Fehler, -2 Fehlschlag (-3 ignoriert, -4 Annahme nicht erfüllt)
 
 
 def strip(line):
     # Zeitstempel des Actions-Logs und BOM entfernen
     return re.sub(r'^﻿?\d{4}-\d\d-\d\dT[\d:.]+Z ', '', line.rstrip('\r').lstrip('﻿'))
+
+
+def protocol(l):
+    """Zeile des am-instrument-Protokolls (auch als FAILED-Kopie)."""
+    return l.startswith('INSTRUMENTATION_') or l.startswith('FAILED ')
+
+
+def raw_copy(main, appended):
+    """Exakte Nachbildung der Protokollzeilen, die tools/run-channel-instrumentation.sh aus dem Hauptbericht
+    (instrumentation.txt) außerhalb der Abschnitte ins Job-Log schreibt: tail -5 summary.txt (grep-Auszug + `appended`
+    angehängte Zeilen), FAILED-Auszüge (awk, je 14 Zeilen ab stack=, head -150), Runner-Ergebnis (grep, head -20),
+    Fehlerliste (awk, head -60). Nur Protokollzeilen werden verglichen."""
+    summary = [l for l in main if SUMMARY_GREP.search(l)] + ['<appended>'] * appended
+    out = summary[-5:]
+    failed, t, n = [], '', 0
+    for l in main:
+        if l.startswith('INSTRUMENTATION_STATUS: test='):
+            t = l
+        if l.startswith('INSTRUMENTATION_STATUS: stack='):
+            failed.append('FAILED ' + t)
+            n = 14
+        if n > 0:
+            failed.append(l)
+            n -= 1
+    out += failed[:150]
+    out += [l for l in main if RESULT_GREP.search(l)][:20]
+    there, p, n = [], False, 0
+    for l in main:
+        if re.match(r'^There (was|were) [0-9]+ failure', l):
+            p = True
+        if p and re.match(r'^[0-9]+\) ', l):
+            n = 6
+        if p and n > 0:
+            there.append(l)
+            n -= 1
+    out += there[:60]
+    return [l.rstrip() for l in out if protocol(l)]
+
+
+def mutant_problems(lines, lo, hi):
+    """Gründe, warum lines[lo:hi] KEIN gültiger Mutantennachweis ist (leer = gültig). Gemeinsam genutzt vom Gate und
+    von failure_evidence() (abgebrochene Jobs), damit beide denselben Maßstab anlegen."""
+    out = []
+    mut = Report(lines[lo:hi])
+    if mut.tests() != [(MP4, MUTANT_TEST)] or [t for _, t in mut.failed] != [MUTANT_TEST] or mut.failures != 1:
+        out.append('mutant run is not exactly the expected single failing test %s' % MUTANT_TEST)
+    for p in mut.problems:
+        out.append('mutant report: %s' % p)
+    if (MP4, MUTANT_TEST) in mut.final:
+        code, st = mut.final[(MP4, MUTANT_TEST)]
+        if code != '-2' or not MUTANT_EVIDENCE.search(st.split('\n')[0]):
+            out.append('mutant failed for another reason than the deliberately broken marker cleanup after a successful '
+                       'publication (code %s): %s' % (code, st.split('\n')[0][:160]))
+    if SYSTEM_CRASH.search(mut.text):
+        out.append('crash in the mutant run: %s' % SYSTEM_CRASH.search(mut.text).group(0))
+    # Jede Zeile des Mutantenbereichs mit Veröffentlichungsfehler-Merkmal muss genau der Mutantenbeleg sein
+    for j in range(lo, hi):
+        l = lines[j]
+        if (PUBLISH_FAILURE.search(l) or PUBLISH_CAUSE.search(l)) and not MUTANT_EVIDENCE.search(l):
+            out.append('unexpected publish failure inside the mutant run (line %d): %s' % (j + 1, l.strip()[:120]))
+    return out
+
+
+def scan_failures(lines, exempt=range(0)):
+    """Strukturierte Fehlerbelege an JEDER Stelle des Logs außer `exempt` (geprüfter Mutantenbereich):
+    -> [(Art, Zeilenindex, Zeile)], Art in crash | publish. Belegzeilen der Veröffentlichungssonden sind ausgenommen."""
+    out = []
+    for i, l in enumerate(lines):
+        if i in exempt:
+            continue
+        if CRASH_ANYWHERE.search(l):
+            out.append(('crash', i, l))
+        if (PUBLISH_FAILURE.search(l) or PUBLISH_CAUSE.search(l)) and not PROBE_EVIDENCE_LINE.search(l):
+            out.append(('publish', i, l))
+    return out
+
+
+def failure_evidence(log, api):
+    """Codex NO-GO 3 (P1): EINE Fehlerklassifikation für abgebrochene/unvollständige Logs (tools/delivery/ci_evidence.py),
+    mit denselben Mustern wie das Gate. -> [(Art, Zeile Nr., Text)]. Arten:
+      publish      Veröffentlichungsfehler (publish rows=/threw=, IOException: publish, MP4_STORE_FAILURE, failed:storage)
+      crash        Absturz/Abbruch/OOM
+      test-failure gescheiterter Test (Code -1/-2) oder Fehlerzusammenfassung ohne zuordenbaren Test
+      size         NUR API 29: der dokumentierte Befund P4B-A10-SIZE (kein neuer Produktfehler, aber auch kein Beleg)
+    Ausgenommen ist nur ein vollständig und streng gültiger Mutantenlauf (mutant_problems() leer)."""
+    lines = [strip(l) for l in log.splitlines()]
+    exempt = range(0)
+    ready = [i for i, l in enumerate(lines) if re.match(r'^DEVICE_READY after \d+ s$', l)]
+    if ready:
+        lo = ready[0] + 1
+        end = next((i for i in range(lo, len(lines)) if lines[i] == MUTANT_PASS), None)
+        if end is None:   # Abbruch nach dem Mutantenlauf, vor der PASS-Zeile: Bericht bis zum Runner-Ende
+            code_end = next((i for i in range(lo, len(lines)) if lines[i].startswith('INSTRUMENTATION_CODE:')), None)
+            end = None if code_end is None else code_end + 1
+        if end is not None and not mutant_problems(lines, lo, end):
+            exempt = range(lo - 1, end + 1)
+    out = [(k, i + 1, l.strip()[:160]) for k, i, l in scan_failures(lines, exempt)]
+    failing, test, stack = [], None, None
+    for i, l in enumerate(lines):
+        if i in exempt:
+            continue
+        l = l[len('FAILED '):] if l.startswith('FAILED ') else l
+        m = re.match(r'^INSTRUMENTATION_STATUS: test=(\S+)$', l)
+        if m:
+            test = m.group(1)
+        if l.startswith('INSTRUMENTATION_STATUS: stack='):
+            stack = l
+        m = re.match(r'^INSTRUMENTATION_STATUS_CODE: (-?\d+)$', l)
+        if m:
+            if m.group(1) in CODE_FAIL:
+                failing.append((i, test, stack))
+            test, stack = None, None
+    for i, t, st in failing:
+        size = api == 29 and t == SIZE_TEST and st is not None and SIZE_RE.search(st) and not PUBLISH_FAILURE.search(st)
+        out.append(('size' if size else 'test-failure', i + 1, '%s: %s' % (t, (st or 'no stack')[:120])))
+    if not failing:
+        for i, l in enumerate(lines):
+            if i not in exempt and re.match(r'^(FAILURES!!!|Tests run: \d+,\s+Failures: [1-9]\d*)$', l):
+                out.append(('test-failure', i + 1, 'failure summary without an identifiable failing test: ' + l))
+                break
+    return sorted(out, key=lambda x: x[1])
+
+
+BLOCKING = ('publish', 'crash', 'test-failure')
 
 
 def sections(lines):
@@ -248,6 +394,7 @@ def _evaluate(log, api, job_conclusion=None):
         reasons.append('section not terminated (truncated log): %s' % open_sec)
     allowed = {'main', 'restart-summary', 'crash'} | set(RESTARTS) | ({'probe', 'probe-lines'} if api >= 29 else set())
     allowed |= {'repeat-three-%d' % i for i in range(1, REPEAT_N + 1)} | {'repeat-class-%d' % i for i in range(1, REPEAT_CLASS_RUNS + 1)}
+    allowed |= {REPEAT_CRASH}
     unknown = sorted(set(secs) - allowed)
     if unknown:
         reasons.append('unexpected sections for API %d: %s' % (api, unknown))
@@ -286,28 +433,14 @@ def _evaluate(log, api, job_conclusion=None):
 
     # 0b) Mutantenprobe (vor dem Gerätetest, getrennt bewertet): genau der erwartete Fehlschlag
     if i_ready is not None and i_mut is not None and i_ready < i_mut:
-        mut = Report(lines[i_ready + 1:i_mut])
-        if mut.tests() != [(MP4, MUTANT_TEST)] or [t for _, t in mut.failed] != [MUTANT_TEST] or mut.failures != 1:
-            reasons.append('mutant run is not exactly the expected single failing test %s' % MUTANT_TEST)
-        for p in mut.problems:
-            reasons.append('mutant report: %s' % p)
-        if (MP4, MUTANT_TEST) in mut.final:
-            code, st = mut.final[(MP4, MUTANT_TEST)]
-            if code != '-2' or MUTANT_REASON not in st or not re.search(r'failed:storag', st):
-                reasons.append('mutant failed for another reason than the publication regression (code %s)' % code)
-        if SYSTEM_CRASH.search(mut.text):
-            reasons.append('crash in the mutant run: %s' % SYSTEM_CRASH.search(mut.text).group(0))
+        reasons += mutant_problems(lines, i_ready + 1, i_mut)
 
     # 0c) GESAMTES Log: Abstürze und Veröffentlichungsfehler an jeder Stelle (Codex Release-Readiness 2). Ausgenommen
     #     sind nur der erwartete Mutantenlauf und die ausdrücklichen Belegzeilen der Veröffentlichungssonden.
     mut_lo, mut_hi = (i_ready, i_mut) if (i_ready is not None and i_mut is not None and i_ready < i_mut) else (-1, -1)
-    for i, l in enumerate(lines):
-        in_mutant = mut_lo < i <= mut_hi   # einschließlich der PASS-Zeile der Mutantenprobe
-        m = CRASH_ANYWHERE.search(l)
-        if m and not in_mutant:
-            reasons.append('crash/abort evidence in the job log (line %d): %s' % (i + 1, l.strip()[:120]))
-        if PUBLISH_FAILURE.search(l) and not in_mutant and not PROBE_EVIDENCE_LINE.search(l):
-            reasons.append('publish failure evidence in the job log (line %d): %s' % (i + 1, l.strip()[:120]))
+    # einschließlich der PASS-Zeile der Mutantenprobe; der Bereich selbst wurde oben streng geprüft (mutant_problems)
+    for kind, i, l in scan_failures(lines, range(mut_lo + 1, mut_hi + 1)):
+        reasons.append('%s evidence in the job log (line %d): %s' % ('crash/abort' if kind == 'crash' else 'publish failure', i + 1, l.strip()[:120]))
 
     # 0d) Instrumentierungsausgabe außerhalb der Abschnitte: nur Kopien des Hauptlaufs (Zusammenfassung, FAILED-Auszug)
     in_sec = set()
@@ -328,6 +461,18 @@ def _evaluate(log, api, job_conclusion=None):
         if m:
             raw_events.append((cur.get('test'), m.group(1)))
             cur = {}
+    # Codex NO-GO 3: Protokollzeilen außerhalb der Abschnitte müssen EXAKT die deterministische Kopie des Hauptberichts
+    # sein (keine zusätzlichen, unvollständigen oder widersprüchlichen Blöcke, z. B. ein "-4" für einen grünen Test).
+    raw_protocol = [lines[i].rstrip() for i, l in enumerate(lines) if i not in in_sec and not (mut_lo <= i <= mut_hi) and protocol(lines[i])]
+    if secs.get('main') is not None:
+        appended = 1 + sum(1 for l in lines if l in ('LISTENER ON 47811', 'package list changed'))
+        want_copy = raw_copy(secs['main'], appended)
+        if raw_protocol != want_copy:
+            k = next((x for x in range(max(len(raw_protocol), len(want_copy)))
+                      if x >= len(raw_protocol) or x >= len(want_copy) or raw_protocol[x] != want_copy[x]), 0)
+            reasons.append('instrumentation output outside the reports is not exactly the copy of the main report '
+                           '(%d lines, expected %d; first difference: %r)' % (len(raw_protocol), len(want_copy),
+                                                                              (raw_protocol[k] if k < len(raw_protocol) else '<missing>')[:100]))
 
     # 1) vollständiger Gerätetest (feste Testmenge)
     main = secs.get('main')
@@ -386,6 +531,18 @@ def _evaluate(log, api, job_conclusion=None):
                 n = sum(1 for l in plines if l.startswith(need.format(api=api)))
                 if n < 1:
                     reasons.append('publish probe evidence missing: %s' % need.format(api=api).strip())
+                elif n > 1 and not need.startswith('PUBLISH_RACE'):
+                    reasons.append('publish probe evidence reported %d times (expected once): %s' % (n, need.format(api=api).strip()))
+            # Codex NO-GO 3: PUBLISH_RACE-Zähler müssen positiv sein und sich zu genau RACE_CYCLES addieren
+            race = [l for l in plines if l.startswith('PUBLISH_RACE ')]
+            rm = [re.match(r'^PUBLISH_RACE sdk=(\d+) count=(\d+) outcome=(\S.*)$', l) for l in race]
+            if not race or not all(rm):
+                reasons.append('publish race evidence missing or unreadable: %s' % [l[:80] for l in race if not re.match(r'^PUBLISH_RACE sdk=\d+ count=\d+ outcome=\S', l)][:2])
+            else:
+                counts = [int(m.group(2)) for m in rm]
+                outcomes = [m.group(3) for m in rm]
+                if min(counts) < 1 or sum(counts) != RACE_CYCLES or len(set(outcomes)) != len(outcomes):
+                    reasons.append('publish race counts %s (expected positive counts of distinct outcomes summing to %d)' % (counts, RACE_CYCLES))
             other_sdk = [l for l in plines if re.search(r'sdk=(\d+)', l) and int(re.search(r'sdk=(\d+)', l).group(1)) != api]
             if other_sdk:
                 reasons.append('publish probe lines of another API: %s' % other_sdk[0][:120])
@@ -438,8 +595,8 @@ def _evaluate(log, api, job_conclusion=None):
     # 5) Wiederholungen: genau diese API, 22 Läufe (20 Dreier + 2 Klassen). Format 2 (Codex Release-Readiness 2): JEDER
     #    Lauf als eigener Bericht mit Kennung und API; altes Format (nur Fehlschläge belegt) ist keine ausreichende Evidenz.
     rep_l = re.findall(r'(?m)^REPEAT api=(\d+) runs=(\d+) passed=(\d+) failed=(\d+)$', text)
-    rsecs = {n: b for n, b in secs.items() if n.startswith('repeat-')}
-    fmt = [i for i, l in enumerate(lines) if l == REPEAT_FORMAT]
+    rsecs = {n: b for n, b in secs.items() if n.startswith('repeat-') and n != REPEAT_CRASH}
+    fmt = [i for i, l in enumerate(lines) if l == REPEAT_FORMAT or l in REPEAT_FORMAT_OLD]
     want_labels = ['three-%d' % i for i in range(1, REPEAT_N + 1)] + ['class-%d' % i for i in range(1, REPEAT_CLASS_RUNS + 1)]
     class_set = {MP4: [t for t in EXPECTED_MAIN[MP4] if t != REPEAT_CLASS_EXCLUDED]}
     if len(fmt) > 1:
@@ -448,6 +605,20 @@ def _evaluate(log, api, job_conclusion=None):
         insufficient.append('repeat evidence in the old format: successful repeat runs are not reported individually')
     elif i_script is not None and i_rep is not None and not (i_script < fmt[0] < i_rep):
         reasons.append('repeat format marker out of order')
+    # Format 3: Crash-Puffer nach ALLEN Wiederholungen erneut ausgelesen (umfasst Hauptlauf, Sonden, Neustarts und die 22
+    # Wiederholungen seit dem logcat -c des Gerätetests); Format 2 hat diesen Beleg nicht -> nie PASS.
+    if fmt and lines[fmt[0]] in REPEAT_FORMAT_OLD:
+        insufficient.append('crash buffer was not read again after the %d repeat runs (repeat format 2)' % REPEAT_RUNS)
+    elif fmt:
+        rc = secs.get(REPEAT_CRASH)
+        if rc is None:
+            reasons.append('crash buffer report after the repeat runs missing (%s)' % REPEAT_CRASH)
+        else:
+            if any(l.strip() for l in rc):
+                reasons.append('crash buffer not empty after the repeat runs: %s' % next(l for l in rc if l.strip())[:120])
+            last_repeat = max([pos[n] for n in rsecs] or [-1])
+            if not (last_repeat < pos[REPEAT_CRASH] and (i_rep is None or pos[REPEAT_CRASH] < i_rep)):
+                reasons.append('crash buffer report after the repeat runs out of order')
     if len(rep_l) == 1:
         rapi, runs, passed, failed = (int(x) for x in rep_l[0])
         if rapi != api:
@@ -468,6 +639,9 @@ def _evaluate(log, api, job_conclusion=None):
                 head = [l for l in body if l.strip()][:1]
                 if head != ['REPEAT-RUN label=%s api=%d' % (label, api)]:
                     reasons.append('%s: missing or wrong run header %s (expected label %s, API %d)' % (n, head[:1], label, api))
+                hdrs = [l for l in body if 'REPEAT-RUN' in l]
+                if len(hdrs) != 1:
+                    reasons.append('%s: %d run headers in one repeat report (expected exactly one)' % (n, len(hdrs)))
                 body = [l for l in body if not l.startswith('REPEAT-RUN ')]
             rr = Report(body)
             expect_tests(rr, {MP4: REPEAT_THREE} if label.startswith('three-') else class_set, n, reasons)
@@ -519,7 +693,20 @@ def main():
     a.add_argument('log')
     a.add_argument('--api', type=int, required=True)
     a.add_argument('--job-conclusion', choices=['success', 'failure'])
+    a.add_argument('--failure-evidence', action='store_true',
+                   help='nur Fehlerbelege klassifizieren (abgebrochene Jobs); Exit 0 = keiner, 1 = blockierender Beleg oder Fehler')
     o = a.parse_args()
+    if o.failure_evidence:
+        try:
+            ev = failure_evidence(open(o.log, encoding='utf-8', errors='replace').read(), o.api)
+        except Exception as e:  # noqa: BLE001 - fail closed
+            print('FAILURE_EVIDENCE parser-error line 0: %s: %s' % (type(e).__name__, e))
+            sys.exit(1)
+        for k, n, t in ev:
+            print('FAILURE_EVIDENCE %s line %d: %s' % (k, n, t))
+        blocking = [e for e in ev if e[0] in BLOCKING]
+        print('FAILURE_EVIDENCE_RESULT %s' % ('blocking' if blocking else 'size-only' if ev else 'none'))
+        sys.exit(1 if blocking else 0)
     verdict, reasons = evaluate(open(o.log, encoding='utf-8', errors='replace').read(), o.api, o.job_conclusion)
     print('DEVICE_GATE api=%d verdict=%s' % (o.api, verdict))
     for r in reasons:

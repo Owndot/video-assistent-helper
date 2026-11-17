@@ -4,6 +4,67 @@ Stand 2026-11-17. Codex-Urteil: **CONDITIONAL GO** für eine isolierte Samsung-A
 Diese Vorbereitung behebt die Lieferketten- und Gate-Blocker. **Keine Lieferung gestartet**, beide Freigaben
 geschlossen (`DELIVERY_APPROVAL: 'none'`), Produktion **UNAPPROVED**.
 
+## Runde 4 – Codex NO-GO 3: False-PASS-Lücken geschlossen (2026-11-17, maßgeblich vor allem Folgenden)
+
+Beide Lieferworkflows bleiben `LOCKED` (`DELIVERY_APPROVAL: 'none'`, zusätzlich `LOCK_REVIEWERS: ''`). Keine APK,
+kein ZIP, keine Signierung, kein Upload, keine Freigabe. Anwendungscode unverändert (Helper `546af14`, Kadri
+`7978a41`); geändert sind nur Workflow-, Prüfwerkzeug-, Test- und Dokumentationsdateien. Jede Codex-Gegenprobe wurde
+zuerst auf der alten Logik (Stand `8ab8982` bzw. `63ee023`) als falsch akzeptiert nachgewiesen und danach abgewiesen.
+
+- **P1 Mutantennachweis** (`tools/device_gate.py`, `tools/run-channel-publication-regression.sh`): gültig nur mit
+  genau der Ursache „Cannot remove pending download ownership“, leerem „last abort“ und leerem „store“. Diese Ursache
+  entsteht im Produktcode nur NACH dem erfolgreichen Veröffentlichen. Jede Veröffentlichungsfehlerzeile (`publish
+  rows=`, `publish threw=`, `IOException: publish`, `MP4_STORE_FAILURE`) ist auch im Mutantenbereich REJECT.
+  Gegenprobe `publish rows=0` mit gleicher Beschriftung: alt PASS, neu REJECT (Gate und Shellprüfung).
+- **P1 abgebrochene CI-Jobs** (`tools/delivery/ci_evidence.py`): eine gemeinsame Klassifikation
+  (`device_gate.failure_evidence`) für vollständige und abgebrochene Logs. `java.io.IOException: publish`,
+  `MP4_STORE_FAILURE … publish threw=` und `failed:storage` sperren. Ein Abbruch nach ausschließlich dem erwarteten
+  Mutantenlauf ist kein Produktfehler, aber auch kein Beleg. Pflichtjobs (Core/JVM/Sicherheits-/Mutationsprüfungen,
+  Signierpfad) werden geprüft: gescheitert mit Prüfungsergebnis oder unbekannter Ursache → Sperre; nur
+  Infrastruktur (z. B. Maven 429) oder Abbruch ohne Prüfungsergebnis → der Versuch liefert keinen Positivbeleg.
+  Bewertet wird nur die Ausgabe des gescheiterten Schritts (die Selbsttests geben absichtlich „SURVIVED“/„FAIL“ aus).
+- **P2 tatsächlich getesteter Code:** genau ein Checkout (ein Fetch, ein `git checkout`, ein `git log -1
+  --format=%H` mit derselben vollständigen SHA), keine weitere git-Änderung des Arbeitsbaums; bei Pull Requests muss
+  der Merge-Commit (GitHub-API) den Lauf-Commit als Elternteil und **exakt dessen Dateibaum** haben. Lokal an echten
+  Daten geprüft: Merge `b3655c9` hat den Baum von `8ab8982`, `a5bb8d7` den von `4fd7350`. Nicht nachweisbar → kein
+  Positivbeleg.
+- **P2 Orphan-Validator** (`orphan_verdict.py`, Hostskript, `OrphanNameCollisionProbeTest`): PASS nur mit
+  erfolgreicher MediaStore-Ausgangsabfrage ohne Eintrag (`queryBefore=ok`, `rowsBefore=[]`; null-Cursor = Fehler),
+  genau einem neuen Eintrag und genau einer neuen Datei mit dem Download-Hash, bytegleicher verwaister Datei,
+  unveränderten übrigen Dateien (jetzt auch versteckte Dateien und Unterordner), vollständig beendetem benanntem Test
+  und leerem Crash-Puffer. Aufnahmen gelten nur mit `SNAPSHOT-END` und ohne Fehlerzeile. Alle Belege werden vor dem
+  Aufräumen ins Log geschrieben, auch beim Abbruch; aufgeräumt werden nur Dateien mit dem zufälligen Sondentitel.
+- **P2 weitere Gate-Lücken:** Protokollzeilen außerhalb der Abschnitte müssen exakt die Kopie des Hauptberichts sein
+  (zusätzlicher unvollständiger Block und widersprüchliches `-4` → REJECT); genau ein `REPEAT-RUN`-Kopf je Bericht;
+  `PUBLISH_RACE`-Zähler positiv mit Summe 30. Der Crash-Puffer wird nach den 22 Wiederholungen erneut ausgelesen
+  (`REPEAT-FORMAT 3`, Abschnitt `repeat-crash`); Logs im Format 2 sind deshalb nur noch `INSUFFICIENT_EVIDENCE`.
+- **P2 Freigabepolitik** (`tools/delivery/lock.py`, in beiden Repositories byte-gleich): „irgendein Required
+  Reviewer“ genügt nicht mehr – verlangt werden keine Admin-Umgehung, Prevent self-review, Reviewer = genau
+  `LOCK_REVIEWERS` (nicht der Auslöser) und im Paketjob eine Zustimmung dieses Laufs durch einen festgelegten
+  Reviewer. Einmaligkeit hängt weiter an löschbarer Actions-Historie und wird **nicht** als dauerhaft behauptet;
+  Vorschlag einer geschützten Verbrauchsregistrierung und funktionsfähige Ein-Personen- bzw. Vier-Augen-Abläufe:
+  [P4-APPROVAL-PROPOSAL.md](P4-APPROVAL-PROPOSAL.md). Nichts davon ist eingerichtet oder aktiviert.
+
+**Testzahlen:** Geräte-Gate 102 Fixtures (die bisherigen 87 mit unverändertem Urteil, 15 neue), `test_ci_evidence`
+59 Fälle (vorher 34), `test_orphan_verdict` 58 Fälle (die bisherigen 33 mit unveränderter Erwartung, 25 neue),
+`test_orphan_probe_script` 10 Fälle (neu, Hostskript gegen nachgebildetes adb), Lock-Selbsttest beider Repositories
+mit 17 neuen Politik-Fällen und 6 neuen Mutanten.
+
+**CI-Stand auf `8ab8982` (vor dieser Runde):**
+
+- API 26 und API 34: Gerätejob grün. Mit dem neuen Gate nur noch `INSUFFICIENT_EVIDENCE` (Format 2, Crash-Puffer
+  nach den Wiederholungen nicht erneut gelesen) – kein Positivbeleg.
+- **API 29 bleibt REJECT** (Job 134306482051): App-Heap 16 MiB (ungültige Umgebung), zwei Remux-Fehlschläge im
+  Hauptlauf, SIZE-Befund in Haupt- und zwei Klassen-Wiederholungen.
+- Orphan-Sonde (Lauf 44158729117): API 29 und API 34 `ORPHAN_RESULT PASS` **im konkret getesteten Fall** (eine
+  verwaiste Datei, ein Download desselben Titels). Die alten Sondenzeilen enthalten die neuen Abfragefelder noch nicht
+  und wären nach der neuen Bewertung INVALID; maßgeblich ist der Lauf nach dieser Runde.
+- `hls-download` / `media3-supply-chain` (Lauf 44158729255): erster Versuch Infrastrukturfehler (Maven Central HTTP
+  429 beim Auflösen der Abhängigkeiten, vor jedem Test), zweiter Versuch erfolgreich.
+- Trockenlauf `ci_evidence.py` gegen die echte GitHub-API (546af14 … 8ab8982, 12 Commits): REJECT – fünf abgewiesene
+  Jobs mit Veröffentlichungsfehlern bzw. ungültiger Umgebung, keine Positivbelege im neuen Format; abgebrochene
+  Core-Jobs werden korrekt als „kein Beleg“ ausgewiesen.
+
 ## Runde 3 – Codex NO-GO abgearbeitet (2026-11-17, maßgeblich vor allem Folgenden)
 
 Beide Lieferworkflows bleiben `LOCKED`. Keine APK, kein ZIP, keine Signierung, kein Upload. Anwendungscode unverändert
@@ -25,7 +86,7 @@ Beide Lieferworkflows bleiben `LOCKED`. Keine APK, kein ZIP, keine Signierung, k
   - Abdeckung von API 26, 29 und 34 verlangt.
   - Fehlende Logs, API-Fehler und Widersprüche sperren.
   - Positivbelege zählen nur, wenn der getestete Merge-Baum nachweislich dem Commit entspricht.
-  - 30 Regressionstests mit Attrappen.
+  - 34 Regressionstests mit Attrappen (Runde 4: 59).
 - **Geräte-Gate (`tools/device_gate.py`).**
   - Globale Prüfung des gesamten Logs auf Abstürze, auch App-FATAL außerhalb des Crash-Abschnitts und OOM, und auf
     Veröffentlichungsfehler. Ausgenommen sind nur der erwartete Mutantenlauf und die Sonden-Belegzeilen.
@@ -46,7 +107,7 @@ Beide Lieferworkflows bleiben `LOCKED`. Keine APK, kein ZIP, keine Signierung, k
 - **Veröffentlichungsfehler sind kein Android-10-Thema.**
   - `publish rows=0` bzw. `IOException: publish` tritt auf API 34 und API 29 auf. Er ist nicht behoben und nicht
     mit SIZE gleichzusetzen.
-  - Eine OOM-Ursache ist nicht belegt: Auf API 34 lag kein Speicherengpass vor.
+  - Eine OOM-Ursache ist nicht belegt: Auf API 34 ist kein Speicherengpass nachgewiesen (ausgeschlossen ist er damit nicht).
   - Alle bekannten Logs sind mit Run-, Attempt- und Job-ID sowie SHA-256 gesichert:
     [evidence/publish-failures/INDEX.md](evidence/publish-failures/INDEX.md).
 - **Verwaiste Datei und Namenskollision.** Gezielter Test nur auf Wegwerf-Emulatoren:
@@ -61,7 +122,7 @@ Beide Lieferworkflows bleiben `LOCKED`. Keine APK, kein ZIP, keine Signierung, k
   Positivbelege im neuen Format.
 - **API 29:** `REJECT`. `duplicateAndLateStartsFetchOnce` scheitert mit `publish rows=0`; die vollständige Datei
   (`diskFinal=exists(65536)`) liegt ohne MediaStore-Zeile auf der Platte. App-Heap 512 MiB, kein Systemabsturz: Auch
-  auf API 29 tritt der Fehler also ohne Speicherengpass auf.
+  auf API 29 tritt der Fehler also auch ohne nachgewiesenen Speicherengpass auf.
 - **Lieferung:** Nach den Regeln weiter gesperrt (`ci_evidence.py`: REJECT wegen API 29 und der älteren Fälle).
 - **Auf `4fd7350` (Lauf 44113835443):**
   - API 26 und API 34 `PASS`, API 29 `ACCEPTED_SIZE_ONLY`.
@@ -117,8 +178,11 @@ zwischen beiden Commits unterscheiden, zeichnet die Kadri-Lieferung als eigene A
 Änderung unter `poc/pake-channel/core` zwischen `bd5ab29` und `546af14`).
 
 Nach `SOURCE_SHA` weichen nur Liefer- und Prüfwerkzeuge ab, die nicht in die APK eingehen:
-`.github/workflows/p4-test-package.yml`, `.github/workflows/helper-channel.yml`, `tools/device_gate.py`,
-`tools/delivery/*.py`, `tests/gate/**`, `tests/delivery/**` und Root-Markdown. Die Scope-Prüfung des Paketjobs
+`.github/workflows/p4-test-package.yml`, `.github/workflows/helper-channel.yml`,
+`.github/workflows/orphan-collision-probe.yml`, `tools/device_gate.py`, `tools/delivery/*.py`,
+`tools/run-flaky-repeat.sh`, `tools/run-channel-publication-regression.sh` (Runde 4: nur die Mutanten-Shellprüfung),
+`tools/run-orphan-collision-probe.sh`, die Testklasse `OrphanNameCollisionProbeTest` (läuft nie im normalen
+Gerätelauf), `tests/gate/**`, `tests/delivery/**`, `evidence/**` und Root-Markdown. Die Scope-Prüfung des Paketjobs
 lässt genau diese Liste zu; gebaut wird aus einem Checkout von `SOURCE_SHA`.
 
 ## P1 – Freigabesperre (beide Lieferworkflows)
@@ -235,7 +299,7 @@ Evidenz.
   (MediaProvider bricht nach dem Umbenennen ab, H3).
 - **Folge für die Wiederherstellung:** Eine solche Datei bleibt ohne Eintrag im Download-Ordner, während die App
   „Speichern fehlgeschlagen“ meldet.
-- Für API 34 (`e5fb290`) ist kein Speicherengpass belegt.
+- Für API 34 (`e5fb290`) ist kein Speicherengpass nachgewiesen.
 - Das Gate weist den Lauf korrekt ab (Veröffentlichungsfehler, Systemabsturz, unvollständige Tests). Nach den Regeln
   ist eine Lieferung von `546af14` deshalb **derzeit gesperrt**, bis der Eigentümer über diesen Befund entscheidet.
   Ein grüner Wiederholungslauf hebt den roten nicht auf.
@@ -243,7 +307,7 @@ Evidenz.
 ### Weitere Befunde auf `b18a355` (Anwendungscode = `546af14`), Lauf 44093078605
 
 - **API 34:** `duplicateAndLateStartsFetchOnce` scheiterte mit `publish rows=0 proof=present cleanup=not-observed`.
-  - Kein Speicherengpass: App-Heap 192 MiB, kein Systemabsturz. Die Wiederholungen waren 22/22 grün.
+  - Kein Speicherengpass nachgewiesen: App-Heap 192 MiB, kein Systemabsturz. Die Wiederholungen waren 22/22 grün.
   - Provider-Schnappschuss: `downloads=absent filesSameId=absent finalNameOtherIds=0 diskFinal=exists(65536) diskPending=absent`.
   - Das Gate weist den Lauf ab.
 - **API 29:** Der Emulator lief mit 16 MiB App-Heap (ungültige Testumgebung, zwei HLS-Speichertests rot). Das Gate

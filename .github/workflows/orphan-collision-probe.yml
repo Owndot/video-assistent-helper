@@ -6,7 +6,7 @@ name: Orphan final-name collision probe (disposable emulators only, nothing publ
 on:
   push:
     branches: [feature/c3-browser-downloads]
-    paths: [.github/workflows/orphan-collision-probe.yml, tools/run-orphan-collision-probe.sh, tools/delivery/orphan_verdict.py, tests/delivery/test_orphan_verdict.py, app/src/androidTestChanneltest/java/de/evp/helfer/OrphanNameCollisionProbeTest.java]
+    paths: [.github/workflows/orphan-collision-probe.yml, tools/run-orphan-collision-probe.sh, tools/delivery/orphan_verdict.py, tests/delivery/test_orphan_verdict.py, tests/delivery/test_orphan_probe_script.py, tools/device_gate.py, app/src/androidTestChanneltest/java/de/evp/helfer/OrphanNameCollisionProbeTest.java]
 permissions:
   contents: read
 concurrency:
@@ -60,7 +60,9 @@ jobs:
           test ! -e app/build/outputs/apk/release
           test ! -e app/build/outputs/apk/debug
       - name: Verdict self-test (PASS only with proven publication, unchanged orphan and unchanged other files)
-        run: python3 -I tests/delivery/test_orphan_verdict.py
+        run: |
+          python3 -I tests/delivery/test_orphan_verdict.py
+          python3 -I tests/delivery/test_orphan_probe_script.py   # Hostskript gegen nachgebildetes adb (versteckte Dateien, Aufnahmefehler, Aufräumen)
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

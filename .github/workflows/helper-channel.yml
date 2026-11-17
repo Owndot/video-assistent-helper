@@ -96,6 +96,7 @@ jobs:
           "$RUNNER_TEMP/lockvenv/bin/python" -I tests/delivery/test_lock.py .github/workflows/p4-test-package.yml feature/c3-browser-downloads "SOURCE_SHA KADRI_PAIR_SHA" "Temporary test signing"
           python3 -I tests/delivery/test_ci_evidence.py
           python3 -I tests/delivery/test_orphan_verdict.py
+          python3 -I tests/delivery/test_orphan_probe_script.py
       - name: Mutation probes (each weakened copy must fail the checks)
         run: python3 -I tests/java/channel/mutation.py "$RUNNER_TEMP/desk"
       - name: Reviewed JVM checks (F1, F3, F4) against the app copies of SnapshotWriter and HttpRequestReader

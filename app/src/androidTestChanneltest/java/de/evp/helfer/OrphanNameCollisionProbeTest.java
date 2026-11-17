@@ -60,15 +60,23 @@ public class OrphanNameCollisionProbeTest {
 
     static String sha(byte[] b) throws Exception { return hex(MessageDigest.getInstance("SHA-256").digest(b)); }
 
-    /** Alle sichtbaren und ausstehenden Zeilen mit dem Titel im Namen: "id|name|size|sha|path" (sha nur lesbar bei eigenen Zeilen). */
-    static List<String> rows(ContentResolver cr, String title, List<Long> ids) {
+    /**
+     * Alle sichtbaren und ausstehenden Zeilen mit dem Titel im Namen: "id|name|size|sha|path" (sha nur lesbar bei eigenen
+     * Zeilen). Codex NO-GO 3: Ein null-Cursor oder ein Fehler der Abfrage ist KEINE leere Antwort – dann null und
+     * {@code status[0]} nennt den Grund ("null-cursor", "error:…"); nur bei erfolgreicher Abfrage "ok".
+     */
+    static List<String> rows(ContentResolver cr, String title, List<Long> ids, String[] status) {
         List<String> out = new ArrayList<>();
         Uri base = Build.VERSION.SDK_INT >= 29 ? MediaStore.Downloads.EXTERNAL_CONTENT_URI : MediaStore.Files.getContentUri("external");
         if (Build.VERSION.SDK_INT >= 29) base = MediaStore.setIncludePending(base);
         try (Cursor c = cr.query(base, new String[] {MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE,
                     MediaStore.MediaColumns.DATA},
                 MediaStore.MediaColumns.DISPLAY_NAME + " LIKE ?", new String[] {"%" + title + "%"}, MediaStore.MediaColumns._ID)) {
-            while (c != null && c.moveToNext()) {
+            if (c == null) {
+                status[0] = "null-cursor";
+                return null;
+            }
+            while (c.moveToNext()) {
                 long id = c.getLong(0);
                 Uri u = ContentUris.withAppendedId(base, id);
                 String h;
@@ -84,7 +92,11 @@ public class OrphanNameCollisionProbeTest {
                 String path = c.getString(3);
                 out.add(id + "|" + c.getString(1) + "|" + c.getLong(2) + "|" + h + "|" + (path == null ? "-" : path.replaceAll(".*/", "")));
             }
+        } catch (RuntimeException e) {
+            status[0] = "error:" + e.getClass().getSimpleName();
+            return null;
         }
+        status[0] = "ok";
         return out;
     }
 
@@ -98,7 +110,8 @@ public class OrphanNameCollisionProbeTest {
         byte[] body = newContent();
         String want = sha(body);
         List<Long> before = new ArrayList<>(), after = new ArrayList<>();
-        List<String> rowsBefore = rows(cr, title, before);
+        String[] qBefore = {"unknown"}, qAfter = {"unknown"};
+        List<String> rowsBefore = rows(cr, title, before, qBefore);
         String status = "";
         try (Mp4DownloadsInstrumentedTest.Server srv = new Mp4DownloadsInstrumentedTest.Server((line, h, out, i) -> {
             Mp4DownloadsInstrumentedTest.head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: " + SIZE, "ETag: \"orphan-probe\"");
@@ -119,11 +132,17 @@ public class OrphanNameCollisionProbeTest {
                 store.engine.stopAll();
             }
         }
-        List<String> rowsAfter = rows(cr, title, after);
+        List<String> rowsAfter = rows(cr, title, after, qAfter);
         String state = status.replaceAll(".*\"state\":\"([a-z]+)\".*", "$1");
         String reason = status.replaceAll(".*\"reason\":\"([^\"]*)\".*", "$1");
+        // Genau eine Belegzeile; der Host (tools/delivery/orphan_verdict.py) verlangt jedes Feld
         Log.i(TAG, "ORPHAN_PROBE sdk=" + Build.VERSION.SDK_INT + " state=" + state + " reason=" + reason + " newSha=" + want
-            + " rowsBefore=" + rowsBefore + " rowsAfter=" + rowsAfter.toString().replace(title, "<title>"));
+            + " queryBefore=" + qBefore[0] + " queryAfter=" + qAfter[0]
+            + " rowsBefore=" + (rowsBefore == null ? "[]" : rowsBefore.toString().replace(title, "<title>"))
+            + " rowsAfter=" + (rowsAfter == null ? "[]" : rowsAfter.toString().replace(title, "<title>")));
+        assertTrue("initial MediaStore query must succeed (no null cursor): " + qBefore[0], rowsBefore != null);
+        assertTrue("final MediaStore query must succeed (no null cursor): " + qAfter[0], rowsAfter != null);
+        assertTrue("the orphan must not have a MediaStore entry before the download: " + rowsBefore, rowsBefore.isEmpty());
         // Kein Aufräumen hier: der Host nimmt danach den Ordner auf (Namen, Größen, Hashes) und entfernt erst dann die
         // eigenen synthetischen Dateien. Zurückbleibende Zeilen betreffen nur den Wegwerf-Emulator.
         // Nur ein abgeschlossener, veröffentlichter Download ist ein Integritätsnachweis. Ein Fehlschlag (auch storage/

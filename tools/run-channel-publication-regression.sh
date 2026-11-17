@@ -21,9 +21,17 @@ if grep -q 'INSTRUMENTATION_ABORTED\|Process crashed' "$OUT/report/publication-b
   echo "== crash buffer"; adb logcat -d -b crash 2>/dev/null | head -150 || true
   echo "== system log (fatal)"; adb logcat -d -b system,main 2>/dev/null | grep -E 'FATAL|\*\*\* |Watchdog|SystemServer|system_server' | tail -80 || true
 fi
-grep -q 'published file is successful despite marker failure' "$OUT/report/publication-baseline.txt"
-# JUnit kürzt ComparisonFailure: expected:<[don]e> but was:<[failed:storag]e> – beide Schreibweisen zulassen
-grep -Eq 'failed:storage|failed:storag\]e' "$OUT/report/publication-baseline.txt"
-grep -q 'INSTRUMENTATION_STATUS_CODE: -2' "$OUT/report/publication-baseline.txt"
-if grep -q '^OK (' "$OUT/report/publication-baseline.txt"; then echo 'baseline unexpectedly passed'; exit 1; fi
+# Codex NO-GO 3 (P1): Nachweis nur, wenn die Veröffentlichung GELANG und erst die absichtlich manipulierte nachgelagerte
+# Bereinigung der Besitzmarkierung scheiterte. Diese Ursache ("Cannot remove pending download ownership", ohne Abbruch
+# "last abort: ;" und ohne Ablagefehler "store: ;") entsteht im Produktcode nur nach rows == 1 bzw. nach dem Verschieben.
+# Beschriftung, failed:storage oder Code -2 allein genügen nicht; jeder Veröffentlichungsfehler im Lauf ist ein Fehlschlag.
+# tools/device_gate.py prüft dasselbe unabhängig am vollständigen Job-Log.
+B="$OUT/report/publication-baseline.txt"
+if grep -Eq 'publish rows=|publish threw=|IOException: publish|publish result \(cause|MP4_STORE_FAILURE' "$B"; then
+  echo 'mutant run shows a publish failure: the publication itself failed (not the marker cleanup)'; exit 1
+fi
+grep -Eq '^INSTRUMENTATION_STATUS: stack=org\.junit\.ComparisonFailure: published file is successful despite marker failure \(cause: IOException: Cannot remove pending download ownership; last abort: ; store: ; downloadsInitialized: (true|false); now=[0-9]+ms; cleanups: \[\]\) expected:<\[don\]e> but was:<\[failed:storag\]e>$' "$B"
+[ "$(grep -c '^INSTRUMENTATION_STATUS_CODE: -2$' "$B")" = 1 ]
+grep -qx 'Tests run: 1,  Failures: 1' "$B"
+if grep -q '^OK (' "$B"; then echo 'baseline unexpectedly passed'; exit 1; fi
 echo 'PASS: previous cleanup fails the publication regression (failed:storage instead of done)'
