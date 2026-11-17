@@ -46,7 +46,8 @@ def plain(rid, path, sha=SRC):
 def job(jid, rid, attempt, api, conclusion='success', status='completed', started=True):
     return {'id': jid, 'run_id': rid, 'run_attempt': attempt, 'name': 'Test package de.evp.helfer.channeltest on a disposable API %d emulator' % api,
             'status': status, 'conclusion': conclusion, 'started_at': '2026-11-17T10:00:00Z' if started else None,
-            'steps': [{'conclusion': 'success' if started else 'skipped'}]}
+            'steps': [{'name': 'Test APKs with a throwaway signer', 'conclusion': 'success' if started else 'skipped'},
+                      {'name': 'Instrumentation on a disposable API %d x86_64 emulator' % api, 'conclusion': (conclusion or None) if started else 'skipped'}]}
 
 
 def other(jid, rid, attempt):
@@ -178,6 +179,15 @@ case('old REJECT on a same-code commit next to a new PASS', lambda r, j, l: (
     git=FakeGit(same=(SRC, W2)))
 case('plain workflow on the source not successful', lambda r, j, l: r[1].update(conclusion='failure'))
 
+case('device step missing in an emulator job', lambda r, j, l: j[(10, 1)][1].update(steps=[{'name': 'x', 'conclusion': 'success'}]))
+case('build failed before the device step, no other evidence for API 26', lambda r, j, l: j[(10, 1)][1].update(
+    conclusion='failure', steps=[{'name': 'Test APKs with a throwaway signer', 'conclusion': 'failure'},
+                                 {'name': 'Instrumentation on a disposable API 26 x86_64 emulator', 'conclusion': 'skipped'}]))
+case('device step ran and failed (log says REJECT) although an earlier step failed too', lambda r, j, l: (j[(10, 1)][3].update(
+    conclusion='failure', steps=[{'name': 'Test APKs with a throwaway signer', 'conclusion': 'failure'},
+                                 {'name': 'Instrumentation on a disposable API 34 x86_64 emulator', 'conclusion': 'failure'}]),
+    l.update({134: merge_log('REJECT')})))
+
 for name, runs, jobs, logs, git, fp, to in CASES:
     ok, why = verdict(runs, jobs, logs, git, fp, to)
     check(not ok and bool(why), 'REJECT: %s (%s)' % (name, why[0][len('CI_EVIDENCE REJECT '):][:90] if why else 'NO REASON'))
@@ -191,5 +201,17 @@ logs[1026] = merge_log('REJECT', BAD)
 ok, _ = verdict(runs, jobs, logs)
 check(ok, 'runs of a commit with different application code are not used as evidence')
 
-print('CI_EVIDENCE_SELFTEST %s %d cases, %d failed' % ('FAIL' if fails else 'PASS', len(CASES) + 2, len(fails)))
+# Ein Bau-Fehlschlag VOR dem Geräteschritt ist kein Beleg über die App: ausgewiesen, aber weder PASS noch REJECT;
+# die Abdeckung muss aus anderen Läufen kommen.
+runs, jobs, logs = world()
+runs.append(run(21, SRC))
+jobs[(21, 1)] = [dict(job(1126, 21, 1, 26, 'failure'), steps=[{'name': 'Test APKs with a throwaway signer', 'conclusion': 'failure'},
+                 {'name': 'Instrumentation on a disposable API 26 x86_64 emulator', 'conclusion': 'skipped'}]),
+                 job(1129, 21, 1, 29, 'failure'), job(1134, 21, 1, 34)]
+logs.update({1129: merge_log('ACCEPTED_SIZE_ONLY'), 1134: merge_log('PASS')})
+out = []
+ok = E.evaluate(FakeGh(runs, jobs, logs), FakeGit(), SRC, W2, FAKE_GATE, TMP, out=out.append)
+check(ok and any('before the device step ran' in l for l in out), 'build failure before the device step is listed as no device evidence (not hidden, not PASS)')
+
+print('CI_EVIDENCE_SELFTEST %s %d cases, %d failed' % ('FAIL' if fails else 'PASS', len(CASES) + 3, len(fails)))
 sys.exit(1 if fails else 0)

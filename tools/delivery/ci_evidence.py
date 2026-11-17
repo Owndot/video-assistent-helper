@@ -40,6 +40,7 @@ KNOWN_OTHER = {'Core, JVM channel checks, mutation probes, WASM unchanged',
                'P4 signing path on macOS (stock tools, throwaway key, nothing published)'}
 PLAIN_WORKFLOWS = ['.github/workflows/build.yml', '.github/workflows/browser-tests.yml', '.github/workflows/hls-download.yml']
 CHANNEL = '.github/workflows/helper-channel.yml'
+DEVICE_STEP = 'Instrumentation on a disposable API'
 APIS = (26, 29, 34)
 FAILURE_EVIDENCE = re.compile(r'publish rows=0|IOException: publish rows|FATAL EXCEPTION|OutOfMemoryError|DeadSystemException'
                               r'|Process crashed|INSTRUMENTATION_ABORTED|^FAILURES!!!$|INSTRUMENTATION_STATUS_CODE: -[12]$', re.M)
@@ -187,6 +188,15 @@ def evaluate(gh, git, source, workflow_sha, gate, tmpdir, out=print):
                         started = bool(j.get('started_at')) and any(s.get('conclusion') not in (None, 'skipped') for s in j.get('steps') or [{}])
                         if concl == 'skipped' or not started:
                             ignored.append('%s: %s, never started' % (where, concl))
+                            continue
+                        dev = [s for s in j.get('steps') or [] if (s.get('name') or '').startswith(DEVICE_STEP)]
+                        if len(dev) != 1:
+                            fails.append('device step missing or ambiguous in %s' % where)
+                            continue
+                        if dev[0].get('conclusion') in (None, 'skipped') and concl != 'success':
+                            # Bau/Vorbereitung scheiterte, kein Gerätetest lief: kein Beleg über die App (ausgewiesen)
+                            failed = [s.get('name') for s in j.get('steps') or [] if s.get('conclusion') == 'failure']
+                            ignored.append('%s: %s before the device step ran (failed step %s) - no device evidence' % (where, concl, failed))
                             continue
                         try:
                             log = gh.log(j['id'])
