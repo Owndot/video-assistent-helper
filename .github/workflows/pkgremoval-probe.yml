@@ -7,13 +7,14 @@ name: Package-removal A/B diagnosis (two fresh disposable API 34 emulators, noth
 #   uninstall: Deinstallation des Testpakets und sofortige Neuinstallation während des Boot-Scans
 # Nur Testinstrumentierung (tests/bootscan/ wird nur in diesem Job in die Test-APK kopiert), Produktcode unverändert.
 # Kein APK-Upload, keine Lieferung, keine Signierung außer dem Wegwerf-Testsignierer, kein Löschen von Dateien auf dem Gerät.
-# Ergebnis nie PASS: PKGAB_RESULT HYPOTHESIS_SUPPORTED | HYPOTHESIS_NOT_SUPPORTED | INCONCLUSIVE | DATA_LOSS | INVALID.
-# HYPOTHESIS_SUPPORTED stützt eine Korrelation (Scan, Paketoperation, Besitzerwechsel konkreter Zeilen), beweist aber keine
-# interne MediaProvider-Warteschlange als Ursache. Regeln pkgab=v2 / snapshots=v2 (nach Codex-NO-GO 1).
+# REINER BEOBACHTUNGSTEST (tools/pkgab_observe.py): kein automatisches Kausalurteil. Je Arm Rohbelege, Beobachtungsliste
+# (observations.jsonl) und Zusammenfassung mit measurement COMPLETE|INCOMPLETE|REFUSED, data_loss PROVEN|NONE_PROVEN und
+# overlap PRESENT|ABSENT|UNDETERMINED (Mess-Voraussetzung). Die Ursachenanalyse erfolgt danach manuell anhand der Rohbelege.
+# Ein grüner Schritt ist keine Freigabe des Helpers und keine Aussage über die Hypothese.
 on:
   push:
     branches: [diag/pkgremoval-ab]
-    paths: [.github/workflows/pkgremoval-probe.yml, tests/bootscan/**, tools/run-pkgremoval-probe.sh, tools/pkgremoval_verdict.py, tools/bootscan_verdict.py]
+    paths: [.github/workflows/pkgremoval-probe.yml, tests/bootscan/**, tools/run-pkgremoval-probe.sh, tools/pkgab_observe.py, tools/bootscan_verdict.py]
 permissions:
   contents: read
 concurrency:
@@ -33,15 +34,14 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
-      - name: Verdict and host-script self-tests (synthetic logs, fake adb; no device)
+      - name: Observer, parser and host-script self-tests (synthetic logs, fake adb; no device)
         run: |
           set -euo pipefail
-          python3 -I tests/bootscan/test_bootscan_verdict.py
-          python3 -I tests/bootscan/test_bootscan_script.py
-          python3 -I tests/bootscan/test_pkgremoval_verdict.py
+          python3 -I tests/bootscan/test_pkgab_observe.py
           python3 -I tests/bootscan/test_pkgremoval_script.py
-          python3 -I tests/bootscan/test_archive_integrity.py
           python3 -I tests/bootscan/test_probe_parsers.py
+          python3 -I tests/bootscan/test_bootscan_verdict.py
+          python3 -I tests/bootscan/test_archive_integrity.py
       - name: Pinned toolchains (Rust from rust-toolchain.toml, NDK r27c, SDK 37.0, build-tools 36.0.0 + 34.0.0)
         run: |
           set -euo pipefail
@@ -98,27 +98,27 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -wipe-data -noaudio -no-boot-anim -camera-back none
           script: bash tools/run-pkgremoval-probe.sh uninstall "$RUNNER_TEMP/a"
-      - name: A/B verdict (never PASS)
+      - name: Index of both arms (measurement status and file list only; no causal conclusion)
         if: always()
         run: |
           set -uo pipefail
-          for v in control uninstall; do
-            f="$RUNNER_TEMP/a/report-pkgremoval-$v/verdict.txt"
-            [ -f "$f" ] || { mkdir -p "$(dirname "$f")"; : > "$f"; echo "PKGAB_HOST variant $v produced no verdict"; }
-          done
           echo "PKGAB_HOST step outcomes control=${{ steps.control.outcome }} uninstall=${{ steps.uninstall.outcome }}"
-          python3 -I tools/pkgremoval_verdict.py ab "$RUNNER_TEMP/a/report-pkgremoval-control/verdict.txt" \
-            "$RUNNER_TEMP/a/report-pkgremoval-uninstall/verdict.txt" | tee "$RUNNER_TEMP/a/ab-verdict.txt"
-      - name: Collect text-only report (no APK, no keys)
+          python3 -I tools/pkgab_observe.py index "$RUNNER_TEMP/a/report-pkgremoval-control" "$RUNNER_TEMP/a/report-pkgremoval-uninstall" \
+            | tee "$RUNNER_TEMP/a/index.txt"
+      - name: Collect text-only report and check it for credentials (no APK, no keys)
+        id: collect
         if: always()
         run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/out"
           cp -r "$RUNNER_TEMP"/a/report-pkgremoval-* "$RUNNER_TEMP/out/" 2>/dev/null || true
-          cp "$RUNNER_TEMP"/a/ab-verdict.txt "$RUNNER_TEMP"/native.txt "$RUNNER_TEMP"/apk.txt "$RUNNER_TEMP"/apk-sha256.txt "$RUNNER_TEMP/out/" 2>/dev/null || true
-          find "$RUNNER_TEMP/out" \( -name '*.apk' -o -name '*.so' -o -name '*.p12' -o -name '*.jks' \) -delete
+          cp "$RUNNER_TEMP"/a/index.txt "$RUNNER_TEMP"/native.txt "$RUNNER_TEMP"/apk.txt "$RUNNER_TEMP"/apk-sha256.txt "$RUNNER_TEMP/out/" 2>/dev/null || true
+          find "$RUNNER_TEMP/out" \( -name '*.apk' -o -name '*.so' -o -name '*.p12' -o -name '*.jks' -o -name '*.keystore' \) -delete
           ls -R "$RUNNER_TEMP/out"
+          # Upload nur, wenn keine Zugangsdaten gefunden werden (Werte werden nie ausgegeben)
+          python3 -I tools/pkgab_observe.py check-upload "$RUNNER_TEMP/out"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
+        if: ${{ !cancelled() && steps.collect.outcome == 'success' }}
         with:
           name: pkgremoval-ab-report-text-only
           path: ${{ runner.temp }}/out

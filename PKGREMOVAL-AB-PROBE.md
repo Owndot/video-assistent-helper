@@ -1,7 +1,8 @@
 # A/B-Diagnose: verzögerte Paket-Deinstallation im MediaProvider (Testplan)
 
-Stand 2026-11-18, überarbeitet nach Codex-NO-GO 1 und NO-GO 2 (Regeln `pkgab=v3`, `snapshots=v3`, `foreign=v2`).
-**Nur vorbereitet: kein Push, kein Emulatorlauf.** Produktcode unverändert (`546af14`, `7978a41`); beide
+Stand 2026-11-18. Nach Codex-NO-GO 3 ist die Strategie geändert: **reiner Beobachtungstest** (`tools/pkgab_observe.py`).
+Der Lauf misst und dokumentiert nur, ohne automatisches Kausalurteil. Die Ursachenanalyse erfolgt danach manuell (Codex)
+anhand der Rohbelege. **Nur vorbereitet: kein Push, kein Emulatorlauf.** Produktcode unverändert (`546af14`, `7978a41`); beide
 Lieferworkflows bleiben `LOCKED`. Das ist keine Lieferfreigabe.
 
 ## Hypothese (unbewiesen) und was der Test messen kann
@@ -17,9 +18,10 @@ Indizien: In beiden fehlgeschlagenen Läufen steht `owner_package_changed:<Pfad>
 derselben TID; dem Hauptlauf ging die Deinstallation der Mutanten-APK voraus.
 
 **Messbar** ist nur die zeitliche Abfolge: Mount-Scan, Paketoperation, Besitzerwechsel bzw. Verlust **konkreter**
-MediaStore-Zeilen. Eine passende Abfolge stützt die Hypothese (Korrelation). Eine interne MediaProvider-Warteschlange
-als Ursache beweist sie nicht; jedes `SUPPORTED` trägt deshalb die Zeile `CLAIM …`. Fehlt die relevante Überschneidung,
-ist das Ergebnis INCONCLUSIVE.
+MediaStore-Zeilen. Eine passende Abfolge könnte die Hypothese stützen (Korrelation); eine interne
+MediaProvider-Warteschlange als Ursache beweist sie nicht. Diese Abwägung trifft **kein Werkzeug**, sondern die
+manuelle Analyse. Fehlt die relevante Überschneidung, ist der Lauf kein aussagekräftiger A/B-Vergleich
+(`overlap ABSENT`, Index `PKGAB_AB_PRECONDITIONS NOT_MET`).
 
 Zu Lauf 44281951152 (korrigiert): Dort wurde der Boot-Scan allein **nicht als Ursache nachgewiesen**. Generell
 widerlegt ist er nicht. Die strengere Aufnahmeprüfung zeigt außerdem, dass in jenem Belegstrom Änderungszeilen fehlen
@@ -38,15 +40,86 @@ wird nicht abgewartet.
 | 2 | Installation 1; jede Operation mit `op-begin`/`op-end`, `rc`, Ergebnis, Gerätezeit | gleich |
 | 3 | Phase `pre`: genau 3 Veröffentlichungen (seq 20000–20002), URI-Prüfungen +0/+250 ms | gleich |
 | 4 | Host fragt ab hier etwa alle 0,3 s die privilegierte Sicht ab (Gerätezeit vor **und** nach der Abfrage) | gleich |
-| 5 | **`install -r`** beider APKs | **`uninstall …test`, `uninstall …channeltest`** (je `rc=0` **und** `Success`), dann Nachweis der Abwesenheit (`pm path` beider Pakete, Paketliste); erst dann Neuinstallation. Sonst INVALID mit allen Rohbelegen, keine Neuinstallation |
+| 5 | **`install -r`** beider APKs | **`uninstall …test`, `uninstall …channeltest`** (je `rc=0` **und** `Success`), dann Nachweis der Abwesenheit (`pm path` beider Pakete, Paketliste); erst dann Neuinstallation. Sonst Abbruch ohne Neuinstallation: Rohbelege bleiben, Beobachtungsliste `INCOMPLETE` mit `PKGOP_FAILED`/`ABSENCE_NOT_PROVEN` und `HOST_ABORT` |
 | 6 | Phase `post` (seq ab 30000): 1 Auftrag, 500 ms Abstand, bis 8 s nach der Scanzeile, höchstens 120 Downloads/120 s; URI-Prüfungen +0/+250/+2000/+10000 ms | gleich |
-| 7 | Synchronisationsmarker muss im Logcat-Strom angekommen sein (begrenzte Abfrage statt blindem Warten); Phase `recheck`; Liste nachher; zweiter Synchronisationsmarker; Bewertung | gleich |
+| 7 | Synchronisationsmarker muss im Logcat-Strom angekommen sein (begrenzte Abfrage statt blindem Warten); Phase `recheck`; Liste nachher; zweiter Synchronisationsmarker; Beobachtungsliste (`pkgab_observe.py observe`) | gleich |
 
 Die Probe-Testklasse protokolliert jede Aufnahme mit Prüfsumme (`appH`, `privH`, `diskH`), drosselt die
 Änderungszeilen und schließt jede Phase mit einer erzwungenen Schlussaufnahme (`final=1`, mit Dateiaufnahme). Eine leere
 Provider-Antwort gilt nur mit ausdrücklichem „No result found.“.
 
-## Bewertung (`tools/pkgremoval_verdict.py`)
+## Auswertung im Lauf: nur Beobachtung (`tools/pkgab_observe.py`)
+
+Je Arm entstehen in `report-pkgremoval-<variante>/`:
+
+- **Rohbelege, unverändert:** ungefilterter Logcat-Strom `logcat.txt` und Abschluss-Dump `logcat-all.txt` (`-b all`),
+  `instr-{pre,post,recheck}.txt`, `host-sampler.txt`, `pkgops.txt`, `foreign-{before,after}.txt` und `dl-lines.txt`.
+  Die `PKGAB_LOG`-Zeilen im Job-Log sind nur ein gefilterter Auszug.
+- **`observations.jsonl`**, die Beobachtungsliste: ein JSON-Objekt je Zeile.
+- **`summary.txt`**: Zeilen `PKGAB_SUMMARY`, `PKGAB_SOURCE`, `PKGAB_FINDING`, `PKGAB_NOTE`.
+
+**Drei getrennte Aussagen, keine davon ist ein Urteil über die Hypothese:**
+
+| Feld | Werte | Bedeutung |
+|---|---|---|
+| `measurement` | `COMPLETE` \| `INCOMPLETE` \| `REFUSED` | Wurden alle vorgesehenen Messungen vollständig erfasst? `INCOMPLETE` heißt ausschließlich „Beobachtung nicht vollständig auswertbar“; die unvollständigen Quellen stehen in `incomplete_sources`. `REFUSED`: Gerät vor jeder Erfassung abgelehnt |
+| `data_loss` | `PROVEN` \| `NONE_PROVEN` | Dateischaden nur aus geprüften Dateirahmen (Prüfsumme passt) bzw. vollständigen Dateilisten – **auch bei `INCOMPLETE`**. Eine fehlende Restdatei nach einem fehlgeschlagenen Download ist nie Datenverlust |
+| `overlap` | `PRESENT` \| `ABSENT` \| `UNDETERMINED` | Mess-Voraussetzung: Ein externer `REASON_MOUNTED`-Scan schneidet den Paketschritt, **und** mindestens ein Download der Phase post begann vor dem Ende dieses Scans. `ABSENT` = vollständig gemessen, aber ohne Überschneidung (kein aussagekräftiger Vergleich) |
+
+**Exit-Codes** (`observe`):
+- 3 = Datenverlust nachgewiesen;
+- 2 = unvollständig, abgebrochen oder abgelehnt;
+- 0 = Messung vollständig **und** kein Dateischaden nachgewiesen. Das ist **keine** Freigabe des Helpers und **keine**
+  Bestätigung oder Widerlegung der Hypothese.
+
+`index` fasst beide Arme zusammen (`PKGAB_ARM`, `PKGAB_AB_PRECONDITIONS MET|NOT_MET`, `PKGAB_FILE` mit SHA-256 jeder
+Datei). Exit-Codes: 0 = Voraussetzungen erfüllt, 4 = vollständig, aber nicht erfüllt, 2 = Arm unvollständig oder
+fehlend, 3 = Datenverlust.
+
+**Datensätze in `observations.jsonl`:**
+- **Gemeinsame Felder:** `type`, `run`, `variant`. Rohdatenbezug über `src`: `[{"file": …, "line": …}]`, Zeilennummer ab 1
+  in der jeweiligen Rohdatei.
+- **Fehlende Werte** sind `null`, z. B. `-1` bzw. `-` der Probe für „Stufe nicht erreicht“; es gibt keine Ersatzwerte.
+
+| `type` | Inhalt |
+|---|---|
+| `source` | `name`, `status` (`complete` \| `incomplete` \| `missing`), `problems`, `detail` – je Quelle: Logcat-Strom (2 Synchronisationsmarker, keine Laufzeile nur im Dump), Logcat-Dump, Laufzeilen, Paketschritte, Instrumentierung und Phase je `pre`/`post`/`recheck` (Rahmen, Prüfsummen, offene oder doppelte Änderungen, Zeiten, Schlussaufnahmen), Downloads (Zeitfolge, ID/URI), URI-Prüfungen, Host-Abfragen, `pkgops.txt`, Dateilisten, ggf. `host_script` (Abbruch) |
+| `run` | Werkzeugversion, Namen der Eingabedateien |
+| `marker`, `pkgop`, `absence` | Paketschritte und jede Paketoperation mit `rc`, Ergebnis, `t_begin`/`t_end` |
+| `pkgop_output` | jede Zeile von `pkgops.txt` wörtlich |
+| `scan` | MediaProvider-Scan mit `t_start`/`t_end`, Zählern, PID/TID |
+| `owner_event` | `owner_package_changed` mit Pfad und `known_seq` (`null` = unbekannter Pfad) |
+| `proc_event` | `am_kill`/`am_proc_died`/`am_crash`/`am_anr` der App, des MediaProvider oder von `system_server`: PID, Prozess, Grund, Rohzeile, `window` (Zeitfenster der Phase bzw. des Paketschritts) – **ohne** Bewertung |
+| `crash_block` | alle Zeilen eines Crash-, OOM- oder nativen Absturzblocks derselben PID wörtlich, auch verschachtelt (`Caused by`, zweites `FATAL EXCEPTION`), mit Zeilenbezügen |
+| `phase` | PID, App-UID, `t_start`/`t_end`, Zahl der Aufnahmen |
+| `download` | `seq`, `phase`, `id`, `uri`, `path`, `insertStart` … `done`, `state`, `reason`, `commit`, `size`, `sha256` |
+| `uri_check` | jede URI-Abfrage: `seq`, `off`, `t`, Ergebnis, gefundene ID/Besitzer/pending/Pfad |
+| `row_span` | Lauflängen des Zustands einer Zeile je Quelle (`snapshot` \| `host`): Zustand (`absent` oder ID/Besitzer/pending/trashed/Pfad), `t_first_begin`, `t_last_end`, `count`, `frames_verified`, Quellbezüge |
+| `file_obs` | jede Änderung der beobachteten Datei (Größe, SHA-256 oder `missing`) gegenüber Erwartung, mit `frame_verified` |
+| `foreign` | gelöschte, veränderte, hinzugekommene fremde Dateien bzw. `lists_complete=false` |
+| `overlap` | Paketschritt, schneidende Scans, Downloads vor Scan-Ende, Status |
+| `finding` | `kind`, `verified`, `count`, Bezüge |
+| `summary` | `measurement`, `incomplete_sources`, `data_loss` (+ Belege), `overlap`, `findings_by_kind`, Hinweise |
+
+**Auffälligkeiten (`finding`):**
+- Sie werden aus **jeder** Beobachtung gesammelt und nie entfernt. Eine spätere unauffällige Beobachtung oder eine
+  ungültige Schlussaufnahme löscht keinen Befund.
+- Arten: `FILE_DAMAGED`, `FILE_MISSING_AFTER_DONE`, `RESIDUAL_FILE_AFTER_FAILURE` (Zustand, nie Datenverlust),
+  `PUBLISH_FAILED`, `URI_NOT_VISIBLE`, `URI_QUERY_ERROR`, `URI_ROW_DIFFERS`, `ROW_OWNER_NOT_APP`,
+  `ROW_PENDING_OR_TRASHED_AGAIN`, `ROW_ABSENT_AFTER_PRESENT`, `ROW_OTHER_ID_FOR_PATH`, `ROW_PATH_DIFFERS`, `OWNER_EVENT`,
+  `PROC_EVENT`, `CRASH_BLOCK`, `PKGOP_FAILED`, `ABSENCE_NOT_PROVEN`, `HOST_ABORT`, `MEASUREMENT_INCOMPLETE`,
+  `FOREIGN_REMOVED`, `FOREIGN_MODIFIED`, `FOREIGN_ADDED` (Hinweis).
+- Befunde aus ungeprüften Rahmen tragen `verified=false` und zählen nie als Nachweis.
+
+Kein Werkzeug des Laufs verwendet `SUPPORTED`, `NOT_SUPPORTED`, `CLEAN`, `ANOMALY` oder `HYPOTHESIS`; das prüft der
+Selbsttest. **Upload:** Vor dem Hochladen des Textartefakts prüft `pkgab_observe.py check-upload` alle Dateien auf
+Zugangsdaten (Tokens, private Schlüssel, Autorisierungs-Header, Keystore-Passwörter). Bei einem Fund wird **nicht**
+hochgeladen; Werte werden nie ausgegeben. Binär- und Schlüsseldateien werden vorher entfernt.
+
+## Historie: frühere automatische Bewertung (nur lokal, NICHT Teil des Laufs)
+
+Die folgenden Abschnitte beschreiben `tools/pkgremoval_verdict.py` (Stand NO-GO 1 und 2). Die Datei ist als
+„LOCAL COMPARISON ONLY“ markiert, wird vom Lauf nicht aufgerufen und liefert kein Laufergebnis.
 
 - **Paketoperationen:**
   - Installationen: letzter Versuch je APK mit `rc=0` und `Success`.
@@ -175,28 +248,45 @@ Zwei bestehende Fälle wurden an die neue Invariante angepasst, ohne die geprüf
 
 ## Selbsttests (lokal)
 
-| Test | Ergebnis |
+| Test | im Workflow | Ergebnis |
+|---|---|---|
+| `tests/bootscan/test_pkgab_observe.py` | ja | PASS, 42 Fälle (Beobachter; Regressionen siehe unten) |
+| `tests/bootscan/test_pkgremoval_script.py` | ja | PASS, 44 Fälle, darunter vollständige Hostabläufe (Exit 0, `COMPLETE`, `overlap PRESENT`, keine Urteilswörter) |
+| `tests/bootscan/test_probe_parsers.py` | ja | PASS, 24 Fälle (Java-Parser mit javac/java, Hostparser, Prüfsumme Java = Python) |
+| `tests/bootscan/test_bootscan_verdict.py` | ja (Parser) | PASS, 50 Fälle |
+| `tests/bootscan/test_archive_integrity.py` | ja | PASS, Originalbelege von Lauf 44281951152 byte-gleich, Ergebnis DATA_LOSS |
+| `tests/bootscan/test_bootscan_script.py` | nein | PASS, 11 Fälle |
+| `tests/bootscan/test_pkgremoval_verdict.py` | nein (nur lokal) | PASS, 79 Fälle |
+| Java-Kompilierung der Probe (mit `ProbeParsers.java`) gegen Stubs | – | nur die bekannten umgebungsbedingten Fehler in Produktdateien |
+
+Gezielte Regressionen in `test_pkgab_observe.py` (zuletzt von Codex nachgewiesene Gegenbeispiele):
+
+| Fall | erwartet |
 |---|---|
-| `tests/bootscan/test_pkgremoval_verdict.py` | PASS, 79 Fälle (Simulator-Fixtures mit einer Geräteuhr) |
-| `tests/bootscan/test_pkgremoval_script.py` | PASS, 44 Fälle, darunter vollständige Hostabläufe CLEAN, SUPPORTED, NOT_SUPPORTED (mit regulären Prozessereignissen) |
-| `tests/bootscan/test_bootscan_verdict.py` | PASS, 50 Fälle (11 für `snapshots=v2/v3`) |
-| `tests/bootscan/test_bootscan_script.py` | PASS, 11 Fälle |
-| `tests/bootscan/test_probe_parsers.py` | PASS, 24 Fälle (Java-Parser mit javac/java, Hostparser, Prüfsumme Java = Python) |
-| `tests/bootscan/test_archive_integrity.py` | PASS, Originalbelege byte-gleich, Ergebnis DATA_LOSS |
-| Java-Kompilierung der Probe (mit `ProbeParsers.java`) gegen Stubs | nur die bekannten umgebungsbedingten Fehler in Produktdateien |
+| Dateischaden, danach Schlussaufnahme (Provider und Dateien) ungültig | `data_loss PROVEN` aus dem geprüften früheren Rahmen, `INCOMPLETE`, Exit 3; frühere Zeilenbefunde bleiben |
+| verschachtelte `FATAL EXCEPTION`-Blöcke (inkl. `Caused by`, zweites FATAL, fremde PID dazwischen) und nativer Absturz | alle Zeilen wörtlich in `crash_block`, fremde Zeile nicht; Absturz als Befund, nicht als Messfehler |
+| widersprüchliche Aufnahmezeiten (`tEnd < t`) | Quelle `phase_*` unvollständig, Befunde bleiben |
+| fehlerhafte Paketoperationen (Deinstallation `rc=1`; fehlgeschlagener Installationsversuch vor erfolgreicher Wiederholung; Hostabbruch) | `PKGOP_FAILED` bzw. `HOST_ABORT` erhalten; Deinstallationsfehler macht `package_steps` unvollständig |
+| fehlende Providerzeilen (Zeile verschwindet nach sichtbarer URI; verlorene Änderungszeile) | `ROW_ABSENT_AFTER_PRESENT`; verlorene Zeile → `INCOMPLETE`, Spannen `frames_verified=false` |
+| Messung ohne Scan-Überschneidung | `COMPLETE`, `overlap ABSENT`, Index `NOT_MET` (Exit 4) |
+| spätere unauffällige Beobachtung (Besitzer wieder eigen) | früherer Befund bleibt |
+| Schaden nur in ungeprüften Rahmen | `verified=false`, `NONE_PROVEN`, `INCOMPLETE` |
+| Restdatei nach fehlgeschlagenem Download intakt, verkürzt, verändert, fehlend | Befund mit Zustand, nie `PROVEN` |
+| Rückführbarkeit | jeder Datensatz mit `run`/`variant`, Bezüge zeigen auf existierende Rohzeilen mit passendem Inhalt |
+| Determinismus, Upload-Prüfung, keine Urteilswörter | byte-gleiche `observations.jsonl`; Tokens/Passwörter blockieren den Upload ohne Ausgabe des Werts |
 
 ## Grenzen
 
-- A läuft vor B auf demselben Runner. Die Zeitachse je Variante steht in `PKGAB_NOTE`.
-- Ob der Paketschritt in den Scan fällt und ob eine Zeile vor dem Verwaisen sicher beobachtet wird, lässt sich nicht
-  erzwingen. Dann ist das Ergebnis INCONCLUSIVE, nie eine Bestätigung.
-- Abfrageintervalle (Aufnahmen etwa 0,5 s, Host etwa 0,3 s) begrenzen die zeitliche Auflösung; Zeilen im Intervall sind
-  `ambiguous`.
+- A läuft vor B auf demselben Runner. Die Zeitachse steht in den Datensätzen (`marker`, `scan`, `phase`).
+- Ob der Paketschritt in den Scan fällt, lässt sich nicht erzwingen. Dann ist `overlap ABSENT` und der Lauf kein
+  aussagekräftiger Vergleich.
+- Zustände, die kürzer sind als die Abfrageintervalle (Aufnahmen etwa 0,5 s, Host etwa 0,3 s), können unsichtbar sein.
 - Gilt nur für API 34 und den Emulator.
 
 ## Auslöser (unverändert)
 
 - Ein Push des neuen Branches `diag/pkgremoval-ab` startet nur `pkgremoval-probe.yml`.
 - Es entsteht kein Pull Request, also kein `pull_request`-Lauf.
-- Jeder weitere Push mit Änderungen unter `tests/bootscan/**` oder an den A/B-Werkzeugen löst erneut aus.
+- Jeder weitere Push mit Änderungen unter `tests/bootscan/**`, an `tools/run-pkgremoval-probe.sh`,
+  `tools/pkgab_observe.py`, `tools/bootscan_verdict.py` oder am Workflow löst erneut aus.
 - **Vor einem GO von Codex wird nichts gepusht.**

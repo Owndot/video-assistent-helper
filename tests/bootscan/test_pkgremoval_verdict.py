@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# LOCAL COMPARISON ONLY - not used by the A/B run (tools/run-pkgremoval-probe.sh uses tools/pkgab_observe.py); no causal
+# conclusion of this file is part of any run result. Kept only to compare against earlier review rounds.
 """Selbsttest für tools/pkgremoval_verdict.py mit Belegen aus dem deterministischen Gerätesimulator
 tests/bootscan/pkgab_sim.py (eine Geräteuhr, widerspruchsfreie Zeitachse) und gezielten Verfälschungen (kein Gerät).
 

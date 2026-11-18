@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# LOCAL COMPARISON ONLY - not used by the A/B run (tools/run-pkgremoval-probe.sh uses tools/pkgab_observe.py); no causal
+# conclusion of this file is part of any run result. Kept only to compare against earlier review rounds.
 """Regression-first-Nachweis zu Codex-NO-GO 2 (nur lokal, braucht den alten Stand 5627df2).
 
 1. A/B-Bewerter: die Fälle P1-1 … P2-5 aus tests/bootscan/test_pkgremoval_verdict.py mit altem und neuem Bewerter. Die

@@ -217,7 +217,7 @@ def phases(ev, run, invalid, require_digest=False):
                 frame(cur, invalid, 'phase %s disk snapshot %d: reconstructed files do not match the digest (change lines lost or altered)' % (cur['phase'], n))
             if ok and str(len(cur['disk'])) != f.get('diskN'):
                 frame(cur, invalid, 'phase %s disk snapshot %d: reconstructed %d files, diskN=%s' % (cur['phase'], n, len(cur['disk']), f.get('diskN')))
-            cur['dsnaps'].append({'n': n, 't': int(f['t']), 'ok': ok, 'disk': dict(cur['disk']), 'final': f.get('final') == '1'})
+            cur['dsnaps'].append({'n': n, 't': int(f['t']), 'ok': ok, 'disk': dict(cur['disk']), 'final': f.get('final') == '1', 'raw': f})
         elif kind == 'END':
             for name in ('app', 'priv', 'disk'):
                 if cur['pend_' + name]:

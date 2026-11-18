@@ -2,18 +2,20 @@
 """Selbsttest für tools/run-pkgremoval-probe.sh gegen ein nachgebildetes adb mit Gerätesimulator (kein Gerät).
 
 Geprüft wird:
-- Ablehnung ohne Emulator, mit falscher API, mit installiertem Testpaket, mit vorhandenen Sondendateien (INVALID, Exit 2)
-  OHNE jede Logcat-Erfassung (keine persönlichen Logs auf einem abgelehnten Gerät); defekte privilegierte Abfrage INVALID;
-- vollständig erfolgreiche synthetische Hostabläufe: control -> CLEAN, uninstall mit verzögertem Verwaisen -> SUPPORTED,
-  uninstall mit Verwaisen nur der ersten Installation -> NOT_SUPPORTED; zweimal ausgeführt gleiche Bewertung
-  (deterministisch, ohne Warten auf echte Zeit);
+- Ablehnung ohne Emulator, mit falscher API, mit installiertem Testpaket, mit vorhandenen Sondendateien (measurement=REFUSED,
+  Exit 2) OHNE jede Logcat-Erfassung (keine persönlichen Logs auf einem abgelehnten Gerät); defekte privilegierte Abfrage
+  nach Beginn der Erfassung: Abbruch, Beobachtungsliste INCOMPLETE mit HOST_ABORT;
+- vollständige synthetische Hostabläufe (control, uninstall mit verzögertem bzw. nur erstem Verwaisen): Exit 0,
+  measurement=COMPLETE, overlap=PRESENT, Beobachtungsliste mit Rohbezügen, KEIN Kausalurteil; zweimal ausgeführt gleiche
+  Beobachtungen (deterministisch, ohne Warten auf echte Zeit);
 - jede Paketoperation mit op-begin/op-end, Rückgabecode und Ergebnis; Deinstallation nur von Test- und App-Paket, genau
   einmal, nach Phase pre, vor der Neuinstallation; Fehler EINES der beiden "adb uninstall" (auch mit rc=0 und "Failure"),
-  sowie "Success" bei weiter installiertem Paket -> INVALID, keine Neuinstallation, Rohbelege erhalten;
-- fehlgeschlagenes find ergibt keine gültige Dateiliste (kein LIST-END) -> INVALID;
+  sowie "Success" bei weiter installiertem Paket -> Abbruch, Exit 2, PKGOP_FAILED bzw. ABSENCE_NOT_PROVEN in der
+  Beobachtungsliste, keine Neuinstallation, Rohbelege erhalten;
+- fehlgeschlagenes find ergibt keine gültige Dateiliste (kein LIST-END) -> foreign_lists unvollständig;
 - beide Varianten: gleiche Befehlsfolge bis auf den Paketschritt; Marker in Reihenfolge; Synchronisation des
   Logcat-Stroms über Marker statt Warten;
-- kaputte Instrumentierung -> INVALID mit allen Belegen; kein sonstiger verändernder Gerätebefehl; nur
+- kaputte Instrumentierung -> INCOMPLETE mit allen Belegen; kein sonstiger verändernder Gerätebefehl; nur
   /data/local/tmp/bootscan-{q,f,qt}.sh abgelegt; fremde Dateien unverändert; Hilfsskripte nur lesend.
 Aufruf: python3 -I tests/bootscan/test_pkgremoval_script.py [--script PFAD]  (PFAD: anderes Hostskript, z. B. alter Stand)
 """
@@ -67,13 +69,18 @@ def run(variant, **sc):
     foreign_ok = open(os.path.join(root, 'Download', 'existing.pdf'), 'rb').read() == b'foreign'
     rd = os.path.join(out, 'report-pkgremoval-' + variant)
     report = sorted(os.listdir(rd)) if os.path.isdir(rd) else []
-    verdict = open(os.path.join(rd, 'verdict.txt')).read() if 'verdict.txt' in report else ''
+    verdict = open(os.path.join(rd, 'summary.txt')).read() if 'summary.txt' in report else ''
+    obs = [json.loads(l) for l in open(os.path.join(rd, 'observations.jsonl'))] if 'observations.jsonl' in report else []
     shutil.rmtree(d)
-    return {'rc': p.returncode, 'out': p.stdout + p.stderr, 'cmds': cmds, 'foreign_ok': foreign_ok, 'report': report, 'verdict': verdict}
+    return {'rc': p.returncode, 'out': p.stdout + p.stderr, 'cmds': cmds, 'foreign_ok': foreign_ok, 'report': report, 'verdict': verdict, 'obs': obs}
 
 
 def result(r):
-    return re.findall(r'PKGAB_VARIANT variant=\w+ run=\w+ result=(\w+)', r['out'])
+    return re.findall(r'PKGAB_SUMMARY variant=\w+ run=\w+ measurement=(\w+)', r['out'])
+
+
+def finding(r, kind):
+    return [x for x in r['obs'] if x['type'] == 'finding' and x['kind'] == kind]
 
 
 def unsafe(cmds, allow_uninstall=False):
@@ -112,30 +119,35 @@ for sc, want, logs_allowed in [(dict(device='phone'), 'not an emulator', False),
     for variant in ('control', 'uninstall'):
         r = run(variant, **sc)
         logcat = [c for c in r['cmds'] if c.startswith('logcat')]
-        check(r['rc'] == 2 and 'PKGAB_RESULT INVALID' in r['out'] and want in r['out'] and not unsafe(r['cmds']) and r['foreign_ok']
+        check(r['rc'] == 2 and ('measurement=REFUSED' in r['out'] if not logs_allowed else ('measurement=INCOMPLETE' in r['out'] and finding(r, 'HOST_ABORT')))
+              and want in r['out'] and not unsafe(r['cmds']) and r['foreign_ok']
               and not any(c.startswith('shell am instrument') or c.startswith('install') for c in r['cmds'])
               and (logs_allowed or (not logcat and 'PKGAB_LOG' not in r['out'] and 'logcat-all.txt' not in r['report'])),
-              'refuses %s (%s): exit %d, INVALID, nothing installed, %s' % (sc, variant, r['rc'], 'logs only on an accepted emulator' if logs_allowed
+              'refuses %s (%s): exit %d, REFUSED/aborted, nothing installed, %s' % (sc, variant, r['rc'], 'logs only on an accepted emulator' if logs_allowed
                                                                               else 'no logcat collected at all %s' % logcat))
 r = run('both')
-check(r['rc'] == 2 and 'PKGAB_RESULT INVALID' in r['out'] and not r['cmds'], 'unknown variant refused before any adb command (exit %d)' % r['rc'])
+check(r['rc'] == 2 and 'measurement=REFUSED' in r['out'] and not r['cmds'], 'unknown variant refused before any adb command (exit %d)' % r['rc'])
 
 # ---- vollständig erfolgreiche synthetische Abläufe
 ok = {'control': run('control', sim={'scan_after_pkg_end': 2000}), 'supported': run('uninstall', sim=SUPPORTED),
       'not_supported': run('uninstall', sim=NOT_SUPPORTED)}
-for key, want in (('control', 'CLEAN'), ('supported', 'SUPPORTED'), ('not_supported', 'NOT_SUPPORTED')):
+VERDICT_WORDS = re.compile(r'\b(SUPPORTED|NOT_SUPPORTED|CLEAN|HYPOTHESIS\w*|ANOMALY|DIAGNOSED)\b|\bPASS\b')
+for key in ('control', 'supported', 'not_supported'):
     r = ok[key]
-    check(r['rc'] == 0 and result(r) == [want] and 'PASS' not in re.sub(r'PASSED?', '', ''.join(re.findall(r'PKGAB_\w+ .*', r['out']))),
-          'complete synthetic host run %s: exit %d, result %s (want %s)' % (key, r['rc'], result(r), want))
-    check({'verdict.txt', 'logcat.txt', 'host-sampler.txt', 'pkgops.txt', 'logcat-all.txt'} <= set(r['report'])
+    summ = r['obs'][-1] if r['obs'] else {}
+    check(r['rc'] == 0 and result(r) == ['COMPLETE'] and summ.get('overlap') == 'PRESENT' and summ.get('data_loss') == 'NONE_PROVEN'
+          and not VERDICT_WORDS.search(''.join(re.findall(r'PKGAB_\w+ .*', r['out']))),
+          'complete synthetic host run %s: exit %d, measurement %s, overlap %s, no verdict word' % (key, r['rc'], result(r), summ.get('overlap')))
+    check({'summary.txt', 'observations.jsonl', 'logcat.txt', 'logcat-all.txt', 'host-sampler.txt', 'pkgops.txt'} <= set(r['report'])
           and all(('PKGAB_INSTR %s instr-%s' % ('control' if key == 'control' else 'uninstall', ph)) in r['out'] for ph in ('pre', 'post', 'recheck'))
-          and 'PKGAB_OPS' in r['out'] and 'PKGAB_HOSTQ' in r['out'] and 'PKGAB_LIST' in r['out'],
-          '%s: evidence printed (instr, ops, host samples, lists) and report %s' % (key, r['report']))
+          and 'PKGAB_OPS' in r['out'] and 'PKGAB_HOSTQ' in r['out'] and 'PKGAB_LIST' in r['out'] and 'PKGAB_OBS' in r['out'],
+          '%s: raw evidence and observations printed and kept in the report %s' % (key, r['report']))
 again = run('uninstall', sim=SUPPORTED)
-dl = lambda r: [l for l in r['out'].splitlines() if l.startswith(('PKGAB_DOWNLOAD', 'PKGAB_VARIANT', 'PKGAB_REASON'))]
-check(dl(again) == dl(ok['supported']) and dl(again), 'deterministic: a second identical run yields identical download classes and result')
-check('CLAIM correlation' in ok['supported']['out'] and 'does not prove an internal MediaProvider queue' in ok['supported']['out'],
-      'SUPPORTED states only a correlation, not an internal queue as the cause')
+stable = lambda r: [x for x in r['obs'] if x['type'] in ('download', 'pkgop', 'scan', 'owner_event', 'file_obs', 'uri_check')] + \
+    [{k: r['obs'][-1].get(k) for k in ('measurement', 'data_loss', 'overlap')}] if r['obs'] else []
+check(stable(again) == stable(ok['supported']) and stable(again), 'deterministic: a second identical run yields identical observations')
+check(bool(finding(ok['supported'], 'OWNER_EVENT')) and bool(finding(ok['supported'], 'ROW_OWNER_NOT_APP')) and not finding(ok['control'], 'OWNER_EVENT'),
+      'delayed orphaning appears as listed facts (owner events, owner changes), not as a verdict; control has none')
 
 c_steps, u_steps = steps(ok['control']['cmds']), steps(ok['supported']['cmds'])
 mk = lambda st: [s[7:] for s in st if s.startswith('MARKER') and not s.startswith('MARKER op-') and not s.startswith('MARKER sync')]
@@ -180,19 +192,20 @@ for label, sim in [('uninstall of the test package reports Failure with rc=0', d
                    ('uninstall reports Success but the test package stays installed', dict(SUPPORTED, uninstall_fail='lie-test'))]:
     r = run('uninstall', sim=sim)
     after = r['cmds'][max(i for i, c in enumerate(r['cmds']) if c.startswith('uninstall')):]
-    check(r['rc'] == 2 and 'PKGAB_RESULT INVALID' in r['out'] and 'result=INVALID' in r['verdict']
+    check(r['rc'] == 2 and 'measurement=INCOMPLETE' in r['verdict'] and finding(r, 'HOST_ABORT')
+          and (finding(r, 'PKGOP_FAILED') or finding(r, 'ABSENCE_NOT_PROVEN'))
           and not any(c.startswith('install') or 'bootscanPhase post' in c for c in after)
           and 'PKGAB_OPS' in r['out'] and 'PKGAB_LOG' in r['out'] and 'logcat.txt' in r['report'],
-          'INVALID: %s (no reinstall, raw evidence kept)' % label)
+          'aborted, INCOMPLETE: %s (failure listed, no reinstall, raw evidence kept)' % label)
 
 # ---- find-Fehler, kaputte Instrumentierung
 r = run('control', find_fails=True, sim={'scan_after_pkg_end': 2000})
 lists = [l for l in r['out'].splitlines() if l.startswith('PKGAB_LIST control foreign-before')]
-check(result(r) == ['INVALID'] and not any(l.endswith('LIST-END') for l in lists) and any('LIST-ERROR' in l for l in lists),
-      'failed find gives no valid listing (no LIST-END) -> INVALID %s' % result(r))
+check(result(r) == ['INCOMPLETE'] and 'foreign_lists' in r['obs'][-1]['incomplete_sources'] and not any(l.endswith('LIST-END') for l in lists)
+      and any('LIST-ERROR' in l for l in lists), 'failed find gives no valid listing (no LIST-END) -> foreign_lists incomplete %s' % result(r))
 r = run('control', instr_broken=True, sim={'scan_after_pkg_end': 2000})
-check(r['rc'] == 2 and result(r) == ['INVALID'] and 'PKGAB_INSTR control instr-pre' in r['out'] and 'PKGAB_LIST control foreign-before' in r['out'],
-      'broken instrumentation -> only INVALID, evidence printed')
+check(r['rc'] == 2 and result(r) == ['INCOMPLETE'] and 'PKGAB_INSTR control instr-pre' in r['out'] and 'PKGAB_LIST control foreign-before' in r['out'],
+      'broken instrumentation -> INCOMPLETE, evidence printed')
 lists = [l for l in ok['control']['out'].splitlines() if l.startswith('PKGAB_LIST control foreign-before ')]
 check(any(l.endswith('/storage/emulated/0/Download/existing.pdf') for l in lists) and not any('/Android/' in l for l in lists)
       and lists[-1:] == ['PKGAB_LIST control foreign-before LIST-END'], 'listing of foreign files complete (SHA-256, LIST-END), Android/ excluded')

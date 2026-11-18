@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# LOCAL COMPARISON ONLY - not used by the A/B run (tools/run-pkgremoval-probe.sh uses tools/pkgab_observe.py); no causal
+# conclusion of this file is part of any run result. Kept only to compare against earlier review rounds.
 """Bewertung des A/B-Diagnosetests "verzögerte Paket-Deinstallation" (tools/run-pkgremoval-probe.sh). Nur Diagnose; es
 gibt kein PASS. Baut auf tools/bootscan_verdict.py auf (Parser, strenge Aufnahmeprüfung snapshots=v2, Klassen je Download).
 Regeln Stand Codex-NO-GO 1 (Regel pkgab=v2).

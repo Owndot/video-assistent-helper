@@ -401,11 +401,11 @@ def simulate(variant, scenario=None, run='a1b2c3d4e5f6', before_recheck=None):
     hosts.append(dev.qt(token))
     ids = ','.join('%s:%s' % (l.split(' seq=')[1].split()[0], l.split(' id=')[-1]) for l in dev.log
                    if ' BOOTSCAN DL run=%s ' % run in l and not l.endswith(' id=-'))
-    dev.advance(2000)
+    dev.marker(run, variant, 'sync', 'id=1')   # wie das Hostskript: Abgleich des Logcat-Stroms vor der Nachprüfung
     if before_recheck:
         before_recheck(dev)
     instr['recheck'] = dev.instrument(run, 'recheck', {'bootscanIds': ids or '-'})
-    dev.marker(run, variant, 'sync', 'id=1')
+    dev.marker(run, variant, 'sync', 'id=2')
     before = {'/storage/emulated/0/Movies/.thumbnails/.database_uuid': ('a' * 64, 36)}
     after = dict(before)
     return {'logcat': '\n'.join(dev.log) + '\n', 'hosts': '\n'.join(hosts) + '\n', 'instr': instr, 'before': before, 'after': after,

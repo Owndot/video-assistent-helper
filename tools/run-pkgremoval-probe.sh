@@ -19,12 +19,17 @@
 #  5. Phase post: gedrosselt (1 Auftrag, 500 ms Abstand), bis 8 s nach dem Mount-Scan, höchstens 120 Veröffentlichungen;
 #  6. Abgleich: Synchronisationsmarker muss im Logcat-Strom angekommen sein (kein blindes Warten);
 #     Phase recheck (neuer Prozess): Abfrage über jede ursprünglich erhaltene URI (pre und post), Sicht, Dateien;
-#  7. Nachher-Liste; Bewertung mit tools/pkgremoval_verdict.py variant (nie PASS).
+#  7. Nachher-Liste; Beobachtungsliste mit tools/pkgab_observe.py (KEIN Kausalurteil: nur Vollständigkeit der Messung,
+#     nachgewiesener Dateischaden und beobachtete Auffälligkeiten; die Ursachenanalyse erfolgt danach manuell).
+#     Exit 0 = Messung vollständig und kein Dateischaden nachgewiesen (keine Freigabe des Helpers, kein Hypothesenurteil),
+#     2 = unvollständig/abgebrochen/abgelehnt, 3 = Dateischaden nachgewiesen.
+# Rohdaten (ungefilterter Logcat-Strom und -Dump, Instrumentierungen, Host-Abfragen, Paketoperationen, Dateilisten) liegen
+# unverändert in report-pkgremoval-<variante>/; die PKGAB_LOG-Zeilen im Job-Log sind nur ein gefilterter Auszug.
 # Es wird NICHTS gelöscht und nichts in die MediaProvider-Datenbank geschrieben; einzige verändernde Paketaktion ist die
 # Deinstallation des eigenen Testpakets in der Variante uninstall. Der Emulator wird nach dem Lauf verworfen.
 set -euo pipefail
 VARIANT="${1:-}"
-case "$VARIANT" in control|uninstall) ;; *) echo "refusing: variant '$VARIANT'"; echo "PKGAB_RESULT INVALID"; exit 2;; esac
+case "$VARIANT" in control|uninstall) ;; *) echo "refusing: variant '$VARIANT'"; echo "PKGAB_SUMMARY variant=- run=- measurement=REFUSED data_loss=NONE_PROVEN overlap=UNDETERMINED"; exit 2;; esac
 OUT="$(cd "${2:?usage: run-pkgremoval-probe.sh control|uninstall OUT}" && pwd)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PKG=de.evp.helfer.channeltest
@@ -44,7 +49,7 @@ evidence() {   # genau einmal, auch beim Abbruch; NUR nach bestandener Emulator-
   cp "$W"/*.txt "$REP/" 2>/dev/null || true
   for f in instr-pre instr-post instr-recheck; do [ -f "$W/$f.txt" ] && sed "s/^/PKGAB_INSTR $VARIANT $f /" "$W/$f.txt"; done
   [ -f "$W/pkgops.txt" ] && sed "s/^/PKGAB_OPS $VARIANT /" "$W/pkgops.txt"
-  [ -f "$W/logcat.txt" ] && grep -E "BOOTSCAN|MediaProvider: Scanned |owner_package_changed|MediaProvider: Moving |$PKG|PACKAGE_(REMOVED|FULLY_REMOVED|ADDED|REPLACED)|AndroidRuntime|OutOfMemoryError|am_crash|am_anr|am_proc_died|am_kill" "$W/logcat.txt" | sed "s/^/PKGAB_LOG $VARIANT /" || true
+  [ -f "$W/logcat.txt" ] && grep -E "BOOTSCAN|MediaProvider: Scanned |owner_package_changed|MediaProvider: Moving |$PKG|PACKAGE_(REMOVED|FULLY_REMOVED|ADDED|REPLACED)|AndroidRuntime|OutOfMemoryError|am_crash|am_anr|am_proc_died|am_kill| [VDIWEF] (DEBUG|libc|crash_dump64|crash_dump|art) *:" "$W/logcat.txt" | sed "s/^/PKGAB_LOG $VARIANT /" || true
   [ -f "$W/host-sampler.txt" ] && sed "s/^/PKGAB_HOSTQ $VARIANT /" "$W/host-sampler.txt"
   for f in foreign-before foreign-after; do [ -f "$W/$f.txt" ] && sed "s/^/PKGAB_LIST $VARIANT $f /" "$W/$f.txt"; done
   return 0
@@ -52,8 +57,28 @@ evidence() {   # genau einmal, auch beim Abbruch; NUR nach bestandener Emulator-
 trap 'evidence; rm -rf "$W"' EXIT
 invalid() {
   echo "refusing: $*" >&2
-  { echo "PKGAB_REASON variant=$VARIANT host script: $*"; echo "PKGAB_VARIANT variant=$VARIANT run=$RUN result=INVALID"; } > "$REP/verdict.txt"
-  echo "PKGAB_RESULT INVALID"; exit 2
+  if [ "$EVIDENCE" != 1 ]; then   # abgelehnt, bevor irgendetwas erfasst wurde
+    echo "PKGAB_SUMMARY variant=$VARIANT run=$RUN measurement=REFUSED data_loss=NONE_PROVEN overlap=UNDETERMINED reason=$(printf '%s' "$*" | tr -c 'A-Za-z0-9_.:-' '_')" | tee "$REP/summary.txt"
+    exit 2
+  fi
+  evidence   # Rohbelege bleiben erhalten, auch beim Abbruch
+  local rc=0
+  observe "$*" || rc=$?
+  [ "$rc" = 0 ] && rc=2   # ein Abbruch ist nie eine vollständige Messung
+  exit "$rc"
+}
+observe() {   # Beobachtungsliste und Zusammenfassung; $1 = Abbruchgrund (optional)
+  local rc=0
+  set +e
+  python3 -I "$HERE/pkgab_observe.py" observe --variant "$VARIANT" --run "$RUN" --out "$REP" --logcat "$W/logcat.txt" --logcat-dump "$W/logcat-all.txt" \
+    --host-sampler "$W/host-sampler.txt" --pkgops "$W/pkgops.txt" --instr-pre "$W/instr-pre.txt" --instr-post "$W/instr-post.txt" \
+    --instr-recheck "$W/instr-recheck.txt" --foreign-before "$W/foreign-before.txt" --foreign-after "$W/foreign-after.txt" ${1:+--abort "$1"} > "$W/observe-out.txt" 2>&1
+  rc=$?
+  set -e
+  [ -f "$REP/observations.jsonl" ] && sed "s/^/PKGAB_OBS $VARIANT /" "$REP/observations.jsonl"
+  cat "$W/observe-out.txt"
+  echo "PKGAB_HOST variant=$VARIANT observe exit $rc"
+  return "$rc"
 }
 marker() { adb shell log -t BOOTSCAN "'BOOTSCAN PKG run=$RUN variant=$VARIANT event=$1 ${2:-}'" > /dev/null 2>&1 || echo "marker $1 failed" >> "$W/errors.txt"; }
 token1() { tr -d '\r' | { grep -v '^$' || true; } | tail -1 | tr -d '\n' | tr -c 'A-Za-z0-9_.-' '_' | cut -c1-60; }
@@ -214,11 +239,6 @@ foreign foreign-after
 sync_stream
 kill "$LOGCAT_PID" 2>/dev/null || true; wait "$LOGCAT_PID" 2>/dev/null || true; LOGCAT_PID=""
 evidence
-set +e
-python3 -I "$HERE/pkgremoval_verdict.py" variant --variant "$VARIANT" --run "$RUN" --logcat "$W/logcat.txt" --host-sampler "$W/host-sampler.txt" \
-  --instr-pre "$W/instr-pre.txt" --instr-post "$W/instr-post.txt" --instr-recheck "$W/instr-recheck.txt" \
-  --foreign-before "$W/foreign-before.txt" --foreign-after "$W/foreign-after.txt" | tee "$REP/verdict.txt"
-rc=${PIPESTATUS[0]}
-set -e
-echo "PKGAB_HOST variant=$VARIANT verdict exit $rc"
-exit $rc
+rc=0
+observe || rc=$?
+exit "$rc"
