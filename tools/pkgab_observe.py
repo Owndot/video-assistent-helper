@@ -37,7 +37,7 @@ _spec = importlib.util.spec_from_file_location('bootscan_parser_for_observe', os
 B = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(B)   # nur Parser/Rekonstruktion: parse, phases, digest, listing, foreign_diff, report_class
 
-TOOL = 'pkgab_observe v2'
+TOOL = 'pkgab_observe v3'
 PKG = 'de.evp.helfer.channeltest'
 SEQ0 = {'pre': 20000, 'post': 30000}
 OFFSETS = {'pre': [0, 250], 'post': [0, 250, 2000, 10000]}
@@ -324,13 +324,16 @@ def snapshot_frames(ph, refs):
 def host_frames(o, text, fname):
     out, used, bad, probs, cur = [], 0, [], [], None
     for i, l in enumerate((text or '').splitlines(), 1):
-        m = re.match(r'^QT-BEGIN t=(\d+) res=(\w+)$', l)
-        if m:
+        if l.startswith('QT-BEGIN'):
+            m = re.match(r'^QT-BEGIN t=(\d+) res=(\w+)$', l)
             if cur:
                 bad.append('unterminated block at line %d' % cur['line'])
-            cur = {'a': int(m.group(1)), 'res': m.group(2), 'rows': {}, 'none': 0, 'n': 0, 'ok': True, 'line': i}
+            cur = {'a': int(m.group(1)), 'res': m.group(2), 'rows': {}, 'none': 0, 'n': 0, 'ok': True, 'line': i} if m else None
+            if not m:
+                bad.append('malformed QT-BEGIN at line %d' % i)
             continue
-        if cur is None:
+        if cur is None:   # isolierter QT-END-Marker, Fehlertext oder sonstige Ausgabe außerhalb einer Abfrage
+            bad.append('unexpected output outside a query at line %d' % i)
             continue
         if l.startswith('QT-END'):
             e = re.match(r'^QT-END rc=(\d+) t=(\d+)$', l)
@@ -359,11 +362,42 @@ def host_frames(o, text, fname):
     # Fail-closed: jede verworfene oder unvollständige Abfrage und eine Datei ohne verwertbare Abfrage machen die Quelle
     # unvollständig (verworfene Blöcke fließen nicht in die Beobachtungen ein, die Messung ist dann nicht COMPLETE)
     if bad:
-        probs.append('%d host queries discarded or unterminated: %s' % (len(bad), bad[:10]))
+        probs.append('%d host queries discarded, unterminated or unexpected output: %s' % (len(bad), bad[:10]))
     if used == 0:
         probs.append('no usable host query')
     o.source('host_queries', probs, detail={'used': used, 'discarded': len(bad), 'discarded_at': bad[:20]})
     return out
+
+
+# Größte zulässige Lücke zwischen zwei verwertbaren Host-Abfragen im Beobachtungsfenster (Beginn des Paketschritts bis
+# Ende der Phase post). Der Sampler fragt etwa alle 0,3 s plus Dauer von "adb shell content query" ab; 5 s lassen
+# normale adb-Verzögerungen zu. Eine längere Lücke heißt: Zeitraum ohne Host-Beobachtung -> host_queries unvollständig.
+HOST_MAX_GAP_MS = 5000
+
+
+def host_coverage(o, hosts, steps, ph, variant):
+    """Zeitliche Abdeckung der Host-Abfragen über das Beobachtungsfenster; eine einzelne frühe Abfrage genügt nie."""
+    begin = steps.get('uninstall-begin' if variant == 'uninstall' else 'update-begin')
+    end = num(((ph.get('post') or {}).get('end') or {}).get('t'))
+    det = o.sources.get('host_queries', {}).get('detail') or {}
+    if begin is None or end is None:
+        o.source('host_queries', ['coverage not checkable: start of the package step or end of phase post missing'])
+        return
+    used = sorted((x[2], x[3]) for x in hosts)
+    probs = []
+    if not used:
+        probs.append('no host query in the observation window')
+    else:
+        if used[0][0] > begin + HOST_MAX_GAP_MS:
+            probs.append('first host query begins %d ms after the package step began' % (used[0][0] - begin))
+        if used[-1][1] < end - HOST_MAX_GAP_MS:
+            probs.append('last host query ends %d ms before the end of phase post' % (end - used[-1][1]))
+        gaps = [a_n - b_p for (_, b_p), (a_n, _) in zip(used, used[1:]) if a_n > begin and b_p < end]
+        long_gaps = [g for g in gaps if g > HOST_MAX_GAP_MS]
+        if long_gaps:
+            probs.append('%d gaps longer than %d ms between host queries (largest %d ms)' % (len(long_gaps), HOST_MAX_GAP_MS, max(long_gaps)))
+        det.update(window=[begin, end], max_gap_ms=max(gaps) if gaps else None, tolerance_ms=HOST_MAX_GAP_MS)
+    o.source('host_queries', probs)
 
 
 def row_state(rows, d):
@@ -469,6 +503,8 @@ def observe(a):
     uri_checks(o, ph, refs, dls)
     priv, disk = snapshot_frames(ph, refs)
     hosts = host_frames(o, read(a.host_sampler), os.path.basename(a.host_sampler or 'host-sampler'))
+    if read(a.host_sampler) is not None:
+        host_coverage(o, hosts, steps, ph, a.variant)
     rows_and_files(o, dls, priv, disk, hosts)
     windows = [('phase %s' % n, num(p['start'].get('t')), num((p.get('end') or {}).get('t'))) for n, p in ph.items() if p.get('end')]
     windows += [('package step %s' % e.rsplit('-', 1)[0], steps[e], steps.get(e.rsplit('-', 1)[0] + '-end')) for e in steps if e.endswith('-begin')]

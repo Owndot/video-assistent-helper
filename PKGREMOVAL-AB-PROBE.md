@@ -88,7 +88,7 @@ fehlend, 3 = Datenverlust.
 
 | `type` | Inhalt |
 |---|---|
-| `source` | `name`, `status` (`complete` \| `incomplete` \| `missing`), `problems`, `detail` – je Quelle: Logcat-Strom (2 Synchronisationsmarker, keine Laufzeile nur im Dump), Logcat-Dump, Laufzeilen, Paketschritte, Instrumentierung und Phase je `pre`/`post`/`recheck` (Rahmen, Prüfsummen, offene oder doppelte Änderungen, Zeiten, Schlussaufnahmen), Downloads (Zeitfolge, ID/URI), URI-Prüfungen, Host-Abfragen (unvollständig bei leerer Datei, jeder verworfenen Abfrage, `rc≠0` oder fehlendem `QT-END`), `pkgops.txt`, Dateilisten, ggf. `host_script` (Abbruch) |
+| `source` | `name`, `status` (`complete` \| `incomplete` \| `missing`), `problems`, `detail` – je Quelle: Logcat-Strom (2 Synchronisationsmarker, keine Laufzeile nur im Dump), Logcat-Dump, Laufzeilen, Paketschritte, Instrumentierung und Phase je `pre`/`post`/`recheck` (Rahmen, Prüfsummen, offene oder doppelte Änderungen, Zeiten, Schlussaufnahmen), Downloads (Zeitfolge, ID/URI), URI-Prüfungen, Host-Abfragen (unvollständig bei leerer Datei, jeder verworfenen Abfrage, `rc≠0`, fehlendem `QT-END`, beschädigtem `QT-BEGIN`, jeder Ausgabe außerhalb einer Abfrage sowie bei fehlender zeitlicher Abdeckung: Die Abfragen müssen das Fenster vom Beginn des Paketschritts bis zum Ende der Phase post ohne Lücke über 5 s überdecken – Toleranz für normale adb-Verzögerungen; der Sampler fragt etwa alle 0,3 s plus Abfragedauer), `pkgops.txt`, Dateilisten, ggf. `host_script` (Abbruch) |
 | `run` | Werkzeugversion, Namen der Eingabedateien |
 | `marker`, `pkgop`, `absence` | Paketschritte und jede Paketoperation mit `rc`, Ergebnis, `t_begin`/`t_end` |
 | `pkgop_output` | jede Zeile von `pkgops.txt` wörtlich |
@@ -255,7 +255,7 @@ Zwei bestehende Fälle wurden an die neue Invariante angepasst, ohne die geprüf
 
 | Test | im Workflow | Ergebnis |
 |---|---|---|
-| `tests/bootscan/test_pkgab_observe.py` | ja | PASS, 46 Fälle (Beobachter; Regressionen siehe unten) |
+| `tests/bootscan/test_pkgab_observe.py` | ja | PASS, 55 Fälle (Beobachter; Regressionen siehe unten) |
 | `tests/bootscan/test_pkgremoval_script.py` | ja | PASS, 51 Fälle, darunter vollständige Hostabläufe (Exit 0, `COMPLETE`, `overlap PRESENT`, keine Urteilswörter) und der Fake-Token-Test für Job-Log und Artefakt |
 | `tests/bootscan/test_probe_parsers.py` | ja | PASS, 24 Fälle (Java-Parser mit javac/java, Hostparser, Prüfsumme Java = Python) |
 | `tests/bootscan/test_bootscan_verdict.py` | ja (Parser) | PASS, 50 Fälle |
@@ -280,6 +280,7 @@ Gezielte Regressionen in `test_pkgab_observe.py` (zuletzt von Codex nachgewiesen
 | Rückführbarkeit | jeder Datensatz mit `run`/`variant`, Bezüge zeigen auf existierende Rohzeilen mit passendem Inhalt |
 | Determinismus, Upload-Prüfung, keine Urteilswörter | byte-gleiche `observations.jsonl`; Tokens/Passwörter blockieren den Upload ohne Ausgabe des Werts |
 | Host-Abfragen: leere Datei, `QT-END rc=1`, `QT-BEGIN` ohne `QT-END`, ein gültiger und ein ungültiger Block | `host_queries` unvollständig, Messung `INCOMPLETE` (vorher fälschlich `complete`) |
+| Host-Abfragen: nur die erste Abfrage; isoliertes `QT-END rc=1`, beschädigtes `QT-BEGIN` oder Providerfehlertext außerhalb einer Abfrage (nach der ersten bzw. mitten in vollständiger Abdeckung); 8 s Lücke im Fenster | `host_queries` unvollständig, Messung `INCOMPLETE`; lückenlose Abdeckung bleibt `complete` (vorher fälschlich `complete`) |
 | Fake-Token in Logcat, `adb install`-Ausgabe und Dateiname (Hostskript-Test) | nicht im Job-Log; unverändert in den Rohdateien; `check-upload` blockiert das Artefakt (vorher Token im Job-Log) |
 
 ## Grenzen

@@ -257,6 +257,47 @@ for name, mutate in (('empty file', lambda h: ''), ('query with QT-END rc=1', rc
           and 'host_queries' in r['sum']['incomplete_sources'], 'host queries: %s -> host_queries incomplete, measurement INCOMPLETE (%s)'
           % (name, r['src']['host_queries']['problems'][:1]))
 
+# ---- Regression (Prüfung 63cf78d): zeitliche Abdeckung und isolierte/beschädigte QT-Marker
+def blocks(h):
+    out, cur = [], []
+    for l in h.splitlines(True):
+        cur.append(l)
+        if l.startswith('QT-END'):
+            out.append(''.join(cur))
+            cur = []
+    return out
+
+
+r = host_case('full_coverage', lambda h: h)
+det = r['src']['host_queries'].get('detail') or {}
+check(r['src']['host_queries']['status'] == 'complete' and len(blocks(r['files']['host-sampler'][1])) > 3
+      and det.get('max_gap_ms') is not None and det['max_gap_ms'] <= det.get('tolerance_ms', 0),
+      'host queries covering the whole window (package step .. end of post) -> complete (max gap %s ms)' % det.get('max_gap_ms'))
+r = host_case('only_first', lambda h: blocks(h)[0])
+check(r['src']['host_queries']['status'] == 'incomplete' and r['sum']['measurement'] == 'INCOMPLETE'
+      and any('ends' in p_ and 'before the end of phase post' in p_ for p_ in r['src']['host_queries']['problems']),
+      'only the first host query, all later ones missing -> incomplete (coverage)')
+for label, extra in (('isolated QT-END rc=1', 'QT-END rc=1 t=1\n'), ('malformed QT-BEGIN', 'QT-BEGIN garbage\n'),
+                     ('provider error text outside a query', 'Error while accessing provider:media\n')):
+    for where, mut in (('after the first query', lambda h, e=extra: blocks(h)[0] + e),
+                       ('inside otherwise complete coverage', lambda h, e=extra: ''.join(blocks(h)[:5]) + e + ''.join(blocks(h)[5:]))):
+        r = host_case('%s_%s' % (label, where), mut)
+        check(r['src']['host_queries']['status'] == 'incomplete' and r['sum']['measurement'] == 'INCOMPLETE'
+              and any('discarded' in p_ for p_ in r['src']['host_queries']['problems']),
+              'host queries: %s %s -> incomplete evidence (%s)' % (label, where, r['src']['host_queries']['problems'][:1]))
+
+
+def gap(h):
+    b = blocks(h)
+    t = lambda x: int(re.search(r'QT-BEGIN t=(\d+)', x).group(1))
+    mid = (t(b[0]) + t(b[-1])) // 2
+    return ''.join(x for x in b if not (mid <= t(x) <= mid + 8000))   # 8 s ohne Abfrage mitten im Fenster
+
+
+r = host_case('gap', gap)
+check(r['src']['host_queries']['status'] == 'incomplete' and any('gaps longer than' in p_ for p_ in r['src']['host_queries']['problems']),
+      'an 8 s gap without host queries inside the window -> incomplete (tolerance %d ms for adb delays)' % 5000)
+
 # ---- unvollständige Quellen
 s = S.simulate('control', CTRL)
 h = s['hosts'].splitlines()

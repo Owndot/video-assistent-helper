@@ -75,6 +75,7 @@ class Device:
         self.install1_ids = set()
         self.scan_line_t = None
         self.stream = None       # Datei eines laufenden "adb logcat" (nachgebildetes adb)
+        self.sampling, self.next_qt, self.qt_buffer = None, None, []   # nebenläufiger Host-Sampler (Token, nächste Zeit)
         self.nr = 0
 
     # ---------------------------------------------------------------- Grundlagen
@@ -91,11 +92,22 @@ class Device:
         heapq.heappush(self.actions, (t, self.nr, name))
 
     def run_until(self, t):
-        """Führt fällige Geräteaktionen (Scan, Verwaisen) aus und stellt die Uhr auf t (nie rückwärts)."""
-        while self.actions and self.actions[0][0] <= t:
-            at, _, name = heapq.heappop(self.actions)
-            self.clock = max(self.clock, at)
-            getattr(self, 'act_' + name)()
+        """Führt fällige Geräteaktionen (Scan, Verwaisen) und – solange der Host-Sampler läuft – dessen Abfragen etwa alle
+        0,4 s in zeitlicher Reihenfolge aus und stellt die Uhr auf t (nie rückwärts). Abfragen, die während langer Befehle
+        (Installation, Instrumentierung) anfallen, werden gepuffert und mit der nächsten Sampler-Ausgabe geliefert."""
+        while True:
+            na = self.actions[0][0] if self.actions else None
+            ns = self.next_qt if self.sampling else None
+            if ns is not None and ns <= t and (na is None or ns < na):
+                self.clock = max(self.clock, ns)
+                self.qt_buffer.append(self._block(self.sampling, ns, ns + 60))
+                self.next_qt = ns + 400
+            elif na is not None and na <= t:
+                at, _, name = heapq.heappop(self.actions)
+                self.clock = max(self.clock, at)
+                getattr(self, 'act_' + name)()
+            else:
+                break
         self.clock = max(self.clock, t)
 
     def advance(self, ms):
@@ -179,14 +191,32 @@ class Device:
         self.advance(30)
         return '\n'.join('package:%s uid:%d' % (p, self.uid) for p in (PKG, TEST_PKG) if self.installed[p] and pkg in p)
 
+    def start_sampling(self, token):
+        if not self.sampling:
+            self.sampling, self.next_qt = token, self.clock
+
+    def stop_sampling(self):
+        self.sampling = None
+
+    def _block(self, token, a, b):
+        rows = [(i, r) for i, r in sorted(self.rows.items()) if token in r[3]]
+        out = ['QT-BEGIN t=%d res=ms' % a] + (['No result found.'] if not rows else [])
+        out += ['Row: %d _id=%s, owner_package_name=%s, is_pending=%s, is_trashed=%s, _data=%s, _display_name=%s, _size=%d'
+                % (n, i, r[0], r[1], r[2], r[3], r[3].rsplit('/', 1)[-1], SIZE) for n, (i, r) in enumerate(rows)]
+        return '\n'.join(out + ['QT-END rc=0 t=%d' % b])
+
     def qt(self, token, tick=True):
         """tick=False (nachgebildetes adb): Host-Abfragen laufen nebenläufig und dürfen die Geräteuhr nicht verschieben,
-        sonst hinge der Ablauf von der Anzahl der Abfragen ab."""
+        sonst hinge der Ablauf von der Anzahl der Abfragen ab; der erste Aufruf startet das nebenläufige Sampling.
+        Vor der aktuellen Abfrage werden die gepufferten Abfragen geliefert."""
+        if not tick:
+            self.start_sampling(token)
+        buffered, self.qt_buffer = self.qt_buffer, []
         if tick:
             self.advance(40)
         t = self.clock
         rows = [(i, r) for i, r in sorted(self.rows.items()) if token in r[3]]
-        out = ['QT-BEGIN t=%d res=ms' % t]
+        out = buffered + ['QT-BEGIN t=%d res=ms' % t]
         if not rows:
             out.append('No result found.')
         for n, (i, r) in enumerate(rows):
@@ -383,6 +413,7 @@ def simulate(variant, scenario=None, run='a1b2c3d4e5f6', before_recheck=None):
     op('install-test', dev.install, TEST_PKG)
     dev.marker(run, variant, 'install1-end', 'uid=%d' % dev.uid)
     instr['pre'] = dev.instrument(run, 'pre', {'bootscanMax': '3'})
+    dev.start_sampling(token)   # wie das Hostskript: Sampler läuft ab hier bis nach Phase post
     hosts.append(dev.qt(token))
     if variant == 'uninstall':
         dev.marker(run, variant, 'uninstall-begin')
@@ -405,6 +436,7 @@ def simulate(variant, scenario=None, run='a1b2c3d4e5f6', before_recheck=None):
     hosts.append(dev.qt(token))
     instr['post'] = dev.instrument(run, 'post', {'bootscanMax': '120', 'bootscanPaceMs': '500', 'bootscanAfterScanMs': '8000', 'bootscanSeconds': '120'})
     hosts.append(dev.qt(token))
+    dev.stop_sampling()
     ids = ','.join('%s:%s' % (l.split(' seq=')[1].split()[0], l.split(' id=')[-1]) for l in dev.log
                    if ' BOOTSCAN DL run=%s ' % run in l and not l.endswith(' id=-'))
     dev.marker(run, variant, 'sync', 'id=1')   # wie das Hostskript: Abgleich des Logcat-Stroms vor der Nachprüfung
