@@ -8,6 +8,8 @@ name: Package-removal A/B diagnosis (two fresh disposable API 34 emulators, noth
 # Nur Testinstrumentierung (tests/bootscan/ wird nur in diesem Job in die Test-APK kopiert), Produktcode unverändert.
 # Kein APK-Upload, keine Lieferung, keine Signierung außer dem Wegwerf-Testsignierer, kein Löschen von Dateien auf dem Gerät.
 # Ergebnis nie PASS: PKGAB_RESULT HYPOTHESIS_SUPPORTED | HYPOTHESIS_NOT_SUPPORTED | INCONCLUSIVE | DATA_LOSS | INVALID.
+# HYPOTHESIS_SUPPORTED stützt eine Korrelation (Scan, Paketoperation, Besitzerwechsel konkreter Zeilen), beweist aber keine
+# interne MediaProvider-Warteschlange als Ursache. Regeln pkgab=v2 / snapshots=v2 (nach Codex-NO-GO 1).
 on:
   push:
     branches: [diag/pkgremoval-ab]
@@ -38,6 +40,7 @@ jobs:
           python3 -I tests/bootscan/test_bootscan_script.py
           python3 -I tests/bootscan/test_pkgremoval_verdict.py
           python3 -I tests/bootscan/test_pkgremoval_script.py
+          python3 -I tests/bootscan/test_archive_integrity.py
       - name: Pinned toolchains (Rust from rust-toolchain.toml, NDK r27c, SDK 37.0, build-tools 36.0.0 + 34.0.0)
         run: |
           set -euo pipefail

@@ -1,158 +1,165 @@
 # A/B-Diagnose: verzögerte Paket-Deinstallation im MediaProvider (Testplan)
 
-Stand 2026-11-18. **Nur vorbereitet: kein Push, kein Emulatorlauf.** Produktcode unverändert (`546af14`, `7978a41`);
-beide Lieferworkflows bleiben `LOCKED`. Das ist keine Lieferfreigabe.
+Stand 2026-11-18, überarbeitet nach Codex-NO-GO 1 (Regeln `pkgab=v2`, `snapshots=v2`, `foreign=v2`).
+**Nur vorbereitet: kein Push, kein Emulatorlauf.** Produktcode unverändert (`546af14`, `7978a41`); beide
+Lieferworkflows bleiben `LOCKED`. Das ist keine Lieferfreigabe.
 
-## Hypothese (unbewiesen)
+## Hypothese (unbewiesen) und was der Test messen kann
 
-Der MediaProvider verarbeitet das `PACKAGE_FULLY_REMOVED` einer Deinstallation erst, wenn die Boot-Scans
-(`REASON_MOUNTED`) auf demselben Worker-Thread beendet sind. Dann trifft das Verwaisen Zeilen der inzwischen neu
-installierten App mit demselben Paketnamen:
+Der MediaProvider verarbeitet das `PACKAGE_FULLY_REMOVED` einer Deinstallation erst nach den Boot-Scans
+(`REASON_MOUNTED`) auf demselben Worker-Thread. Dann trifft das Verwaisen Zeilen der inzwischen neu installierten App
+mit demselben Paketnamen:
 
-- veröffentlichte Zeilen bekommen den Besitzer `NULL` und sind für die App unsichtbar (Muster von `0f989ca`);
-- ausstehende Zeilen werden gelöscht (Muster `publish rows=0` von `be74008`).
+- veröffentlichte Zeilen bekommen den Besitzer `NULL` (Muster von `0f989ca`);
+- ausstehende Zeilen werden gelöscht, der Commit scheitert (Muster `publish rows=0` von `be74008`).
 
-Indizien:
+Indizien: In beiden fehlgeschlagenen Läufen steht `owner_package_changed:<Pfad>` 3–4 ms nach dem Scan-Ende auf
+derselben TID; dem Hauptlauf ging die Deinstallation der Mutanten-APK voraus.
 
-- In beiden fehlgeschlagenen Läufen steht `owner_package_changed` 3–4 ms nach dem Scan-Ende, auf derselben TID.
-- Dort ging dem Hauptlauf die Deinstallation der Mutanten-APK voraus.
-- Diagnoselauf 44281951152 hatte **keine** Deinstallation, keine solche Zeile und 877/877 Downloads OK.
+**Messbar** ist nur die zeitliche Abfolge: Mount-Scan, Paketoperation, Besitzerwechsel bzw. Verlust **konkreter**
+MediaStore-Zeilen. Eine passende Abfolge stützt die Hypothese (Korrelation). Eine interne MediaProvider-Warteschlange
+als Ursache beweist sie nicht; jedes `SUPPORTED` trägt deshalb die Zeile `CLAIM …`. Fehlt die relevante Überschneidung,
+ist das Ergebnis INCONCLUSIVE.
 
-## Aufbau
+Zu Lauf 44281951152 (korrigiert): Dort wurde der Boot-Scan allein **nicht als Ursache nachgewiesen**. Generell
+widerlegt ist er nicht. Die strengere Aufnahmeprüfung zeigt außerdem, dass in jenem Belegstrom Änderungszeilen fehlen
+(siehe `evidence/bootscan-diagnosis/run44281951152/INDEX.md`; Originalergebnis DATA_LOSS bleibt byte-gleich archiviert).
 
-Ein Job und ein Build: dieselbe Test-APK und dieselben synthetischen Daten. Der Inhalt hängt nur von `seq` ab; der
-SHA-256 wird im Log mitgeschrieben. Zwei nacheinander frisch gestartete Wegwerf-Emulatoren, API 34 x86_64, jeweils mit
-`-wipe-data` und Kaltstart. `tools/wait-device-ready.sh` läuft bewusst nicht, damit der Boot-Scan nicht abgewartet wird.
+## Ablauf (`tools/run-pkgremoval-probe.sh`)
 
-Beide Varianten durchlaufen dieselbe Befehlsfolge (`tools/run-pkgremoval-probe.sh`). Einziger Unterschied ist der
-Paketschritt; das prüft der Selbsttest mit nachgebildetem adb.
+Ein Job und ein Build: dieselbe Test-APK, dieselben synthetischen Daten (Inhalt hängt nur von `seq` ab). Es laufen zwei
+nacheinander frisch gestartete Wegwerf-Emulatoren, API 34 x86_64, jeweils mit `-wipe-data` und Kaltstart. Der Boot-Scan
+wird nicht abgewartet.
 
 | Schritt | A `control` | B `uninstall` |
 |---|---|---|
-| 1 | Frische prüfen: Emulator, API 34, Testpaket nicht installiert, keine Sondendateien; Liste fremder Dateien mit SHA-256 | gleich |
-| 2 | Installation 1 (Marker `install1-begin/-end uid=`) | gleich |
-| 3 | Phase `pre`: genau 3 Veröffentlichungen (seq 20000–20002), URI-Prüfungen bei +0/+250 ms | gleich |
-| 4 | ab hier fragt der Host etwa alle 0,3 s die privilegierte MediaStore-Sicht mit Gerätezeit ab | gleich |
-| 5 | **`install -r`** (Marker `update-begin/-end`) | **`uninstall …channeltest.test`, `uninstall …channeltest`**, sofort Neuinstallation (Marker `uninstall-*`, `install2-*`) |
-| 6 | Phase `post` (seq ab 30000): 1 Auftrag, 500 ms Abstand, bis 8 s nach der Scanzeile, höchstens 120 Downloads/120 s; URI-Prüfungen bei +0/+250/+2000/+10000 ms | gleich |
-| 7 | Phase `recheck` in neuem Prozess: jede ursprünglich erhaltene URI (pre und post), App-Sicht, privilegierte Sicht, Dateien mit SHA-256 | gleich |
-| 8 | Liste fremder Dateien nachher; Bewertung `tools/pkgremoval_verdict.py variant` | gleich |
+| 0 | Emulator, API 34, Testpaket nicht installiert (`pm path` mit Statuszeile), keine Sondendateien (`find` mit Statuszeile) – **vor** jeder Logerfassung; ein abgelehntes Gerät liefert keine Logs | gleich |
+| 1 | Logcat-Strom (`-v epoch`); Liste fremder Dateien mit SHA-256 (fehlgeschlagenes `find` = keine gültige Liste) | gleich |
+| 2 | Installation 1; jede Operation mit `op-begin`/`op-end`, `rc`, Ergebnis, Gerätezeit | gleich |
+| 3 | Phase `pre`: genau 3 Veröffentlichungen (seq 20000–20002), URI-Prüfungen +0/+250 ms | gleich |
+| 4 | Host fragt ab hier etwa alle 0,3 s die privilegierte Sicht ab (Gerätezeit vor **und** nach der Abfrage) | gleich |
+| 5 | **`install -r`** beider APKs | **`uninstall …test`, `uninstall …channeltest`** (je `rc=0` **und** `Success`), dann Nachweis der Abwesenheit (`pm path` beider Pakete, Paketliste); erst dann Neuinstallation. Sonst INVALID mit allen Rohbelegen, keine Neuinstallation |
+| 6 | Phase `post` (seq ab 30000): 1 Auftrag, 500 ms Abstand, bis 8 s nach der Scanzeile, höchstens 120 Downloads/120 s; URI-Prüfungen +0/+250/+2000/+10000 ms | gleich |
+| 7 | Synchronisationsmarker muss im Logcat-Strom angekommen sein (begrenzte Abfrage statt blindem Warten); Phase `recheck`; Liste nachher; zweiter Synchronisationsmarker; Bewertung | gleich |
 
-Die Marker werden mit `adb shell log -t BOOTSCAN` geschrieben, also mit derselben Uhr wie die MediaProvider-Zeilen
-(`logcat -v epoch`). Mitgeschnitten werden die Puffer main, system, crash und events.
+Die Probe-Testklasse protokolliert jede Aufnahme mit Prüfsumme (`appH`, `privH`, `diskH`), drosselt die
+Änderungszeilen und schließt jede Phase mit einer erzwungenen Schlussaufnahme (`final=1`, mit Dateiaufnahme). Eine leere
+Provider-Antwort gilt nur mit ausdrücklichem „No result found.“.
 
-Downloadumfang: höchstens 123 je Variante, also höchstens 246 insgesamt. Erwartet werden deutlich weniger (Lauf
-44281951152 hatte 877).
+## Bewertung (`tools/pkgremoval_verdict.py`)
 
-## Belege
+- **Paketoperationen:**
+  - Installationen: letzter Versuch je APK mit `rc=0` und `Success`.
+  - Deinstallation: genau Test- dann App-Paket, beide erfolgreich, danach `absent` mit leeren `pm path` und leerer Paketliste.
+  - Ein UID-Wechsel ist kein Nachweis. Fehlt etwas davon, ist das Ergebnis INVALID.
+- **Generationen:** `pre` startet nach `install1-end` mit dessen UID und endet vor dem Paketschritt; `post` startet nach
+  dem Paketschritt mit dessen UID. ID, URI, Pfad und Zeitachse jedes Downloads müssen passen, sonst INVALID.
+  `ORPHANED_EXPECTED` gibt es nur für so nachgewiesene `install1`-Zeilen.
+- **Aufnahmen (`snapshots=v2`):**
+  - Rekonstruierte Sichten müssen zu Prüfsumme und Anzahl passen.
+  - Am Phasenende darf keine Änderung offen sein; jede Dateiaufnahme gehört zu ihrer Aufnahme.
+  - App- und privilegierte Sicht dürfen sich nicht widersprechen (nur Vorwärtsübergänge zwischen den Abfragen).
+  - Es zählt nur die tatsächlich letzte Aufnahme; ist sie ungültig, ergibt das UNKNOWN, nie einen Ersatz.
+- **Zeitachse je Zeile:**
+  - Wechselintervall = [letzte Beobachtung „eigen“, erste andere Beobachtung].
+  - `owner_package_changed` für genau diesen Pfad kann das Ende nur vorziehen; einen exakten Zeitpunkt ergibt es nie.
+  - Ereignisse für unbekannte Sondendateien ergeben INVALID.
+  - Widersprüche zwischen Logcat und Provider ergeben INCONCLUSIVE.
+- **Verwaisen O** = Schnitt der Intervalle aller drei `install1`-Zeilen. Verzögert heißt: O beginnt nach `install2-end`
+  und endet nicht vor dem Scan-Ende.
+- **Einteilung der `install2`-Zeilen:** `at_risk` (vor O angelegt), `ambiguous` (in O angelegt) und `late` (nach O angelegt).
 
-Die Belege werden je Variante vor der Bewertung ins Job-Log geschrieben und als Textartefakt hochgeladen. Es wird keine
-APK hochgeladen.
-
-| Belegzeile | Inhalt |
+| Ergebnis | Bedingung |
 |---|---|
-| `PKGAB_LOG` | Marker; `Scanned …`-Zeilen; `owner_package_changed`; `PACKAGE_(REMOVED\|FULLY_REMOVED\|ADDED\|REPLACED)`; alle Zeilen mit dem Paketnamen (mit Zeit, PID, TID) |
-| `PKGAB_HOSTQ` | Host-Abfragen: Gerätezeit, `_id`, Besitzer, ausstehend/Papierkorb, Pfad |
-| `PKGAB_INSTR` | vollständige Instrumentierungsausgaben der drei Phasen |
-| `PKGAB_LIST` | fremde Dateien vorher und nachher |
-| `PKGAB_DOWNLOAD` | je Download: Generation, Klasse, `at_risk`, ursprüngliche ID, Begründung (spätere ID, Besitzer, Hash) |
-| `PKGAB_GENERATION`, `PKGAB_NOTE`, `PKGAB_REASON` | Zählung je Generation, Zeitachse, Gründe |
-| `PKGAB_VARIANT` / `PKGAB_RESULT` | Ergebnis je Variante bzw. A/B-Gesamtergebnis |
+| `SUPPORTED` | Ein Mount-Scan überschneidet den Paketschritt, die erste Installation ist gültig, das Verwaisen ist verzögert und genug nachbeobachtet (≥ 5 s), und es gibt keine Absturz-/ANR-/OOM-Belege. Jede `at_risk`-Zeile hat einen **passenden** Schaden: Besitzer NULL bzw. Zeile verschwunden mit Intervall in O, oder Commit-Fehler (`commit=ex:…`) nach Beginn von O ohne verbleibende Zeile bei intakter Datei. Nichts Unsicheres oder Unpassendes, keine späten Fehler |
+| `NOT_SUPPORTED` | Dieselben Vorbedingungen; jede `at_risk`- und `ambiguous`-Zeile ist OK **und** wurde nach O privilegiert als eigen beobachtet |
+| `INCONCLUSIVE` | Alles andere, u. a.: keine Überschneidung; nicht, teilweise, mehrdeutig oder nicht verzögert verwaist; keine `at_risk`-Zeile; UNKNOWN/TRANSIENT/UNEXPLAINED; `failed:network` oder andere unpassende Fehler; teilweise Wirkung; Widersprüche; Absturzbelege |
+| `CLEAN` (A) | Aktualisierung überschneidet den Scan; alle Zeilen OK; keine `owner_package_changed`-Zeile einer Sondendatei; ≥ 1 Zeile vor dem Scan-Ende angelegt und danach als eigen beobachtet |
+| `ANOMALY` (A) | Abweichung ohne Deinstallation |
+| `DATA_LOSS` | Belegter Verlust (vollständige Dateilisten oder gültige letzte Dateiaufnahme), **auch wenn andere Belege unvollständig sind**; neu hinzugekommene fremde Dateien sind nur `FOREIGN_ADDED` |
+| `INVALID` | Unvollständige oder widersprüchliche Belege |
 
-## Klassen je Download
+**A/B:**
+- Gebildet wird das Ergebnis nur aus definierten Arm-Ergebnissen zweier verschiedener Läufe.
+- Fehlt ein Ergebnis, ist es unbekannt, steht es doppelt da oder haben beide Arme dieselbe Lauf-ID, ist es INVALID.
+- `HYPOTHESIS_SUPPORTED` gibt es nur bei B `SUPPORTED` und A `CLEAN`, `HYPOTHESIS_NOT_SUPPORTED` nur bei B `NOT_SUPPORTED` und A `CLEAN`.
+- Sonst INCONCLUSIVE, wobei DATA_LOSS bzw. INVALID eines Arms Vorrang haben. Beide Arm-Ergebnisse stehen immer in `PKGAB_ARM`.
+- Exit-Codes: 0, 2 = INVALID, 3 = DATA_LOSS, 4 = INCONCLUSIVE.
 
-Die Generationen werden getrennt ausgewertet:
+## Regression-first (Codex-NO-GO 1)
 
-- `install1`: Phase pre, vor dem Paketschritt;
-- `install2`: Phase post nach der Neuinstallation (B);
-- `updated`: Phase post nach der Aktualisierung (A).
+`tests/bootscan/regress_pkgab_nogo1.py ALT` bewertet dieselben synthetischen Fälle mit dem Stand `1578394` und dem
+neuen Stand. Für den alten Bewerter werden die Eingaben in das alte Format gebracht.
 
-| Klasse | Bedeutung |
+| Befund | Fall | alt (`1578394`) | neu |
+|---|---|---|---|
+| 1 | Deinstallation Testpaket „Failure“ mit rc=0 | SUPPORTED | INVALID |
+| 1 | Deinstallation App-Paket rc=1 | SUPPORTED | INVALID |
+| 1 | Abwesenheit nicht bewiesen (Paket noch gelistet) | SUPPORTED | INVALID |
+| 1 | nur UID-Wechsel, keine Operations-/Abwesenheitsmarker | SUPPORTED | INVALID |
+| 2 | Veröffentlichungsfehler anderer Art (Commit nicht erreicht, `network`) | SUPPORTED | INCONCLUSIVE |
+| 2 | UNKNOWN einer `at_risk`-Zeile | SUPPORTED | INCONCLUSIVE |
+| 2 | erste Installation ungültig | SUPPORTED | INCONCLUSIVE |
+| 3 | Anlegen im Beobachtungsintervall des Verwaisens | SUPPORTED | INCONCLUSIVE |
+| 3 | verspätet protokollierter Besitzerwechsel | NOT_SUPPORTED | INCONCLUSIVE |
+| 3 | Besitzerwechsel einer unbekannten Sondendatei | INCONCLUSIVE | INVALID |
+| 3 | Wechsel protokolliert, Provider zeigt weiter „eigen“ | NOT_SUPPORTED | INCONCLUSIVE |
+| 4 | verlorene PRIV-Änderungszeile | SUPPORTED | INVALID |
+| 4 | offene Änderung am Phasenende | SUPPORTED | INVALID |
+| 4 | letzte Aufnahme ungültig (kein Ersatz durch ältere) | SUPPORTED | INCONCLUSIVE |
+| 4 | belegter Datenverlust bei sonst unvollständigen Belegen | INVALID | DATA_LOSS |
+| 4 | App-Sicht widerspricht privilegierter Sicht | SUPPORTED | INVALID |
+| 5 | Phase pre mit fremder UID | SUPPORTED | INVALID |
+| 5 | URI und ID passen nicht | SUPPORTED | INVALID |
+| 5 | TRANSIENT-Zeile im kausalen Fenster | NOT_SUPPORTED | INCONCLUSIVE |
+| 5 | Absturz des MediaProvider im Fenster | NOT_SUPPORTED | INCONCLUSIVE |
+
+Hostskript gegen nachgebildetes adb mit Gerätesimulator:
+
+| Befund | Fall | alt | neu |
+|---|---|---|---|
+| 1 | `uninstall` Testpaket: „Failure“ mit rc=0 | Exit 0, SUPPORTED, neu installiert | Exit 2, INVALID |
+| 1 | `uninstall` App-Paket: rc=1 | Exit 0, SUPPORTED, neu installiert | Exit 2, INVALID |
+| 1 | `uninstall` meldet Success, Paket bleibt installiert | Exit 0, SUPPORTED, neu installiert | Exit 2, INVALID |
+| 6 | `find` scheitert bei der Liste fremder Dateien | Exit 0, CLEAN | Exit 2, INVALID |
+| 6 | abgelehntes Gerät (kein Emulator) | Logcat (`-b all`) erfasst | keine Logerfassung |
+
+Die positiven Fälle (SUPPORTED, SUPPORTED mit Commit-Fehler, NOT_SUPPORTED, CLEAN) ergeben in beiden Ständen dasselbe.
+Kein bestehender Test wurde abgeschwächt: Alle Prüfungen des alten Stands sind übernommen oder verschärft.
+
+**Nicht reproduziert:** die zwei von Codex gemeldeten fehlgeschlagenen Selbsttests. Der alte Stand war hier in 9 Läufen
+grün, 6 davon parallel unter Last. Die wahrscheinlichen Ursachen sind beseitigt:
+- Der Logcat-Strom war über `tail -f` zeitabhängig.
+- Es gab echte Wartezeiten (`sleep 0.05`) und blinde `sleep 2` im Skript.
+
+Jetzt laufen der Strom synchron unter einer Dateisperre und die Geräteuhr virtuell. Host-Abfragen verschieben die Uhr
+nicht, und das Skript gleicht über Synchronisationsmarker ab. Zwei identische Läufe ergeben nachweislich dieselben
+Klassen.
+
+## Selbsttests (lokal)
+
+| Test | Ergebnis |
 |---|---|
-| `OK` | gleiche ID, eigener Besitzer, sichtbar, Hash gleich |
-| `OWNER_CHANGED` | **Besitzerwechsel**: gleiche ID existiert privilegiert, Besitzer nicht mehr die App |
-| `REPLACED` | **ID-Ersatz**: ursprüngliche ID fehlt, andere Zeile für denselben Pfad |
-| `LOST` | **Verlust der veröffentlichten Zeile**: weder ID noch Zeile für den Pfad; Datei vorhanden |
-| `STATE_CHANGED` | gleiche ID, wieder ausstehend oder im Papierkorb |
-| `PUBLISH_FAILED` | Engine meldete nicht „done“ (z. B. `publish rows=0`) |
-| `ORPHANED_EXPECTED` | **normales Deinstallationsverhalten**: `install1`-Zeile in B mit Besitzer `NULL` |
-| `NOT_ORPHANED` | `install1`-Zeile in B gehört nach der Deinstallation weiter der App (berichtet) |
-| `UNKNOWN` | Beobachtung fehlt oder ist unzuverlässig; ist nie ein Beweis |
-| `DATA_LOSS` | Sondendatei fehlt oder Inhalt geändert |
-
-Fremde Dateien (Regel `foreign=v2`):
-
-- **gelöscht oder verändert** ergibt DATA_LOSS;
-- **neu hinzugekommen** (z. B. vom System angelegte `.thumbnails/.nomedia`) ergibt nur `FOREIGN_ADDED` als Hinweis.
-
-## Zeitpunkt des Verwaisens in B
-
-Genau ist er, wenn eine `owner_package_changed`-Zeile ein Sondenkennzeichen nennt. Sonst gilt das Intervall zwischen
-der letzten Beobachtung „gehört der App“ und der ersten Beobachtung „Besitzer weg“, aus Host-Abfragen und privilegierten
-Abzügen.
-
-- **verzögert**: das Intervall liegt vollständig nach `install2-end`;
-- **nicht verzögert**: das Ende des Intervalls liegt vor `install2-end`;
-- **mehrdeutig**: das Intervall überspannt `install2-end`.
-
-`at_risk` bedeutet: ein `install2`-Download wurde angelegt, bevor das Verwaisen beobachtet war.
-
-## Ergebnisse (nie PASS)
-
-| Variante | Ergebnis |
-|---|---|
-| B | `SUPPORTED`: verzögertes Verwaisen, und mindestens ein `at_risk`-Download ist OWNER_CHANGED, LOST, REPLACED, STATE_CHANGED oder PUBLISH_FAILED; spätere Downloads sind unauffällig |
-| B | `NOT_SUPPORTED`: verzögertes Verwaisen, alle `at_risk`-Downloads OK |
-| B | `INCONCLUSIVE`: kein Verwaisen beobachtet; nicht verzögert; Zeit mehrdeutig; kein `at_risk`-Download; `UNKNOWN` unter `at_risk`; oder auch spätere Downloads fehlerhaft (dann erklärt die Hypothese den Fehler nicht) |
-| A | `CLEAN`: alle OK, kein `owner_package_changed` nach der Aktualisierung, mindestens ein Download überspannt das Scan-Ende |
-| A | `ANOMALY`: Abweichung ohne Deinstallation |
-| A | `INCONCLUSIVE`: keine Überschneidung mit dem Scan-Ende |
-| beide | `DATA_LOSS`; `INVALID` bei unvollständigen Belegen (Marker, Reihenfolge, Phasen, Instrumentierung, URI-Prüfungen, Fremdliste) |
-
-A/B-Gesamtergebnis:
-
-- `HYPOTHESIS_SUPPORTED` nur bei B `SUPPORTED` **und** A `CLEAN`;
-- `HYPOTHESIS_NOT_SUPPORTED` bei B `NOT_SUPPORTED`;
-- `INVALID` oder `DATA_LOSS`, wenn eine Variante es ist;
-- sonst `INCONCLUSIVE`.
-
-Exit-Codes von `ab`: 0 = SUPPORTED oder NOT_SUPPORTED, 2 = INVALID, 3 = DATA_LOSS, 4 = INCONCLUSIVE. Ein roter Job ist
-also bei INCONCLUSIVE erwartbar und kein Produktbefund.
-
-Tritt die relevante Überschneidung nicht ein, ist das Ergebnis INCONCLUSIVE, nie eine Bestätigung. Dafür muss die
-Deinstallation während des Scans liegen und post-Downloads müssen vor dem Verwaisen beginnen.
+| `tests/bootscan/test_pkgremoval_verdict.py` | PASS, 50 Fälle (Simulator-Fixtures mit einer Geräteuhr) |
+| `tests/bootscan/test_pkgremoval_script.py` | PASS, 44 Fälle, darunter vollständige Hostabläufe CLEAN, SUPPORTED, NOT_SUPPORTED; 5× hintereinander stabil |
+| `tests/bootscan/test_bootscan_verdict.py` | PASS, 45 Fälle (6 neu für `snapshots=v2`) |
+| `tests/bootscan/test_bootscan_script.py` | PASS, 11 Fälle |
+| `tests/bootscan/test_archive_integrity.py` | PASS, Originalbelege byte-gleich, Ergebnis DATA_LOSS |
+| Java-Kompilierung der Probe gegen Stubs | nur die bekannten umgebungsbedingten Fehler in Produktdateien |
+| Prüfsumme Java ↔ Python | identisch (`e1b668ebbacb9434`, leere Sicht `e3b0c44298fc1c14`) |
 
 ## Grenzen
 
-- A läuft vor B auf demselben Runner. Der zweite Kaltstart kann wegen warmer Host-Caches schneller sein. Die Zeitachse
-  (Marker gegenüber Scan-Ende) steht deshalb je Variante in `PKGAB_NOTE`.
-- Ob der Paketschritt in den Scan fällt, lässt sich nicht erzwingen. In Lauf 44281951152 endete der externe Mount-Scan
-  etwa 38 s nach dem Start der ersten Testphase. Der Paketschritt hier liegt erwartungsgemäß etwa 10–25 s danach.
-- Ein Ergebnis gilt nur für API 34 und den Emulator; auf Geräten wurde nichts geprüft.
+- A läuft vor B auf demselben Runner. Die Zeitachse je Variante steht in `PKGAB_NOTE`.
+- Ob der Paketschritt in den Scan fällt und ob eine Zeile vor dem Verwaisen sicher beobachtet wird, lässt sich nicht
+  erzwingen. Dann ist das Ergebnis INCONCLUSIVE, nie eine Bestätigung.
+- Abfrageintervalle (Aufnahmen etwa 0,5 s, Host etwa 0,3 s) begrenzen die zeitliche Auflösung; Zeilen im Intervall sind
+  `ambiguous`.
+- Gilt nur für API 34 und den Emulator.
 
-## Lokal geprüft
+## Auslöser (unverändert)
 
-| Prüfung | Ergebnis |
-|---|---|
-| `tests/bootscan/test_pkgremoval_verdict.py` | PASS, 37 Fälle |
-| `tests/bootscan/test_pkgremoval_script.py` | PASS, 31 Fälle (nachgebildetes adb) |
-| `tests/bootscan/test_bootscan_verdict.py` | PASS, 39 Fälle, davon 3 neu für `foreign=v2` |
-| `tests/bootscan/test_bootscan_script.py` | PASS, 11 Fälle |
-| Java-Kompilierung der Probe gegen android-all und Stubs | fehlerfrei; nur die bekannten umgebungsbedingten Fehler in Produktdateien, unverändert |
-| `bash -n`, YAML | geprüft |
-| Nachbewertung von Lauf 44281951152 | `evidence/bootscan-diagnosis/run44281951152/INDEX.md`; Originalergebnis DATA_LOSS bleibt |
-
-## Auslöser (exakt)
-
-Ein **Push des neuen Branches `diag/pkgremoval-ab`** startet von 21 Workflows nur `pkgremoval-probe.yml`:
-
-- Es ist der einzige mit passendem Branch-Filter; alle anderen nennen den Branch nicht.
-- Der Pfadfilter passt bei jeder Vergleichsbasis, weil die Workflowdatei selbst neu ist.
-- Es entsteht kein Pull Request, also kein `pull_request`-Lauf; es gibt keine `workflow_run`- oder `create`-Auslöser.
-- Die installierten Apps legen erfahrungsgemäß nur leere Check-Suites an.
-
-Nicht berührt werden PR #21, PR #27, `ccr-791d6ed0-rmfzvd`, `feature/c3-browser-downloads`, `diag/bootscan-probe` und
-Kadri.
-
-Ein weiterer Push auf den Branch würde erneut auslösen, wenn er Dateien aus dem Pfadfilter ändert. Deshalb genau ein
-Push und danach keiner mehr ohne neue Freigabe.
+- Ein Push des neuen Branches `diag/pkgremoval-ab` startet nur `pkgremoval-probe.yml`.
+- Es entsteht kein Pull Request, also kein `pull_request`-Lauf.
+- Jeder weitere Push mit Änderungen unter `tests/bootscan/**` oder an den A/B-Werkzeugen löst erneut aus.
+- **Vor einem GO von Codex wird nichts gepusht.**

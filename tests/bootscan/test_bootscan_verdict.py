@@ -218,6 +218,38 @@ log, instr, before, after = build(BASE + [overlap(1, 'OK')])
 r, why = V.evaluate(log.replace('|0|0|/storage', '|0|/storage', 1), RUN, instr, before, after, PKG)[:2]
 check(r == 'INVALID' and 'change line with' in why[0], 'INVALID: unreadable change line inside a phase (%s)' % why[:1])
 
+# --- strenge Aufnahmen (Regel snapshots=v2, Codex-NO-GO 1 Befund 4)
+log, instr, before, after = build(BASE + [overlap(1, 'OK')])
+priv_lines = [l for l in log.splitlines() if ' BOOTSCAN PRIV ' in l]
+r, why = V.evaluate(log.replace(priv_lines[0] + '\n', ''), RUN, instr, before, after, PKG)[:2]
+check(r == 'INVALID' and any('privN' in w for w in why), 'snapshots=v2: lost PRIV change line (count differs from privN) -> INVALID %s' % why[:1])
+lines = log.splitlines()
+i = max(k for k, l in enumerate(lines) if ' BOOTSCAN END ' in l and 'phase=after' in l)
+lines.insert(i, lines[i].split('BOOTSCAN: ')[0] + 'BOOTSCAN: BOOTSCAN DISK run=%s n=1 +/storage/x|1|%s' % (RUN, 'a' * 64))
+r, why = V.evaluate('\n'.join(lines) + '\n', RUN, instr, before, after, PKG)[:2]
+check(r == 'INVALID' and any('open DISK' in w for w in why), 'snapshots=v2: open change line at the end of a phase -> INVALID %s' % why[:1])
+lines = log.splitlines()
+i = max(k for k, l in enumerate(lines) if ' BOOTSCAN DSNAP ' in l)
+lines[i] = lines[i].replace(' n=1 ', ' n=7 ')
+r, why = V.evaluate('\n'.join(lines) + '\n', RUN, instr, before, after, PKG)[:2]
+check(r == 'INVALID' and any('does not belong' in w for w in why), 'snapshots=v2: disk snapshot not belonging to its snapshot -> INVALID %s' % why[:1])
+log, instr, before, after = build(BASE + [overlap(1, 'LOST')])
+lines = log.splitlines()
+i = max(k for k, l in enumerate(lines) if ' BOOTSCAN END ' in l and 'phase=recheck' in l)
+pre = lines[i].split('BOOTSCAN: ')[0] + 'BOOTSCAN: '
+t = SCAN_END + 90_000 + 25
+lines[i:i] = [pre + 'BOOTSCAN SNAP run=%s n=2 t=%d app=ok appN=3 priv=bad:frame-Q-END_rc-1 privN=-1 cross=na' % (RUN, t),
+              pre + 'BOOTSCAN DSNAP run=%s n=2 t=%d disk=ok diskN=4' % (RUN, t + 1)]
+lines[i + 2] = lines[i + 2].replace('snapshots=1', 'snapshots=2')
+r, why, rows, _ = V.evaluate('\n'.join(lines) + '\n', RUN, instr, before, after, PKG)
+check({s_: c for s_, g, c, w in rows}.get('1') == 'UNKNOWN' and r == 'INCONCLUSIVE',
+      'snapshots=v2: last privileged snapshot invalid -> UNKNOWN, never replaced by the older valid one (%s, %s)' % (r, {s_: c for s_, g, c, w in rows}.get('1')))
+log, instr, before, after = build(BASE + [overlap(1, 'DATA_LOSS_SHA')], drop=('end',))
+r, why = V.evaluate(log, RUN, instr, before, after, PKG)[:2]
+check(r == 'DATA_LOSS' and 'incomplete' in why[-1], 'proven data loss stays visible although other evidence is incomplete -> DATA_LOSS %s' % why[:1])
+check(V.digest({'1': ('a', 'b')}) == __import__('hashlib').sha256(b'1|a|b').hexdigest()[:16] and V.digest({}) == __import__('hashlib').sha256(b'').hexdigest()[:16],
+      'digest identical to the probe test definition (sorted "key|value" lines, SHA-256, 16 hex)')
+
 # --- Kommandozeile: Exit-Codes, nie PASS, unvollständige Dateiliste
 with tempfile.TemporaryDirectory() as d:
     def w(n, s):
@@ -240,6 +272,6 @@ with tempfile.TemporaryDirectory() as d:
         check(p.returncode == code and ('BOOTSCAN_RESULT ' + word) in p.stdout and 'PASS' not in p.stdout,
               'cli %s: exit %d, BOOTSCAN_RESULT %s, no PASS' % (label, p.returncode, word))
 
-n = 7 + 2 + 4 + 3 + 4 + 11 + 5 + 3
+n = 7 + 2 + 4 + 3 + 4 + 11 + 5 + 3 + 6
 print('BOOTSCAN_VERDICT_SELFTEST %s %d cases, %d failed' % ('FAIL' if fails else 'PASS', n, len(fails)))
 sys.exit(1 if fails else 0)

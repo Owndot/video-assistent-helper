@@ -28,10 +28,17 @@ Gruppen: OVERLAP (Lebensdauer des Eintrags vom Anlegen bis "done" schneidet eine
 REASON_MOUNTED"-Scan), DURING_OTHER (Phase during ohne Überschneidung), CONTROL (Phase after, ≥ 10 s nach dem Ende des
 letzten Mount-Scans, ohne Überschneidung), AFTER_UNCONTROLLED (Phase after, Bedingung verletzt).
 
+Aufnahmen (Regel snapshots=v2, nach Codex-NO-GO 1): jede Aufnahme wird aus ihren Änderungszeilen rekonstruiert und
+streng geprüft – Änderungszeilen nur für den eigenen, abgeschlossenen Rahmen (gleiche Nummer, gültiger Status), Anzahl
+gleich appN/privN/diskN, keine offenen Änderungen am Phasenende, DSNAP genau zur unmittelbar vorangehenden SNAP, App-Sicht
+widerspruchsfrei zur privilegierten Sicht (gleiche ID, Besitzer, ausstehend, Name). Die Einordnung verwendet NUR die
+tatsächlich letzte Aufnahme der Nachprüfung; ist sie ungültig, wird sie nie durch eine ältere ersetzt (UNKNOWN).
+
 Ergebnis (eine Zeile BOOTSCAN_RESULT, Exit-Code):
-  INVALID (2)       unvollständige oder widersprüchliche Belege (Phasen, Zähler, Logzeilen, Instrumentierung)
+  INVALID (2)       unvollständige oder widersprüchliche Belege (Phasen, Zähler, Logzeilen, Instrumentierung, Aufnahmen)
   DATA_LOSS (3)     irgendein Download DATA_LOSS oder eine schon vorher vorhandene fremde Datei gelöscht oder inhaltlich
-                    verändert – hat Vorrang vor allem außer INVALID. Seit Regel foreign=v2 (nach Lauf 44281951152, dessen
+                    verändert – hat Vorrang vor allem, auch vor INVALID, sofern der Verlust selbst aus vollständigen
+                    Belegen folgt (vollständige Dateilisten bzw. eine in sich gültige letzte Dateiaufnahme). Seit Regel foreign=v2 (nach Lauf 44281951152, dessen
                     Ergebnis unverändert archiviert ist: evidence/bootscan-diagnosis/run44281951152/) sind NEU hinzugekommene
                     fremde Dateien (z. B. vom System angelegte .thumbnails/.nomedia) kein Datenverlust, sondern eine Zeile
                     BOOTSCAN_NOTE FOREIGN_ADDED; Löschen oder Verändern bleibt DATA_LOSS.
@@ -41,6 +48,7 @@ Ergebnis (eine Zeile BOOTSCAN_RESULT, Exit-Code):
                     eine Abweichung (nicht OK) auftrat, "control_anomaly", ob auch ohne Scan
 """
 import argparse
+import hashlib
 import importlib.util
 import os
 import re
@@ -127,8 +135,8 @@ def phases(ev, run, invalid):
         if kind == 'START':
             if f.get('phase') in out:
                 invalid.append('phase %s started twice' % f.get('phase'))
-            cur = {'phase': f.get('phase'), 'dl': [], 'uriq': [], 'snaps': [], 'dsnaps': [], 'scanseen': [], 'end': None,
-                   'app': {}, 'priv': {}, 'disk': {}, 'pend_app': [], 'pend_priv': [], 'pend_disk': [], 'pkg': f.get('pkg')}
+            cur = {'phase': f.get('phase'), 'dl': [], 'uriq': [], 'snaps': [], 'dsnaps': [], 'scanseen': [], 'end': None, 'start': f,
+                   'app': {}, 'priv': {}, 'disk': {}, 'pend_app': [], 'pend_priv': [], 'pend_disk': [], 'pkg': f.get('pkg'), 'frame_problems': []}
             out[cur['phase']] = cur
             continue
         if cur is None:
@@ -145,22 +153,54 @@ def phases(ev, run, invalid):
             cur['pend_' + kind.lower()].append((int(f.get('n', -1)), item))
         elif kind == 'SNAP':
             n = int(f['n'])
+            valid = f.get('app') == 'ok' and f.get('priv') == 'ok' and f.get('cross') == 'ok'
+            allowed = {'app': f.get('app') == 'ok', 'priv': valid}
             for name in ('app', 'priv'):
                 for pn, item in cur['pend_' + name]:
                     if pn != n:
-                        invalid.append('%s change of snapshot %d logged at snapshot %d' % (name.upper(), pn, n))
+                        frame(cur, invalid, '%s change of snapshot %d logged at snapshot %d' % (name.upper(), pn, n))
+                    if not allowed[name]:
+                        frame(cur, invalid, '%s change logged for snapshot %d whose %s view is not valid' % (name.upper(), n, name))
+                        continue
                     apply(cur[name], item, 4 if name == 'priv' else 3)
                 cur['pend_' + name] = []
-            valid = f.get('app') == 'ok' and f.get('priv') == 'ok' and f.get('cross') == 'ok'
-            cur['snaps'].append({'n': n, 't': int(f['t']), 'valid': valid, 'app_ok': f.get('app') == 'ok',
-                                 'app': dict(cur['app']), 'priv': dict(cur['priv']), 'raw': f})
+            for name in ('app', 'priv'):
+                h = f.get(name + 'H')
+                if allowed[name] and h not in (None, '-') and digest(cur[name]) != h:
+                    frame(cur, invalid, 'phase %s snapshot %d: reconstructed %s view does not match its digest (change lines lost or altered)'
+                          % (cur['phase'], n, name))
+            if allowed['app'] and str(len(cur['app'])) != f.get('appN'):
+                frame(cur, invalid, 'phase %s snapshot %d: reconstructed app view has %d rows, appN=%s' % (cur['phase'], n, len(cur['app']), f.get('appN')))
+            if valid and str(len(cur['priv'])) != f.get('privN'):
+                frame(cur, invalid, 'phase %s snapshot %d: reconstructed privileged view has %d rows, privN=%s' % (cur['phase'], n, len(cur['priv']), f.get('privN')))
+            if valid:
+                bad = cross_check(cur['app'], cur['priv'])
+                if bad:
+                    frame(cur, invalid, 'phase %s snapshot %d: app view contradicts privileged view %s' % (cur['phase'], n, bad[:3]))
+            cur['snaps'].append({'n': n, 't': int(f['t']), 't_end': int(f.get('tEnd', f['t'])), 'valid': valid, 'app_ok': f.get('app') == 'ok',
+                                 'app': dict(cur['app']), 'priv': dict(cur['priv']), 'raw': f, 'final': f.get('final') == '1'})
         elif kind == 'DSNAP':
             n = int(f['n'])
+            ok = f.get('disk') == 'ok'
+            if not cur['snaps'] or cur['snaps'][-1]['n'] != n or any(d['n'] == n for d in cur['dsnaps']):
+                frame(cur, invalid, 'phase %s disk snapshot %d does not belong to the preceding snapshot or is repeated' % (cur['phase'], n))
             for pn, item in cur['pend_disk']:
+                if pn != n:
+                    frame(cur, invalid, 'DISK change of snapshot %d logged at disk snapshot %d' % (pn, n))
+                if not ok:
+                    frame(cur, invalid, 'DISK change logged for disk snapshot %d that is not valid' % n)
+                    continue
                 apply(cur['disk'], item, 2)
             cur['pend_disk'] = []
-            cur['dsnaps'].append({'n': n, 't': int(f['t']), 'ok': f.get('disk') == 'ok', 'disk': dict(cur['disk'])})
+            if ok and f.get('diskH') not in (None, '-') and digest(cur['disk']) != f.get('diskH'):
+                frame(cur, invalid, 'phase %s disk snapshot %d: reconstructed files do not match the digest (change lines lost or altered)' % (cur['phase'], n))
+            if ok and str(len(cur['disk'])) != f.get('diskN'):
+                frame(cur, invalid, 'phase %s disk snapshot %d: reconstructed %d files, diskN=%s' % (cur['phase'], n, len(cur['disk']), f.get('diskN')))
+            cur['dsnaps'].append({'n': n, 't': int(f['t']), 'ok': ok, 'disk': dict(cur['disk']), 'final': f.get('final') == '1'})
         elif kind == 'END':
+            for name in ('app', 'priv', 'disk'):
+                if cur['pend_' + name]:
+                    frame(cur, invalid, 'phase %s ends with %d open %s changes (no closing snapshot)' % (cur['phase'], len(cur['pend_' + name]), name.upper()))
             cur['end'] = f
             cur = None
         elif kind == 'SNAPERR':
@@ -168,6 +208,58 @@ def phases(ev, run, invalid):
         else:
             invalid.append('unknown BOOTSCAN line kind %s' % kind)
     return out
+
+
+def frame(cur, invalid, msg):
+    """Fehler eines Aufnahmerahmens: macht den Lauf INVALID und wird je Phase vermerkt (für belegten Datenverlust)."""
+    invalid.append(msg)
+    cur['frame_problems'].append(msg)
+
+
+def digest(state):
+    """Wie MediaStoreBootScanProbeTest.digest: SHA-256 über "schlüssel|wert", nach Schlüssel sortiert, erste 16 Hex."""
+    text = '\n'.join('%s|%s' % (k, '|'.join(state[k])) for k in sorted(state))
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]
+
+
+def cross_check(app, priv):
+    """App-Sicht {id: (owner, pending, name)} gegen die unmittelbar danach abgefragte privilegierte Sicht
+    {id: (owner, pending, trashed, path)}. Zulässig sind gleiche Werte oder Übergänge, die in der Zeit zwischen beiden
+    Abfragen vorwärts geschehen sein können (ausstehend 1 -> 0 mit Umbenennung beim Veröffentlichen, Besitzer -> NULL);
+    alles andere ist ein Widerspruch."""
+    bad = []
+    for i, (owner, pending, name) in app.items():
+        p = priv.get(i)
+        if p is None:
+            bad.append('%s missing' % i)
+            continue
+        published_between = pending == '1' and p[1] == '0'
+        owner_ok = p[0] == owner or p[0] == 'NULL'
+        pending_ok = p[1] == pending or published_between
+        base = p[3].rsplit('/', 1)[-1]
+        # ausstehende/gelöschte Dateien liegen als ".pending-<Ablauf>-<Name>" bzw. ".trashed-<Ablauf>-<Name>" auf der Platte
+        name_ok = base == name or published_between or re.fullmatch(r'\.(pending|trashed)-\d+-' + re.escape(name), base) is not None
+        if not (owner_ok and pending_ok and name_ok):
+            bad.append('%s app %s/%s/%s priv %s/%s/%s' % (i, owner, pending, name, p[0], p[1], p[3]))
+    return bad
+
+
+def final_frames(rc):
+    """-> (letzte Aufnahme oder None, letzte Dateiaufnahme oder None, Grund). Nur die tatsächlich letzte zählt; ist sie
+    ungültig, gibt es keinen Ersatz durch eine ältere gültige Aufnahme."""
+    snaps, dsnaps = rc.get('snaps', []), rc.get('dsnaps', [])
+    if not snaps or not snaps[-1]['valid']:
+        return None, None, 'last privileged snapshot of the recheck is missing or not valid (%s)' % (snaps[-1]['raw'] if snaps else 'none')
+    if not dsnaps or not dsnaps[-1]['ok']:
+        return snaps[-1], None, 'last disk snapshot of the recheck is missing or not valid'
+    end = rc.get('end') or {}
+    if 'final' in end and (snaps[-1]['n'] != int(end['final']) or dsnaps[-1]['n'] != int(end['final'])
+                           or not snaps[-1]['final'] or not dsnaps[-1]['final']):
+        return None, None, 'the final snapshot announced by END (%s) is not the last valid snapshot' % end['final']
+    last_q = max([int(q['t']) for q in rc.get('uriq', []) if q.get('t', '').isdigit()] or [0])
+    if dsnaps[-1]['t'] < last_q or snaps[-1]['t'] < last_q:
+        return None, None, 'last snapshots of the recheck were taken before the last URI query'
+    return snaps[-1], dsnaps[-1], ''
 
 
 def apply(state, item, nfields):
@@ -233,23 +325,22 @@ def classify(d, ph, pkg):
     name, sid = d['name'], d.get('id', '-')
     path = DIR + name
     rc = ph['recheck']
-    final_disk = [s for s in rc['dsnaps'] if s['ok']]
-    final_priv = [s for s in rc['snaps'] if s['valid']]
+    snap, dsnap, why = final_frames(rc)
     if d.get('state') != 'done':
-        disk = final_disk[-1]['disk'] if final_disk else {}
-        rows = [k for k, v in (final_priv[-1]['priv'] if final_priv else {}).items() if v[3] == path]
+        disk = dsnap['disk'] if dsnap else None
+        rows = sorted(k for k, v in snap['priv'].items() if v[3] == path) if snap else None
         return 'PUBLISH_FAILED', 'state=%s reason=%s commit=%s; file on disk: %s; rows for the path: %s' % (
-            d.get('state'), d.get('reason'), d.get('commit'), path in disk, rows)
-    if not final_disk:
-        return 'UNKNOWN', 'no valid final disk snapshot'
-    disk = final_disk[-1]['disk']
+            d.get('state'), d.get('reason'), d.get('commit'), 'unknown' if disk is None else path in disk, 'unknown' if rows is None else rows)
+    if dsnap is None and snap is not None:
+        return 'UNKNOWN', why
+    if snap is None:
+        return 'UNKNOWN', why
+    disk = dsnap['disk']
     if path not in disk:
         return 'DATA_LOSS', 'file %s missing at the end' % name
     if disk[path] != (d['size'], d['sha']):
         return 'DATA_LOSS', 'file %s changed: size/sha %s, expected %s/%s' % (name, disk[path], d['size'], d['sha'][:16])
-    if not final_priv:
-        return 'UNKNOWN', 'no valid (complete) privileged snapshot in the recheck'
-    priv = final_priv[-1]['priv']
+    priv = snap['priv']
     rq = [q for q in rc['uriq'] if q['seq'] == d['seq'] and q['off'] == '-1']
     if len(rq) != 1:
         return 'UNKNOWN', 'recheck URI query missing'
@@ -294,6 +385,31 @@ def group(d, scans):
 
 
 FOREIGN_RULES = 'v2'   # v1 (c86d84b/8c4b2cb): jede Abweichung der Fremdliste = DATA_LOSS; v2: Hinzufügen nur Hinweis
+SNAPSHOT_RULES = 'v2'  # v1 (bis 1578394): letzte GÜLTIGE Aufnahme, Zähler ungeprüft; v2: s. Kopf
+
+
+def proven_loss(ph, dl_phases, before, after):
+    """Datenverlust, der trotz sonst unvollständiger Belege feststeht: fremde Dateien aus vollständigen Listen gelöscht
+    oder verändert; Sondendateien fehlen oder sind verändert laut einer in sich gültigen letzten Dateiaufnahme der
+    Nachprüfung (Rahmen ohne Fehler)."""
+    out = []
+    removed, modified, _ = foreign_diff(before, after)
+    if removed or modified:
+        out.append('files outside the probe changed: removed %s, modified %s' % (removed[:5], modified[:5]))
+    rc = ph.get('recheck') or {}
+    ds = rc.get('dsnaps') or []
+    if ds and ds[-1]['ok'] and not any('DISK' in m or 'disk' in m for m in rc.get('frame_problems', [])):
+        disk = ds[-1]['disk']
+        for name in dl_phases:
+            for d in (ph.get(name) or {}).get('dl', []):
+                path = DIR + d.get('name', '')
+                if d.get('state') != 'done' or d.get('sha', '-') in ('-', '') or not d.get('name'):
+                    continue   # nur fertig gemeldete Dateien; ein fehlgeschlagener Download darf aufgeräumt sein
+                if path not in disk:
+                    out.append('seq %s: file %s missing in the last valid disk snapshot' % (d.get('seq'), d['name']))
+                elif disk[path] != (d.get('size'), d['sha']):
+                    out.append('seq %s: file %s changed in the last valid disk snapshot' % (d.get('seq'), d['name']))
+    return out
 
 
 def foreign_diff(before, after):
@@ -318,6 +434,9 @@ def evaluate(logcat, run, instr, before, after, pkg='de.evp.helfer.channeltest',
         if p.get('pkg') != pkg:
             invalid.append('phase %s ran in package %s, expected %s' % (p['phase'], p.get('pkg'), pkg))
     if invalid:
+        loss = proven_loss(ph, ('during', 'after'), before, after)
+        if loss:
+            return 'DATA_LOSS', loss + ['other evidence incomplete or contradictory: %s' % invalid[:3]], [], {}
         return 'INVALID', invalid, [], {}
     rows, groups, data_loss = [], {}, []
     for name in ('during', 'after'):
@@ -362,7 +481,7 @@ def main():
     a.add_argument('--package', default='de.evp.helfer.channeltest')
     o = a.parse_args()
     rows, groups, notes = [], {}, []
-    print('BOOTSCAN_RULES foreign=%s' % FOREIGN_RULES)
+    print('BOOTSCAN_RULES foreign=%s snapshots=%s' % (FOREIGN_RULES, SNAPSHOT_RULES))
     try:
         read = lambda p: open(p, encoding='utf-8', errors='replace').read()
         result, reasons, rows, groups = evaluate(read(o.logcat), o.run, {'during': read(o.instr_during), 'after': read(o.instr_after),

@@ -1,250 +1,267 @@
 #!/usr/bin/env python3
-"""Selbsttest für tools/pkgremoval_verdict.py mit synthetischen Belegen (kein Gerät).
+"""Selbsttest für tools/pkgremoval_verdict.py mit Belegen aus dem deterministischen Gerätesimulator
+tests/bootscan/pkgab_sim.py (eine Geräteuhr, widerspruchsfreie Zeitachse) und gezielten Verfälschungen (kein Gerät).
 
-Geprüft wird: SUPPORTED nur bei nachweislich verzögerter Besitzer-Aufhebung (nach dem Ende der Neuinstallation), die
-neue Downloads trifft; NOT_SUPPORTED, wenn diese unversehrt bleiben; INCONCLUSIVE ohne beobachtete Aufhebung, bei nicht
-verzögerter oder zeitlich mehrdeutiger Aufhebung und ohne neue Downloads davor; das normale Verwaisen der ersten
-Installation (ORPHANED_EXPECTED) ist kein Befund; Generationen getrennt; Kontrolllauf CLEAN/ANOMALY/INCONCLUSIVE;
-DATA_LOSS nur bei fehlenden/veränderten Dateien bzw. gelöschten/veränderten fremden Dateien, neu hinzugekommene
-Systemdateien nur als Hinweis; unvollständige Belege INVALID; A/B-Kombination; nie PASS.
+Jeder Fall nennt den Codex-Befund (NO-GO 1), den er absichert. Positive Fälle: SUPPORTED (veröffentlichte Zeilen ->
+Besitzer NULL; ausstehende Zeile gelöscht -> Commit-Fehler), NOT_SUPPORTED, CLEAN. Negative Fälle: unbewiesene
+Paketoperationen, fehlende Überschneidung, unpassende Fehler (failed:network), UNKNOWN/TRANSIENT im kausalen Fenster,
+zeitlich mehrdeutige Zeilen, verspätet protokollierte Besitzerwechsel, Ereignisse unbekannter Sondendateien,
+Widersprüche Logcat/Provider, verlorene Änderungszeilen, offene Änderungen, ungültige Schlussaufnahme, leere
+Provider-Antwort, Absturzbelege, falsche Generationen, unbekannte Ergebniswerte. Nie PASS.
+
+cases() wird auch von tests/bootscan/regress_pkgab_nogo1.py benutzt (alter gegen neuen Bewerter).
 Aufruf: python3 -I tests/bootscan/test_pkgremoval_verdict.py
 """
 import os
+import re
 import subprocess
 import sys
 import tempfile
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(HERE))
 TOOL = os.path.join(ROOT, 'tools', 'pkgremoval_verdict.py')
-sys.path.insert(0, os.path.join(ROOT, 'tools'))
-import pkgremoval_verdict as V  # noqa: E402
+sys.path.insert(0, HERE)
+import pkgab_sim as S  # noqa: E402
 
-RUN = 'a1b2c3d4e5f6'
-PKG = 'de.evp.helfer.channeltest'
-DIR = '/storage/emulated/0/Download/Video-Assistent/'
-T0 = 1763400000000
-SCAN = (T0 + 30_000 - 300, T0 + 30_000)   # externer Mount-Scan
-fails, done = [], []
-
-
-def check(cond, what):
-    done.append(what)
-    print(('ok   ' if cond else 'FAIL ') + what)
-    if not cond:
-        fails.append(what)
+SUP = {'orphan': 'delayed-all', 'scan_after_pkg_end': 2000}            # zwei veröffentlichte Zeilen getroffen
+SUP_PENDING = {'orphan': 'delayed-all', 'scan_after_pkg_end': 2400}    # dazu eine ausstehende Zeile gelöscht
+NOTSUP = {'orphan': 'delayed-install1', 'scan_after_pkg_end': 2000}
+AMBIG = {'orphan': 'delayed-all', 'scan_after_pkg_end': 1500}         # Anlegen einer Zeile im Beobachtungsintervall
+CTRL = {'scan_after_pkg_end': 2000}
 
 
-def instr_ok():
-    c, t = 'de.evp.helfer.MediaStoreBootScanProbeTest', 'probe'
-    head = ['INSTRUMENTATION_STATUS: class=' + c, 'INSTRUMENTATION_STATUS: current=1', 'INSTRUMENTATION_STATUS: id=AndroidJUnitRunner',
-            'INSTRUMENTATION_STATUS: numtests=1', 'INSTRUMENTATION_STATUS: stream=', 'INSTRUMENTATION_STATUS: test=' + t, 'INSTRUMENTATION_STATUS_CODE: 1']
-    return '\n'.join(head + head[:4] + ['INSTRUMENTATION_STATUS: stream=.', 'INSTRUMENTATION_STATUS: test=' + t, 'INSTRUMENTATION_STATUS_CODE: 0',
-                                         'INSTRUMENTATION_RESULT: stream=', '', 'Time: 9.1', '', 'OK (1 test)', '', '', 'INSTRUMENTATION_CODE: -1']) + '\n'
+def dl_line(sim, seq):
+    return next(l for l in sim['logcat'].splitlines() if ' BOOTSCAN DL ' in l and ' seq=%d ' % seq in l)
 
 
-def sha(seq):
-    return ('%064x' % (seq * 7919 + 13))[-64:]
+def sub_line(sim, old, new):
+    assert old in sim['logcat'], old
+    sim['logcat'] = sim['logcat'].replace(old, new, 1)
+    return sim
 
 
-def name(seq):
-    return 'BootScanProbe-%s-%d.mp4' % (RUN, seq)
+def drop_lines(sim, pred):
+    sim['logcat'] = '\n'.join(l for l in sim['logcat'].splitlines() if not pred(l)) + '\n'
+    return sim
 
 
-def build(variant='uninstall', post=(), install1='orphaned', owner_line=T0 + 30_050, host=(), pkg_times=None, drop=(),
-          foreign=('same',), recheck_priv='ok', extra=(), post_snap_owned=True):
-    """post: [(seq, lo_ms, hi_ms, fate)] ab T0 (seq wird lückenlos ab 30000 neu nummeriert); host: [(t_ms ab T0, owned)]
-    Host-Abfragen der install1-Zeilen; post_snap_owned: Besitzer der install1-Zeilen im ersten privilegierten post-Abzug."""
-    L = []
-    post = [(30000 + i, lo, hi, fate) for i, (_, lo, hi, fate) in enumerate(post)]
-
-    def line(t, tag, msg, pid=4381, tid=None):
-        L.append('  %d.%03d  %d  %d I %s: %s' % (t // 1000, t % 1000, pid, tid or pid + 26, tag, msg))
-
-    line(SCAN[1], 'MediaProvider', 'Scanned external_primary due to REASON_MOUNTED, found 30 items in %dms, 2 inserts 0 updates 0 deletes' % (SCAN[1] - SCAN[0]), 1642, 2289)
-    ev = V.EVENTS[variant]
-    times = pkg_times or ({'install1-begin': 2_000, 'install1-end': 9_000, 'uninstall-begin': 16_000, 'uninstall-end': 17_000,
-                           'install2-begin': 17_100, 'install2-end': 25_000} if variant == 'uninstall' else
-                          {'install1-begin': 2_000, 'install1-end': 9_000, 'update-begin': 16_000, 'update-end': 25_000})
-    for e in ev:
-        if ('marker', e) in drop:
-            continue
-        line(T0 + times[e], 'BOOTSCAN', 'BOOTSCAN PKG run=%s variant=%s event=%s uid=10194' % (RUN, variant, e), 2000)
-    if owner_line is not None and variant == 'uninstall':
-        line(owner_line, 'MediaProvider', 'Invalidating LocalCallingIdentity cache for package null. Reason: owner_package_changed:%s%s' % (DIR, name(20000)), 1642, 2289)
-    pre = [(20000 + i, 10_000 + 300 * i, 10_000 + 300 * i + 200, 'OK') for i in range(3)]
-    for ol in extra:
-        L.append(ol)
-    for ph, t_start, dls, offs in (('pre', T0 + 9_500, pre, (0, 250)), ('post', T0 + 25_500, list(post), (0, 250, 2000, 10000))):
-        if ('phase', ph) in drop:
-            continue
-        line(t_start, 'BOOTSCAN', 'BOOTSCAN START run=%s phase=%s sdk=34 pkg=%s appUid=%d pid=1 t=%d' % (RUN, ph, PKG, 10194 if ph == 'pre' else 10195, t_start))
-        for seq, lo, hi, fate in dls:
-            done = fate != 'PUBLISH_FAILED'
-            line(T0 + hi, 'BOOTSCAN', 'BOOTSCAN DL run=%s phase=%s seq=%d name=%s sha=%s size=262144 insertStart=%d insertEnd=%d commitStart=%d '
-                 'commitEnd=%d commit=%s done=%d state=%s reason=%s uri=%s id=%s'
-                 % (RUN, ph, seq, name(seq), sha(seq), T0 + lo, T0 + lo + 5, T0 + hi - 10, T0 + hi - 2, 'ok' if done else 'ex:IOException', T0 + hi,
-                    'done' if done else 'failed', '-' if done else 'storage', 'content://media/external/downloads/%d' % (100000 + seq) if done else '-',
-                    str(100000 + seq) if done else '-'))
-            if done and ('uriq', ph) not in drop:
-                for off in offs:
-                    hidden = fate in ('OWNER_CHANGED', 'LOST', 'REPLACED') and off >= 250
-                    res = 'none' if hidden else 'found id=%d owner=%s pending=0 data=%s%s' % (100000 + seq, PKG, DIR, name(seq))
-                    line(T0 + hi + off, 'BOOTSCAN', 'BOOTSCAN URIQ run=%s seq=%d off=%d t=%d res=%s' % (RUN, seq, off, T0 + hi + off, res))
-        snap = {} if ph == 'pre' else {str(100000 + s_): (PKG if post_snap_owned else 'NULL', '0', '0', DIR + name(s_)) for s_, _, _, _ in pre}
-        for k, v in snap.items():
-            line(t_start + 1, 'BOOTSCAN', 'BOOTSCAN PRIV run=%s n=1 +%s|%s' % (RUN, k, '|'.join(v)))
-        line(t_start + 1, 'BOOTSCAN', 'BOOTSCAN SNAP run=%s n=1 t=%d app=ok appN=0 priv=ok privN=%d cross=ok' % (RUN, t_start + 1, len(snap)))
-        line(t_start + 2, 'BOOTSCAN', 'BOOTSCAN DSNAP run=%s n=1 t=%d disk=ok diskN=0' % (RUN, t_start + 2))
-        line(t_start + 40_000, 'BOOTSCAN', 'BOOTSCAN END run=%s phase=%s downloads=%d snapshots=1 invalid=0 t=%d' % (RUN, ph, len(dls), t_start + 40_000))
-    # Nachprüfung
-    t = T0 + 90_000
-    if ('phase', 'recheck') not in drop:
-        line(t, 'BOOTSCAN', 'BOOTSCAN START run=%s phase=recheck sdk=34 pkg=%s appUid=10195 pid=2 t=%d' % (RUN, PKG, t))
-        app, priv, disk = {}, {}, {}
-        for seq, lo, hi, fate in pre + list(post):
-            disk[DIR + name(seq)] = (262144, ('0' * 64) if fate == 'DATA_LOSS' else sha(seq))
-            if fate == 'PUBLISH_FAILED':
-                continue
-            sid = str(100000 + seq)
-            gen1 = seq < 30000
-            if gen1 and variant == 'uninstall' and install1 == 'orphaned':
-                vis, own = False, 'NULL'
-            else:
-                vis, own = fate in ('OK', 'DATA_LOSS'), PKG
-            if fate == 'OWNER_CHANGED':
-                own = 'NULL'
-            res = ('found id=%s owner=%s pending=0 data=%s%s' % (sid, PKG, DIR, name(seq))) if vis else 'none'
-            if fate == 'UNKNOWN':
-                res = 'error:SecurityException'
-            line(t + 5, 'BOOTSCAN', 'BOOTSCAN URIQ run=%s seq=%d off=-1 t=%d res=%s' % (RUN, seq, t + 5, res))
-            if vis:
-                app[sid] = (PKG, '0', name(seq))
-            if fate == 'REPLACED':
-                priv[str(900000 + seq)] = ('NULL', '0', '0', DIR + name(seq))
-            elif fate != 'LOST':
-                priv[sid] = (own, '0', '0', DIR + name(seq))
-        for k, v in app.items():
-            line(t + 10, 'BOOTSCAN', 'BOOTSCAN APP run=%s n=1 +%s|%s' % (RUN, k, '|'.join(v)))
-        if recheck_priv == 'ok':
-            for k, v in priv.items():
-                line(t + 10, 'BOOTSCAN', 'BOOTSCAN PRIV run=%s n=1 +%s|%s' % (RUN, k, '|'.join(v)))
-        line(t + 11, 'BOOTSCAN', 'BOOTSCAN SNAP run=%s n=1 t=%d app=ok appN=%d priv=%s privN=%d cross=%s'
-             % (RUN, t + 11, len(app), recheck_priv, len(priv), 'ok' if recheck_priv == 'ok' else 'na'))
-        for k, v in disk.items():
-            line(t + 12, 'BOOTSCAN', 'BOOTSCAN DISK run=%s n=1 +%s|%d|%s' % (RUN, k, v[0], v[1]))
-        line(t + 13, 'BOOTSCAN', 'BOOTSCAN DSNAP run=%s n=1 t=%d disk=ok diskN=%d' % (RUN, t + 13, len(disk)))
-        line(t + 20, 'BOOTSCAN', 'BOOTSCAN END run=%s phase=recheck downloads=0 snapshots=1 invalid=0 t=%d' % (RUN, t + 20))
-    hosts = []
-    for ht, owned in host:
-        hosts += ['QT-BEGIN t=%d res=ms' % (T0 + ht)] + ['Row: %d _id=%d, owner_package_name=%s, is_pending=0, is_trashed=0, _data=%s%s, _display_name=%s, _size=262144'
-                                                          % (i, 100000 + 20000 + i, PKG if owned else 'NULL', DIR, name(20000 + i), name(20000 + i)) for i in range(3)] + ['QT-END rc=0']
-    instr = {p: instr_ok() for p in V.PHASES}
-    before = {'/storage/emulated/0/Movies/.thumbnails/.database_uuid': ('a' * 64, 36)}
-    after = dict(before)
-    if 'added' in foreign:
-        after['/storage/emulated/0/Movies/.thumbnails/.nomedia'] = ('e' * 64, 0)
-    if 'removed' in foreign:
-        after = {}
-    if 'modified' in foreign:
-        after = {k: ('b' * 64, 36) for k in before}
-    return '\n'.join(L) + '\n', '\n'.join(hosts) + '\n', instr, before, after
+def add_line(sim, t, tag, msg, pid=1642, tid=2289):
+    sim['logcat'] += '  %d.%03d  %d  %d I %s: %s\n' % (t // 1000, t % 1000, pid, tid, tag, msg)
+    return sim
 
 
-def verdict(variant='uninstall', **kw):
-    log, hosts, instr, before, after = build(variant, **kw)
-    return V.variant_verdict(variant, RUN, log, hosts, instr, before, after, PKG)
+def mark_t(sim, event):
+    return sim['dev'].marks[event]
 
 
-# post-Downloads: vor der Besitzer-Aufhebung (T0+30_050) bzw. danach
-BEFORE = [(30000, 26_000, 26_300, 'OK'), (30001, 27_000, 27_300, 'OK')]
-AFTER = [(30002, 40_000, 40_300, 'OK'), (30003, 41_000, 41_300, 'OK')]
+def path(sim, seq):
+    return S.DIR + 'BootScanProbe-%s-%d.mp4' % (sim['run'], seq)
 
-r, why, rows, notes = verdict(post=[(30000, 26_000, 26_300, 'OWNER_CHANGED'), (30001, 27_000, 27_300, 'OK')] + AFTER)
-gen = {x['seq']: (x['gen'], x['cls'], x['at_risk']) for x in rows}
-check(r == 'SUPPORTED' and gen['20000'] == ('install1', 'ORPHANED_EXPECTED', False) and gen['30000'] == ('install2', 'OWNER_CHANGED', True)
-      and gen['30002'][2] is False, 'SUPPORTED: delayed owner removal hits a new download; install1 orphaning is expected (%s)' % why[:1])
-for fate in ('LOST', 'REPLACED', 'PUBLISH_FAILED'):
-    r, why, rows, _ = verdict(post=[(30000, 26_000, 26_300, fate)] + AFTER)
-    check(r == 'SUPPORTED' and any(x['cls'] == fate and x['at_risk'] for x in rows), 'SUPPORTED with %s of a new download (%s)' % (fate, why[:1]))
-r, why, rows, notes = verdict(post=[(30000, 26_000, 26_300, 'OWNER_CHANGED'), (30001, 27_000, 27_300, 'OK'), (30002, 40_000, 40_300, 'LOST')])
-check(r == 'INCONCLUSIVE' and 'after the delayed owner removal failed too' in why[0], 'failure after the owner removal too -> INCONCLUSIVE, not SUPPORTED %s' % why)
-r, why, rows, _ = verdict(post=BEFORE + AFTER)
-check(r == 'NOT_SUPPORTED' and all(x['cls'] == 'OK' for x in rows if x['gen'] == 'install2'), 'NOT_SUPPORTED: delayed removal, new downloads stay OK %s' % why)
-r, why, rows, _ = verdict(post=BEFORE + AFTER, install1='kept', owner_line=None, host=[(17_500, True), (60_000, True)])
-check(r == 'INCONCLUSIVE' and any(x['cls'] == 'NOT_ORPHANED' for x in rows) and 'no owner removal' in why[0],
-      'no owner removal observed -> INCONCLUSIVE, install1 NOT_ORPHANED reported %s' % why)
-r, why, _, _ = verdict(post=BEFORE + AFTER, owner_line=T0 + 20_000)
-check(r == 'INCONCLUSIVE' and 'not delayed' in why[0], 'owner removal before the reinstall ended -> INCONCLUSIVE (not delayed) %s' % why)
-r, why, _, _ = verdict(post=BEFORE + AFTER, owner_line=None, host=[(18_000, True), (32_000, False)], post_snap_owned=False)
-check(r == 'INCONCLUSIVE' and 'ambiguous' in why[0], 'removal only seen between samples spanning the reinstall end -> INCONCLUSIVE (ambiguous) %s' % why)
-r, why, _, _ = verdict(post=BEFORE + AFTER, owner_line=None, host=[(18_000, True), (26_000, True), (31_000, False)])
-check(r == 'NOT_SUPPORTED' and 'between' not in why[0], 'removal bracketed by host samples after the reinstall end counts as delayed %s' % why)
-r, why, _, _ = verdict(post=AFTER)
-check(r == 'INCONCLUSIVE' and 'no download of the new installation before it' in why[0], 'no new download before the delayed removal -> INCONCLUSIVE %s' % why)
-r, why, rows, _ = verdict(post=[(30000, 26_000, 26_300, 'UNKNOWN')] + AFTER)
-check(r == 'INCONCLUSIVE' and any(x['cls'] == 'UNKNOWN' for x in rows), 'unreliable recheck of a new download -> INCONCLUSIVE, never NOT_SUPPORTED %s' % why)
-r, why, rows, _ = verdict(post=[(30000, 26_000, 26_300, 'LOST')] + AFTER, recheck_priv='bad:frame')
-check(r != 'SUPPORTED' and not any(x['cls'] == 'LOST' for x in rows), 'privileged recheck failed -> no LOST claim, no SUPPORTED (%s)' % r)
 
-# Kontrolllauf
-r, why, rows, _ = verdict('control', post=[(30000, 29_800, 30_100, 'OK')] + AFTER, owner_line=None)
-check(r == 'CLEAN' and {x['gen'] for x in rows} == {'install1', 'updated'}, 'control CLEAN: all OK, downloads span the scan end %s' % why)
-r, why, _, _ = verdict('control', post=AFTER, owner_line=None)
-check(r == 'INCONCLUSIVE', 'control without a download spanning the scan end -> INCONCLUSIVE %s' % why)
-r, why, _, _ = verdict('control', post=[(30000, 29_800, 30_100, 'OWNER_CHANGED')] + AFTER, owner_line=None)
-check(r == 'ANOMALY', 'control with an owner change -> ANOMALY %s' % why[:1])
+def corrupt(seq):
+    def f(dev):
+        p = S.DIR + 'BootScanProbe-a1b2c3d4e5f6-%d.mp4' % seq
+        dev.disk[p] = (S.SIZE, '0' * 64)
+    return f
 
-# Dateien
-r, why, _, notes = verdict(post=BEFORE + AFTER, foreign=('added',))
-check(r == 'NOT_SUPPORTED' and any('FOREIGN_ADDED' in n for n in notes), 'added system files are only a note, not DATA_LOSS (%s)' % r)
-for kind in ('removed', 'modified'):
-    r, why, _, _ = verdict(post=BEFORE + AFTER, foreign=(kind,))
-    check(r == 'DATA_LOSS', 'existing foreign file %s -> DATA_LOSS %s' % (kind, why[:1]))
-r, why, _, _ = verdict(post=[(30000, 26_000, 26_300, 'DATA_LOSS')] + AFTER)
-check(r == 'DATA_LOSS', 'probe file content changed -> DATA_LOSS %s' % why[:1])
 
-# unvollständige Belege
-for label, kw in [('marker missing', dict(drop=(('marker', 'install2-end'),))), ('post phase missing', dict(drop=(('phase', 'post'),))),
-                  ('recheck missing', dict(drop=(('phase', 'recheck'),))), ('URI checks missing', dict(drop=(('uriq', 'post'),)))]:
-    r, why, _, _ = verdict(post=BEFORE + AFTER, **kw)
-    check(r == 'INVALID' and bool(why), 'INVALID: %s (%s)' % (label, why[0][:80] if why else 'NO REASON'))
-r, why, _, _ = verdict(post=BEFORE + AFTER, pkg_times={'install1-begin': 2_000, 'install1-end': 9_000, 'uninstall-begin': 16_000, 'uninstall-end': 15_000,
-                                                       'install2-begin': 17_100, 'install2-end': 25_000})
-check(r == 'INVALID' and 'out of order' in why[0], 'INVALID: package markers out of order')
-log, hosts, instr, before, after = build(post=BEFORE + AFTER)
-check(V.variant_verdict('control', RUN, log, hosts, instr, before, after, PKG)[0] == 'INVALID', 'INVALID: markers of another variant')
+def cases():
+    """-> [(befund, label, variante, sim-dict, prüfung(result, why, rows) -> bool)]."""
+    C = []
+    add = lambda f, label, variant, sim, ok: C.append((f, label, variant, sim, ok))
+    res = lambda want: (lambda r, why, rows: r == want)
+    cls = lambda r, rows, seq: {x['seq']: x['cls'] for x in rows}.get(str(seq))
 
-# A/B
-for c, e, want in [('CLEAN', 'SUPPORTED', 'HYPOTHESIS_SUPPORTED'), ('ANOMALY', 'SUPPORTED', 'INCONCLUSIVE'), ('INCONCLUSIVE', 'SUPPORTED', 'INCONCLUSIVE'),
-                   ('CLEAN', 'NOT_SUPPORTED', 'HYPOTHESIS_NOT_SUPPORTED'), ('CLEAN', 'INCONCLUSIVE', 'INCONCLUSIVE'),
-                   ('INVALID', 'SUPPORTED', 'INVALID'), ('CLEAN', 'DATA_LOSS', 'DATA_LOSS')]:
-    got = V.ab('PKGAB_VARIANT variant=control result=%s\n' % c, 'PKGAB_VARIANT variant=uninstall result=%s\n' % e)[0]
-    check(got == want, 'A/B control=%s uninstall=%s -> %s' % (c, e, got))
-check(V.ab('', 'PKGAB_VARIANT variant=uninstall result=SUPPORTED\n')[0] == 'INVALID', 'A/B with a missing variant -> INVALID')
+    # ---- positive Abläufe
+    add('positiv', 'delayed orphaning hits published rows of the new installation -> SUPPORTED', 'uninstall', S.simulate('uninstall', SUP),
+        lambda r, why, rows: r == 'SUPPORTED' and any(w.startswith('CLAIM ') and 'does not prove' in w for w in why)
+        and [x['cls'] for x in rows if x['gen'] == 'install1'] == ['ORPHANED_EXPECTED'] * 3)
+    add('positiv', 'delayed orphaning deletes a pending row (commit failure) -> SUPPORTED with PUBLISH_FAILED', 'uninstall', S.simulate('uninstall', SUP_PENDING),
+        lambda r, why, rows: r == 'SUPPORTED' and any(x['cls'] == 'PUBLISH_FAILED' and x['risk'] == 'at_risk' for x in rows))
+    add('positiv', 'delayed orphaning only of the first installation, new rows seen own afterwards -> NOT_SUPPORTED', 'uninstall',
+        S.simulate('uninstall', NOTSUP), res('NOT_SUPPORTED'))
+    add('positiv', 'control: update during the scan, all rows OK and seen own after the scan end -> CLEAN', 'control', S.simulate('control', CTRL), res('CLEAN'))
 
-# Kommandozeile
-with tempfile.TemporaryDirectory() as d:
-    def w(n, s):
-        p = os.path.join(d, n)
-        open(p, 'w').write(s)
-        return p
+    # ---- Befund 1: Paketoperationen beweisbar erfolgreich
+    s = S.simulate('uninstall', SUP)
+    add('1', 'uninstall of the test package with result Failure (rc=0) -> INVALID', 'uninstall',
+        sub_line(s, 'op=uninstall-test attempt=1 rc=0 result=Success', 'op=uninstall-test attempt=1 rc=0 result=Failure__DELETE_FAILED_INTERNAL_ERROR_'), res('INVALID'))
+    s = S.simulate('uninstall', SUP)
+    add('1', 'uninstall of the app package with rc=1 -> INVALID', 'uninstall',
+        sub_line(s, 'op=uninstall-app attempt=1 rc=0 result=Success', 'op=uninstall-app attempt=1 rc=1 result=Failure'), res('INVALID'))
+    s = S.simulate('uninstall', SUP)
+    add('1', 'absence after the uninstall not proven (package still listed) -> INVALID', 'uninstall',
+        sub_line(s, 'event=absent pmApp=none pmTest=none listed=none', 'event=absent pmApp=none pmTest=none listed=present'), res('INVALID'))
+    s = S.simulate('uninstall', SUP)
+    add('1', 'only a uid change, no operation and absence markers -> INVALID', 'uninstall',
+        drop_lines(s, lambda l: ('event=op-' in l and 'uninstall-' in l) or 'event=absent' in l), res('INVALID'))
 
-    def lst(m):
-        return ''.join('%s %d %s\n' % (v[0], v[1], k) for k, v in m.items()) + 'LIST-END\n'
+    # ---- Befund 2: keine falsche Bestätigung
+    s = S.simulate('uninstall', SUP_PENDING)
+    fl = dl_line(s, 30002)
+    add('2', 'publish failure of a different kind (commit not reached, reason network) never supports -> INCONCLUSIVE', 'uninstall',
+        sub_line(s, fl, fl.replace('commit=ex:IOException', 'commit=-').replace('reason=storage', 'reason=network')), res('INCONCLUSIVE'))
+    add('2', 'no overlap of mount scan and package step -> INCONCLUSIVE', 'uninstall',
+        S.simulate('uninstall', {'orphan': 'delayed-all', 'scan_after_pkg_end': None}), res('INCONCLUSIVE'))
+    add('2', 'orphaning not delayed (at the uninstall) is normal behaviour -> INCONCLUSIVE', 'uninstall',
+        S.simulate('uninstall', {'orphan': 'immediate', 'scan_after_pkg_end': 2000}),
+        lambda r, why, rows: r == 'INCONCLUSIVE' and 'not delayed' in why[0] and all(x['cls'] == 'ORPHANED_EXPECTED' for x in rows if x['gen'] == 'install1'))
+    add('2', 'no orphaning observed -> INCONCLUSIVE', 'uninstall', S.simulate('uninstall', {'orphan': None, 'scan_after_pkg_end': 2000}),
+        lambda r, why, rows: r == 'INCONCLUSIVE' and all(x['cls'] == 'NOT_ORPHANED' for x in rows if x['gen'] == 'install1'))
+    s = S.simulate('uninstall', SUP)
+    q = next(l for l in s['logcat'].splitlines() if ' URIQ ' in l and ' seq=30000 off=-1 ' in l)
+    add('2', 'UNKNOWN (recheck query error) of an at-risk row stays uncertainty -> INCONCLUSIVE', 'uninstall',
+        sub_line(s, q, q.split(' res=')[0] + ' res=error:SecurityException'), res('INCONCLUSIVE'))
+    s = S.simulate('uninstall', SUP)
+    q = next(l for l in s['logcat'].splitlines() if ' URIQ ' in l and ' seq=20001 off=250 ' in l)
+    add('2', 'first installation not valid (pre row invisible at +250 ms) -> INCONCLUSIVE', 'uninstall',
+        sub_line(s, q, q.split(' res=')[0] + ' res=none'), lambda r, why, rows: r == 'INCONCLUSIVE' and 'first installation' in ' '.join(why))
 
-    outs = {}
-    for variant, kw, code, word in [('uninstall', dict(post=[(30000, 26_000, 26_300, 'OWNER_CHANGED')] + AFTER), 0, 'SUPPORTED'),
-                                    ('control', dict(post=[(30000, 29_800, 30_100, 'OK')] + AFTER, owner_line=None), 0, 'CLEAN')]:
-        log, hosts, instr, before, after = build(variant, **kw)
-        p = subprocess.run([sys.executable, '-I', TOOL, 'variant', '--variant', variant, '--run', RUN, '--logcat', w('l', log), '--host-sampler', w('h', hosts),
-                            '--instr-pre', w('i1', instr['pre']), '--instr-post', w('i2', instr['post']), '--instr-recheck', w('i3', instr['recheck']),
-                            '--foreign-before', w('b', lst(before)), '--foreign-after', w('a', lst(after))], capture_output=True, text=True)
-        outs[variant] = w('v-' + variant, p.stdout)
-        check(p.returncode == code and ('PKGAB_VARIANT variant=%s result=%s' % (variant, word)) in p.stdout and 'PASS' not in p.stdout,
-              'cli variant %s: exit %d, %s, no PASS' % (variant, p.returncode, word))
-    p = subprocess.run([sys.executable, '-I', TOOL, 'ab', outs['control'], outs['uninstall']], capture_output=True, text=True)
-    check(p.returncode == 0 and 'PKGAB_RESULT HYPOTHESIS_SUPPORTED' in p.stdout and 'PASS' not in p.stdout, 'cli ab: exit %d, HYPOTHESIS_SUPPORTED' % p.returncode)
+    # ---- Befund 3: zeilenbezogene Besitzer-Korrelation
+    add('3', 'download created inside the orphaning observation interval is ambiguous, not at risk -> INCONCLUSIVE', 'uninstall',
+        S.simulate('uninstall', AMBIG), lambda r, why, rows: r == 'INCONCLUSIVE' and any(x['risk'] == 'ambiguous' for x in rows))
+    s = S.simulate('uninstall', {'orphan': 'immediate', 'scan_after_pkg_end': 2000, 'owner_log': False})
+    late = mark_t(s, 'install2-end') + 3000
+    for k in range(3):   # verspätet protokolliert: Logzeile nach der Neuinstallation, Provider sah NULL schon davor
+        add_line(s, late + k, 'MediaProvider', 'Invalidating LocalCallingIdentity cache for package null. Reason: owner_package_changed:' + path(s, 20000 + k))
+    add('3', 'owner change logged late: no exact time from the log line, provider shows it before the reinstall -> INCONCLUSIVE', 'uninstall', s,
+        lambda r, why, rows: r == 'INCONCLUSIVE' and 'not delayed' in why[0])
+    s = S.simulate('uninstall', SUP)
+    add('3', 'owner change for an unknown probe file -> INVALID', 'uninstall',
+        add_line(s, mark_t(s, 'install2-end') + 50, 'MediaProvider', 'Invalidating LocalCallingIdentity cache for package null. Reason: owner_package_changed:'
+                 + S.DIR + 'BootScanProbe-a1b2c3d4e5f6-39999.mp4'), res('INVALID'))
+    s = S.simulate('uninstall', NOTSUP)
+    add('3', 'owner change logged for a row the provider keeps showing as own -> INCONCLUSIVE (contradiction)', 'uninstall',
+        add_line(s, mark_t(s, 'install2-end') + 700, 'MediaProvider', 'Invalidating LocalCallingIdentity cache for package null. Reason: owner_package_changed:'
+                 + path(s, 30000)), lambda r, why, rows: r == 'INCONCLUSIVE' and 'contradict' in ' '.join(why))
+    s = S.simulate('control', CTRL)
+    add('3', 'control: owner change of a probe row without uninstall -> ANOMALY', 'control',
+        add_line(s, mark_t(s, 'update-end') + 900, 'MediaProvider', 'Invalidating LocalCallingIdentity cache for package null. Reason: owner_package_changed:'
+                 + path(s, 30000)), res('ANOMALY'))
 
-n = len(done)
-print('PKGAB_VERDICT_SELFTEST %s %d cases, %d failed' % ('FAIL' if fails else 'PASS', n, len(fails)))
-sys.exit(1 if fails else 0)
+    # ---- Befund 4: Aufnahmen streng
+    s = S.simulate('uninstall', SUP)
+    first_priv = next(l for l in s['logcat'].splitlines() if ' BOOTSCAN PRIV ' in l and 'phase' not in l and ' n=2 ' in l)
+    add('4', 'lost PRIV change line (digest mismatch) -> INVALID', 'uninstall', drop_lines(s, lambda l: l == first_priv), res('INVALID'))
+    s = S.simulate('uninstall', SUP)
+    lines = s['logcat'].splitlines()
+    end_post = next(i for i, l in enumerate(lines) if ' BOOTSCAN END ' in l and 'phase=post' in l)
+    lines.insert(end_post, lines[end_post].split('BOOTSCAN: ')[0] + 'BOOTSCAN: BOOTSCAN DISK run=a1b2c3d4e5f6 n=99 +/storage/x|1|' + 'a' * 64)
+    s['logcat'] = '\n'.join(lines) + '\n'
+    add('4', 'open change line at the end of a phase -> INVALID', 'uninstall', s, res('INVALID'))
+    s = S.simulate('uninstall', SUP)
+    lines = s['logcat'].splitlines()
+    rs = next(i for i, l in enumerate(lines) if ' BOOTSCAN START ' in l and 'phase=recheck' in l)
+    li = max(i for i, l in enumerate(lines) if ' BOOTSCAN SNAP ' in l and 'final=1' in l)
+    n = re.search(r' n=(\d+) ', lines[li]).group(1)
+    lines[li] = re.sub(r'priv=ok privN=\d+ privH=\w+ cross=ok', 'priv=bad:frame-Q-END_rc-1 privN=-1 privH=- cross=na', lines[li])
+    lines = [l for i, l in enumerate(lines) if not (rs < i < li and ' BOOTSCAN PRIV ' in l and ' n=%s ' % n in l)]
+    s['logcat'] = '\n'.join(lines) + '\n'
+    add('4', 'final snapshot of the recheck not valid -> never replaced by an older valid one, no SUPPORTED', 'uninstall', s,
+        lambda r, why, rows: r == 'INCONCLUSIVE' and all(x['cls'] == 'UNKNOWN' for x in rows))
+    s = S.simulate('uninstall', SUP, before_recheck=corrupt(30005))
+    end_pre = next(l for l in s['logcat'].splitlines() if ' BOOTSCAN END ' in l and 'phase=pre' in l)
+    add('4', 'proven data loss stays visible although other evidence is incomplete -> DATA_LOSS', 'uninstall',
+        drop_lines(s, lambda l: l == end_pre), lambda r, why, rows: r == 'DATA_LOSS' and 'incomplete' in why[-1])
+    add('4', 'app view contradicts the privileged view (other owner, digests consistent) -> INVALID', 'uninstall',
+        S.simulate('uninstall', dict(SUP, app_owner_lie=True)), lambda r, why, rows: r == 'INVALID' and 'contradicts' in why[0])
+
+    # ---- Befund 5: Generationen und negative Aussagen
+    s = S.simulate('uninstall', SUP)
+    st = next(l for l in s['logcat'].splitlines() if ' BOOTSCAN START ' in l and 'phase=pre' in l)
+    add('5', 'phase pre ran with another app uid than install1 -> INVALID (generation not proven)', 'uninstall',
+        sub_line(s, st, re.sub(r'appUid=\d+', 'appUid=99999', st)), res('INVALID'))
+    s = S.simulate('uninstall', SUP)
+    fl = dl_line(s, 20001)
+    add('5', 'URI and id of a download disagree -> INVALID', 'uninstall', sub_line(s, fl, re.sub(r'(uri=\S+/)(\d+)', r'\g<1>1', fl)), res('INVALID'))
+    s = S.simulate('uninstall', NOTSUP)
+    q = next(l for l in s['logcat'].splitlines() if ' URIQ ' in l and ' seq=30000 off=250 ' in l)
+    add('5', 'TRANSIENT at-risk row is not "all OK" -> INCONCLUSIVE', 'uninstall', sub_line(s, q, q.split(' res=')[0] + ' res=none'),
+        lambda r, why, rows: r == 'INCONCLUSIVE' and cls(r, rows, 30000) == 'TRANSIENT')
+    s = S.simulate('uninstall', NOTSUP)
+    t = mark_t(s, 'install2-end') + 4000
+    add_line(s, t, 'AndroidRuntime', 'FATAL EXCEPTION: main', 4400, 4400)
+    add_line(s, t + 1, 'AndroidRuntime', 'Process: com.android.providers.media.module, PID: 4400', 4400, 4400)
+    add('5', 'MediaProvider crash during the window -> INCONCLUSIVE, never NOT_SUPPORTED', 'uninstall', s, res('INCONCLUSIVE'))
+    return C
+
+
+def instr_of(sim):
+    return {k: sim['instr'][k] for k in ('pre', 'post', 'recheck')}
+
+
+if __name__ == '__main__':
+    sys.path.insert(0, os.path.join(ROOT, 'tools'))
+    import pkgremoval_verdict as V
+    fails, done = [], []
+
+    def check(cond, what):
+        done.append(what)
+        print(('ok   ' if cond else 'FAIL ') + what)
+        if not cond:
+            fails.append(what)
+
+    for finding, label, variant, sim, ok in cases():
+        r, why, rows, notes = V.variant_verdict(variant, sim['run'], sim['logcat'], sim['hosts'], instr_of(sim), sim['before'], sim['after'])
+        check(ok(r, why, rows) and r != 'PASS', '[%s] %s (%s: %s)' % (finding, label, r, (why[0] if why else '')[:110]))
+
+    # Host-Abfragen: leere Antwort nur mit "No result found.", Rahmen und Endzeit nötig
+    notes = []
+    h = V.host_samples('QT-BEGIN t=5 res=ms\nQT-END rc=0 t=9\nQT-BEGIN t=10 res=ms\nNo result found.\nQT-END rc=0 t=12\n'
+                       'QT-BEGIN t=20 res=ms\nNo result found.\nQT-END rc=0\nQT-BEGIN t=30 res=ms\nError while accessing provider\nQT-END rc=0 t=31\n', notes)
+    check(h == [(10, 12, {})] and '3 discarded' in notes[0], '[4] empty provider answer accepted only with "No result found.", frame and end time')
+
+    # Dateien
+    s = S.simulate('uninstall', SUP, before_recheck=corrupt(30005))
+    check(V.variant_verdict('uninstall', s['run'], s['logcat'], s['hosts'], instr_of(s), s['before'], s['after'])[0] == 'DATA_LOSS',
+          '[8] probe file content changed -> DATA_LOSS')
+    for kind in ('removed', 'modified', 'added'):
+        s = S.simulate('control', CTRL)
+        after = {} if kind == 'removed' else ({k: ('b' * 64, 36) for k in s['before']} if kind == 'modified'
+                                              else dict(s['before'], **{'/storage/emulated/0/Movies/.thumbnails/.nomedia': ('e' * 64, 0)}))
+        r, why, rows, notes = V.variant_verdict('control', s['run'], s['logcat'], s['hosts'], instr_of(s), s['before'], after)
+        want = 'CLEAN' if kind == 'added' else 'DATA_LOSS'
+        check(r == want and (kind != 'added' or any('FOREIGN_ADDED' in n for n in notes)), '[8] foreign file %s -> %s (%s)' % (kind, want, r))
+
+    # A/B nur aus definierten, gültigen Arm-Ergebnissen
+    line = lambda v, run, res: 'PKGAB_VARIANT variant=%s run=%s result=%s\n' % (v, run, res)
+    for c, e, want in [('CLEAN', 'SUPPORTED', 'HYPOTHESIS_SUPPORTED'), ('CLEAN', 'NOT_SUPPORTED', 'HYPOTHESIS_NOT_SUPPORTED'),
+                       ('ANOMALY', 'NOT_SUPPORTED', 'INCONCLUSIVE'), ('INCONCLUSIVE', 'NOT_SUPPORTED', 'INCONCLUSIVE'),
+                       ('ANOMALY', 'SUPPORTED', 'INCONCLUSIVE'), ('CLEAN', 'INCONCLUSIVE', 'INCONCLUSIVE'), ('INVALID', 'SUPPORTED', 'INVALID'),
+                       ('INVALID', 'DATA_LOSS', 'DATA_LOSS'), ('CLEAN', 'PASS', 'INVALID'), ('CLEAN', 'SUPPORTED_MAYBE', 'INVALID'),
+                       ('SUPPORTED', 'SUPPORTED', 'INVALID')]:
+        got, why, arms = V.ab(line('control', '111111111111', c), line('uninstall', '222222222222', e))
+        check(got == want and arms['control'][0] == c and arms['uninstall'][0] == e, '[5] A/B control=%s uninstall=%s -> %s (%s)' % (c, e, want, got))
+    check(V.ab(line('control', '111111111111', 'CLEAN'), line('uninstall', '111111111111', 'SUPPORTED'))[0] == 'INVALID',
+          '[5] A/B with the same run in both arms -> INVALID')
+    check(V.ab('', line('uninstall', '222222222222', 'SUPPORTED'))[0] == 'INVALID', '[5] A/B with a missing arm -> INVALID')
+    check(V.ab(line('control', '111111111111', 'CLEAN') * 2, line('uninstall', '222222222222', 'SUPPORTED'))[0] == 'INVALID',
+          '[5] A/B with two results for one arm -> INVALID')
+
+    # Kommandozeile
+    with tempfile.TemporaryDirectory() as d:
+        def w(n, s_):
+            p = os.path.join(d, n)
+            open(p, 'w').write(s_)
+            return p
+
+        def lst(m):
+            return ''.join('%s %d %s\n' % (v[0], v[1], k) for k, v in m.items()) + 'LIST-END\n'
+
+        outs = {}
+        for variant, sc, code, word in [('uninstall', SUP, 0, 'SUPPORTED'), ('control', CTRL, 0, 'CLEAN')]:
+            s = S.simulate(variant, sc, run='a1b2c3d4e5f6' if variant == 'uninstall' else 'b1b2c3d4e5f6')
+            p = subprocess.run([sys.executable, '-I', TOOL, 'variant', '--variant', variant, '--run', s['run'], '--logcat', w('l', s['logcat']),
+                                '--host-sampler', w('h', s['hosts']), '--instr-pre', w('i1', s['instr']['pre']), '--instr-post', w('i2', s['instr']['post']),
+                                '--instr-recheck', w('i3', s['instr']['recheck']), '--foreign-before', w('b', lst(s['before'])),
+                                '--foreign-after', w('a', lst(s['after']))], capture_output=True, text=True)
+            outs[variant] = w('v-' + variant, p.stdout)
+            check(p.returncode == code and ('PKGAB_VARIANT variant=%s run=%s result=%s' % (variant, s['run'], word)) in p.stdout
+                  and 'PASS' not in p.stdout, 'cli variant %s: exit %d, %s, no PASS' % (variant, p.returncode, word))
+        p = subprocess.run([sys.executable, '-I', TOOL, 'ab', outs['control'], outs['uninstall']], capture_output=True, text=True)
+        check(p.returncode == 0 and 'PKGAB_RESULT HYPOTHESIS_SUPPORTED' in p.stdout and 'PKGAB_ARM variant=control' in p.stdout
+              and 'does not prove' in p.stdout, 'cli ab: exit %d, HYPOTHESIS_SUPPORTED with both arms and the claim limit' % p.returncode)
+
+    print('PKGAB_VERDICT_SELFTEST %s %d cases, %d failed' % ('FAIL' if fails else 'PASS', len(done), len(fails)))
+    sys.exit(1 if fails else 0)

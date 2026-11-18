@@ -152,6 +152,8 @@ public class MediaStoreBootScanProbeTest {
             out.put(m.group(1), clean(m.group(2)) + "|" + m.group(3) + "|" + m.group(4) + "|" + clean(m.group(5)));
         }
         if (none && !out.isEmpty()) { status[0] = "bad:mixed"; return null; }
+        // leere Antwort nur, wenn der Provider ausdrücklich "No result found." meldete (sonst unvollständige Ausgabe)
+        if (!none && out.isEmpty()) { status[0] = "bad:empty"; return null; }
         status[0] = "ok";
         return out;
     }
@@ -175,11 +177,27 @@ public class MediaStoreBootScanProbeTest {
         return out;
     }
 
-    /** Protokolliert nur Änderungen gegenüber der vorigen gültigen Aufnahme (+ neu/geändert, - verschwunden). */
+    /**
+     * Protokolliert nur Änderungen gegenüber der vorigen gültigen Aufnahme (+ neu/geändert, - verschwunden). Gedrosselt
+     * (nach je 25 Zeilen 2 ms Pause): in Lauf 44281951152 fehlten bei 877 Zeilen in ~15 ms ohne Meldung Zeilen im Strom.
+     * Vollständigkeit belegt die Prüfsumme der ganzen Aufnahme in der SNAP-/DSNAP-Zeile (digest), nicht die Anzahl.
+     */
     static void diff(String kind, int n, Map<String, String> prev, Map<String, String> cur) {
+        int lines = 0;
         for (Map.Entry<String, String> e : cur.entrySet())
-            if (!e.getValue().equals(prev.get(e.getKey()))) log(kind + " run=" + RUN + " n=" + n + " +" + e.getKey() + "|" + e.getValue());
-        for (String k : prev.keySet()) if (!cur.containsKey(k)) log(kind + " run=" + RUN + " n=" + n + " -" + k);
+            if (!e.getValue().equals(prev.get(e.getKey()))) { log(kind + " run=" + RUN + " n=" + n + " +" + e.getKey() + "|" + e.getValue()); pace(++lines); }
+        for (String k : prev.keySet()) if (!cur.containsKey(k)) { log(kind + " run=" + RUN + " n=" + n + " -" + k); pace(++lines); }
+    }
+
+    static void pace(int lines) {
+        if (lines % 25 == 0) { try { Thread.sleep(2); } catch (InterruptedException e) { Thread.currentThread().interrupt(); } }
+    }
+
+    /** SHA-256 (erste 16 Hex-Zeichen) über "schlüssel|wert" je Zeile, nach Schlüssel sortiert, mit "\n" verbunden. */
+    static String digest(Map<String, String> m) {
+        StringBuilder b = new StringBuilder();
+        for (Map.Entry<String, String> e : new TreeMap<>(m).entrySet()) { if (b.length() > 0) b.append('\n'); b.append(e.getKey()).append('|').append(e.getValue()); }
+        try { return sha(b.toString().getBytes(StandardCharsets.UTF_8)).substring(0, 16); } catch (Exception e) { return "-"; }
     }
 
     static volatile String RUN = "-";
@@ -189,9 +207,10 @@ public class MediaStoreBootScanProbeTest {
         int n, invalid;
         long lastDisk;
 
-        @Override public void run() { try { sample(); } catch (Throwable t) { invalid++; log("SNAPERR run=" + run + " error=" + t.getClass().getSimpleName()); } }
+        @Override public void run() { try { sample(false); } catch (Throwable t) { invalid++; log("SNAPERR run=" + run + " error=" + t.getClass().getSimpleName()); } }
 
-        synchronized void sample() {
+        /** last=true: Schlussaufnahme – mit Dateiaufnahme erzwungen und als final=1 gekennzeichnet. */
+        synchronized void sample(boolean last) {
             n++;
             long t = now();
             String[] as = {"?"}, ps = {"?"};
@@ -209,14 +228,16 @@ public class MediaStoreBootScanProbeTest {
             if (a != null) { diff("APP", n, app, a); app.clear(); app.putAll(a); }
             if (a != null && p != null && cross.equals("ok")) { diff("PRIV", n, priv, p); priv.clear(); priv.putAll(p); }
             if (a == null || p == null || !cross.equals("ok")) invalid++;
-            log("SNAP run=" + run + " n=" + n + " t=" + t + " app=" + as[0] + " appN=" + (a == null ? -1 : a.size()) + " priv=" + ps[0]
-                + " privN=" + (p == null ? -1 : p.size()) + " cross=" + cross);
-            if (t - lastDisk >= DISK_MS) {
+            log("SNAP run=" + run + " n=" + n + " t=" + t + " tEnd=" + now() + " app=" + as[0] + " appN=" + (a == null ? -1 : a.size())
+                + " appH=" + (a == null ? "-" : digest(a)) + " priv=" + ps[0] + " privN=" + (p == null ? -1 : p.size())
+                + " privH=" + (p == null ? "-" : digest(p)) + " cross=" + cross + " final=" + (last ? 1 : 0));
+            if (last || t - lastDisk >= DISK_MS) {
                 lastDisk = t;
                 String[] ds = {"?"};
                 Map<String, String> d = diskFiles(ds);
                 if (d != null) { diff("DISK", n, disk, d); disk.clear(); disk.putAll(d); }
-                log("DSNAP run=" + run + " n=" + n + " t=" + now() + " disk=" + ds[0] + " diskN=" + (d == null ? -1 : d.size()));
+                log("DSNAP run=" + run + " n=" + n + " t=" + now() + " disk=" + ds[0] + " diskN=" + (d == null ? -1 : d.size())
+                    + " diskH=" + (d == null ? "-" : digest(d)) + " final=" + (last ? 1 : 0));
             }
         }
     }
@@ -318,8 +339,9 @@ public class MediaStoreBootScanProbeTest {
         } finally {
             ex.shutdown();
             ex.awaitTermination(30, TimeUnit.SECONDS);
-            sampler.sample();   // letzte Aufnahme nach allen geplanten Abfragen
-            log("END run=" + run + " phase=" + phase + " downloads=" + downloads + " snapshots=" + sampler.n + " invalid=" + sampler.invalid + " t=" + now());
+            sampler.sample(true);   // Schlussaufnahme nach allen geplanten Abfragen (immer mit Dateiaufnahme)
+            log("END run=" + run + " phase=" + phase + " downloads=" + downloads + " snapshots=" + sampler.n + " invalid=" + sampler.invalid
+                + " final=" + sampler.n + " t=" + now());
         }
     }
 

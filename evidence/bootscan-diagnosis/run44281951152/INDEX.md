@@ -30,8 +30,10 @@ ist DATA_LOSS). Dieses Ergebnis wird **nicht** umgeschrieben und gilt für diese
 - Die drei Abweichungen sind ausschließlich **neu hinzugekommene** Dateien `.thumbnails/.nomedia` (0 Byte, SHA-256 der
   leeren Datei) unter Movies, Music und Pictures, vom System angelegt. Keine vorher vorhandene Datei wurde gelöscht oder
   verändert (die drei `.thumbnails/.database_uuid` sind vorher und nachher gleich).
-- Alle 877 Sondendownloads sind OK; die 4 den Mount-Scan überschneidenden (seq 149–152) ebenfalls; kein
-  `owner_package_changed`.
+- Laut Bewertung waren alle 877 Sondendownloads OK, die 4 den Mount-Scan überschneidenden (seq 149–152) ebenfalls;
+  kein `owner_package_changed`. Einschränkung (erkannt mit Regel snapshots=v2, s. u.): Im Belegstrom fehlen
+  Änderungszeilen der Aufnahmen (u. a. rekonstruiert 632 statt 877 privilegierte Zeilen in der Nachprüfung). Die
+  OK-Einstufung beruht auf den URI-Abfragen; die privilegierte Sicht dieses Laufs ist unvollständig.
 - Seit Regel „foreign=v2“ (Branch `diag/pkgremoval-ab`, lokal) unterscheidet `bootscan_verdict.py` hinzugefügte fremde
   Dateien (`BOOTSCAN_NOTE FOREIGN_ADDED`) von gelöschten oder veränderten (weiterhin DATA_LOSS) und gibt die Regel als
   `BOOTSCAN_RULES foreign=v2` aus.
@@ -50,7 +52,10 @@ A="--logcat OUTDIR/logcat.txt --run 98f4fb2769c8 --instr-during OUTDIR/instr-dur
 | Bewerter | Ergebnis | Bemerkung |
 |---|---|---|
 | `8c4b2cb` (`git show 8c4b2cb:tools/bootscan_verdict.py` und `…:tools/device_gate.py`) | DATA_LOSS, Exit 3 | Bewertungszeilen byte-gleich mit `original-verdict-lines.txt` – die Rekonstruktion ist vollständig |
-| foreign=v2 | DIAGNOSED, `reproduced=no control_anomaly=no`, Exit 0; `BOOTSCAN_NOTE FOREIGN_ADDED … 3 new files` | Nachbewertung, ersetzt das Ergebnis oben nicht |
+| foreign=v2, snapshots=v1 (Stand `1578394`) | DIAGNOSED, `reproduced=no control_anomaly=no`, Exit 0; `BOOTSCAN_NOTE FOREIGN_ADDED … 3 new files` | Nachbewertung, ersetzt das Ergebnis oben nicht |
+| foreign=v2, snapshots=v2 (nach Codex-NO-GO 1) | INVALID, Exit 2: rekonstruierte Aufnahmen passen nicht zu `diskN`/`privN` (after: 700 statt 834 und 743 statt 877 Dateien; recheck: 632 statt 877 privilegierte Zeilen) | Nachbewertung; zeigt verlorene Änderungszeilen im Belegstrom, ersetzt das Ergebnis oben nicht |
 
-Inhaltlich: Der externe Mount-Scan (≈ 330 ms, 169 Einträge) allein verursacht den Fehler auf API 34 nicht. Offene
-Hypothese (ungeprüft): verzögerte Verarbeitung einer Paket-Deinstallation – siehe `PKGREMOVAL-AB-PROBE.md`.
+Inhaltlich (korrigiert): In diesem Lauf wurde der Boot-Scan allein **nicht als Ursache nachgewiesen** – keine der vier
+überschneidenden Veröffentlichungen fiel auf. Generell widerlegt ist er damit nicht: ein einzelner Lauf, nur vier
+Überschneidungen, und die privilegierte Sicht ist unvollständig (s. o.). Offene Hypothese (ungeprüft): verzögerte
+Verarbeitung einer Paket-Deinstallation – siehe `PKGREMOVAL-AB-PROBE.md`.

@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
-"""Selbsttest für tools/run-pkgremoval-probe.sh gegen ein nachgebildetes adb (kein Gerät, kein Emulator).
+"""Selbsttest für tools/run-pkgremoval-probe.sh gegen ein nachgebildetes adb mit Gerätesimulator (kein Gerät).
 
-Geprüft wird: Ablehnung ohne Emulator, mit falscher API, mit schon installiertem Testpaket, mit vorhandenen
-Sondendateien, mit nicht funktionierender privilegierter Abfrage und mit unbekannter Variante (PKGAB_RESULT INVALID,
-Exit 2); die Variante control deinstalliert NIE; die Variante uninstall deinstalliert genau einmal genau das eigene
-Test- und App-Paket, und zwar zwischen Phase pre und Phase post, eingerahmt von den Markern; beide Varianten setzen bis
-auf den Paketschritt dieselbe Befehlsfolge ab; Marker in der festgelegten Reihenfolge; eine kaputte Instrumentierung
-endet INVALID (nie ein anderes Ergebnis) und legt vorher alle Belege ins Log; kein sonstiger verändernder Gerätebefehl
-(rm, mv, delete, content insert/update/delete, pm clear); abgelegt werden nur /data/local/tmp/bootscan-{q,f,qt}.sh;
-fremde Dateien bleiben gleich; die Gerätehilfsskripte enthalten nur lesende Befehle.
-Aufruf: python3 -I tests/bootscan/test_pkgremoval_script.py
+Geprüft wird:
+- Ablehnung ohne Emulator, mit falscher API, mit installiertem Testpaket, mit vorhandenen Sondendateien (INVALID, Exit 2)
+  OHNE jede Logcat-Erfassung (keine persönlichen Logs auf einem abgelehnten Gerät); defekte privilegierte Abfrage INVALID;
+- vollständig erfolgreiche synthetische Hostabläufe: control -> CLEAN, uninstall mit verzögertem Verwaisen -> SUPPORTED,
+  uninstall mit Verwaisen nur der ersten Installation -> NOT_SUPPORTED; zweimal ausgeführt gleiche Bewertung
+  (deterministisch, ohne Warten auf echte Zeit);
+- jede Paketoperation mit op-begin/op-end, Rückgabecode und Ergebnis; Deinstallation nur von Test- und App-Paket, genau
+  einmal, nach Phase pre, vor der Neuinstallation; Fehler EINES der beiden "adb uninstall" (auch mit rc=0 und "Failure"),
+  sowie "Success" bei weiter installiertem Paket -> INVALID, keine Neuinstallation, Rohbelege erhalten;
+- fehlgeschlagenes find ergibt keine gültige Dateiliste (kein LIST-END) -> INVALID;
+- beide Varianten: gleiche Befehlsfolge bis auf den Paketschritt; Marker in Reihenfolge; Synchronisation des
+  Logcat-Stroms über Marker statt Warten;
+- kaputte Instrumentierung -> INVALID mit allen Belegen; kein sonstiger verändernder Gerätebefehl; nur
+  /data/local/tmp/bootscan-{q,f,qt}.sh abgelegt; fremde Dateien unverändert; Hilfsskripte nur lesend.
+Aufruf: python3 -I tests/bootscan/test_pkgremoval_script.py [--script PFAD]  (PFAD: anderes Hostskript, z. B. alter Stand)
 """
+import json
 import os
 import re
 import shutil
@@ -19,56 +26,15 @@ import subprocess
 import sys
 import tempfile
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SCRIPT = os.path.join(ROOT, 'tools', 'run-pkgremoval-probe.sh')
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(HERE))
+SCRIPT = sys.argv[sys.argv.index('--script') + 1] if '--script' in sys.argv else os.path.join(ROOT, 'tools', 'run-pkgremoval-probe.sh')
 PKG = 'de.evp.helfer.channeltest'
 fails, done = [], []
-
-FAKE_ADB = r'''#!/usr/bin/env python3
-import os, subprocess, sys, time
-F = os.environ['FAKE_ROOT']; SC = os.environ['FAKE_SCENARIO']
-a = sys.argv[1:]
-open(F + '/cmds.log', 'a').write(' '.join(a) + '\n')
-def tr(c): return c.replace('/storage/emulated/0', F + '/storage/emulated/0').replace('/data/local/tmp', F + '/tmp')
-def log(tag, msg):
-    with open(F + '/logcat.txt', 'a') as l:
-        l.write('  %.3f  1644  2571 I %s: %s\n' % (time.time(), tag, msg))
-if a[:1] == ['wait-for-device']: sys.exit(0)
-if a[:1] == ['install']: sys.exit(0)
-if a[:1] == ['uninstall']: print('Success'); sys.exit(0)
-if a[:1] == ['push']:
-    os.makedirs(F + '/tmp', exist_ok=True); subprocess.run(['cp', a[1], tr(a[2])], check=True); sys.exit(0)
-if a[:1] == ['logcat']:
-    if '-G' in a: sys.exit(0)
-    if '-d' in a: print(open(F + '/logcat.txt').read(), end=''); sys.exit(0)
-    os.execvp('tail', ['tail', '-n', '+1', '-f', F + '/logcat.txt'])
-if a[:1] == ['shell']:
-    cmd = ' '.join(a[1:])
-    if cmd.startswith('getprop ro.kernel.qemu') or cmd.startswith('getprop ro.boot.qemu'):
-        print('0' if SC == 'not_emulator' else '1'); sys.exit(0)
-    if cmd.startswith('getprop ro.build.version.sdk'): print('33' if SC == 'wrong_api' else '34'); sys.exit(0)
-    if cmd.startswith('pm path'): print('package:/data/app/x/base.apk' if SC == 'installed' else ''); sys.exit(0)
-    if cmd.startswith('pm grant'): sys.exit(0)
-    if cmd.startswith('cmd package list packages -U'): print('package:de.evp.helfer.channeltest uid:10194'); sys.exit(0)
-    if cmd.startswith('log -t BOOTSCAN'): log('BOOTSCAN', a[-1].strip("'")); sys.exit(0)
-    if cmd.startswith('sh /data/local/tmp/bootscan-qt.sh'):
-        print('QT-BEGIN t=%d res=ms' % int(time.time() * 1000)); print('No result found.'); print('QT-END rc=0'); sys.exit(0)
-    if cmd.startswith('sh /data/local/tmp/bootscan-q.sh'):
-        print('Q-BEGIN'); print('Error while accessing provider:media' if SC == 'query_broken' else 'No result found.')
-        print('Q-END rc=1' if SC == 'query_broken' else 'Q-END rc=0'); sys.exit(0)
-    if cmd.startswith('am instrument'):
-        log('MediaProvider', 'Scanned external_primary due to REASON_MOUNTED, found 18 items in 184ms, 2 inserts 1 updates 0 deletes')
-        print('INSTRUMENTATION_RESULT: shortMsg=Process crashed.'); print('INSTRUMENTATION_CODE: 0'); sys.exit(0)
-    if "-name '*BootScanProbe-*'" in cmd:
-        if SC == 'probe_present': print('/storage/emulated/0/Download/Video-Assistent/BootScanProbe-000000000000-1.mp4')
-        sys.exit(0)
-    if 'LIST-END' in cmd:   # nur das Arbeitsverzeichnis umlenken; ausgegebene Pfade bleiben Gerätepfade
-        sys.exit(subprocess.run(['bash', '-c', cmd.replace('cd /storage/emulated/0', 'cd ' + F + '/storage/emulated/0')]).returncode)
-sys.stderr.write('fake adb: unsupported %r\n' % a); sys.exit(1)
-'''
-
 DESTRUCTIVE = re.compile(r'(^|[\s;&|(])(rm|mv|uninstall|pm clear|pm uninstall|content (insert|update|delete)|delete)\b')
 ALLOWED_PUSH = re.compile(r'^push \S+ /data/local/tmp/bootscan-(q|f|qt)\.sh$')
+SUPPORTED = {'orphan': 'delayed-all', 'scan_after_pkg_end': 2000}
+NOT_SUPPORTED = {'orphan': 'delayed-install1', 'scan_after_pkg_end': 2000}
 
 
 def check(cond, what):
@@ -78,11 +44,13 @@ def check(cond, what):
         fails.append(what)
 
 
-def run(variant, scenario='broken_instrumentation'):
+def run(variant, **sc):
     d = tempfile.mkdtemp()
     b = os.path.join(d, 'bin')
     os.makedirs(b)
-    for name, body in (('adb', FAKE_ADB), ('sleep', '#!/bin/sh\nexec /bin/sleep 0.05\n'), ('od', '#!/bin/sh\necho " a1 b2 c3 d4 e5 f6"\n')):
+    for name, body in (('adb', '#!/bin/sh\nexec "%s" -I "%s" "$@"\n' % (sys.executable, os.path.join(HERE, 'fake_adb.py'))),
+                       ('sleep', '#!/bin/sh\nexit 0\n'),   # Geräteuhr ist virtuell; Host-Abfragen verschieben sie nicht
+                       ('od', '#!/bin/sh\necho " a1 b2 c3 d4 e5 f6"\n')):
         p = os.path.join(b, name)
         open(p, 'w').write(body)
         os.chmod(p, os.stat(p).st_mode | stat.S_IEXEC)
@@ -91,17 +59,21 @@ def run(variant, scenario='broken_instrumentation'):
     os.makedirs(os.path.join(root, 'Android', 'data'))
     open(os.path.join(root, 'Download', 'existing.pdf'), 'wb').write(b'foreign')
     open(os.path.join(root, 'Android', 'data', 'skip.bin'), 'wb').write(b'x')
-    open(os.path.join(d, 'logcat.txt'), 'w').close()
     out = os.path.join(d, 'out')
     os.makedirs(os.path.join(out, 'apk'))
-    env = dict(os.environ, PATH=b + os.pathsep + os.environ['PATH'], FAKE_ROOT=d, FAKE_SCENARIO=scenario)
-    p = subprocess.run(['bash', SCRIPT, variant, out], capture_output=True, text=True, env=env, timeout=180)
+    env = dict(os.environ, PATH=b + os.pathsep + os.environ['PATH'], FAKE_ROOT=d, FAKE_SIM_DIR=HERE, FAKE_SCENARIO=json.dumps(sc))
+    p = subprocess.run(['bash', SCRIPT, variant, out], capture_output=True, text=True, env=env, timeout=300)
     cmds = open(os.path.join(d, 'cmds.log')).read().splitlines() if os.path.exists(os.path.join(d, 'cmds.log')) else []
     foreign_ok = open(os.path.join(root, 'Download', 'existing.pdf'), 'rb').read() == b'foreign'
     rd = os.path.join(out, 'report-pkgremoval-' + variant)
     report = sorted(os.listdir(rd)) if os.path.isdir(rd) else []
+    verdict = open(os.path.join(rd, 'verdict.txt')).read() if 'verdict.txt' in report else ''
     shutil.rmtree(d)
-    return p.returncode, p.stdout + p.stderr, cmds, foreign_ok, report
+    return {'rc': p.returncode, 'out': p.stdout + p.stderr, 'cmds': cmds, 'foreign_ok': foreign_ok, 'report': report, 'verdict': verdict}
+
+
+def result(r):
+    return re.findall(r'PKGAB_VARIANT variant=\w+ run=\w+ result=(\w+)', r['out'])
 
 
 def unsafe(cmds, allow_uninstall=False):
@@ -122,10 +94,10 @@ def steps(cmds):
     s = []
     for c in cmds:
         if c.startswith('shell sh /data/local/tmp/bootscan-qt.sh') or c.startswith('logcat -v epoch -b main'):
-            continue   # Hintergrundprozesse: Anzahl bzw. Position zeitabhängig
+            continue
         m = re.search(r'event=(\S+)', c)
         if c.startswith('shell log -t BOOTSCAN') and m:
-            s.append('MARKER ' + m.group(1))
+            s.append('MARKER ' + m.group(1).strip("'"))
         elif c.startswith('shell am instrument'):
             s.append('INSTR ' + re.search(r'bootscanPhase (\w+)', c).group(1))
         else:
@@ -133,58 +105,97 @@ def steps(cmds):
     return s
 
 
-for scenario, want in [('not_emulator', 'not an emulator'), ('wrong_api', 'API 33'), ('installed', 'already installed'),
-                       ('probe_present', 'probe files already present'), ('query_broken', 'privileged query helper')]:
+# ---- Ablehnungen: vor jeder Logerfassung
+for sc, want, logs_allowed in [(dict(device='phone'), 'not an emulator', False), (dict(api=33), 'API 33', False),
+                               (dict(installed=True), 'already installed', False), (dict(probe_present=True), 'probe files already present', False),
+                               (dict(query_broken=True), 'privileged query helper', True)]:
     for variant in ('control', 'uninstall'):
-        rc, out, cmds, foreign_ok, _ = run(variant, scenario)
-        bad = unsafe(cmds)
-        check(rc == 2 and re.findall(r'PKGAB_RESULT (\w+)', out) == ['INVALID'] and want in out and not bad and foreign_ok
-              and not any(c.startswith('shell am instrument') for c in cmds),
-              'refuses %s (%s): exit %d, INVALID, nothing installed or run, no destructive command %s' % (scenario, variant, rc, bad))
-rc, out, cmds, _, _ = run('both')
-check(rc == 2 and 'PKGAB_RESULT INVALID' in out and not cmds, 'unknown variant refused before any adb command (exit %d)' % rc)
+        r = run(variant, **sc)
+        logcat = [c for c in r['cmds'] if c.startswith('logcat')]
+        check(r['rc'] == 2 and 'PKGAB_RESULT INVALID' in r['out'] and want in r['out'] and not unsafe(r['cmds']) and r['foreign_ok']
+              and not any(c.startswith('shell am instrument') or c.startswith('install') for c in r['cmds'])
+              and (logs_allowed or (not logcat and 'PKGAB_LOG' not in r['out'] and 'logcat-all.txt' not in r['report'])),
+              'refuses %s (%s): exit %d, INVALID, nothing installed, %s' % (sc, variant, r['rc'], 'logs only on an accepted emulator' if logs_allowed
+                                                                              else 'no logcat collected at all %s' % logcat))
+r = run('both')
+check(r['rc'] == 2 and 'PKGAB_RESULT INVALID' in r['out'] and not r['cmds'], 'unknown variant refused before any adb command (exit %d)' % r['rc'])
 
-res = {v: run(v) for v in ('control', 'uninstall')}
-for v, (rc, out, cmds, foreign_ok, report) in res.items():
-    bad = unsafe(cmds, allow_uninstall=(v == 'uninstall'))
-    results = re.findall(r'PKGAB_VARIANT variant=\w+ result=(\w+)', out)
-    check(rc == 2 and results == ['INVALID'] and not re.search(r'result=(PASS|SUPPORTED|NOT_SUPPORTED|CLEAN)', out),
-          '%s with broken instrumentation: exit %d, only INVALID %s' % (v, rc, results))
-    check(all(('PKGAB_INSTR %s instr-%s' % (v, ph)) in out for ph in ('pre', 'post', 'recheck')) and ('PKGAB_LIST %s foreign-before' % v) in out
-          and ('PKGAB_LIST %s foreign-after' % v) in out and ('PKGAB_HOSTQ %s QT-BEGIN' % v) in out and ('PKGAB_LOG %s' % v) in out
-          and {'verdict.txt', 'logcat.txt', 'host-sampler.txt'} <= set(report), '%s: evidence printed (instr, lists, host samples, log) and report %s' % (v, report))
-    check(not bad and foreign_ok, '%s: no destructive device command besides the planned package step %s, foreign files untouched' % (v, bad))
-    lists = [l for l in out.splitlines() if l.startswith('PKGAB_LIST %s foreign-before ' % v)]
-    check(any(l.endswith('/storage/emulated/0/Download/existing.pdf') for l in lists) and not any('/Android/' in l for l in lists)
-          and lists[-1:] == ['PKGAB_LIST %s foreign-before LIST-END' % v], '%s: listing of foreign files complete (SHA-256, LIST-END), Android/ excluded' % v)
+# ---- vollständig erfolgreiche synthetische Abläufe
+ok = {'control': run('control', sim={'scan_after_pkg_end': 2000}), 'supported': run('uninstall', sim=SUPPORTED),
+      'not_supported': run('uninstall', sim=NOT_SUPPORTED)}
+for key, want in (('control', 'CLEAN'), ('supported', 'SUPPORTED'), ('not_supported', 'NOT_SUPPORTED')):
+    r = ok[key]
+    check(r['rc'] == 0 and result(r) == [want] and 'PASS' not in re.sub(r'PASSED?', '', ''.join(re.findall(r'PKGAB_\w+ .*', r['out']))),
+          'complete synthetic host run %s: exit %d, result %s (want %s)' % (key, r['rc'], result(r), want))
+    check({'verdict.txt', 'logcat.txt', 'host-sampler.txt', 'pkgops.txt', 'logcat-all.txt'} <= set(r['report'])
+          and all(('PKGAB_INSTR %s instr-%s' % ('control' if key == 'control' else 'uninstall', ph)) in r['out'] for ph in ('pre', 'post', 'recheck'))
+          and 'PKGAB_OPS' in r['out'] and 'PKGAB_HOSTQ' in r['out'] and 'PKGAB_LIST' in r['out'],
+          '%s: evidence printed (instr, ops, host samples, lists) and report %s' % (key, r['report']))
+again = run('uninstall', sim=SUPPORTED)
+dl = lambda r: [l for l in r['out'].splitlines() if l.startswith(('PKGAB_DOWNLOAD', 'PKGAB_VARIANT', 'PKGAB_REASON'))]
+check(dl(again) == dl(ok['supported']) and dl(again), 'deterministic: a second identical run yields identical download classes and result')
+check('CLAIM correlation' in ok['supported']['out'] and 'does not prove an internal MediaProvider queue' in ok['supported']['out'],
+      'SUPPORTED states only a correlation, not an internal queue as the cause')
 
-c_steps, u_steps = steps(res['control'][2]), steps(res['uninstall'][2])
-c_mk = [s[7:] for s in c_steps if s.startswith('MARKER')]
-u_mk = [s[7:] for s in u_steps if s.startswith('MARKER')]
-check(c_mk == ['install1-begin', 'install1-end', 'update-begin', 'update-end'], 'control markers in order %s' % c_mk)
-check(u_mk == ['install1-begin', 'install1-end', 'uninstall-begin', 'uninstall-end', 'install2-begin', 'install2-end'], 'uninstall markers in order %s' % u_mk)
-check(not any(c.startswith('uninstall') or ' uninstall' in c for c in res['control'][2]), 'control never uninstalls')
+c_steps, u_steps = steps(ok['control']['cmds']), steps(ok['supported']['cmds'])
+mk = lambda st: [s[7:] for s in st if s.startswith('MARKER') and not s.startswith('MARKER op-') and not s.startswith('MARKER sync')]
+check(mk(c_steps) == ['install1-begin', 'install1-end', 'update-begin', 'update-end'], 'control markers in order %s' % mk(c_steps))
+check(mk(u_steps) == ['install1-begin', 'install1-end', 'uninstall-begin', 'absent', 'uninstall-end', 'install2-begin', 'install2-end'],
+      'uninstall markers in order, absence proven before the reinstall %s' % mk(u_steps))
+check(not any(c.startswith('uninstall') for c in ok['control']['cmds']), 'control never uninstalls')
 un = [i for i, s in enumerate(u_steps) if s.startswith('uninstall')]
+pos = lambda x: u_steps.index(x) if x in u_steps else -1
 check([u_steps[i] for i in un] == ['uninstall %s.test' % PKG, 'uninstall %s' % PKG]
-      and u_steps.index('INSTR pre') < u_steps.index('MARKER uninstall-begin') < un[0] < un[1] < u_steps.index('MARKER uninstall-end')
-      < u_steps.index('MARKER install2-begin') < u_steps.index('MARKER install2-end') < u_steps.index('INSTR post'),
-      'uninstall: exactly the test and app package once each, after phase pre, inside the markers, before reinstall and phase post')
+      and -1 < pos('INSTR pre') < pos('MARKER uninstall-begin') < un[0] < un[1] < pos('MARKER absent')
+      < pos('MARKER install2-begin') < pos('INSTR post'),
+      'uninstall: exactly test and app package once each, after phase pre, before the absence proof, reinstall and phase post')
+ops = re.findall(r'event=op-end op=(\S+) attempt=\d+ rc=(\d+) result=(\S+)', '\n'.join(ok['supported']['cmds']))
+check([o[0] for o in ops] == ['install-app', 'install-test', 'uninstall-test', 'uninstall-app', 'install-app', 'install-test']
+      and all(o[1] == '0' and o[2].rstrip("'") == 'Success' for o in ops), 'every package operation logged with rc and result %s' % ops)
 for name, st in (('control', c_steps), ('uninstall', u_steps)):
-    ins = [i for i, s in enumerate(st) if s.startswith('INSTR')]
-    check([st[i] for i in ins] == ['INSTR pre', 'INSTR post', 'INSTR recheck'], '%s: phases pre, post, recheck once each in order' % name)
+    ins = [s for s in st if s.startswith('INSTR')]
+    check(ins == ['INSTR pre', 'INSTR post', 'INSTR recheck'], '%s: phases pre, post, recheck once each in order' % name)
     check(sum(1 for s in st if s.startswith('install -r -t')) == 4, '%s: two installations of both APKs (4 install commands)' % name)
+    check(sum(1 for s in st if s == 'MARKER sync') == 2 and 'INSTR recheck' in st and st.index('MARKER sync') < st.index('INSTR recheck'),
+          '%s: logcat stream synchronised by marker before the recheck and at the end' % name)
 
 
 def common(st, a, b):
+    if 'MARKER ' + a not in st or 'MARKER ' + b not in st:
+        return ['markers %s/%s missing' % (a, b)]
     return st[:st.index('MARKER ' + a)] + ['PACKAGE-STEP'] + st[st.index('MARKER ' + b) + 1:]
 
 
 check(common(c_steps, 'update-begin', 'update-end') == common(u_steps, 'uninstall-begin', 'install2-end'),
       'both variants issue the same command sequence except the package step')
-post_c = [c for c in res['control'][2] if 'bootscanPhase post' in c]
-post_u = [c for c in res['uninstall'][2] if 'bootscanPhase post' in c]
-check(len(post_c) == 1 and re.sub(r'bootscanRun \w+', '', post_c[0]) == re.sub(r'bootscanRun \w+', '', post_u[0])
-      and 'bootscanPaceMs 500' in post_c[0] and 'bootscanMax 120' in post_c[0], 'phase post with identical, paced, capped parameters in both variants')
+for key in ok:
+    check(not unsafe(ok[key]['cmds'], allow_uninstall=(key != 'control')) and ok[key]['foreign_ok'],
+          '%s: no destructive device command besides the planned uninstall, foreign files untouched' % key)
+
+# ---- fehlgeschlagene Deinstallation: INVALID, keine Neuinstallation, Rohbelege erhalten
+for label, sim in [('uninstall of the test package reports Failure with rc=0', dict(SUPPORTED, uninstall_fail='test', uninstall_rc=0)),
+                   ('uninstall of the app package fails with rc=1', dict(SUPPORTED, uninstall_fail='app', uninstall_rc=1)),
+                   ('uninstall of the app package reports Failure with rc=0', dict(SUPPORTED, uninstall_fail='app', uninstall_rc=0)),
+                   ('uninstall reports Success but the app package stays installed', dict(SUPPORTED, uninstall_fail='lie-app')),
+                   ('uninstall reports Success but the test package stays installed', dict(SUPPORTED, uninstall_fail='lie-test'))]:
+    r = run('uninstall', sim=sim)
+    after = r['cmds'][max(i for i, c in enumerate(r['cmds']) if c.startswith('uninstall')):]
+    check(r['rc'] == 2 and 'PKGAB_RESULT INVALID' in r['out'] and 'result=INVALID' in r['verdict']
+          and not any(c.startswith('install') or 'bootscanPhase post' in c for c in after)
+          and 'PKGAB_OPS' in r['out'] and 'PKGAB_LOG' in r['out'] and 'logcat.txt' in r['report'],
+          'INVALID: %s (no reinstall, raw evidence kept)' % label)
+
+# ---- find-Fehler, kaputte Instrumentierung
+r = run('control', find_fails=True, sim={'scan_after_pkg_end': 2000})
+lists = [l for l in r['out'].splitlines() if l.startswith('PKGAB_LIST control foreign-before')]
+check(result(r) == ['INVALID'] and not any(l.endswith('LIST-END') for l in lists) and any('LIST-ERROR' in l for l in lists),
+      'failed find gives no valid listing (no LIST-END) -> INVALID %s' % result(r))
+r = run('control', instr_broken=True, sim={'scan_after_pkg_end': 2000})
+check(r['rc'] == 2 and result(r) == ['INVALID'] and 'PKGAB_INSTR control instr-pre' in r['out'] and 'PKGAB_LIST control foreign-before' in r['out'],
+      'broken instrumentation -> only INVALID, evidence printed')
+lists = [l for l in ok['control']['out'].splitlines() if l.startswith('PKGAB_LIST control foreign-before ')]
+check(any(l.endswith('/storage/emulated/0/Download/existing.pdf') for l in lists) and not any('/Android/' in l for l in lists)
+      and lists[-1:] == ['PKGAB_LIST control foreign-before LIST-END'], 'listing of foreign files complete (SHA-256, LIST-END), Android/ excluded')
 
 src = open(SCRIPT).read()
 helpers = re.findall(r"<<'(QSH|FSH|QTSH)'\n(.*?)\n\1\n", src, re.S)
