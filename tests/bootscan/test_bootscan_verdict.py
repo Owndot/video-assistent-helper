@@ -97,14 +97,21 @@ def build(downloads, scans=((SCAN_END - 184, SCAN_END),), recheck_priv='ok', rec
                 disk[DIR + name] = (262144, ('0' * 64) if f == 'DATA_LOSS_SHA' else sha(d['seq']))
             if f == 'PUBLISH_FAILED':
                 continue
-            vis = f in ('OK', 'TRANSIENT', 'DATA_LOSS_SHA', 'DATA_LOSS_MISSING')
+            vis = f in ('OK', 'TRANSIENT', 'DATA_LOSS_SHA', 'DATA_LOSS_MISSING', 'VIS_THEN_LOST', 'VIS_THEN_NULL', 'VIS_THEN_PENDING')
             if d['seq'] in recheck_uri_error:
                 res = 'error:SecurityException'
             else:
                 res = ('found id=%s owner=%s pending=0 data=%s%s' % (d['id'], PKG, DIR, name)) if vis else 'none'
             if 'recheckuri' not in drop:
                 line(t + 10, 'BOOTSCAN', 'BOOTSCAN URIQ run=%s seq=%d off=-1 t=%d res=%s' % (RUN, d['seq'], t + 10, res))
-            if vis:
+            if f == 'VIS_THEN_LOST':     # URI-Abfrage sah die Zeile, die Schlussaufnahme nicht mehr
+                continue
+            if f == 'VIS_THEN_NULL':
+                priv[d['id']] = ('NULL', '0', '0', DIR + name)
+            elif f == 'VIS_THEN_PENDING':
+                app[d['id']] = (PKG, '1', name)
+                priv[d['id']] = (PKG, '1', '0', DIR + name)
+            elif vis:
                 app[d['id']] = (PKG, '0', name)
                 priv[d['id']] = (PKG, '0', '0', DIR + name)
             elif f == 'OWNER_CHANGED':
@@ -189,8 +196,10 @@ r, why, rows, _ = verdict(BASE + [overlap(1, 'LOST')], recheck_priv='bad:frame-Q
 check(r == 'INCONCLUSIVE' and {s: c for s, g, c, w in rows}.get('1') == 'UNKNOWN', 'privileged query failed -> UNKNOWN, never LOST (%s)' % r)
 r, why, rows, _ = verdict(BASE + [overlap(1, 'LOST')], recheck_cross='missing:1000000000')
 check({s: c for s, g, c, w in rows}.get('1') == 'UNKNOWN', 'privileged query incomplete (misses rows the app sees) -> UNKNOWN, never LOST')
+r, why, rows, _ = verdict(BASE + [overlap(1, 'OK')], recheck_uri_error=(1,))
+check({s: c for s, g, c, w in rows}.get('1') == 'UNKNOWN', 'recheck URI query error (missing permission) on an intact row -> UNKNOWN, never OK')
 r, why, rows, _ = verdict(BASE + [overlap(1, 'OWNER_CHANGED')], recheck_uri_error=(1,))
-check({s: c for s, g, c, w in rows}.get('1') == 'UNKNOWN', 'recheck URI query error (missing permission) -> UNKNOWN')
+check({s: c for s, g, c, w in rows}.get('1') == 'OWNER_CHANGED', 'snapshots=v3: URI query error, but the final snapshot proves owner NULL -> OWNER_CHANGED')
 
 # --- ohne Überschneidung, ohne Scan, ohne Kontrolle: INCONCLUSIVE, nie PASS
 r, why, _, _ = verdict(BASE, )
@@ -250,6 +259,14 @@ check(r == 'DATA_LOSS' and 'incomplete' in why[-1], 'proven data loss stays visi
 check(V.digest({'1': ('a', 'b')}) == __import__('hashlib').sha256(b'1|a|b').hexdigest()[:16] and V.digest({}) == __import__('hashlib').sha256(b'').hexdigest()[:16],
       'digest identical to the probe test definition (sorted "key|value" lines, SHA-256, 16 hex)')
 
+# --- snapshots=v3 (Codex-NO-GO 2, P1-1/P1-2): Schlussaufnahme verbindlich, Dateien unabhängig vom Provider
+for fate, want in (('VIS_THEN_LOST', 'LOST'), ('VIS_THEN_NULL', 'OWNER_CHANGED'), ('VIS_THEN_PENDING', 'STATE_CHANGED')):
+    r, why, rows, _ = verdict(BASE + [overlap(1, fate)])
+    check({s_: c for s_, g, c, w in rows}.get('1') == want, 'snapshots=v3: URI visible in the recheck, final snapshot %s -> %s (%s)'
+          % (fate, want, {s_: c for s_, g, c, w in rows}.get('1')))
+r, why, rows, _ = verdict(BASE + [overlap(1, 'DATA_LOSS_SHA')], recheck_priv='bad:frame-Q-END_rc-1')
+check(r == 'DATA_LOSS', 'snapshots=v3: privileged query of the final snapshot failed, valid disk snapshot shows damage -> DATA_LOSS (%s)' % r)
+
 # --- Kommandozeile: Exit-Codes, nie PASS, unvollständige Dateiliste
 with tempfile.TemporaryDirectory() as d:
     def w(n, s):
@@ -272,6 +289,6 @@ with tempfile.TemporaryDirectory() as d:
         check(p.returncode == code and ('BOOTSCAN_RESULT ' + word) in p.stdout and 'PASS' not in p.stdout,
               'cli %s: exit %d, BOOTSCAN_RESULT %s, no PASS' % (label, p.returncode, word))
 
-n = 7 + 2 + 4 + 3 + 4 + 11 + 5 + 3 + 6
+n = 7 + 2 + 4 + 3 + 4 + 11 + 5 + 3 + 6 + 5
 print('BOOTSCAN_VERDICT_SELFTEST %s %d cases, %d failed' % ('FAIL' if fails else 'PASS', n, len(fails)))
 sys.exit(1 if fails else 0)

@@ -18,9 +18,16 @@ Szenario (dict):
                        (meldet Success, Paket bleibt trotzdem installiert)
   uninstall_rc         Rückgabecode von adb bei Failure (alte adb-Versionen: 0)
   owner_log            True: owner_package_changed-Zeilen schreiben
+  create_ms            Dauer von create() (insertStart..insertEnd), Standard 5
+  recheck_mutation     (seq, 'lost'|'null'|'pending'): 3 s nach Beginn der Nachprüfung (nach den URI-Abfragen) wird die
+                       Zeile gelöscht, verwaist oder wieder ausstehend
+  proc_events          True: am_kill "finished inst" und am_proc_died nach jeder Instrumentierung (reguläres Ende)
+  pkg_step_kill        True: am_kill des App-Prozesses durch die Paketaktion (installPackageLI bzw. deletePackageX)
+  crash                None | 'app_fatal' | 'app_kill_lmk' | 'provider_died' | 'oom' | 'anr' (3 s nach Beginn von post)
 """
 import hashlib
 import heapq
+import os
 
 PKG = 'de.evp.helfer.channeltest'
 TEST_PKG = PKG + '.test'
@@ -49,7 +56,10 @@ def instr_ok():
 
 class Device:
     def __init__(self, scenario=None, t0=T0):
-        self.sc = {'scan_after_pkg_end': 1500, 'orphan': None, 'orphan_delay': 4, 'uninstall_fail': None, 'uninstall_rc': 0, 'owner_log': True}
+        self.sc = {'scan_after_pkg_end': 1500, 'orphan': None, 'orphan_delay': 4, 'uninstall_fail': None, 'uninstall_rc': 0, 'owner_log': True,
+                   'create_ms': 5, 'recheck_mutation': None, 'pkg_step_kill': False, 'crash': None,
+                   # PKGAB_SIM_NO_PROC_EVENTS=1: ohne reguläre Prozessereignisse (nur zur Nachstellung alter Befunde)
+                   'proc_events': os.environ.get('PKGAB_SIM_NO_PROC_EVENTS') != '1'}
         self.sc.update(scenario or {})
         self.clock = t0
         self.log = []
@@ -121,8 +131,14 @@ class Device:
         if event == 'install1-end' and self.sc['scan_after_pkg_end'] is None:
             self.schedule(self.clock + 300, 'scan')
 
+    def proc_event(self, tag, pid, process, reason):
+        self.emit(tag, '[0,%d,%s,900,%s]' % (pid, process, reason), 1100, 1180)
+
     def install(self, pkg):
-        self.advance(2_500)
+        self.advance(1_200)
+        if self.sc['pkg_step_kill'] and pkg == PKG and self.installed[PKG]:
+            self.proc_event('am_kill', self.pid, PKG, 'stop %s due to installPackageLI' % PKG)
+        self.advance(1_300)
         if not self.installed[pkg] and pkg == PKG:
             self.uid += 1
         self.installed[pkg] = True
@@ -138,6 +154,8 @@ class Device:
         if not self.installed[pkg]:
             return 1, 'Failure [DELETE_FAILED_INTERNAL_ERROR]'
         self.installed[pkg] = False
+        if self.sc['pkg_step_kill'] and pkg == PKG:
+            self.proc_event('am_kill', self.pid, PKG, 'stop %s due to deletePackageX' % PKG)
         if pkg == PKG and self.sc['orphan'] == 'immediate':
             for i, r in sorted(self.rows.items()):
                 if r[0] == PKG and i in self.install1_ids:
@@ -259,7 +277,7 @@ class Device:
             self.disk[path] = (SIZE, sha(seq))
             if phase == 'pre':
                 self.install1_ids.add(rid)
-            at(ins + 290, commit, seq, name, rid, ins)
+            at(ins + self.sc['create_ms'] + 285, commit, seq, name, rid, ins)
 
         def commit(seq, name, rid, ins):
             cs = self.clock
@@ -271,7 +289,7 @@ class Device:
             done = ce + 2
             self.clock = done
             L('DL run=%s phase=%s seq=%d name=%s sha=%s size=%d insertStart=%d insertEnd=%d commitStart=%d commitEnd=%d commit=%s done=%d '
-              'state=%s reason=%s uri=%s id=%s' % (run, phase, seq, name, sha(seq), SIZE, ins, ins + 5, cs, ce, 'ok' if ok else 'ex:IOException', done,
+              'state=%s reason=%s uri=%s id=%s' % (run, phase, seq, name, sha(seq), SIZE, ins, ins + self.sc['create_ms'], cs, ce, 'ok' if ok else 'ex:IOException', done,
                                                    'done' if ok else 'failed', '-' if ok else 'storage',
                                                    'content://media/external_primary/downloads/' + rid if ok else '-', rid if ok else '-'))
             if ok:
@@ -284,7 +302,36 @@ class Device:
             res = ('found id=%s owner=%s pending=0 data=%s' % (rid, r[0], r[3])) if r and r[0] == PKG and r[1] == '0' else 'none'
             L('URIQ run=%s seq=%d off=%d t=%d res=%s' % (run, seq, off, self.clock, res))
 
+        def mutate():
+            seq, kind = self.sc['recheck_mutation']
+            for i, r in list(self.rows.items()):
+                if r[3].endswith('-%d.mp4' % seq):
+                    if kind == 'lost':
+                        del self.rows[i]
+                    elif kind == 'null':
+                        r[0] = 'NULL'
+                    else:
+                        r[1] = '1'
+
+        def crash():
+            kind = self.sc['crash']
+            if kind == 'app_fatal':
+                self.emit('AndroidRuntime', 'FATAL EXCEPTION: main', pid, pid)
+                self.emit('AndroidRuntime', 'Process: %s, PID: %d' % (PKG, pid), pid, pid)
+            elif kind == 'app_kill_lmk':
+                self.proc_event('am_kill', pid, PKG, 'lmk')
+            elif kind == 'provider_died':
+                self.proc_event('am_proc_died', 1642, 'com.android.providers.media.module', 'crash')
+            elif kind == 'oom':
+                self.emit('art', 'Throwing OutOfMemoryError "Failed to allocate"', 1642, 2289)
+            elif kind == 'anr':
+                self.proc_event('am_anr', 1642, 'com.android.providers.media.module', 'Input dispatching timed out')
+
         at(start + 1, tick)
+        if phase == 'recheck' and self.sc['recheck_mutation']:
+            at(start + 3_000, mutate)
+        if phase == 'post' and self.sc['crash']:
+            at(start + 3_000, crash)
         if phase == 'recheck':
             ids = [p.split(':') for p in args.get('bootscanIds', '-').split(',') if ':' in p]
             for k, (seq, rid) in enumerate(ids):
@@ -304,6 +351,11 @@ class Device:
         sample(final=True)
         self.advance(5)
         L('END run=%s phase=%s downloads=%d snapshots=%d invalid=0 final=%d t=%d' % (run, phase, state['count'], snaps[0], snaps[0], self.clock))
+        if self.sc['proc_events']:   # reguläres Ende der Instrumentierung: ActivityManager beendet den Prozess
+            self.advance(30)
+            self.proc_event('am_kill', pid, PKG, 'finished inst')
+            self.advance(5)
+            self.proc_event('am_proc_died', pid, PKG, '0,0')
         return instr_ok()
 
 

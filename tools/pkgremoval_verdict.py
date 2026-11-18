@@ -70,7 +70,8 @@ spec = importlib.util.spec_from_file_location('bootscan_verdict_for_pkgremoval',
 B = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(B)
 
-RULES = 'v2'
+RULES = 'v3'   # v2 (5627df2); v3 nach Codex-NO-GO 2: Schlussaufnahme verbindlich, Dateien getrennt, Pflicht-Prüfsummen,
+               # Kausalität über insertEnd, Zeitachsen geprüft, reguläre Prozessenden zugeordnet
 PHASES = ('pre', 'post', 'recheck')
 SEQ0 = {'pre': 20000, 'post': 30000}
 OFFSETS = {'pre': [0, 250], 'post': [0, 250, 2000, 10000]}
@@ -81,7 +82,10 @@ STEP_OPS = {('install1-begin', 'install1-end'): 'install', ('install2-begin', 'i
 RESULTS = {'uninstall': ('SUPPORTED', 'NOT_SUPPORTED', 'INCONCLUSIVE', 'INVALID', 'DATA_LOSS'),
            'control': ('CLEAN', 'ANOMALY', 'INCONCLUSIVE', 'INVALID', 'DATA_LOSS')}
 OBSERVE_AFTER_MS = 5000
-QT_ROW = re.compile(r'^Row: \d+ _id=(\d+), owner_package_name=([^,]*), is_pending=(\d+), is_trashed=(\d+), _data=([^,]*), _display_name=([^,]*), _size=([^,]*)$')
+# Ausdrücklich nachgewiesene, zur Hypothese passende Veröffentlichungsfehler: die gelöschte ausstehende Zeile lässt das
+# Veröffentlichen im Commit scheitern (be74008: "IOException: publish", Engine-Grund storage). Alles andere passt nicht.
+MATCHING_PUBLISH_FAILURES = {('ex:IOException', 'storage')}
+QT_ROW = re.compile(r'^Row: (\d+) _id=(\d+), owner_package_name=([^,]*), is_pending=(\d+), is_trashed=(\d+), _data=([^,]*), _display_name=([^,]*), _size=([^,]*)$')
 OWNER_LINE = re.compile(r'Reason: owner_package_changed:(.+)$')
 RELEVANT_PROC = re.compile(r'de\.evp\.helfer|providers\.media|system_server')
 CLAIM = ('correlation of mount scan, package operation and owner change/loss of concrete rows; this does not prove an '
@@ -89,38 +93,45 @@ CLAIM = ('correlation of mount scan, package operation and owner change/loss of 
 
 
 # ------------------------------------------------------------------------------------------------ Eingaben
-def host_samples(text, notes):
-    """'QT-BEGIN t=… res=ms' … 'QT-END rc=0 t=…' -> [(a, b, {id: (owner, pending, trashed, path)})]. Nur vollständige
-    Blöcke: Rahmen, rc=0, Endzeit, jede Zeile lesbar, leer nur mit ausdrücklichem "No result found."."""
+def host_samples(text, notes, invalid=None):
+    """'QT-BEGIN t=… res=ms' … 'QT-END rc=0 t=…' -> [(a, b, {id: (owner, pending, trashed, path)})]. Fail-closed: nur
+    vollständige Blöcke mit rc=0, Endzeit, jeder Zeile lesbar, Zeilennummern lückenlos ab 0, jede ID genau einmal, leer nur
+    mit genau einem "No result found."; alles andere fällt weg (kein Beleg). Endet eine Abfrage vor ihrem Beginn, ist das
+    eine unmögliche Zeitangabe: INVALID (in 'invalid'), nicht stilles Verwerfen."""
+    invalid = [] if invalid is None else invalid
     out, bad, cur = [], 0, None
     for l in text.splitlines():
         m = re.match(r'^QT-BEGIN t=(\d+) res=(\w+)$', l)
         if m:
             if cur is not None:
                 bad += 1
-            cur = {'a': int(m.group(1)), 'res': m.group(2), 'rows': {}, 'none': False, 'ok': True}
+            cur = {'a': int(m.group(1)), 'res': m.group(2), 'rows': {}, 'none': 0, 'n': 0, 'ok': True}
             continue
         if cur is None:
             continue
         if l.startswith('QT-END'):
-            e = re.match(r'^QT-END rc=0 t=(\d+)$', l)
-            if e and cur['ok'] and cur['res'] in ('ms', 's') and (cur['none'] != bool(cur['rows'])):
-                b = int(e.group(1)) + (999 if cur['res'] == 's' else 0)
-                out.append((cur['a'], b, cur['rows']))
+            e = re.match(r'^QT-END rc=(\d+) t=(\d+)$', l)
+            if e and int(e.group(2)) < cur['a']:
+                invalid.append('host query ends before it began (%d < %d)' % (int(e.group(2)), cur['a']))
+            if e and e.group(1) == '0' and cur['ok'] and cur['res'] in ('ms', 's') and ((cur['none'] == 1 and cur['n'] == 0) or (cur['none'] == 0 and cur['n'] > 0)):
+                b_ = int(e.group(2)) + (999 if cur['res'] == 's' else 0)
+                out.append((cur['a'], b_, cur['rows']))
             else:
                 bad += 1
             cur = None
         elif l == 'No result found.':
-            cur['none'] = True
+            cur['none'] += 1
         else:
             r = QT_ROW.match(l)
-            if r:
-                cur['rows'][r.group(1)] = (r.group(2).replace(' ', '_'), r.group(3), r.group(4), r.group(5).replace(' ', '_'))
+            if r and int(r.group(1)) == cur['n'] and r.group(2) not in cur['rows']:
+                cur['rows'][r.group(2)] = (r.group(3).replace(' ', '_'), r.group(4), r.group(5), r.group(6).replace(' ', '_'))
+                cur['n'] += 1
             else:
-                cur['ok'] = False
+                cur['ok'] = False   # unlesbar, Lücke in den Zeilennummern oder doppelte ID: ganzer Block kein Beleg
     if cur is not None:
         bad += 1
-    notes.append('host samples: %d complete, %d discarded (incomplete frame, error, missing end time or empty without "No result found.")' % (len(out), bad))
+    notes.append('host samples: %d complete, %d discarded (incomplete frame, error, missing end time, row numbering, duplicate id '
+                 'or empty without "No result found.")' % (len(out), bad))
     return out
 
 
@@ -201,12 +212,30 @@ def owner_events(logcat):
     return out
 
 
-def crash_evidence(logcat, since):
-    """Absturz-, ANR-, OOM- oder Prozesstod-Belege der App, des MediaProvider oder von system_server ab 'since'."""
-    out, fatal = [], False
+PKG_STEP_KILL = re.compile(r'installPackageLI|deletePackageX|pkg removed|replace pkg|uninstall pkg')
+
+
+def crash_evidence(logcat, since, ph=None, steps=None, pkg='de.evp.helfer.channeltest'):
+    """Absturz-, ANR-, OOM- oder unerwartete Prozesstod-Belege der App, des MediaProvider oder von system_server ab 'since'.
+    Erwartet (kein Beleg) sind nur Beendigungen des App-Prozesses, die nach PID, Zeit und Grund eindeutig zugeordnet sind:
+      - am_kill "finished inst" eines Testprozesses (PID aus START einer Phase) nach deren END, höchstens 10 s danach;
+      - am_kill durch die Paketaktion (installPackageLI, deletePackageX, …) innerhalb eines Paketschritts;
+      - am_proc_died derselben PID höchstens 10 s nach einer solchen erwarteten Beendigung.
+    Alles andere (MediaProvider, system_server, andere Gründe, andere Zeiten, AndroidRuntime FATAL, OOM, ANR) ist ein Beleg."""
+    ph, steps = ph or {}, steps or {}
+    ends = {}
+    for p in ph.values():
+        if p.get('start') and p.get('end') and str(p['start'].get('pid', '')).isdigit():
+            ends[int(p['start']['pid'])] = int(p['end'].get('t', -1))
+    brackets = [(steps[a], steps[b]) for a, b in (('install1-begin', 'install1-end'), ('uninstall-begin', 'uninstall-end'),
+                                                    ('install2-begin', 'install2-end'), ('update-begin', 'update-end')) if a in steps and b in steps]
+    out, fatal, expected_end = [], False, {}
     for raw in logcat.splitlines():
         m = B.LINE.match(raw)
-        if not m or int(round(float(m.group(1)) * 1000)) < since:
+        if not m:
+            continue
+        t = int(round(float(m.group(1)) * 1000))
+        if t < since:
             continue
         tag, msg = m.group(5).strip(), m.group(6)
         if 'OutOfMemoryError' in msg or 'FATAL EXCEPTION IN SYSTEM PROCESS' in msg:
@@ -217,7 +246,18 @@ def crash_evidence(logcat, since):
             fatal = False
             if RELEVANT_PROC.search(msg):
                 out.append(raw.strip()[:140])
-        elif tag in ('am_crash', 'am_anr', 'am_proc_died', 'am_kill') and RELEVANT_PROC.search(msg):
+        elif tag in ('am_crash', 'am_anr', 'am_kill', 'am_proc_died') and RELEVANT_PROC.search(msg):
+            f = msg.strip('[]').split(',')
+            pid = int(f[1]) if len(f) > 2 and f[1].isdigit() else -1
+            proc = f[2] if len(f) > 2 else ''
+            reason = ','.join(f[4:]) if len(f) > 4 else ''
+            app = proc == pkg or proc.startswith(pkg + ':')
+            if tag == 'am_kill' and app and ((reason == 'finished inst' and pid in ends and ends[pid] <= t <= ends[pid] + 10_000)
+                                             or (PKG_STEP_KILL.search(reason) and any(a <= t <= b for a, b in brackets))):
+                expected_end[pid] = t
+                continue
+            if tag == 'am_proc_died' and app and pid in expected_end and expected_end[pid] <= t <= expected_end[pid] + 10_000:
+                continue
             out.append(raw.strip()[:140])
     return out
 
@@ -264,14 +304,32 @@ def structure(ph, instr, steps, uid, variant, invalid):
 
 
 def check_download(name, d, p, ph, invalid):
-    """Zeitachse, URI, ID und Pfad eines Downloads müssen zueinander und zur Phase passen."""
+    """Zeitachse, URI, ID und Pfad eines Downloads müssen zueinander und zur Phase passen. Zeiten: vorhandene Werte
+    (-1 = Stufe nicht erreicht) in der Reihenfolge insertStart <= insertEnd <= commitStart <= commitEnd <= done, alle
+    innerhalb der Phase; ein erreichter Commit braucht Beginn und Ende; "done" braucht alle Stufen; URI-Prüfungen nach
+    "done" und innerhalb ihrer Phase."""
     try:
-        lo, done = int(d.get('insertStart', -1)), int(d.get('done', -1))
+        t = [int(d.get(k, -1)) for k in ('insertStart', 'insertEnd', 'commitStart', 'commitEnd', 'done')]
     except ValueError:
         invalid.append('phase %s seq %s: unreadable times' % (name, d.get('seq')))
         return
-    if not (int(p['start'].get('t', -1)) <= lo <= done <= int(p['end'].get('t', -1))):
-        invalid.append('phase %s seq %s: insert/done outside the phase' % (name, d.get('seq')))
+    seq = d.get('seq')
+    p0, p1 = int(p['start'].get('t', -1)), int(p['end'].get('t', -1))
+    present = [v for v in t if v != -1]
+    if present != sorted(present) or any(v < p0 or v > p1 for v in present) or t[4] == -1:
+        invalid.append('phase %s seq %s: impossible or out-of-phase times %s (phase %d..%d)' % (name, seq, t, p0, p1))
+    if (t[0] == -1) != (t[1] == -1) or (d.get('commit', '-') != '-') != (t[2] != -1 and t[3] != -1) or (t[2] == -1) != (t[3] == -1):
+        invalid.append('phase %s seq %s: incomplete stage times %s for commit=%s' % (name, seq, t, d.get('commit')))
+    if d.get('state') == 'done' and -1 in t:
+        invalid.append('phase %s seq %s: done without all stage times %s' % (name, seq, t))
+    for q in p['uriq']:
+        if q['seq'] == seq and not (t[4] <= int(q.get('t', -1)) <= p1):
+            invalid.append('phase %s seq %s: URI check at %s outside done..phase end (%d..%d)' % (name, seq, q.get('t'), t[4], p1))
+    rc = ph.get('recheck') or {}
+    if rc.get('start') and rc.get('end'):
+        for q in rc['uriq']:
+            if q['seq'] == seq and not (int(rc['start'].get('t', -1)) <= int(q.get('t', -1)) <= int(rc['end'].get('t', -1))):
+                invalid.append('recheck URI check of seq %s outside the recheck phase' % seq)
     if d.get('state') == 'done':
         uri, sid = d.get('uri', '-'), d.get('id', '-')
         if not sid.isdigit() or not uri.endswith('/' + sid):
@@ -349,9 +407,10 @@ def variant_verdict(variant, run, logcat, hosts_text, instr, before, after, pkg=
     steps, uid = package_steps(variant, mk, invalid, notes)
     ev = [(k, r) for k, r in ev if k != 'PKG']
     try:
-        ph = B.phases(ev, run, invalid)
+        ph = B.phases(ev, run, invalid, require_digest=True)
     except B.Invalid as e:
         return 'INVALID', [str(e)], [], notes
+    hosts = host_samples(hosts_text, notes, invalid)
     if all(n in ph for n in PHASES):
         structure(ph, instr, steps, uid, variant, invalid)
     else:
@@ -377,7 +436,6 @@ def variant_verdict(variant, run, logcat, hosts_text, instr, before, after, pkg=
             return 'DATA_LOSS', loss + ['other evidence incomplete or contradictory: %s' % invalid[:3]], [], notes
         return 'INVALID', invalid, [], notes
 
-    hosts = host_samples(hosts_text, notes)
     obs = observations(ph, hosts)
     ext = [s for s in scans if s['volume'] == 'external_primary' and s['reason'] == 'REASON_MOUNTED']
     step_a, step_b = (steps['uninstall-begin'], steps['uninstall-end']) if variant == 'uninstall' else (steps['update-begin'], steps['update-end'])
@@ -385,7 +443,9 @@ def variant_verdict(variant, run, logcat, hosts_text, instr, before, after, pkg=
     notes.append('time line: %s' % ' '.join('%s=%d' % (e, steps[e]) for e in STEPS[variant]))
     notes.append('mount scans external_primary %s' % [(s['start'], s['end'], s['tid'] if 'tid' in s else '-') for s in ext])
     notes.append('app uid pre=%s post=%s (a uid change alone proves nothing)' % (ph['pre']['start'].get('appUid'), ph['post']['start'].get('appUid')))
-    final = ph['recheck']['snaps'][-1]
+    final, fwhy = B.final_priv(ph['recheck'])          # None: letzte privilegierte Aufnahme ungültig -> nichts bestätigt
+    final_t = ph['recheck']['snaps'][-1]['t']
+    final_disk, _ = B.final_disk(ph['recheck'])
     rows, data_loss = [], []
     for name in ('pre', 'post'):
         gen = 'install1' if name == 'pre' else ('install2' if variant == 'uninstall' else 'updated')
@@ -394,7 +454,8 @@ def variant_verdict(variant, run, logcat, hosts_text, instr, before, after, pkg=
             cls, why = B.classify(d, ph, pkg)
             path = B.DIR + d['name']
             row = {'seq': d['seq'], 'gen': gen, 'cls': cls, 'why': why, 'id': d.get('id', '-'), 'path': path, 'd': d,
-                   'lo': int(d['insertStart']), 'done': int(d['done']), 'risk': '-'}
+                   'lo': int(d['insertStart']), 'lo_end': int(d['insertEnd']), 'done': int(d['done']), 'risk': '-',
+                   'residual': B.residual(d, final_disk['disk'] if final_disk else None)}
             row['events'] = [(t, p) for t, p in evs if p == path]
             row['ch'] = change(row, obs, row['events'], pkg)
             if cls == 'DATA_LOSS':
@@ -404,7 +465,7 @@ def variant_verdict(variant, run, logcat, hosts_text, instr, before, after, pkg=
         data_loss.append('existing files outside the probe removed %s or modified %s' % (removed[:5], modified[:5]))
     if data_loss:
         return 'DATA_LOSS', data_loss, rows, notes
-    crash = crash_evidence(logcat, steps['install1-begin'])
+    crash = crash_evidence(logcat, steps['install1-begin'], ph, steps, pkg)
     pre_rows = [r for r in rows if r['gen'] == 'install1']
     new_rows = [r for r in rows if r['gen'] != 'install1']
     # erste Installation: alle drei veröffentlicht und unmittelbar sichtbar
@@ -435,12 +496,13 @@ def variant_verdict(variant, run, logcat, hosts_text, instr, before, after, pkg=
             reasons.append('UNKNOWN classifications: %s' % [r['seq'] for r in rows if r['cls'] == 'UNKNOWN'])
         if reasons:
             return 'INCONCLUSIVE', reasons, rows, notes
-        before_end = [r for r in new_rows if r['lo'] < scan['end']]
+        # nur sicher vor dem Scan-Ende vorhanden, wenn create() vorher abgeschlossen war
+        before_end = [r for r in new_rows if r['lo_end'] < scan['end']]
         for r in new_rows:
-            r['risk'] = 'before-scan-end' if r['lo'] < scan['end'] else 'after-scan-end'
+            r['risk'] = 'before-scan-end' if r['lo_end'] < scan['end'] else ('after-scan-end' if r['lo'] > scan['end'] else 'spans-scan-end')
         if not before_end:
             return 'INCONCLUSIVE', ['no updated download was created before the end of the mount scan %d' % scan['end']], rows, notes
-        if final['t'] < scan['end'] + OBSERVE_AFTER_MS:
+        if final is None or final_t < scan['end'] + OBSERVE_AFTER_MS:
             return 'INCONCLUSIVE', ['observation after the scan end too short'], rows, notes
         unseen = [r['seq'] for r in before_end if not any(a >= scan['end'] and row_state(o, r['id'], r['path'], pkg) == 'own' for a, b, o in obs)]
         if unseen:
@@ -453,7 +515,7 @@ def variant_verdict(variant, run, logcat, hosts_text, instr, before, after, pkg=
     for r in pre_rows:
         ch = r['ch']
         if r['cls'] == 'OWNER_CHANGED' and ch['changed'] and ch['to'] == 'NULL' and not ch['contradiction']:
-            fin = final['priv'].get(r['id'])
+            fin = final['priv'].get(r['id']) if final else None
             if fin and fin[0] == 'NULL' and fin[1] == '0' and fin[2] == '0' and fin[3] == r['path']:
                 r['cls'], r['why'] = 'ORPHANED_EXPECTED', 'normal uninstall behaviour: owner NULL between %d and %d; %s' % (ch['lo'], ch['hi'], r['why'])
                 orphan.append(r)
@@ -474,12 +536,17 @@ def variant_verdict(variant, run, logcat, hosts_text, instr, before, after, pkg=
             reasons.append('orphaning time ambiguous: between %d and %d, reinstall ended %d' % (O[0], O[1], end2))
         elif O[1] < scan['end']:
             reasons.append('orphaning completed (%d) before the mount scan ended (%d): delay not related to the scan' % (O[1], scan['end']))
-        elif final['t'] < O[1] + OBSERVE_AFTER_MS:
-            reasons.append('observation after the orphaning too short (final snapshot %d)' % final['t'])
+        elif final is None:
+            reasons.append('final privileged snapshot not valid: %s' % fwhy)
+        elif final_t < O[1] + OBSERVE_AFTER_MS:
+            reasons.append('observation after the orphaning too short (final snapshot %d)' % final_t)
     if reasons:
         return 'INCONCLUSIVE', reasons, rows, notes
+    # Kausalität: sicher vorher vorhanden nur, wenn create() VOR dem Beginn des Verwaisungsintervalls abgeschlossen war;
+    # überschneidet create() das Intervall, bleibt die Reihenfolge unbestimmt (ambiguous)
     for r in new_rows:
-        r['risk'] = 'at_risk' if r['lo'] < O[0] else ('ambiguous' if r['lo'] <= O[1] else 'late')
+        r['O'] = O
+        r['risk'] = 'at_risk' if r['lo_end'] < O[0] else ('late' if r['lo'] > O[1] else 'ambiguous')
     at_risk = [r for r in new_rows if r['risk'] == 'at_risk']
     if not at_risk:
         return 'INCONCLUSIVE', ['delayed orphaning between %d and %d, but no download of the new installation was created before it' % O], rows, notes
@@ -494,10 +561,12 @@ def variant_verdict(variant, run, logcat, hosts_text, instr, before, after, pkg=
             matched.append(r)
         elif r['cls'] == 'LOST' and ch['changed'] and ch['to'] == 'absent' and inter((ch['lo'], ch['hi']), O):
             matched.append(r)
-        elif r['cls'] == 'PUBLISH_FAILED' and d.get('state') == 'failed' and d.get('commit', '').startswith('ex:') \
-                and int(d.get('commitEnd', -1)) >= O[0] and 'network' not in d.get('reason', '') \
-                and not any(v[3] == r['path'] for v in final['priv'].values()) and 'file on disk: True' in r['why']:
+        elif r['cls'] == 'PUBLISH_FAILED' and d.get('state') == 'failed' and (d.get('commit'), d.get('reason')) in MATCHING_PUBLISH_FAILURES \
+                and int(d.get('commitStart', -1)) > O[0] and r['residual'] == 'intact' \
+                and not any(v[3] == r['path'] for v in final['priv'].values()):
             matched.append(r)
+        elif r['cls'] == 'PUBLISH_FAILED':
+            unmatched.append(r)   # andere Fehlerart, Commit vor dem Verwaisen oder Restdatei nicht vollständig/intakt
         elif r['cls'] in ('UNKNOWN', 'TRANSIENT', 'UNEXPLAINED') or ch['unbracketed'] or (r['cls'] in ('OWNER_CHANGED', 'LOST') and not ch['changed']):
             uncertain.append(r)
         else:

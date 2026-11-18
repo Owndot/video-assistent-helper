@@ -41,6 +41,7 @@ jobs:
           python3 -I tests/bootscan/test_pkgremoval_verdict.py
           python3 -I tests/bootscan/test_pkgremoval_script.py
           python3 -I tests/bootscan/test_archive_integrity.py
+          python3 -I tests/bootscan/test_probe_parsers.py
       - name: Pinned toolchains (Rust from rust-toolchain.toml, NDK r27c, SDK 37.0, build-tools 36.0.0 + 34.0.0)
         run: |
           set -euo pipefail
@@ -53,8 +54,8 @@ jobs:
       - name: Diagnosis test class into the test APK (this job only; the only change to the checkout)
         run: |
           set -euo pipefail
-          cp tests/bootscan/MediaStoreBootScanProbeTest.java app/src/androidTestChanneltest/java/de/evp/helfer/
-          test "$(git status --porcelain)" = "?? app/src/androidTestChanneltest/java/de/evp/helfer/MediaStoreBootScanProbeTest.java"
+          cp tests/bootscan/MediaStoreBootScanProbeTest.java tests/bootscan/ProbeParsers.java app/src/androidTestChanneltest/java/de/evp/helfer/
+          test "$(git status --porcelain)" = "$(printf '%s\n' '?? app/src/androidTestChanneltest/java/de/evp/helfer/MediaStoreBootScanProbeTest.java' '?? app/src/androidTestChanneltest/java/de/evp/helfer/ProbeParsers.java')"
       - name: Test APKs with a throwaway signer (deleted after the build; one build for both variants)
         run: |
           set -o pipefail

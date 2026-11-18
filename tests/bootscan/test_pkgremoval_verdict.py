@@ -29,6 +29,7 @@ SUP_PENDING = {'orphan': 'delayed-all', 'scan_after_pkg_end': 2400}    # dazu ei
 NOTSUP = {'orphan': 'delayed-install1', 'scan_after_pkg_end': 2000}
 AMBIG = {'orphan': 'delayed-all', 'scan_after_pkg_end': 1500}         # Anlegen einer Zeile im Beobachtungsintervall
 CTRL = {'scan_after_pkg_end': 2000}
+OVERLAP_CREATE = {'orphan': 'delayed-all', 'scan_after_pkg_end': 1900, 'create_ms': 400}   # create() von seq 30001 reicht in das Verwaisungsintervall
 
 
 def dl_line(sim, seq):
@@ -101,7 +102,8 @@ def cases():
     s = S.simulate('uninstall', SUP_PENDING)
     fl = dl_line(s, 30002)
     add('2', 'publish failure of a different kind (commit not reached, reason network) never supports -> INCONCLUSIVE', 'uninstall',
-        sub_line(s, fl, fl.replace('commit=ex:IOException', 'commit=-').replace('reason=storage', 'reason=network')), res('INCONCLUSIVE'))
+        sub_line(s, fl, re.sub(r'commitStart=\d+ commitEnd=\d+ commit=ex:IOException', 'commitStart=-1 commitEnd=-1 commit=-', fl).replace('reason=storage', 'reason=network')),
+        res('INCONCLUSIVE'))
     add('2', 'no overlap of mount scan and package step -> INCONCLUSIVE', 'uninstall',
         S.simulate('uninstall', {'orphan': 'delayed-all', 'scan_after_pkg_end': None}), res('INCONCLUSIVE'))
     add('2', 'orphaning not delayed (at the uninstall) is normal behaviour -> INCONCLUSIVE', 'uninstall',
@@ -109,10 +111,11 @@ def cases():
         lambda r, why, rows: r == 'INCONCLUSIVE' and 'not delayed' in why[0] and all(x['cls'] == 'ORPHANED_EXPECTED' for x in rows if x['gen'] == 'install1'))
     add('2', 'no orphaning observed -> INCONCLUSIVE', 'uninstall', S.simulate('uninstall', {'orphan': None, 'scan_after_pkg_end': 2000}),
         lambda r, why, rows: r == 'INCONCLUSIVE' and all(x['cls'] == 'NOT_ORPHANED' for x in rows if x['gen'] == 'install1'))
-    s = S.simulate('uninstall', SUP)
+    s = S.simulate('uninstall', NOTSUP)   # at_risk-Zeile sonst unversehrt: nur die URI-Abfrage ist unzuverlässig
     q = next(l for l in s['logcat'].splitlines() if ' URIQ ' in l and ' seq=30000 off=-1 ' in l)
-    add('2', 'UNKNOWN (recheck query error) of an at-risk row stays uncertainty -> INCONCLUSIVE', 'uninstall',
-        sub_line(s, q, q.split(' res=')[0] + ' res=error:SecurityException'), res('INCONCLUSIVE'))
+    add('2', 'UNKNOWN (recheck query error) of an otherwise intact at-risk row stays uncertainty -> INCONCLUSIVE, not NOT_SUPPORTED', 'uninstall',
+        sub_line(s, q, q.split(' res=')[0] + ' res=error:SecurityException'),
+        lambda r, why, rows: r == 'INCONCLUSIVE' and cls(r, rows, 30000) == 'UNKNOWN')
     s = S.simulate('uninstall', SUP)
     q = next(l for l in s['logcat'].splitlines() if ' URIQ ' in l and ' seq=20001 off=250 ' in l)
     add('2', 'first installation not valid (pre row invisible at +250 ms) -> INCONCLUSIVE', 'uninstall',
@@ -184,6 +187,112 @@ def cases():
     add_line(s, t, 'AndroidRuntime', 'FATAL EXCEPTION: main', 4400, 4400)
     add_line(s, t + 1, 'AndroidRuntime', 'Process: com.android.providers.media.module, PID: 4400', 4400, 4400)
     add('5', 'MediaProvider crash during the window -> INCONCLUSIVE, never NOT_SUPPORTED', 'uninstall', s, res('INCONCLUSIVE'))
+    # ======== Codex-NO-GO 2 (zweiter Review von 5627df2)
+    # ---- P1-1: Schlussaufnahme verbindlich, frühere URI-Abfrage überstimmt sie nicht
+    add('P1-1', 'control: URI visible in the recheck, row lost afterwards -> not CLEAN', 'control',
+        S.simulate('control', dict(CTRL, recheck_mutation=(30001, 'lost'))), lambda r, why, rows: r == 'ANOMALY' and cls(r, rows, 30001) == 'LOST')
+    add('P1-1', 'URI visible in the recheck, owner NULL afterwards -> not NOT_SUPPORTED', 'uninstall',
+        S.simulate('uninstall', dict(NOTSUP, recheck_mutation=(30000, 'null'))),
+        lambda r, why, rows: r == 'INCONCLUSIVE' and cls(r, rows, 30000) == 'OWNER_CHANGED')
+    add('P1-1', 'URI visible in the recheck, pending=1 afterwards (late row) -> not SUPPORTED', 'uninstall',
+        S.simulate('uninstall', dict(SUP, recheck_mutation=(30008, 'pending'))),
+        lambda r, why, rows: r == 'INCONCLUSIVE' and cls(r, rows, 30008) == 'STATE_CHANGED')
+
+    # ---- P1-2: Dateien unabhängig vom Providerzustand; nur nachgewiesene passende Fehler
+    def residual(kind):
+        def f(dev):
+            p = S.DIR + 'BootScanProbe-a1b2c3d4e5f6-30002.mp4'
+            if kind == 'truncated':
+                dev.disk[p] = (S.SIZE // 2, S.sha(30002)[::-1])
+            elif kind == 'altered':
+                dev.disk[p] = (S.SIZE, '0' * 64)
+            elif kind == 'missing':
+                del dev.disk[p]
+        return f
+    add('P1-2', 'failed publish with complete, intact residual file -> SUPPORTED', 'uninstall', S.simulate('uninstall', SUP_PENDING, before_recheck=residual('intact')),
+        lambda r, why, rows: r == 'SUPPORTED' and 'residual file intact' in {x['seq']: x['why'] for x in rows}['30002'])
+    for kind in ('truncated', 'altered', 'missing'):
+        add('P1-2', 'failed publish with %s residual file -> not SUPPORTED, not DATA_LOSS (cleanup may be regular)' % kind, 'uninstall',
+            S.simulate('uninstall', SUP_PENDING, before_recheck=residual(kind)),
+            lambda r, why, rows, k=kind: r == 'INCONCLUSIVE' and ('residual file %s' % k) in {x['seq']: x['why'] for x in rows}['30002'])
+    s = S.simulate('uninstall', SUP, before_recheck=corrupt(30005))
+    lines = s['logcat'].splitlines()
+    rs = next(i for i, l in enumerate(lines) if ' BOOTSCAN START ' in l and 'phase=recheck' in l)
+    li = max(i for i, l in enumerate(lines) if ' BOOTSCAN SNAP ' in l and 'final=1' in l)
+    n = re.search(r' n=(\d+) ', lines[li]).group(1)
+    lines[li] = re.sub(r'priv=ok privN=\d+ privH=\w+ cross=ok', 'priv=bad:frame-Q-END_rc-1 privN=-1 privH=- cross=na', lines[li])
+    s['logcat'] = '\n'.join(l for i, l in enumerate(lines) if not (rs < i < li and ' BOOTSCAN PRIV ' in l and ' n=%s ' % n in l)) + '\n'
+    add('P1-2', 'final privileged snapshot invalid, valid final disk snapshot shows a damaged published file -> DATA_LOSS', 'uninstall', s,
+        lambda r, why, rows: r == 'DATA_LOSS' and any('30005' in w for w in why))
+    for label, old_, new_ in [('reason=internal', 'reason=storage', 'reason=internal'),
+                              ('another exception in the commit', 'commit=ex:IOException', 'commit=ex:IllegalStateException')]:
+        s = S.simulate('uninstall', SUP_PENDING)
+        fl = dl_line(s, 30002)
+        add('P1-2', 'engine error not explicitly matching (%s) never supports -> INCONCLUSIVE' % label, 'uninstall', sub_line(s, fl, fl.replace(old_, new_)),
+            res('INCONCLUSIVE'))
+
+    s = S.simulate('control', CTRL)    # Wechselwirkung: Provider bestätigt alles, die Schluss-Dateiaufnahme ist ungültig
+    lines = s['logcat'].splitlines()
+    rs = next(i for i, l in enumerate(lines) if ' BOOTSCAN START ' in l and 'phase=recheck' in l)
+    li = max(i for i, l in enumerate(lines) if ' BOOTSCAN DSNAP ' in l and 'final=1' in l)
+    n = re.search(r' n=(\d+) ', lines[li]).group(1)
+    lines[li] = re.sub(r'disk=ok diskN=\d+ diskH=\w+', 'disk=bad:frame diskN=-1 diskH=-', lines[li])
+    s['logcat'] = '\n'.join(l for i, l in enumerate(lines) if not (rs < i < li and ' BOOTSCAN DISK ' in l and ' n=%s ' % n in l)) + '\n'
+    add('P1-2', 'final disk snapshot invalid, provider confirms every row -> files unconfirmed, never CLEAN', 'control', s,
+        lambda r, why, rows: r == 'INCONCLUSIVE' and all(x['cls'] == 'UNKNOWN' for x in rows))
+
+    # ---- P1-3: Prüfsummen und Parser fail-closed
+    s = S.simulate('uninstall', SUP)
+    ds = next(l for l in s['logcat'].splitlines() if ' BOOTSCAN DSNAP ' in l and 'phase' not in l and 'disk=ok' in l)
+    add('P1-3', 'valid disk snapshot with diskH=- -> INVALID', 'uninstall', sub_line(s, ds, re.sub(r'diskH=\w+', 'diskH=-', ds)), res('INVALID'))
+    s = S.simulate('uninstall', SUP)
+    sn = next(l for l in s['logcat'].splitlines() if ' BOOTSCAN SNAP ' in l and 'priv=ok' in l)
+    add('P1-3', 'valid snapshot without privH field -> INVALID', 'uninstall', sub_line(s, sn, re.sub(r' privH=\w+', '', sn)), res('INVALID'))
+    s = S.simulate('uninstall', SUP)
+    pl = next(l for l in s['logcat'].splitlines() if ' BOOTSCAN PRIV ' in l and ' +' in l)
+    add('P1-3', 'two change operations for the same key in one frame -> INVALID', 'uninstall', sub_line(s, pl, pl + '\n' + pl), res('INVALID'))
+
+    # ---- P1-4: zeitliche Kausalität und Zeitachsen
+    add('P1-4', 'create() overlapping the orphaning interval is not "before" it -> no SUPPORTED', 'uninstall', S.simulate('uninstall', OVERLAP_CREATE),
+        lambda r, why, rows: r == 'INCONCLUSIVE' and any(x['seq'] == '30001' and x['risk'] == 'ambiguous' and x['lo'] < x['O'][0] <= x['lo_end'] for x in rows))
+    for label, seq, field, delta in [('insertEnd before insertStart', 20001, 'insertEnd', -10), ('commitEnd before commitStart', 30000, 'commitEnd', -20),
+                                     ('done before commitEnd', 30001, 'done', -15)]:
+        s = S.simulate('uninstall', NOTSUP)
+        fl = dl_line(s, seq)
+        if field == 'insertEnd':
+            v = int(re.search(r'insertStart=(\d+)', fl).group(1)) + delta
+        elif field == 'commitEnd':
+            v = int(re.search(r'commitStart=(\d+)', fl).group(1)) + delta
+        else:
+            v = int(re.search(r'commitEnd=(\d+)', fl).group(1)) + delta
+        add('P1-4', 'impossible time order: %s -> INVALID' % label, 'uninstall', sub_line(s, fl, re.sub(r'%s=\d+' % field, '%s=%d' % (field, v), fl)),
+            res('INVALID'))
+    s = S.simulate('uninstall', NOTSUP)
+    sn = next(l for l in s['logcat'].splitlines() if ' BOOTSCAN SNAP ' in l and 'phase' not in l and ' n=3 ' in l)
+    t0 = int(re.search(r' t=(\d+)', sn).group(1))
+    add('P1-4', 'snapshot ending before it began -> INVALID', 'uninstall', sub_line(s, sn, re.sub(r'tEnd=\d+', 'tEnd=%d' % (t0 - 5), sn)), res('INVALID'))
+    s = S.simulate('uninstall', NOTSUP)
+    q = next(l for l in s['logcat'].splitlines() if ' URIQ ' in l and ' seq=30001 off=2000 ' in l)
+    dt = int(re.search(r'done=(\d+)', dl_line(s, 30001)).group(1))
+    add('P1-4', 'URI check before the download was done -> INVALID', 'uninstall', sub_line(s, q, re.sub(r' t=\d+', ' t=%d' % (dt - 100), q)), res('INVALID'))
+    s = S.simulate('uninstall', NOTSUP)
+    h = s['hosts'].splitlines()
+    i = next(k for k, l in enumerate(h) if l.startswith('QT-END'))
+    a = int(next(l for l in h[:i] if l.startswith('QT-BEGIN')).split('t=')[1].split()[0])
+    h[i] = 'QT-END rc=0 t=%d' % (a - 50)
+    s['hosts'] = '\n'.join(h) + '\n'
+    add('P1-4', 'host query ending before it began -> INVALID', 'uninstall', s, res('INVALID'))
+
+    # ---- P2-5: reguläre Prozessbeendigungen vs. echte Abstürze
+    add('P2-5', 'regular "finished inst" kills after each instrumentation keep the definitive result (SUPPORTED)', 'uninstall',
+        S.simulate('uninstall', SUP), res('SUPPORTED'))
+    add('P2-5', 'process killed by the package update (installPackageLI) is expected -> CLEAN', 'control',
+        S.simulate('control', dict(CTRL, pkg_step_kill=True)), res('CLEAN'))
+    add('P2-5', 'process killed by the uninstall (deletePackageX) is expected -> NOT_SUPPORTED stays', 'uninstall',
+        S.simulate('uninstall', dict(NOTSUP, pkg_step_kill=True)), res('NOT_SUPPORTED'))
+    for kind in ('app_fatal', 'app_kill_lmk', 'provider_died', 'oom', 'anr'):
+        add('P2-5', 'real crash evidence (%s) during post -> INCONCLUSIVE' % kind, 'uninstall', S.simulate('uninstall', dict(NOTSUP, crash=kind)),
+            lambda r, why, rows: r == 'INCONCLUSIVE' and 'crash' in why[0])
     return C
 
 

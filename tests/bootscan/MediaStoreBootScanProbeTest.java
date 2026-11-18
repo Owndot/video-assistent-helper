@@ -73,9 +73,6 @@ public class MediaStoreBootScanProbeTest {
     static final long[] URI_OFFSETS = {0, 250, 2_000, 10_000};
     static final long[] URI_OFFSETS_PRE = {0, 250};
     static final Pattern SCAN_LINE = Pattern.compile("Scanned external_primary due to REASON_MOUNTED");
-    static final Pattern ROW = Pattern.compile("^Row: \\d+ _id=(\\d+), owner_package_name=([^,]*), is_pending=(\\d+), is_trashed=(\\d+), "
-        + "_data=([^,]*), _display_name=([^,]*), _size=([^,]*)$");
-    static final Pattern FILE = Pattern.compile("^([0-9a-f]{64}) (\\d+) (/storage/\\S+)$");
 
     String run, phase, token, pkg;
     Context ctx;
@@ -122,7 +119,11 @@ public class MediaStoreBootScanProbeTest {
                 MediaStore.MediaColumns.IS_PENDING, MediaStore.MediaColumns.DISPLAY_NAME},
                 MediaStore.MediaColumns.DISPLAY_NAME + " LIKE ?", new String[] {"%" + token + "%"}, MediaStore.MediaColumns._ID)) {
             if (c == null) { status[0] = "null-cursor"; return null; }
-            while (c.moveToNext()) out.put(String.valueOf(c.getLong(0)), clean(c.getString(1)) + "|" + c.getInt(2) + "|" + clean(c.getString(3)));
+            while (c.moveToNext())
+                if (out.put(String.valueOf(c.getLong(0)), clean(c.getString(1)) + "|" + c.getInt(2) + "|" + clean(c.getString(3))) != null) {
+                    status[0] = "bad:dup-id";   // dieselbe ID zweimal im Cursor: kein Beleg
+                    return null;
+                }
         } catch (RuntimeException e) {
             status[0] = "error:" + e.getClass().getSimpleName();
             return null;
@@ -139,23 +140,7 @@ public class MediaStoreBootScanProbeTest {
         List<String> lines;
         try { lines = shell("sh " + QUERY_SH + " " + token); }
         catch (IOException | RuntimeException e) { status[0] = "bad:exec-" + e.getClass().getSimpleName(); return null; }
-        if (lines.size() < 2 || !lines.get(0).equals("Q-BEGIN") || !lines.get(lines.size() - 1).equals("Q-END rc=0")) {
-            status[0] = "bad:frame-" + (lines.isEmpty() ? "empty" : clean(lines.get(lines.size() - 1)).replace('=', '-'));
-            return null;
-        }
-        Map<String, String> out = new TreeMap<>();
-        boolean none = false;
-        for (String l : lines.subList(1, lines.size() - 1)) {
-            if (l.equals("No result found.")) { none = true; continue; }
-            Matcher m = ROW.matcher(l);
-            if (!m.matches()) { status[0] = "bad:line"; return null; }
-            out.put(m.group(1), clean(m.group(2)) + "|" + m.group(3) + "|" + m.group(4) + "|" + clean(m.group(5)));
-        }
-        if (none && !out.isEmpty()) { status[0] = "bad:mixed"; return null; }
-        // leere Antwort nur, wenn der Provider ausdrücklich "No result found." meldete (sonst unvollständige Ausgabe)
-        if (!none && out.isEmpty()) { status[0] = "bad:empty"; return null; }
-        status[0] = "ok";
-        return out;
+        return ProbeParsers.parsePriv(lines, status);   // fail-closed: Rahmen, Zeilennummern, eindeutige IDs, leer nur ausdrücklich
     }
 
     /** Dateien dieses Laufs auf der Platte (Shell): Pfad -> Größe|SHA-256. null = Aufnahme nicht verlässlich. */
@@ -163,18 +148,7 @@ public class MediaStoreBootScanProbeTest {
         List<String> lines;
         try { lines = shell("sh " + FILES_SH + " " + token); }
         catch (IOException | RuntimeException e) { status[0] = "bad:exec-" + e.getClass().getSimpleName(); return null; }
-        if (lines.size() < 2 || !lines.get(0).equals("F-BEGIN") || !lines.get(lines.size() - 1).equals("F-END rc=0")) {
-            status[0] = "bad:frame";
-            return null;
-        }
-        Map<String, String> out = new TreeMap<>();
-        for (String l : lines.subList(1, lines.size() - 1)) {
-            Matcher m = FILE.matcher(l);
-            if (!m.matches()) { status[0] = "bad:line"; return null; }
-            out.put(m.group(3), m.group(2) + "|" + m.group(1));
-        }
-        status[0] = "ok";
-        return out;
+        return ProbeParsers.parseDisk(lines, status);
     }
 
     /**
@@ -193,12 +167,7 @@ public class MediaStoreBootScanProbeTest {
         if (lines % 25 == 0) { try { Thread.sleep(2); } catch (InterruptedException e) { Thread.currentThread().interrupt(); } }
     }
 
-    /** SHA-256 (erste 16 Hex-Zeichen) über "schlüssel|wert" je Zeile, nach Schlüssel sortiert, mit "\n" verbunden. */
-    static String digest(Map<String, String> m) {
-        StringBuilder b = new StringBuilder();
-        for (Map.Entry<String, String> e : new TreeMap<>(m).entrySet()) { if (b.length() > 0) b.append('\n'); b.append(e.getKey()).append('|').append(e.getValue()); }
-        try { return sha(b.toString().getBytes(StandardCharsets.UTF_8)).substring(0, 16); } catch (Exception e) { return "-"; }
-    }
+    static String digest(Map<String, String> m) { return ProbeParsers.digest(m); }
 
     static volatile String RUN = "-";
 

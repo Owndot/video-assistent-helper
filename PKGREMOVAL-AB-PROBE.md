@@ -1,6 +1,6 @@
 # A/B-Diagnose: verzögerte Paket-Deinstallation im MediaProvider (Testplan)
 
-Stand 2026-11-18, überarbeitet nach Codex-NO-GO 1 (Regeln `pkgab=v2`, `snapshots=v2`, `foreign=v2`).
+Stand 2026-11-18, überarbeitet nach Codex-NO-GO 1 und NO-GO 2 (Regeln `pkgab=v3`, `snapshots=v3`, `foreign=v2`).
 **Nur vorbereitet: kein Push, kein Emulatorlauf.** Produktcode unverändert (`546af14`, `7978a41`); beide
 Lieferworkflows bleiben `LOCKED`. Das ist keine Lieferfreigabe.
 
@@ -136,17 +136,54 @@ Jetzt laufen der Strom synchron unter einer Dateisperre und die Geräteuhr virtu
 nicht, und das Skript gleicht über Synchronisationsmarker ab. Zwei identische Läufe ergeben nachweislich dieselben
 Klassen.
 
+## Codex-NO-GO 2: fünf Blocker (Regeln `pkgab=v3`, `snapshots=v3`)
+
+| Befund | Korrektur (Invariante) |
+|---|---|
+| P1-1 | Die gültige Schlussaufnahme der Nachprüfung ist verbindlich. `OK` nur, wenn sie ID, Pfad, Besitzer, „veröffentlicht“ bestätigt, die App-Sicht die Zeile enthält und jede URI-Abfrage sie sah; eine frühere erfolgreiche URI-Abfrage verdeckt keinen späteren Verlust, Besitzerwechsel oder Pending-Wechsel |
+| P1-2 | Dateien und Providerzustand getrennt: eine gültige Schluss-Dateiaufnahme gilt auch bei ungültiger Provideraufnahme (veröffentlichte Datei beschädigt → DATA_LOSS). Fehlgeschlagene Downloads: Restdatei `intact` nur bei passender Größe und SHA-256, sonst `truncated`/`altered`/`missing` (kein Datenverlust, aber kein passender Schaden). Passender Veröffentlichungsfehler nur ausdrücklich `commit=ex:IOException` mit `reason=storage`, Commit nach Beginn des Verwaisens, Restdatei intakt, keine Zeile mehr |
+| P1-3 | Im A/B-Format sind Prüfsummen (`appH`, `privH`, `diskH`, 16 Hex) und `tEnd` für jede gültige Sicht Pflicht; doppelte Änderungen eines Schlüssels im selben Rahmen sind ungültig. Java-Providerparser in `ProbeParsers.java` (ohne Android prüfbar) und Python-Hostparser: lückenlose Zeilennummern ab 0, eindeutige IDs/Pfade, leer nur mit genau einem „No result found.“. Historische Logs bleiben nach ihrer Version auswertbar (Prüfsummen dort nicht verlangt) |
+| P1-4 | Sicher vor dem Verwaisen nur, wenn `create()` vorher **abgeschlossen** war (`insertEnd` < Beginn des Intervalls); überschneidet `create()` das Intervall, ist die Zeile `ambiguous`. Zeitachsen geprüft: `insertStart ≤ insertEnd ≤ commitStart ≤ commitEnd ≤ done` innerhalb der Phase, URI-Prüfungen nach `done`, Aufnahmen `t ≤ tEnd` und monoton, Host-Abfragen Ende ≥ Beginn – sonst INVALID |
+| P2-5 | Prozessereignisse nach PID, Zeit und Grund zugeordnet: `am_kill … finished inst` des Testprozesses nach seinem END, `am_kill` durch `installPackageLI`/`deletePackageX` im Paketschritt und das zugehörige `am_proc_died` sind erwartet; MediaProvider/system_server-Tod, andere Gründe, AndroidRuntime FATAL, OOM, ANR verhindern weiter ein definitives Ergebnis. Der Simulator erzeugt beide Arten |
+
+Regression-first (`tests/bootscan/regress_pkgab_nogo2.py ALT`, alter Stand `5627df2`). Die P1-Fälle wurden ohne reguläre
+Prozessereignisse erzeugt, sonst verdeckt P2-5 im alten Stand alles.
+
+| Befund | Fall | alt | neu |
+|---|---|---|---|
+| P1-1 | control: URI sichtbar, Zeile danach verloren | CLEAN | ANOMALY |
+| P1-1 | URI sichtbar, danach `owner=NULL` | NOT_SUPPORTED | INCONCLUSIVE |
+| P1-1 | URI sichtbar, danach `pending=1` | SUPPORTED | INCONCLUSIVE |
+| P1-1 | Boot-Scan: URI sichtbar, Schlussaufnahme ohne Zeile / NULL / pending | OK / OK / OK | LOST / OWNER_CHANGED / STATE_CHANGED |
+| P1-2 | Restdatei verkürzt bzw. verändert | SUPPORTED | INCONCLUSIVE |
+| P1-2 | Provideraufnahme ungültig, Dateischaden belegt | INCONCLUSIVE | DATA_LOSS |
+| P1-2 | `reason=internal` bzw. andere Exception im Commit | SUPPORTED | INCONCLUSIVE |
+| P1-3 | `diskH=-`, fehlendes `privH`, doppelte Änderung im Rahmen | SUPPORTED | INVALID |
+| P1-3 | Java-Parser: doppelte ID mit Widerspruch / Lücke / Start ≠ 0 | ok | bad:dup-id / bad:rownum |
+| P1-3 | Hostparser: doppelte ID / Zeilenlücke | Abfrage verwendet | verworfen |
+| P1-4 | `create()` überschneidet das Verwaisungsintervall | SUPPORTED | INCONCLUSIVE |
+| P1-4 | rückwärts laufende Zeiten (insert, commit, done, Aufnahme, URI, Host) | NOT_SUPPORTED | INVALID |
+| P2-5 | reguläres `finished inst` bzw. Paketaktion | INCONCLUSIVE | SUPPORTED / CLEAN / NOT_SUPPORTED |
+| P2-5 | echter Absturz, LMK-Kill, MediaProvider-Tod, OOM, ANR | INCONCLUSIVE | INCONCLUSIVE |
+
+Zwei bestehende Fälle wurden an die neue Invariante angepasst, ohne die geprüfte Eigenschaft zu schwächen:
+
+- **URI-Fehler:** Bei unversehrter Zeile ergibt ein URI-Fehler weiter UNKNOWN, nie OK. Belegt die Schlussaufnahme
+  dagegen `owner=NULL`, gilt jetzt OWNER_CHANGED (P1-1).
+- **Netzwerkfehler-Fixture:** Ein Fehler vor dem Commit hat keine Commit-Zeiten. Die frühere Fixture war in sich
+  widersprüchlich und ergäbe jetzt INVALID.
+
 ## Selbsttests (lokal)
 
 | Test | Ergebnis |
 |---|---|
-| `tests/bootscan/test_pkgremoval_verdict.py` | PASS, 50 Fälle (Simulator-Fixtures mit einer Geräteuhr) |
-| `tests/bootscan/test_pkgremoval_script.py` | PASS, 44 Fälle, darunter vollständige Hostabläufe CLEAN, SUPPORTED, NOT_SUPPORTED; 5× hintereinander stabil |
-| `tests/bootscan/test_bootscan_verdict.py` | PASS, 45 Fälle (6 neu für `snapshots=v2`) |
+| `tests/bootscan/test_pkgremoval_verdict.py` | PASS, 79 Fälle (Simulator-Fixtures mit einer Geräteuhr) |
+| `tests/bootscan/test_pkgremoval_script.py` | PASS, 44 Fälle, darunter vollständige Hostabläufe CLEAN, SUPPORTED, NOT_SUPPORTED (mit regulären Prozessereignissen) |
+| `tests/bootscan/test_bootscan_verdict.py` | PASS, 50 Fälle (11 für `snapshots=v2/v3`) |
 | `tests/bootscan/test_bootscan_script.py` | PASS, 11 Fälle |
+| `tests/bootscan/test_probe_parsers.py` | PASS, 24 Fälle (Java-Parser mit javac/java, Hostparser, Prüfsumme Java = Python) |
 | `tests/bootscan/test_archive_integrity.py` | PASS, Originalbelege byte-gleich, Ergebnis DATA_LOSS |
-| Java-Kompilierung der Probe gegen Stubs | nur die bekannten umgebungsbedingten Fehler in Produktdateien |
-| Prüfsumme Java ↔ Python | identisch (`e1b668ebbacb9434`, leere Sicht `e3b0c44298fc1c14`) |
+| Java-Kompilierung der Probe (mit `ProbeParsers.java`) gegen Stubs | nur die bekannten umgebungsbedingten Fehler in Produktdateien |
 
 ## Grenzen
 

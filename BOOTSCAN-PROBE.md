@@ -24,7 +24,7 @@ Dieselbe Signatur steht im früheren `publish rows=0`-Fall `be74008`. Ungeklärt
 | `tests/bootscan/MediaStoreBootScanProbeTest.java` | Gerätetest; wird **nur** im Diagnose-Job vor dem Bau in die Test-APK kopiert |
 | `tools/run-bootscan-probe.sh` | Hostskript, nur frischer Wegwerf-Emulator API 34 |
 | `tools/bootscan_verdict.py` | Einordnung; gibt nie PASS aus |
-| `tests/bootscan/test_bootscan_verdict.py` | 45 Fälle mit synthetischen Logs (3 für Regel `foreign=v2`, 6 für `snapshots=v2`) |
+| `tests/bootscan/test_bootscan_verdict.py` | 50 Fälle mit synthetischen Logs (3 für Regel `foreign=v2`, 11 für `snapshots=v2/v3`) |
 | `tests/bootscan/test_bootscan_script.py` | 11 Fälle, Hostskript gegen nachgebildetes adb |
 | `.github/workflows/bootscan-probe.yml` | genau ein Job, startet nur bei einem Push dieser Dateien |
 

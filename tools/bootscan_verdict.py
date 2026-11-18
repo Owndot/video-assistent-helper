@@ -127,8 +127,13 @@ def parse(logcat, run):
     return scans, ev, problems
 
 
-def phases(ev, run, invalid):
-    """Zerlegt die Ereignisse in Phasen und rekonstruiert die Aufnahmen aus den Änderungszeilen."""
+HEX16 = re.compile(r'^[0-9a-f]{16}$')
+
+
+def phases(ev, run, invalid, require_digest=False):
+    """Zerlegt die Ereignisse in Phasen und rekonstruiert die Aufnahmen aus den Änderungszeilen.
+    require_digest=True (aktuelles A/B-Format): jede gültige Sicht braucht eine 16-stellige Prüfsumme und tEnd; Platzhalter
+    wie "-" oder fehlende Felder machen den Rahmen ungültig. Historische Logs (ohne Prüfsummen) werten ohne diese Pflicht."""
     out, cur = {}, None
     for kind, rest in ev:
         f = kv(rest)
@@ -155,7 +160,18 @@ def phases(ev, run, invalid):
             n = int(f['n'])
             valid = f.get('app') == 'ok' and f.get('priv') == 'ok' and f.get('cross') == 'ok'
             allowed = {'app': f.get('app') == 'ok', 'priv': valid}
+            if require_digest:
+                for name in ('app', 'priv'):
+                    if allowed[name] and not HEX16.match(f.get(name + 'H', '')):
+                        frame(cur, invalid, 'phase %s snapshot %d: %s view valid but digest %r missing or not a digest' % (cur['phase'], n, name, f.get(name + 'H')))
+                if not f.get('tEnd', '').isdigit():
+                    frame(cur, invalid, 'phase %s snapshot %d: no end time' % (cur['phase'], n))
+            t_snap, t_end = int(f['t']), int(f.get('tEnd', f['t']))
+            if t_end < t_snap or (cur['snaps'] and t_snap < cur['snaps'][-1]['t']):
+                frame(cur, invalid, 'phase %s snapshot %d: impossible time (t=%d tEnd=%d, previous t=%s)'
+                      % (cur['phase'], n, t_snap, t_end, cur['snaps'][-1]['t'] if cur['snaps'] else '-'))
             for name in ('app', 'priv'):
+                dup_keys(cur, invalid, name, n)
                 for pn, item in cur['pend_' + name]:
                     if pn != n:
                         frame(cur, invalid, '%s change of snapshot %d logged at snapshot %d' % (name.upper(), pn, n))
@@ -184,6 +200,11 @@ def phases(ev, run, invalid):
             ok = f.get('disk') == 'ok'
             if not cur['snaps'] or cur['snaps'][-1]['n'] != n or any(d['n'] == n for d in cur['dsnaps']):
                 frame(cur, invalid, 'phase %s disk snapshot %d does not belong to the preceding snapshot or is repeated' % (cur['phase'], n))
+            if require_digest and ok and not HEX16.match(f.get('diskH', '')):
+                frame(cur, invalid, 'phase %s disk snapshot %d valid but digest %r missing or not a digest' % (cur['phase'], n, f.get('diskH')))
+            if cur['snaps'] and int(f['t']) < cur['snaps'][-1]['t']:
+                frame(cur, invalid, 'phase %s disk snapshot %d taken before its snapshot' % (cur['phase'], n))
+            dup_keys(cur, invalid, 'disk', n)
             for pn, item in cur['pend_disk']:
                 if pn != n:
                     frame(cur, invalid, 'DISK change of snapshot %d logged at disk snapshot %d' % (pn, n))
@@ -222,6 +243,15 @@ def digest(state):
     return hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]
 
 
+def dup_keys(cur, invalid, name, n):
+    """Zwei Änderungsoperationen für denselben Schlüssel im selben Rahmen sind unzulässig (die Probe schreibt je Schlüssel
+    höchstens eine)."""
+    keys = [item[1:].split('|', 1)[0] for pn, item in cur['pend_' + name]]
+    dups = sorted({k for k in keys if keys.count(k) > 1})
+    if dups:
+        frame(cur, invalid, 'phase %s frame %d: %s changes for the same key twice %s' % (cur['phase'], n, name.upper(), dups[:3]))
+
+
 def cross_check(app, priv):
     """App-Sicht {id: (owner, pending, name)} gegen die unmittelbar danach abgefragte privilegierte Sicht
     {id: (owner, pending, trashed, path)}. Zulässig sind gleiche Werte oder Übergänge, die in der Zeit zwischen beiden
@@ -244,22 +274,55 @@ def cross_check(app, priv):
     return bad
 
 
-def final_frames(rc):
-    """-> (letzte Aufnahme oder None, letzte Dateiaufnahme oder None, Grund). Nur die tatsächlich letzte zählt; ist sie
-    ungültig, gibt es keinen Ersatz durch eine ältere gültige Aufnahme."""
-    snaps, dsnaps = rc.get('snaps', []), rc.get('dsnaps', [])
-    if not snaps or not snaps[-1]['valid']:
-        return None, None, 'last privileged snapshot of the recheck is missing or not valid (%s)' % (snaps[-1]['raw'] if snaps else 'none')
-    if not dsnaps or not dsnaps[-1]['ok']:
-        return snaps[-1], None, 'last disk snapshot of the recheck is missing or not valid'
+def _final_ok(rc, frames, what):
     end = rc.get('end') or {}
-    if 'final' in end and (snaps[-1]['n'] != int(end['final']) or dsnaps[-1]['n'] != int(end['final'])
-                           or not snaps[-1]['final'] or not dsnaps[-1]['final']):
-        return None, None, 'the final snapshot announced by END (%s) is not the last valid snapshot' % end['final']
+    if 'final' in end and (frames[-1]['n'] != int(end['final']) or not frames[-1]['final']):
+        return 'the final %s announced by END (%s) is not the last one' % (what, end['final'])
     last_q = max([int(q['t']) for q in rc.get('uriq', []) if q.get('t', '').isdigit()] or [0])
-    if dsnaps[-1]['t'] < last_q or snaps[-1]['t'] < last_q:
-        return None, None, 'last snapshots of the recheck were taken before the last URI query'
-    return snaps[-1], dsnaps[-1], ''
+    if frames[-1]['t'] < last_q:
+        return 'last %s of the recheck was taken before the last URI query' % what
+    return ''
+
+
+def final_priv(rc):
+    """-> (letzte privilegierte Aufnahme oder None, Grund). Nur die tatsächlich letzte zählt; ist sie ungültig, gibt es
+    keinen Ersatz durch eine ältere gültige Aufnahme."""
+    snaps = rc.get('snaps', [])
+    if not snaps or not snaps[-1]['valid']:
+        return None, 'last privileged snapshot of the recheck is missing or not valid (%s)' % (snaps[-1]['raw'] if snaps else 'none')
+    why = _final_ok(rc, snaps, 'snapshot')
+    return (None, why) if why else (snaps[-1], '')
+
+
+def final_disk(rc):
+    """-> (letzte Dateiaufnahme oder None, Grund) – unabhängig davon, ob die privilegierte MediaStore-Abfrage gültig war."""
+    ds = rc.get('dsnaps', [])
+    if not ds or not ds[-1]['ok']:
+        return None, 'last disk snapshot of the recheck is missing or not valid'
+    why = _final_ok(rc, ds, 'disk snapshot')
+    return (None, why) if why else (ds[-1], '')
+
+
+def final_frames(rc):
+    """Rückwärtskompatibel: (letzte privilegierte Aufnahme, letzte Dateiaufnahme, Grund)."""
+    snap, w1 = final_priv(rc)
+    dsnap, w2 = final_disk(rc)
+    return snap, dsnap, w1 or w2
+
+
+def residual(d, disk):
+    """Zustand der Datei eines Downloads in der letzten Dateiaufnahme: unknown | missing | intact | truncated | altered."""
+    if disk is None:
+        return 'unknown'
+    got = disk.get(DIR + d['name'])
+    if got is None:
+        return 'missing'
+    if got == (d.get('size'), d.get('sha')):
+        return 'intact'
+    try:
+        return 'truncated' if int(got[0]) < int(d.get('size', -1)) else 'altered'
+    except ValueError:
+        return 'altered'
 
 
 def apply(state, item, nfields):
@@ -321,52 +384,60 @@ def visible(res, sid, pkg):
 
 
 def classify(d, ph, pkg):
-    """-> (Klasse, Begründung)."""
+    """-> (Klasse, Begründung). Verbindlich ist der Zustand der tatsächlich letzten Aufnahmen der Nachprüfung: Dateien
+    (Größe, SHA-256) und Providerzeile (ID, Pfad, Besitzer, veröffentlicht) werden getrennt bewertet; eine frühere
+    erfolgreiche URI-Abfrage kann einen später beobachteten Schaden nie verdecken. OK nur, wenn die letzte Beobachtung ID,
+    Pfad, Besitzer und veröffentlichten Status bestätigt und alle URI-Abfragen die Zeile sahen."""
     name, sid = d['name'], d.get('id', '-')
     path = DIR + name
     rc = ph['recheck']
-    snap, dsnap, why = final_frames(rc)
+    dsnap, dwhy = final_disk(rc)
+    snap, pwhy = final_priv(rc)
+    disk = dsnap['disk'] if dsnap else None
     if d.get('state') != 'done':
-        disk = dsnap['disk'] if dsnap else None
         rows = sorted(k for k, v in snap['priv'].items() if v[3] == path) if snap else None
-        return 'PUBLISH_FAILED', 'state=%s reason=%s commit=%s; file on disk: %s; rows for the path: %s' % (
-            d.get('state'), d.get('reason'), d.get('commit'), 'unknown' if disk is None else path in disk, 'unknown' if rows is None else rows)
-    if dsnap is None and snap is not None:
-        return 'UNKNOWN', why
+        return 'PUBLISH_FAILED', 'state=%s reason=%s commit=%s; residual file %s; rows for the path: %s' % (
+            d.get('state'), d.get('reason'), d.get('commit'), residual(d, disk), 'unknown' if rows is None else rows)
+    # Dateien zuerst und unabhängig vom Providerzustand
+    if disk is not None:
+        if path not in disk:
+            return 'DATA_LOSS', 'file %s missing at the end' % name
+        if disk[path] != (d['size'], d['sha']):
+            return 'DATA_LOSS', 'file %s changed: size/sha %s, expected %s/%s' % (name, disk[path], d['size'], d['sha'][:16])
     if snap is None:
-        return 'UNKNOWN', why
-    disk = dsnap['disk']
-    if path not in disk:
-        return 'DATA_LOSS', 'file %s missing at the end' % name
-    if disk[path] != (d['size'], d['sha']):
-        return 'DATA_LOSS', 'file %s changed: size/sha %s, expected %s/%s' % (name, disk[path], d['size'], d['sha'][:16])
+        return 'UNKNOWN', pwhy + ('; ' + dwhy if dwhy else '')
     priv = snap['priv']
+    row = priv.get(sid)
+    phase = ph[d['phase']]
+    early = [(int(q['off']), visible(q['res'], sid, pkg)) for q in phase['uriq'] if q['seq'] == d['seq']]
+    hidden_at = [o for o, v in early if v is False]
+    if row is None:
+        same = sorted((k, v[0]) for k, v in priv.items() if v[3] == path)
+        if same:
+            return 'REPLACED', 'original id %s gone in the final snapshot; path now owned by rows %s' % (sid, same)
+        return 'LOST', 'no row for id %s or path %s in the final snapshot; file %s' % (sid, name, 'complete on disk' if disk else 'state unknown')
+    owner, pending, trashed, ppath = row
+    if owner != pkg:
+        return 'OWNER_CHANGED', 'row %s exists in the final snapshot, owner %s (expected %s); invisible since +%s ms' % (sid, owner, pkg, hidden_at)
+    if pending != '0' or trashed != '0':
+        return 'STATE_CHANGED', 'row %s in the final snapshot: own, pending=%s trashed=%s' % (sid, pending, trashed)
+    if ppath != path:
+        return 'STATE_CHANGED', 'row %s in the final snapshot points to %s, expected %s' % (sid, ppath, path)
+    if disk is None:
+        return 'UNKNOWN', dwhy
     rq = [q for q in rc['uriq'] if q['seq'] == d['seq'] and q['off'] == '-1']
     if len(rq) != 1:
         return 'UNKNOWN', 'recheck URI query missing'
     final_vis = visible(rq[0]['res'], sid, pkg)
-    phase = ph[d['phase']]
-    early = [(int(q['off']), visible(q['res'], sid, pkg)) for q in phase['uriq'] if q['seq'] == d['seq']]
-    hidden_at = [o for o, v in early if v is False]
     if final_vis is None:
         return 'UNKNOWN', 'recheck URI query not reliable: %s' % rq[0]['res']
-    if final_vis:
-        if hidden_at:
-            return 'TRANSIENT', 'invisible at +%s ms after done, visible again in the recheck (same id %s)' % (hidden_at, sid)
-        if any(v is None for _, v in early):
-            return 'UNKNOWN', 'some URI checks after done were not reliable'
-        return 'OK', 'visible at +0/+250/+2000/+10000 ms and in the recheck (id %s)' % sid
-    if sid in priv:
-        owner, pending, trashed, ppath = priv[sid]
-        if owner != pkg:
-            return 'OWNER_CHANGED', 'row %s exists, owner %s (expected %s), invisible since +%s ms' % (sid, owner, pkg, hidden_at)
-        if pending != '0' or trashed != '0':
-            return 'STATE_CHANGED', 'row %s exists, own, pending=%s trashed=%s' % (sid, pending, trashed)
-        return 'UNEXPLAINED', 'row %s exists, own, published, but the app cannot see it' % sid
-    same = sorted((k, v[0]) for k, v in priv.items() if v[3] == path)
-    if same:
-        return 'REPLACED', 'original id %s gone; path now owned by rows %s' % (sid, same)
-    return 'LOST', 'no row for id %s or path %s; file complete on disk' % (sid, name)
+    if not final_vis or snap['app'].get(sid) != (pkg, '0', name):
+        return 'UNEXPLAINED', 'row %s exists, own, published, but the app cannot see it (URI %s, app view %s)' % (sid, rq[0]['res'][:40], snap['app'].get(sid))
+    if hidden_at:
+        return 'TRANSIENT', 'invisible at +%s ms after done, visible again in the recheck (same id %s)' % (hidden_at, sid)
+    if any(v is None for _, v in early):
+        return 'UNKNOWN', 'some URI checks after done were not reliable'
+    return 'OK', 'final snapshot confirms id %s, path, owner, published; visible at every URI check' % sid
 
 
 def group(d, scans):
@@ -385,7 +456,9 @@ def group(d, scans):
 
 
 FOREIGN_RULES = 'v2'   # v1 (c86d84b/8c4b2cb): jede Abweichung der Fremdliste = DATA_LOSS; v2: Hinzufügen nur Hinweis
-SNAPSHOT_RULES = 'v2'  # v1 (bis 1578394): letzte GÜLTIGE Aufnahme, Zähler ungeprüft; v2: s. Kopf
+SNAPSHOT_RULES = 'v3'  # v1 (bis 1578394): letzte GÜLTIGE Aufnahme; v2 (5627df2): Zähler/Prüfsummen, letzte Aufnahme;
+#                       v3: Schlussaufnahme verbindlich vor URI-Abfrage, Dateien unabhängig vom Provider, Pflicht-Prüfsummen
+#                       im A/B-Format, doppelte Änderungen, Zeitprüfung der Aufnahmen
 
 
 def proven_loss(ph, dl_phases, before, after):
