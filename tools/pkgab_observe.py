@@ -37,7 +37,7 @@ _spec = importlib.util.spec_from_file_location('bootscan_parser_for_observe', os
 B = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(B)   # nur Parser/Rekonstruktion: parse, phases, digest, listing, foreign_diff, report_class
 
-TOOL = 'pkgab_observe v3'
+TOOL = 'pkgab_observe v4'
 PKG = 'de.evp.helfer.channeltest'
 SEQ0 = {'pre': 20000, 'post': 30000}
 OFFSETS = {'pre': [0, 250], 'post': [0, 250, 2000, 10000]}
@@ -369,9 +369,10 @@ def host_frames(o, text, fname):
     return out
 
 
-# Größte zulässige Lücke zwischen zwei verwertbaren Host-Abfragen im Beobachtungsfenster (Beginn des Paketschritts bis
-# Ende der Phase post). Der Sampler fragt etwa alle 0,3 s plus Dauer von "adb shell content query" ab; 5 s lassen
-# normale adb-Verzögerungen zu. Eine längere Lücke heißt: Zeitraum ohne Host-Beobachtung -> host_queries unvollständig.
+# Größte zulässige Beobachtungslücke im Fenster (Beginn des Paketschritts bis Ende der Phase post). Der Sampler fragt etwa
+# alle 0,3 s plus Dauer von "adb shell content query" ab; 5 s lassen normale adb-Verzögerungen zu. Eine längere Lücke
+# zwischen zwei Abfragen ODER eine einzelne Abfrage, die länger dauert (t_end - t_begin), heißt: Zeitraum ohne
+# zeitlich zuordenbare Host-Beobachtung -> host_queries unvollständig. Eine blockierte Abfrage ist keine Abdeckung.
 HOST_MAX_GAP_MS = 5000
 
 
@@ -385,6 +386,13 @@ def host_coverage(o, hosts, steps, ph, variant):
         return
     used = sorted((x[2], x[3]) for x in hosts)
     probs = []
+    # Dauer jeder Abfrage, die das Fenster berührt: länger als die zulässige Lücke -> keine kontinuierliche Beobachtung
+    durations = [(x[3] - x[2], x) for x in hosts if x[3] >= begin and x[2] <= end]
+    slow = sorted(((dur, x) for dur, x in durations if dur > HOST_MAX_GAP_MS), key=lambda y: (y[1][2], y[1][3]))
+    if slow:
+        probs.append('%d host queries took longer than %d ms (longest %d ms)' % (len(slow), HOST_MAX_GAP_MS, max(d for d, _ in slow)))
+    det.update(max_query_ms=max(d for d, _ in durations) if durations else None,
+               slow_queries=[{'t_begin': x[2], 't_end': x[3], 'duration_ms': d, 'src': x[6]} for d, x in slow[:20]])
     if not used:
         probs.append('no host query in the observation window')
     else:

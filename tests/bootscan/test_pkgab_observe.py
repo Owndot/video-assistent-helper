@@ -298,6 +298,37 @@ r = host_case('gap', gap)
 check(r['src']['host_queries']['status'] == 'incomplete' and any('gaps longer than' in p_ for p_ in r['src']['host_queries']['problems']),
       'an 8 s gap without host queries inside the window -> incomplete (tolerance %d ms for adb delays)' % 5000)
 
+# ---- Regression (Prüfung 280e1b7): Dauer einzelner Host-Abfragen; Fenster 100000..180000 ms wie im Prüffall
+import importlib.util  # noqa: E402
+_spec = importlib.util.spec_from_file_location('pkgab_observe_for_test', TOOL)
+P = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(P)
+
+
+def coverage(blocks_):
+    """blocks_: [(t_begin, t_end)] -> (Status, Probleme, Detail) der Quelle host_queries für das Fenster 100000..180000."""
+    text = ''.join('QT-BEGIN t=%d res=ms\nNo result found.\nQT-END rc=0 t=%d\n' % (a_, b_) for a_, b_ in blocks_)
+    o_ = P.Observer('uninstall', 'a1b2c3d4e5f6')
+    h_ = P.host_frames(o_, text, 'host-sampler.txt')
+    P.host_coverage(o_, h_, {'uninstall-begin': 100000}, {'post': {'end': {'t': '180000'}}}, 'uninstall')
+    src_ = o_.sources['host_queries']
+    return src_['status'], src_['problems'], src_['detail']
+
+
+st, pr, det = coverage([(99000, 181000)])
+check(st == 'incomplete' and any('took longer than' in p_ for p_ in pr) and det.get('max_query_ms') == 82000
+      and det.get('slow_queries') and det['slow_queries'][0]['duration_ms'] == 82000 and det['slow_queries'][0]['src'][0] == {'file': 'host-sampler.txt', 'line': 1},
+      'a single host query blocked for 82 s over the whole window -> incomplete, duration and raw line reference kept (%s)' % pr[:1])
+normal = [(t, t + 60) for t in range(99800, 180400, 400)]
+st, pr, det = coverage(normal)
+check(st == 'complete' and det.get('max_query_ms') == 60 and not det.get('slow_queries'), 'normal short host queries (60 ms every 400 ms) -> complete (%s)' % pr[:1])
+slower = [(t, t + 3000) for t in range(99800, 180400, 3300)]
+st, pr, det = coverage(slower)
+check(st == 'complete' and det.get('max_query_ms') == 3000, 'legitimately slower host queries (3 s each, below the 5 s tolerance) -> complete (%s)' % pr[:1])
+mixed = [x for x in normal if not 140000 <= x[0] <= 146000] + [(140000, 146000)]
+st, pr, det = coverage(mixed)
+check(st == 'incomplete' and det.get('max_query_ms') == 6000 and len(det.get('slow_queries') or []) == 1, 'one 6 s query among normal ones -> incomplete (%s)' % pr[:1])
+
 # ---- unvollständige Quellen
 s = S.simulate('control', CTRL)
 h = s['hosts'].splitlines()
