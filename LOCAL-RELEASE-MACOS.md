@@ -6,14 +6,14 @@ Arbeitspaket 2 bereitet Build und Prüfung vor. **Jetzt keinen Produktionsschlü
 
 Gradle erzeugt ausschließlich eine **unsignierte** Release-APK. Es liest keinen Keystore und keine EVP-Passwortvariablen mehr. Debug bleibt `de.evp.helfer.debug`; die Produktions-ID bleibt `de.evp.helfer`, minSdk 26, targetSdk 34, Release nicht debuggable. Migration-Fixture-Parameter werden bei Release-Tasks abgelehnt. Release-Versionen müssen explizit angegeben werden; GITHUB_RUN_NUMBER und RELEASE_VERSION_CODE sind keine Produktionsversionsquelle.
 
-Voraussetzungen auf einem vertrauenswürdigen Mac: Git, Python 3.12, JDK 17, Gradle **8.9**, Android-SDK-Plattform **34**, Build-Tools **34.0.0**, AGP **8.5.2** (im Projekt gepinnt). SDK über die offiziellen Android-Werkzeuge installieren. Java/Gradle/SDK-Patchstände und OS für spätere Wiederholungen zusätzlich protokollieren. Der Weg fixiert Quellcommit und wesentliche Werkzeugversionen; eine bitidentische, hermetische Reproduktion über alle Hosts wird damit nicht behauptet. Abhängigkeiten werden über die bestehenden offiziellen Gradle-Repositories aufgelöst; es gibt keine neue Lieferkettenarchitektur.
+Voraussetzungen auf einem vertrauenswürdigen Mac: Git, Python 3.12, JDK 17, Gradle **9.3.1**, Android-SDK-Plattform **37.0** (compileSdk; targetSdk bleibt 34), Build-Tools **36.0.0** (Build) und **34.0.0** (zipalign/apksigner im Skript), AGP **9.1.1** (im Projekt gepinnt). SDK über die offiziellen Android-Werkzeuge installieren. Java/Gradle/SDK-Patchstände und OS für spätere Wiederholungen zusätzlich protokollieren. Der Weg fixiert Quellcommit und wesentliche Werkzeugversionen; eine bitidentische, hermetische Reproduktion über alle Hosts wird damit nicht behauptet. Abhängigkeiten werden über die bestehenden offiziellen Gradle-Repositories aufgelöst; es gibt keine neue Lieferkettenarchitektur.
 
 Nach Review den vollständigen freigegebenen 40-stelligen Quellcommit und die vom Eigentümer gewählte Version einsetzen. Keine Platzhalter ungeprüft übernehmen. Es werden nur Commits ab dem sicheren Ausgangsstand `d111923` akzeptiert. Der Builder verwendet einen separaten, sauberen Git-Worktree dieses Commits; lokale Änderungen im Arbeitsverzeichnis fließen nicht in die APK ein.
 
 ```sh
 export ANDROID_HOME="$HOME/Library/Android/sdk"
 export PATH="$ANDROID_HOME/build-tools/34.0.0:$PATH"
-# JDK 17 und Gradle 8.9 vorher prüfen; kein Shell-Tracing einschalten.
+# JDK 17 und Gradle 9.3.1 vorher prüfen; kein Shell-Tracing einschalten.
 python3 tools/prepare-release.py --commit REVIEWED_FULL_40_HEX_COMMIT \
   --version-code OWNER_CHOSEN_CODE --version-name OWNER_CHOSEN_NAME \
   --out "$HOME/Helper-Releases/NEW_EMPTY_BUILD_DIRECTORY"

@@ -19,11 +19,11 @@ assert.strictEqual(ctx.site('EXAMPLE.COM.'),'example.com');
 assert.strictEqual(ctx.site('127.0.0.1'),'127.0.0.1');
 assert.notStrictEqual(ctx.site('127.0.0.1'),ctx.site('127.0.0.2'));
 const helper=fs.readFileSync(path.join(root,'src/080-helper-app.js'),'utf8');
-const proxy=helper.slice(helper.indexOf('const proxyJobs ='),helper.indexOf('// Koppel-Seite'));
+const proxy=helper.slice(helper.indexOf('const proxyJobs ='),helper.indexOf('// Beim Wischen nicht jede Bewegung'));
 let delivered=false,anonymous=null;
 Object.assign(ctx,{
  hostOf:u=>new URL(u).hostname,
- helper:async p=>p.startsWith('/pull')?(!delivered?(delivered=true,{reqs:[{u:'https://bob.eu.org/v',id:1}]}):{done:true}):{},
+ helper:async p=>p.startsWith('/pull')?(!delivered?(delivered=true,{reqs:[{u:'https://bob.eu.org/v',id:1}]}):{done:true}):p.startsWith('/dlstate')?{ok:true,state:'startet'}:{ok:true},
  gmGet:async(u,o,l,s,anon)=>{anonymous=anon;return {st:200,body:new ArrayBuffer(0)};}
 });
 vm.runInContext(proxy+'\nthis.run=proxyLoop;',ctx);

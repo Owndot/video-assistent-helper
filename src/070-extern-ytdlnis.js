@@ -17,9 +17,16 @@
     openExternal(link, null, YTDLNIS, 'An YTDLnis übergeben …', 'https://github.com/deniscerri/ytdlnis/releases/latest');
     return true;
   }
-  // ---------- Pornhub: komplette MP4-Dateien mit Ton über die eigene Abfrage der Seite ----------
+  // ---------- Seite A: komplette MP4-Dateien mit Ton über die eigene Abfrage der Seite ----------
+  // (Seite A wird am Hash der zweiten Domain-Ebene erkannt, Endung com/org/net – der Name steht nicht im Quelltext)
   // (der HLS-Stream ist dort an den Web-Player gebunden und bleibt im externen Player schwarz)
-  const PH = /(^|\.)pornhub\.(com|org|net)$/i.test(location.hostname);
+  const siteLabelHash = (host) => {
+    const p = String(host || '').toLowerCase().replace(/\.$/, '').split('.');
+    let x = 0x811c9dc5;
+    for (const ch of p.length >= 2 ? p[p.length - 2] : '') { x ^= ch.charCodeAt(0); x = Math.imul(x, 0x01000193) >>> 0; }
+    return p.length >= 2 && /^(com|org|net)$/.test(p[p.length - 1]) ? x : 0;
+  };
+  const PH = siteLabelHash(location.hostname) === 0x507a797;   // Seite A
   let phCache = null, phPending = null, phLog = '-', phHref = '';
   function phMp4() {
     if (!PH) return null;

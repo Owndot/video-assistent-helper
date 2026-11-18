@@ -1,0 +1,11 @@
+// Isolated Android capability test project. Not part of the production
+// helper build (the repository root settings.gradle does not include it).
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories { google(); mavenCentral() }
+}
+rootProject.name = 'KadriPakePocTestApp'
+include ':testapp'

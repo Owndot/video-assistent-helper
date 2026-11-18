@@ -28,7 +28,7 @@ recorded exact version. Mozilla HTTPS APK origin and downloaded digest are
 recorded; this does not independently pin Mozilla's signing certificate.
 
 Local prerequisites: Linux/macOS shell, Android SDK/adb and running disposable
-API33/35 emulator, JDK17, Gradle8.9, Node22, Python3.12, ffmpeg, Tesseract OCR, zip, and the Cairo shared library.
+API33/35 emulator, JDK17, Gradle9.3.1, Node22, Python3.12, ffmpeg, Tesseract OCR, zip, and the Cairo shared library.
 Python image dependencies are pinned in requirements.txt (OpenCV/CairoSVG/Pillow).
 The SVG paths in icons.json come from the player's existing Material Icons
 (Apache2.0); they are screenshot targets, not player instrumentation.

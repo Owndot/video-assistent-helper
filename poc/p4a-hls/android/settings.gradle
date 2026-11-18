@@ -1,0 +1,11 @@
+// P4a: isoliertes HLS->MP4-Machbarkeitsprojekt (nur Test-App für Wegwerf-Emulatoren). Nicht Teil des Helper-Builds
+// (das settings.gradle im Repository-Wurzelverzeichnis bindet es nicht ein); nie signiert, nie hochgeladen.
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories { google(); mavenCentral() }
+}
+rootProject.name = 'P4aHlsRemuxPoc'
+include ':app'

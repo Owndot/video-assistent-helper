@@ -1,0 +1,166 @@
+name: HLS downloads (P4b) – supply chain, JVM, mutations
+
+# P4b: HLS-VOD → MP4 in the helper. Nothing is published; no APK leaves a job.
+on:
+  push:
+    branches: [feature/c3-browser-downloads]
+    paths: ['app/**', 'tests/java/hls/**', 'tests/java/hlsmux/**', 'poc/p4a-hls/tools/**', 'gradle/**', '.github/workflows/hls-download.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hls-download-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  media3-supply-chain:
+    # Resolves exactly the Media3 artifacts the app adds, records their SHA-256 (Gradle dependency verification) and
+    # asks OSV for known vulnerabilities of every resolved coordinate. Text output only.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - name: SDK platform 37 / build-tools 36
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-37.0" "build-tools;36.0.0" < <(yes 2>/dev/null) > /dev/null'
+      - name: Resolve app runtime classpath, record verification metadata for new components
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/out"
+          cp gradle/verification-metadata.xml "$RUNNER_TEMP/before.xml"
+          # Only in this job's workspace if the app does not declare Media3 yet (first pinning pass).
+          if ! grep -q "androidx.media3:media3-extractor" app/build.gradle; then
+            python3 - <<'PY'
+          p = 'app/build.gradle'; s = open(p).read()
+          a = "    implementation 'com.squareup.okhttp3:okhttp-android:5.5.1'\n"
+          assert s.count(a) == 1
+          s = s.replace(a, a + "    implementation 'androidx.media3:media3-extractor:1.11.1'\n    implementation 'androidx.media3:media3-muxer:1.11.1'\n"
+                        "    constraints { implementation('com.google.guava:guava') { version { strictly '33.7.2-android' } } }\n")
+          open(p, 'w').write(s)
+          PY
+          fi
+          grep -n "media3\|guava" app/build.gradle
+          ./gradlew --no-daemon -q --write-verification-metadata sha256 :app:dependencies --configuration releaseRuntimeClasspath > "$RUNNER_TEMP/out/release-runtime-classpath.txt"
+          # alle übrigen Konfigurationen (Debug, channeltest, Instrumentierung, Compile-Klassenpfade)
+          ./gradlew --no-daemon -q --write-verification-metadata sha256 :app:dependencies > "$RUNNER_TEMP/out/all-configurations.txt"
+          diff -u "$RUNNER_TEMP/before.xml" gradle/verification-metadata.xml > "$RUNNER_TEMP/out/verification-metadata.diff" || true
+          echo "----- verification-metadata.diff -----"; cat "$RUNNER_TEMP/out/verification-metadata.diff"
+          echo "----- resolved (release runtime) -----"; grep -E 'media3|guava|failureaccess|listenablefuture|annotation|kotlin-stdlib|jspecify|checker|errorprone' "$RUNNER_TEMP/out/release-runtime-classpath.txt" | sort -u
+          # Nach dem Pinning: jede Komponente steht schon in der eingecheckten Liste (sonst unvollständig → Fehler)
+          if grep -q '^+\s*<component ' "$RUNNER_TEMP/out/verification-metadata.diff"; then echo "verification metadata incomplete"; exit 1; fi
+      - name: Known vulnerabilities (OSV) of the Media3 runtime components (Media3, Guava, JSpecify, annotations)
+        run: |
+          set -euo pipefail
+          status=0
+          python3 - "$RUNNER_TEMP/out/verification-metadata.diff" > "$RUNNER_TEMP/out/osv.txt" 2>&1 <<'PY' || status=1
+          import json, re, sys, urllib.request
+          meta = open('gradle/verification-metadata.xml').read()
+          comps = sorted(set(c for c in re.findall(r'<component group="([^"]+)" name="([^"]+)" version="([^"]+)"', meta)
+                             if c[0] in ('androidx.media3', 'org.jspecify') or c[1] == 'annotation-experimental'
+                             or (c[0] == 'com.google.guava' and (c[2].endswith('-android') or c[1] == 'failureaccess'))))
+          # (Guava -jre gehört nur zu den Build-Werkzeugen, nicht in die App)
+          bad = 0
+          for g, n, v in comps:
+              q = json.dumps({"package": {"name": g + ":" + n, "ecosystem": "Maven"}, "version": v}).encode()
+              r = json.load(urllib.request.urlopen(urllib.request.Request("https://api.osv.dev/v1/query", q, {"Content-Type": "application/json"}), timeout=30))
+              ids = [x["id"] for x in r.get("vulns", [])]
+              print("%s:%s:%s %s" % (g, n, v, ",".join(ids) if ids else "no known vulnerabilities"))
+              for vid in ids:
+                  d = json.load(urllib.request.urlopen("https://api.osv.dev/v1/vulns/" + vid, timeout=30))
+                  print("  %s aliases=%s summary=%s" % (vid, ",".join(d.get("aliases", [])), d.get("summary", "")[:200]))
+                  for a in d.get("affected", []):
+                      for rg in a.get("ranges", []):
+                          print("    %s %s" % (a.get("package", {}).get("name"), [e for e in rg.get("events", [])]))
+              bad += bool(ids)
+          print("components=%d with_vulns=%d" % (len(comps), bad))
+          sys.exit(1 if bad else 0)
+          PY
+          cat "$RUNNER_TEMP/out/osv.txt"
+          exit $status
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: hls-media3-supply-chain-text
+          path: ${{ runner.temp }}/out
+          retention-days: 7
+
+  hls-core-jvm:
+    # Strict parser, URI resolution, plan/budgets and fetches through the real SafeHttpClient (local server), then
+    # mutation probes: every weakened copy must fail.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: ffmpeg (synthetic fixtures)
+        run: |
+          set -euo pipefail
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"; fi
+          done
+          timeout 120 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          timeout 300 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends ffmpeg
+          bash poc/p4a-hls/tools/make-fixtures.sh "$RUNNER_TEMP/fx"
+      - name: HLS core JVM tests and mutation probes
+        run: |
+          set -euo pipefail
+          bash tests/java/hls/run.sh "$RUNNER_TEMP/fx" "$RUNNER_TEMP/deps"
+          python3 -I tests/java/hls/mutation.py "$RUNNER_TEMP/fx" "$RUNNER_TEMP/deps"
+      - name: Network layer guard (HLS core only via SafeHttpClient, remuxer without network)
+        run: bash tools/check-network-layer.sh && bash tools/check-network-layer.sh --self-test
+
+  hls-remux-jvm:
+    # App-Remuxer (de.evp.helfer.hlsmux) mit denselben Media3-1.11.1-Artefakten wie die App (SHA-256 gepinnt) gegen alle
+    # Fixtures; jede Ausgabe gegen die Quelle analysiert (Bilder, Dauer, A/V-Versatz über Blitz/Ton). Dann Mutationen.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'   # Robolectric android-all 16 ist für Java 21 übersetzt
+      - name: ffmpeg (synthetic fixtures incl. 10-min clip)
+        run: |
+          set -euo pipefail
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"; fi
+          done
+          timeout 120 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          timeout 300 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends ffmpeg
+          bash poc/p4a-hls/tools/make-fixtures.sh "$RUNNER_TEMP/fx"
+      - name: Remux + verification + source analysis (JVM, 192 MiB heap)
+        run: bash tests/java/hlsmux/run.sh "$RUNNER_TEMP/fx" "$RUNNER_TEMP/deps"
+      - name: Pinned Kadri capture probe (test sources only, no extension installed)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Owndot/Kadri
+          ref: 0fa3bcbd8cad843d8cda9ea43aa78e2b5b989f4e
+          path: .capture-kadri
+          persist-credentials: false
+      - name: Actual browser capture through address-free staging and unchanged remuxer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/capture-venv"
+          "$RUNNER_TEMP/capture-venv/bin/python" -m pip install playwright==1.56.0
+          export KADRI_CAPTURE_CHROMIUM="$(command -v google-chrome)"
+          "$RUNNER_TEMP/capture-venv/bin/python" -u .capture-kadri/tests/passive_player_capture.py --export-fixture "$RUNNER_TEMP/browser-capture"
+          HLSMUX_CAPTURE_ONLY=1 HLSMUX_CAPTURE_FIXTURE="$RUNNER_TEMP/browser-capture" bash tests/java/hlsmux/run.sh "$RUNNER_TEMP/fx" "$RUNNER_TEMP/deps"
+      - name: Remuxer mutation probes (each weakened copy must fail)
+        run: python3 -I tests/java/hlsmux/mutation.py "$RUNNER_TEMP/fx" "$RUNNER_TEMP/deps"

@@ -1,0 +1,999 @@
+name: P4 test app (de.evp.helfer.p4test, throwaway signer, owner-approved Samsung test only)
+
+# Vom Eigentümer freigegeben („Kadri P4c – Samsung-Test ohne Mac und ohne dauerhaften Signierschlüssel“): EINE
+# temporär signierte Test-APK de.evp.helfer.p4test für den kontrollierten Gerätetest. Keine Produktionsfreigabe:
+# release/production-policy.json bleibt UNAPPROVED, kein Release, kein Tag, nie de.evp.helfer oder channeltest.
+#
+# Ausdrücklich getrennter, temporärer Testsignierweg (Wegwerf-Schlüssel):
+#  * Der Schlüssel entsteht in DIESEM Lauf (keytool, RSA-3072, 2 Tage gültig, DN „… throwaway“), Passwort zufällig nur
+#    im Prozess-Umfeld, nie in einer Ausgabe; signiert wird ausschließlich die P4-Test-APK über die fail-closed Prüfungen
+#    von tools/p4test/sign.sh mit einer Wegwerf-Festlegung im selben Wegwerf-Ordner; danach Schlüssel, Festlegung und
+#    Passwort gelöscht und geprüft, dass kein Schlüsselspeicher mehr existiert.
+#  * Der dauerhafte P4-Signierweg bleibt unverändert: release/p4test-signer.json (KEY_NOT_YET_CREATED, null) und
+#    tools/p4test/** werden weder geändert noch verwendet, um etwas Dauerhaftes festzulegen.
+#  * Nie der Produktionsschlüssel, nie der kompromittierte alte Signierer (ec17fab1…, wird zusätzlich abgewiesen).
+#
+# Gebaut wird exakt der Quell-Commit SOURCE_SHA (Anwendungscode). Nach SOURCE_SHA dürfen sich nur Liefer- und
+# Prüfwerkzeuge ändern, die nicht in die APK eingehen (diese Datei, helper-channel.yml, tools/device_gate.py,
+# tools/delivery/**, tools/run-flaky-repeat.sh, tools/run-channel-publication-regression.sh, tests/gate/**, tests/delivery/**, evidence/**, Root-Markdown); das Geräte-Gate
+# und die CI-Belegprüfung laufen aus dem Workflow-Commit.
+# Voraussetzung: CI auf SOURCE_SHA vollständig; einzige zugelassene Ausnahme ist der dokumentierte Android-10-Befund
+# P4B-A10-SIZE (nur API 29, nur dieser Test, nur für den isolierten Android-17-Test). Jeder Emulator-Job (API 26, 29,
+# 34) wird – ob grün oder rot – vom Geräte-Gate bewertet. Nie akzeptiert: Veröffentlichungsfehler (publish rows=…),
+# PUBLISH_PROBE_STATUS failed, fehlende/unvollständige Sonden, Emulator-/Systemabsturz, unbekannte Fehlschläge.
+#
+# FREIGABESPERRE (Codex Release-Readiness P1): standardmäßig geschlossen (DELIVERY_APPROVAL: 'none'). Der Job "gate"
+# entscheidet ohne Checkout (tools/delivery/lock.py, wörtlich eingebettet): geliefert wird nur bei einer einmaligen,
+# an SOURCE_SHA und KADRI_PAIR_SHA gebundenen Freigabe, die genau der auslösende Push einführt (Commit-Nachricht
+# "Delivery-Approval: <ID>", höchstens 72 h gültig, ID unverbraucht, kein Re-Run). Doku-Commits, Pin-Korrekturen und
+# spätere Pushes erben eine Freigabe nie. Der Paket-Job prüft die Sperre vor jedem Checkout erneut.
+# Öffentliches Actions-Artefakt mit 2 Tagen Aufbewahrung (Repository ist öffentlich).
+on:
+  push:
+    branches: [feature/c3-browser-downloads]
+    paths: [.github/workflows/p4-test-package.yml]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: p4-test-package
+  cancel-in-progress: false
+
+env:
+  # Freigabesperre: 'none' = gesperrt. Nur der Eigentümer trägt hier eine Freigabe ein (Format in tools/delivery/lock.py).
+  DELIVERY_APPROVAL: 'none'
+  # Anwendungscode der Test-APK (Codex-Folgereview, CI vollständig auf diesem Commit)
+  SOURCE_SHA: 546af144fe2c2efa00c9c93b745c695f6077dbaa
+  # Gepaarte Kadri-Quelle der P4-Testerweiterung
+  KADRI_PAIR_SHA: 7978a41232c3b1582289c53461da4fe63ad28ff9
+  KADRI_P4_EXTENSION_ID: pcccpjllneffccpenbepmfbkjedllkkf
+  # Nur Information: Herkunft des in Kadri vendorten WASM-Kerns (NICHT der Anwendungscode dieser APK; die APK baut ihre
+  # native Bibliothek aus SOURCE_SHA). Kadri prüft die Herkunft durch bitgenauen Neuaufbau.
+  KADRI_WASM_CORE_ORIGIN_SHA: bd5ab293bbc6729cabafe72b6bd5606f8c74f5e5
+  NDK_VERSION: 27.2.12479018
+  RETENTION_DAYS: 2
+
+jobs:
+  # Entscheidung ohne Checkout; ohne gültige Freigabe wird der Paket-Job übersprungen (nichts gebaut, signiert, geladen).
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      go: ${{ steps.lock.outputs.go }}
+      approval_id: ${{ steps.lock.outputs.approval_id }}
+    steps:
+      - id: lock
+        name: Delivery lock (closed unless a new, bound, unused owner approval is introduced by this push)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOCK_BIND: SOURCE_SHA KADRI_PAIR_SHA
+          LOCK_BRANCH: feature/c3-browser-downloads
+          LOCK_WORKFLOW: .github/workflows/p4-test-package.yml
+          LOCK_SCOPE: helper-p4test
+          LOCK_ENVIRONMENT: p4-delivery
+          LOCK_REVIEWERS: ''   # festgelegte Reviewer-Identität(en), nur der Eigentümer trägt sie ein (leer = gesperrt)
+        run: |
+          set -euo pipefail
+          python3 -I - <<'LOCKPY'
+          #!/usr/bin/env python3
+          """Freigabesperre für Testlieferungen (Codex Release-Readiness P1). Läuft im Workflow VOR jedem Checkout.
+
+          Diese Datei ist die maßgebliche Kopie. Der Job "gate" der Lieferworkflows enthält sie wörtlich als Inline-Skript
+          (tests/delivery/test_lock.py prüft die Byte-Gleichheit und die Workflow-Struktur). Helper und Kadri nutzen dieselbe Datei.
+
+          Standard: gesperrt. DELIVERY_APPROVAL: 'none' -> go=no, nichts wird ausgecheckt, gebaut, signiert oder hochgeladen.
+
+          Eine Freigabe ist genau ein Wert der env-Variable DELIVERY_APPROVAL in der Workflowdatei, in einfachen Anführungszeichen:
+              SOURCE_SHA=<40hex>;<PAAR>=<40hex>[;...];SCOPE=<Lieferumfang>;ID=<id>;UNTIL=<YYYY-MM-DDTHH:MMZ>
+          Die Schlüssel sind genau die in LOCK_BIND genannten Pins plus SCOPE (= LOCK_SCOPE, der Lieferumfang), ID und UNTIL. Jeder Wert muss dem Pin derselben
+          Workflowdatei gleichen. Wer einen Pin ändert, ohne die Freigabe neu zu erteilen, sperrt damit die Lieferung.
+
+          Die Freigabe gilt nur einmal und nur für den Push, der sie einführt:
+            * Ereignis push auf genau LOCK_BRANCH, erster Versuch (keine Wiederholung eines Laufs), Auslöser = Repo-Eigentümer;
+            * der Kopf-Commit dieses Pushes trägt die Zeile "Delivery-Approval: <ID>" in der Commit-Nachricht;
+            * am Stand vor dem Push (event.before) stand ein anderer DELIVERY_APPROVAL-Wert. Ein späterer Doku-Commit, eine
+              Pin-Korrektur oder ein anderer Push erbt die Zeile unverändert und wird deshalb abgewiesen;
+            * kein anderer Lauf dieses Workflows (irgendein Branch, irgendein Ergebnis) trägt dieselbe ID oder denselben Commit.
+              Eine benutzte ID ist verbraucht, auch wenn die Lieferung danach scheiterte – GRENZE (Codex NO-GO 3): geprüft wird
+              die Actions-Historie; wer Läufe löschen kann (Repo-Admin, auch ein Agent mit Adminrechten), kann eine ID wieder
+              "frei" machen. Dauerhafte Einmaligkeit ist damit NICHT gewährleistet; Vorschlag einer gegen Agentenänderungen
+              geschützten Verbrauchsregistrierung: P4-APPROVAL-PROPOSAL.md (nicht umgesetzt, nicht aktiviert);
+            * UNTIL liegt in der Zukunft und höchstens 72 Stunden entfernt.
+            * das GitHub-Environment LOCK_ENVIRONMENT existiert, Administratoren dürfen es NICHT umgehen (can_admins_bypass
+              false), "Prevent self-review" ist an, die Required Reviewers sind GENAU die im Workflow festgelegten Benutzer
+              (LOCK_REVIEWERS, nur Benutzer, keine Teams) und keiner davon ist der Auslöser/Eigentümer. "Irgendein Reviewer" genügt
+              nicht (Codex NO-GO 3);
+            * nur im Paketjob (LOCK_REQUIRE_GO=1): für DIESEN Lauf liegt eine Zustimmung ("approved") eines festgelegten Reviewers
+              (≠ Auslöser) für LOCK_ENVIRONMENT vor und keine Ablehnung – eine Umgehung ohne Zustimmung sperrt.
+          Diese Prüfungen belegen nur die EINRICHTUNG und die ZUSTIMMUNG einer anderen GitHub-Identität. Dass hinter ihr ein
+          unabhängiger Mensch steht, dessen Zugang kein Agent besitzt, kann kein Workflow prüfen (Pflicht des Eigentümers, siehe
+          P4-APPROVAL-PROPOSAL.md).
+          Jede nicht prüfbare Bedingung (API-Fehler, fehlende Ereignisdaten) zählt als nicht erfüllt (fail closed).
+
+          Codex Release-Readiness 2: Dieselbe Prüfung läuft im Paketjob erneut (LOCK_REQUIRE_GO=1) – vor dem Checkout, vor dem
+          Signieren und vor dem Upload. Ein Re-Run eines fehlgeschlagenen Paketjobs (GITHUB_RUN_ATTEMPT > 1, Gate-Ausgabe
+          wiederverwendet), eine inzwischen abgelaufene Freigabe oder eine anderweitig verbrauchte ID sperren dort fail closed.
+
+          Exit 0 mit go=no: gesperrt (Normalzustand). Exit 0 mit go=yes: freigegeben.
+          Exit 1 mit go=no: Freigabe eingetragen, aber ungültig (sichtbar roter Lauf).
+          """
+          import base64
+          import datetime
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+
+          APPROVAL_LINE = re.compile(r"^\s*DELIVERY_APPROVAL:\s*'([^'\n]*)'\s*(#.*)?$", re.M)
+          HEX40 = re.compile(r'^[0-9a-f]{40}$')
+          ID_RE = re.compile(r'^[a-z0-9][a-z0-9-]{7,39}$')
+          UNTIL_RE = re.compile(r'^\d{4}-\d\d-\d\dT\d\d:\d\dZ$')
+          MAX_VALIDITY = datetime.timedelta(hours=72)
+          CLOSED = ('', 'none')
+
+
+          def approval_in(text):
+              """DELIVERY_APPROVAL-Wert einer Workflowdatei; None, wenn die Datei fehlt; ValueError bei mehrdeutiger Datei."""
+              if text is None:
+                  return None
+              found = [m.group(1) for m in APPROVAL_LINE.finditer(text)]
+              if len(found) != 1:
+                  raise ValueError('expected exactly one DELIVERY_APPROVAL line, found %d' % len(found))
+              return found[0]
+
+
+          def parse(value, bind):
+              """'K=V;K=V' -> dict; Schlüssel genau bind + ID + UNTIL, keine Dubletten."""
+              out = {}
+              for part in value.split(';'):
+                  if '=' not in part:
+                      raise ValueError('malformed approval part %r' % part)
+                  k, v = part.split('=', 1)
+                  if k in out:
+                      raise ValueError('duplicate approval key %s' % k)
+                  out[k] = v
+              want = set(bind) | {'SCOPE', 'ID', 'UNTIL'}
+              if set(out) != want:
+                  raise ValueError('approval keys %s, expected %s' % (sorted(out), sorted(want)))
+              return out
+
+
+          def protected(env_info, expected, actor):
+              """Environment-Antwort der GitHub-API -> (geschützt, Grund). Codex NO-GO 3: Required Reviewers allein genügen nicht.
+              Verlangt: keine Admin-Umgehung, Prevent self-review an, Reviewer = genau die festgelegten Benutzer, Auslöser keiner davon."""
+              env_info = env_info or {}
+              rules = [r for r in env_info.get('protection_rules') or [] if r.get('type') == 'required_reviewers']
+              if len(rules) != 1:
+                  return False, 'environment has no (or more than one) required reviewers rule'
+              rule = rules[0]
+              reviewers = rule.get('reviewers') or []
+              if not reviewers:
+                  return False, 'environment has no required reviewers'
+              if env_info.get('can_admins_bypass') is not False:
+                  return False, 'administrators may bypass the environment protection (can_admins_bypass %s)' % env_info.get('can_admins_bypass')
+              if rule.get('prevent_self_review') is not True:
+                  return False, 'prevent self-review is not enabled (%s)' % rule.get('prevent_self_review')
+              if any(r.get('type') != 'User' for r in reviewers):
+                  return False, 'reviewers must be individual users (team membership of an approver is not provable)'
+              logins = [(r.get('reviewer') or {}).get('login') for r in reviewers]
+              if not expected:
+                  return False, 'no reviewer identity pinned in the workflow (LOCK_REVIEWERS)'
+              if sorted(set(logins)) != sorted(set(expected)) or len(logins) != len(set(logins)):
+                  return False, 'reviewers %s are not exactly the pinned reviewers %s' % (sorted(logins), sorted(expected))
+              if actor and actor in logins:
+                  return False, 'the triggering owner %s is a reviewer (no second identity)' % actor
+              return True, 'reviewers %s (pinned), no admin bypass, self-review prevented' % sorted(logins)
+
+
+          def reviewed(records, ctx):
+              """Zustimmungen des Laufs (GET actions/runs/<id>/approvals) -> (zugestimmt, Grund)."""
+              env = ctx['environment']
+              mine = [a for a in records or [] if env in [e.get('name') for e in a.get('environments') or []]]
+              if any(a.get('state') != 'approved' for a in mine):
+                  return False, 'a review of this run for %s is not "approved"' % env
+              ok = [a for a in mine if a.get('state') == 'approved'
+                    and (a.get('user') or {}).get('login') in ctx.get('reviewers', [])
+                    and (a.get('user') or {}).get('login') != ctx['actor']]
+              if not ok:
+                  return False, 'no approval of this run for %s by a pinned reviewer other than %s' % (env, ctx['actor'] or '(missing)')
+              return True, 'approved by %s' % ok[0]['user']['login']
+
+
+          def decide(ctx, fetch_workflow_at, list_runs, now, fetch_environment=None, fetch_approvals=None):
+              """-> (go, reasons, approval_id). Reine Funktion; fetch_workflow_at/list_runs dürfen Ausnahmen werfen."""
+              value = ctx['approval']
+              if value in CLOSED:
+                  return False, ['delivery lock closed (DELIVERY_APPROVAL none)'], None
+              reasons = []
+              try:
+                  a = parse(value, ctx['bind'])
+              except ValueError as e:
+                  return False, ['approval unreadable: %s' % e], None
+              aid = a['ID']
+              if not ID_RE.match(aid):
+                  reasons.append('approval ID %r has the wrong form' % aid)
+              for name in ctx['bind']:
+                  pin = ctx['pins'].get(name, '')
+                  if not HEX40.match(a[name]):
+                      reasons.append('approved %s is not a full commit SHA' % name)
+                  elif a[name] != pin:
+                      reasons.append('approved %s %s differs from the pinned %s' % (name, a[name], pin or '(missing)'))
+              if a['SCOPE'] != ctx.get('scope'):
+                  reasons.append('approval scope %r is not this delivery (%r)' % (a['SCOPE'], ctx.get('scope')))
+              if not UNTIL_RE.match(a['UNTIL']):
+                  reasons.append('UNTIL %r has the wrong form' % a['UNTIL'])
+              else:
+                  until = datetime.datetime.strptime(a['UNTIL'], '%Y-%m-%dT%H:%MZ').replace(tzinfo=datetime.timezone.utc)
+                  if until <= now:
+                      reasons.append('approval expired at %s' % a['UNTIL'])
+                  elif until - now > MAX_VALIDITY:
+                      reasons.append('approval valid for more than 72 hours (until %s)' % a['UNTIL'])
+              if ctx['event_name'] != 'push':
+                  reasons.append('event %s (only the push that introduces the approval may deliver)' % ctx['event_name'])
+              if ctx['ref'] != 'refs/heads/' + ctx['branch']:
+                  reasons.append('ref %s is not refs/heads/%s' % (ctx['ref'], ctx['branch']))
+              if ctx['run_attempt'] != '1':
+                  reasons.append('run attempt %s (a re-run never delivers again)' % ctx['run_attempt'])
+              if not ctx['actor'] or ctx['actor'] != ctx['owner']:
+                  reasons.append('actor %s is not the repository owner' % (ctx['actor'] or '(missing)'))
+              if ctx['head_id'] != ctx['sha']:
+                  reasons.append('head commit %s is not the workflow commit %s' % (ctx['head_id'] or '(missing)', ctx['sha']))
+              marker = 'Delivery-Approval: ' + aid
+              if marker not in (ctx['head_message'] or '').splitlines():
+                  reasons.append('head commit message lacks the line "%s"' % marker)
+              before = ctx['before'] or ''
+              if not HEX40.match(before) or before == '0' * 40:
+                  reasons.append('no previous branch state to compare (before=%s)' % (before or '(missing)'))
+              else:
+                  try:
+                      prev = approval_in(fetch_workflow_at(before))
+                  except Exception as e:  # fail closed
+                      reasons.append('cannot read the previous approval at %s: %s' % (before, e))
+                  else:
+                      if prev == value:
+                          reasons.append('approval not introduced by this push (already present at %s)' % before)
+              if not ctx.get('environment'):
+                  reasons.append('no protected environment configured for the package job')
+              else:
+                  try:
+                      ok, why = protected(fetch_environment(ctx['environment']) if fetch_environment else None, ctx.get('reviewers') or [], ctx['actor'])
+                  except Exception as e:  # fail closed
+                      ok, why = False, 'cannot read environment %s: %s' % (ctx['environment'], e)
+                  if not ok:
+                      reasons.append('environment %s not protected: %s' % (ctx['environment'], why))
+                  if ctx.get('require_review'):
+                      try:
+                          rok, rwhy = reviewed(fetch_approvals() if fetch_approvals else None, ctx)
+                      except Exception as e:  # fail closed
+                          rok, rwhy = False, 'cannot read the approvals of this run: %s' % e
+                      if not rok:
+                          reasons.append('package stage without the reviewer approval: %s' % rwhy)
+              try:
+                  runs = list_runs()
+              except Exception as e:  # fail closed
+                  reasons.append('cannot list earlier runs of this workflow: %s' % e)
+              else:
+                  for r in runs:
+                      if str(r.get('id')) == str(ctx['run_id']):
+                          continue
+                      if marker in (r.get('message') or '').splitlines():
+                          reasons.append('approval ID %s already used by run %s' % (aid, r.get('id')))
+                      if r.get('head_sha') == ctx['sha']:
+                          reasons.append('commit %s already ran this workflow in run %s' % (ctx['sha'], r.get('id')))
+              return (not reasons), reasons, aid
+
+
+          def gh_json(path):
+              p = subprocess.run(['gh', 'api', '-H', 'Accept: application/vnd.github+json', path],
+                                 capture_output=True, text=True, timeout=120)
+              if p.returncode != 0:
+                  raise RuntimeError('gh api %s failed: %s' % (path.split('?')[0], (p.stderr or '').strip()[:200]))
+              return json.loads(p.stdout)
+
+
+          def main():
+              env = os.environ
+              repo = env['GITHUB_REPOSITORY']
+              wf = env['LOCK_WORKFLOW']
+              bind = env['LOCK_BIND'].split()
+              event = {}
+              if env.get('GITHUB_EVENT_PATH') and os.path.exists(env['GITHUB_EVENT_PATH']):
+                  event = json.load(open(env['GITHUB_EVENT_PATH']))
+              head = event.get('head_commit') or {}
+              ctx = {
+                  'approval': env.get('DELIVERY_APPROVAL', ''), 'bind': bind, 'pins': {n: env.get(n, '') for n in bind},
+                  'event_name': env.get('GITHUB_EVENT_NAME', ''), 'ref': env.get('GITHUB_REF', ''), 'branch': env['LOCK_BRANCH'],
+                  'sha': env.get('GITHUB_SHA', ''), 'before': event.get('before', ''), 'run_attempt': env.get('GITHUB_RUN_ATTEMPT', ''),
+                  'run_id': env.get('GITHUB_RUN_ID', ''), 'actor': env.get('GITHUB_ACTOR', ''),
+                  'owner': env.get('GITHUB_REPOSITORY_OWNER', ''), 'head_id': head.get('id', ''), 'head_message': head.get('message', ''),
+                  'scope': env.get('LOCK_SCOPE', ''), 'environment': env.get('LOCK_ENVIRONMENT', ''),
+                  'reviewers': env.get('LOCK_REVIEWERS', '').split(), 'stage': env.get('LOCK_STAGE', 'gate'),
+                  'require_review': env.get('LOCK_REQUIRE_GO') == '1',
+              }
+
+              def fetch_workflow_at(sha):
+                  p = subprocess.run(['gh', 'api', 'repos/%s/contents/%s?ref=%s' % (repo, wf, sha)],
+                                     capture_output=True, text=True, timeout=120)
+                  if p.returncode != 0:
+                      if 'HTTP 404' in (p.stderr or ''):
+                          return None
+                      raise RuntimeError((p.stderr or '').strip()[:200])
+                  return base64.b64decode(json.loads(p.stdout)['content']).decode('utf-8')
+
+              def list_runs():
+                  out, name = [], os.path.basename(wf)
+                  for page in range(1, 31):
+                      batch = gh_json('repos/%s/actions/workflows/%s/runs?per_page=100&page=%d' % (repo, name, page))['workflow_runs']
+                      out += [{'id': r['id'], 'head_sha': r['head_sha'], 'message': (r.get('head_commit') or {}).get('message', '')}
+                              for r in batch]
+                      if len(batch) < 100:
+                          return out
+                  raise RuntimeError('more than 3000 runs: cannot prove the approval is unused')
+
+              def fetch_environment(name):
+                  return gh_json('repos/%s/environments/%s' % (repo, name))
+
+              def fetch_approvals():
+                  return gh_json('repos/%s/actions/runs/%s/approvals' % (repo, ctx['run_id']))
+
+              now = datetime.datetime.now(datetime.timezone.utc)
+              go, reasons, aid = decide(ctx, fetch_workflow_at, list_runs, now, fetch_environment, fetch_approvals)
+              for r in reasons:
+                  print('DELIVERY_LOCK ' + r)
+              print('DELIVERY_LOCK stage=%s verdict=%s approval_id=%s pins=%s' % (env.get('LOCK_STAGE', 'gate'), 'GO' if go else 'LOCKED', aid or '-',
+                                                                         ' '.join('%s=%s' % (n, ctx['pins'][n]) for n in bind)))
+              if env.get('GITHUB_OUTPUT'):
+                  with open(env['GITHUB_OUTPUT'], 'a') as f:
+                      f.write('go=%s\napproval_id=%s\n' % ('yes' if go else 'no', aid if go else ''))
+              if env.get('LOCK_REQUIRE_GO') == '1' and not go:
+                  sys.exit(1)   # Paketjob: ohne gültige Freigabe JETZT kein Schritt weiter (auch nach Re-Run oder Ablauf)
+              sys.exit(0 if go or ctx['approval'] in CLOSED else 1)
+
+
+          if __name__ == '__main__':
+              main()
+          LOCKPY
+  package:
+    needs: gate
+    if: needs.gate.outputs.go == 'yes'
+    # Menschliche Zustimmung: GitHub hält den Job an, bis ein Required Reviewer dieses Environments zustimmt.
+    # Codex NO-GO 3: Der Lock prüft an jeder Lock-Stufe des Paketjobs zusätzlich, dass die Reviewer GENAU LOCK_REVIEWERS sind (nicht der
+    # Auslöser), keine Admin-Umgehung erlaubt ist, Prevent self-review an ist und für DIESEN Lauf eine Zustimmung vorliegt.
+    # Dass hinter der Reviewer-Identität ein Mensch ohne Agentenzugang steht, kann kein Workflow prüfen (Eigentümerpflicht).
+    environment: p4-delivery
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Delivery lock re-run in the package job before checkout (re-run, expiry, single use, protection)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GO: ${{ needs.gate.outputs.go }}
+          APPROVAL_ID: ${{ needs.gate.outputs.approval_id }}
+          LOCK_BIND: SOURCE_SHA KADRI_PAIR_SHA
+          LOCK_BRANCH: feature/c3-browser-downloads
+          LOCK_WORKFLOW: .github/workflows/p4-test-package.yml
+          LOCK_SCOPE: helper-p4test
+          LOCK_ENVIRONMENT: p4-delivery
+          LOCK_REVIEWERS: ''   # festgelegte Reviewer-Identität(en), nur der Eigentümer trägt sie ein (leer = gesperrt)
+          LOCK_REQUIRE_GO: "1"
+          LOCK_STAGE: package-start
+        run: |
+          # DELIVERY_LOCK_RECHECK
+          set -euo pipefail
+          [ "$GO" = yes ] || { echo "delivery lock closed: nothing is built or uploaded" >&2; exit 1; }
+          cat > "$RUNNER_TEMP/delivery_lock.py" <<'LOCKPY'
+          #!/usr/bin/env python3
+          """Freigabesperre für Testlieferungen (Codex Release-Readiness P1). Läuft im Workflow VOR jedem Checkout.
+
+          Diese Datei ist die maßgebliche Kopie. Der Job "gate" der Lieferworkflows enthält sie wörtlich als Inline-Skript
+          (tests/delivery/test_lock.py prüft die Byte-Gleichheit und die Workflow-Struktur). Helper und Kadri nutzen dieselbe Datei.
+
+          Standard: gesperrt. DELIVERY_APPROVAL: 'none' -> go=no, nichts wird ausgecheckt, gebaut, signiert oder hochgeladen.
+
+          Eine Freigabe ist genau ein Wert der env-Variable DELIVERY_APPROVAL in der Workflowdatei, in einfachen Anführungszeichen:
+              SOURCE_SHA=<40hex>;<PAAR>=<40hex>[;...];SCOPE=<Lieferumfang>;ID=<id>;UNTIL=<YYYY-MM-DDTHH:MMZ>
+          Die Schlüssel sind genau die in LOCK_BIND genannten Pins plus SCOPE (= LOCK_SCOPE, der Lieferumfang), ID und UNTIL. Jeder Wert muss dem Pin derselben
+          Workflowdatei gleichen. Wer einen Pin ändert, ohne die Freigabe neu zu erteilen, sperrt damit die Lieferung.
+
+          Die Freigabe gilt nur einmal und nur für den Push, der sie einführt:
+            * Ereignis push auf genau LOCK_BRANCH, erster Versuch (keine Wiederholung eines Laufs), Auslöser = Repo-Eigentümer;
+            * der Kopf-Commit dieses Pushes trägt die Zeile "Delivery-Approval: <ID>" in der Commit-Nachricht;
+            * am Stand vor dem Push (event.before) stand ein anderer DELIVERY_APPROVAL-Wert. Ein späterer Doku-Commit, eine
+              Pin-Korrektur oder ein anderer Push erbt die Zeile unverändert und wird deshalb abgewiesen;
+            * kein anderer Lauf dieses Workflows (irgendein Branch, irgendein Ergebnis) trägt dieselbe ID oder denselben Commit.
+              Eine benutzte ID ist verbraucht, auch wenn die Lieferung danach scheiterte – GRENZE (Codex NO-GO 3): geprüft wird
+              die Actions-Historie; wer Läufe löschen kann (Repo-Admin, auch ein Agent mit Adminrechten), kann eine ID wieder
+              "frei" machen. Dauerhafte Einmaligkeit ist damit NICHT gewährleistet; Vorschlag einer gegen Agentenänderungen
+              geschützten Verbrauchsregistrierung: P4-APPROVAL-PROPOSAL.md (nicht umgesetzt, nicht aktiviert);
+            * UNTIL liegt in der Zukunft und höchstens 72 Stunden entfernt.
+            * das GitHub-Environment LOCK_ENVIRONMENT existiert, Administratoren dürfen es NICHT umgehen (can_admins_bypass
+              false), "Prevent self-review" ist an, die Required Reviewers sind GENAU die im Workflow festgelegten Benutzer
+              (LOCK_REVIEWERS, nur Benutzer, keine Teams) und keiner davon ist der Auslöser/Eigentümer. "Irgendein Reviewer" genügt
+              nicht (Codex NO-GO 3);
+            * nur im Paketjob (LOCK_REQUIRE_GO=1): für DIESEN Lauf liegt eine Zustimmung ("approved") eines festgelegten Reviewers
+              (≠ Auslöser) für LOCK_ENVIRONMENT vor und keine Ablehnung – eine Umgehung ohne Zustimmung sperrt.
+          Diese Prüfungen belegen nur die EINRICHTUNG und die ZUSTIMMUNG einer anderen GitHub-Identität. Dass hinter ihr ein
+          unabhängiger Mensch steht, dessen Zugang kein Agent besitzt, kann kein Workflow prüfen (Pflicht des Eigentümers, siehe
+          P4-APPROVAL-PROPOSAL.md).
+          Jede nicht prüfbare Bedingung (API-Fehler, fehlende Ereignisdaten) zählt als nicht erfüllt (fail closed).
+
+          Codex Release-Readiness 2: Dieselbe Prüfung läuft im Paketjob erneut (LOCK_REQUIRE_GO=1) – vor dem Checkout, vor dem
+          Signieren und vor dem Upload. Ein Re-Run eines fehlgeschlagenen Paketjobs (GITHUB_RUN_ATTEMPT > 1, Gate-Ausgabe
+          wiederverwendet), eine inzwischen abgelaufene Freigabe oder eine anderweitig verbrauchte ID sperren dort fail closed.
+
+          Exit 0 mit go=no: gesperrt (Normalzustand). Exit 0 mit go=yes: freigegeben.
+          Exit 1 mit go=no: Freigabe eingetragen, aber ungültig (sichtbar roter Lauf).
+          """
+          import base64
+          import datetime
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+
+          APPROVAL_LINE = re.compile(r"^\s*DELIVERY_APPROVAL:\s*'([^'\n]*)'\s*(#.*)?$", re.M)
+          HEX40 = re.compile(r'^[0-9a-f]{40}$')
+          ID_RE = re.compile(r'^[a-z0-9][a-z0-9-]{7,39}$')
+          UNTIL_RE = re.compile(r'^\d{4}-\d\d-\d\dT\d\d:\d\dZ$')
+          MAX_VALIDITY = datetime.timedelta(hours=72)
+          CLOSED = ('', 'none')
+
+
+          def approval_in(text):
+              """DELIVERY_APPROVAL-Wert einer Workflowdatei; None, wenn die Datei fehlt; ValueError bei mehrdeutiger Datei."""
+              if text is None:
+                  return None
+              found = [m.group(1) for m in APPROVAL_LINE.finditer(text)]
+              if len(found) != 1:
+                  raise ValueError('expected exactly one DELIVERY_APPROVAL line, found %d' % len(found))
+              return found[0]
+
+
+          def parse(value, bind):
+              """'K=V;K=V' -> dict; Schlüssel genau bind + ID + UNTIL, keine Dubletten."""
+              out = {}
+              for part in value.split(';'):
+                  if '=' not in part:
+                      raise ValueError('malformed approval part %r' % part)
+                  k, v = part.split('=', 1)
+                  if k in out:
+                      raise ValueError('duplicate approval key %s' % k)
+                  out[k] = v
+              want = set(bind) | {'SCOPE', 'ID', 'UNTIL'}
+              if set(out) != want:
+                  raise ValueError('approval keys %s, expected %s' % (sorted(out), sorted(want)))
+              return out
+
+
+          def protected(env_info, expected, actor):
+              """Environment-Antwort der GitHub-API -> (geschützt, Grund). Codex NO-GO 3: Required Reviewers allein genügen nicht.
+              Verlangt: keine Admin-Umgehung, Prevent self-review an, Reviewer = genau die festgelegten Benutzer, Auslöser keiner davon."""
+              env_info = env_info or {}
+              rules = [r for r in env_info.get('protection_rules') or [] if r.get('type') == 'required_reviewers']
+              if len(rules) != 1:
+                  return False, 'environment has no (or more than one) required reviewers rule'
+              rule = rules[0]
+              reviewers = rule.get('reviewers') or []
+              if not reviewers:
+                  return False, 'environment has no required reviewers'
+              if env_info.get('can_admins_bypass') is not False:
+                  return False, 'administrators may bypass the environment protection (can_admins_bypass %s)' % env_info.get('can_admins_bypass')
+              if rule.get('prevent_self_review') is not True:
+                  return False, 'prevent self-review is not enabled (%s)' % rule.get('prevent_self_review')
+              if any(r.get('type') != 'User' for r in reviewers):
+                  return False, 'reviewers must be individual users (team membership of an approver is not provable)'
+              logins = [(r.get('reviewer') or {}).get('login') for r in reviewers]
+              if not expected:
+                  return False, 'no reviewer identity pinned in the workflow (LOCK_REVIEWERS)'
+              if sorted(set(logins)) != sorted(set(expected)) or len(logins) != len(set(logins)):
+                  return False, 'reviewers %s are not exactly the pinned reviewers %s' % (sorted(logins), sorted(expected))
+              if actor and actor in logins:
+                  return False, 'the triggering owner %s is a reviewer (no second identity)' % actor
+              return True, 'reviewers %s (pinned), no admin bypass, self-review prevented' % sorted(logins)
+
+
+          def reviewed(records, ctx):
+              """Zustimmungen des Laufs (GET actions/runs/<id>/approvals) -> (zugestimmt, Grund)."""
+              env = ctx['environment']
+              mine = [a for a in records or [] if env in [e.get('name') for e in a.get('environments') or []]]
+              if any(a.get('state') != 'approved' for a in mine):
+                  return False, 'a review of this run for %s is not "approved"' % env
+              ok = [a for a in mine if a.get('state') == 'approved'
+                    and (a.get('user') or {}).get('login') in ctx.get('reviewers', [])
+                    and (a.get('user') or {}).get('login') != ctx['actor']]
+              if not ok:
+                  return False, 'no approval of this run for %s by a pinned reviewer other than %s' % (env, ctx['actor'] or '(missing)')
+              return True, 'approved by %s' % ok[0]['user']['login']
+
+
+          def decide(ctx, fetch_workflow_at, list_runs, now, fetch_environment=None, fetch_approvals=None):
+              """-> (go, reasons, approval_id). Reine Funktion; fetch_workflow_at/list_runs dürfen Ausnahmen werfen."""
+              value = ctx['approval']
+              if value in CLOSED:
+                  return False, ['delivery lock closed (DELIVERY_APPROVAL none)'], None
+              reasons = []
+              try:
+                  a = parse(value, ctx['bind'])
+              except ValueError as e:
+                  return False, ['approval unreadable: %s' % e], None
+              aid = a['ID']
+              if not ID_RE.match(aid):
+                  reasons.append('approval ID %r has the wrong form' % aid)
+              for name in ctx['bind']:
+                  pin = ctx['pins'].get(name, '')
+                  if not HEX40.match(a[name]):
+                      reasons.append('approved %s is not a full commit SHA' % name)
+                  elif a[name] != pin:
+                      reasons.append('approved %s %s differs from the pinned %s' % (name, a[name], pin or '(missing)'))
+              if a['SCOPE'] != ctx.get('scope'):
+                  reasons.append('approval scope %r is not this delivery (%r)' % (a['SCOPE'], ctx.get('scope')))
+              if not UNTIL_RE.match(a['UNTIL']):
+                  reasons.append('UNTIL %r has the wrong form' % a['UNTIL'])
+              else:
+                  until = datetime.datetime.strptime(a['UNTIL'], '%Y-%m-%dT%H:%MZ').replace(tzinfo=datetime.timezone.utc)
+                  if until <= now:
+                      reasons.append('approval expired at %s' % a['UNTIL'])
+                  elif until - now > MAX_VALIDITY:
+                      reasons.append('approval valid for more than 72 hours (until %s)' % a['UNTIL'])
+              if ctx['event_name'] != 'push':
+                  reasons.append('event %s (only the push that introduces the approval may deliver)' % ctx['event_name'])
+              if ctx['ref'] != 'refs/heads/' + ctx['branch']:
+                  reasons.append('ref %s is not refs/heads/%s' % (ctx['ref'], ctx['branch']))
+              if ctx['run_attempt'] != '1':
+                  reasons.append('run attempt %s (a re-run never delivers again)' % ctx['run_attempt'])
+              if not ctx['actor'] or ctx['actor'] != ctx['owner']:
+                  reasons.append('actor %s is not the repository owner' % (ctx['actor'] or '(missing)'))
+              if ctx['head_id'] != ctx['sha']:
+                  reasons.append('head commit %s is not the workflow commit %s' % (ctx['head_id'] or '(missing)', ctx['sha']))
+              marker = 'Delivery-Approval: ' + aid
+              if marker not in (ctx['head_message'] or '').splitlines():
+                  reasons.append('head commit message lacks the line "%s"' % marker)
+              before = ctx['before'] or ''
+              if not HEX40.match(before) or before == '0' * 40:
+                  reasons.append('no previous branch state to compare (before=%s)' % (before or '(missing)'))
+              else:
+                  try:
+                      prev = approval_in(fetch_workflow_at(before))
+                  except Exception as e:  # fail closed
+                      reasons.append('cannot read the previous approval at %s: %s' % (before, e))
+                  else:
+                      if prev == value:
+                          reasons.append('approval not introduced by this push (already present at %s)' % before)
+              if not ctx.get('environment'):
+                  reasons.append('no protected environment configured for the package job')
+              else:
+                  try:
+                      ok, why = protected(fetch_environment(ctx['environment']) if fetch_environment else None, ctx.get('reviewers') or [], ctx['actor'])
+                  except Exception as e:  # fail closed
+                      ok, why = False, 'cannot read environment %s: %s' % (ctx['environment'], e)
+                  if not ok:
+                      reasons.append('environment %s not protected: %s' % (ctx['environment'], why))
+                  if ctx.get('require_review'):
+                      try:
+                          rok, rwhy = reviewed(fetch_approvals() if fetch_approvals else None, ctx)
+                      except Exception as e:  # fail closed
+                          rok, rwhy = False, 'cannot read the approvals of this run: %s' % e
+                      if not rok:
+                          reasons.append('package stage without the reviewer approval: %s' % rwhy)
+              try:
+                  runs = list_runs()
+              except Exception as e:  # fail closed
+                  reasons.append('cannot list earlier runs of this workflow: %s' % e)
+              else:
+                  for r in runs:
+                      if str(r.get('id')) == str(ctx['run_id']):
+                          continue
+                      if marker in (r.get('message') or '').splitlines():
+                          reasons.append('approval ID %s already used by run %s' % (aid, r.get('id')))
+                      if r.get('head_sha') == ctx['sha']:
+                          reasons.append('commit %s already ran this workflow in run %s' % (ctx['sha'], r.get('id')))
+              return (not reasons), reasons, aid
+
+
+          def gh_json(path):
+              p = subprocess.run(['gh', 'api', '-H', 'Accept: application/vnd.github+json', path],
+                                 capture_output=True, text=True, timeout=120)
+              if p.returncode != 0:
+                  raise RuntimeError('gh api %s failed: %s' % (path.split('?')[0], (p.stderr or '').strip()[:200]))
+              return json.loads(p.stdout)
+
+
+          def main():
+              env = os.environ
+              repo = env['GITHUB_REPOSITORY']
+              wf = env['LOCK_WORKFLOW']
+              bind = env['LOCK_BIND'].split()
+              event = {}
+              if env.get('GITHUB_EVENT_PATH') and os.path.exists(env['GITHUB_EVENT_PATH']):
+                  event = json.load(open(env['GITHUB_EVENT_PATH']))
+              head = event.get('head_commit') or {}
+              ctx = {
+                  'approval': env.get('DELIVERY_APPROVAL', ''), 'bind': bind, 'pins': {n: env.get(n, '') for n in bind},
+                  'event_name': env.get('GITHUB_EVENT_NAME', ''), 'ref': env.get('GITHUB_REF', ''), 'branch': env['LOCK_BRANCH'],
+                  'sha': env.get('GITHUB_SHA', ''), 'before': event.get('before', ''), 'run_attempt': env.get('GITHUB_RUN_ATTEMPT', ''),
+                  'run_id': env.get('GITHUB_RUN_ID', ''), 'actor': env.get('GITHUB_ACTOR', ''),
+                  'owner': env.get('GITHUB_REPOSITORY_OWNER', ''), 'head_id': head.get('id', ''), 'head_message': head.get('message', ''),
+                  'scope': env.get('LOCK_SCOPE', ''), 'environment': env.get('LOCK_ENVIRONMENT', ''),
+                  'reviewers': env.get('LOCK_REVIEWERS', '').split(), 'stage': env.get('LOCK_STAGE', 'gate'),
+                  'require_review': env.get('LOCK_REQUIRE_GO') == '1',
+              }
+
+              def fetch_workflow_at(sha):
+                  p = subprocess.run(['gh', 'api', 'repos/%s/contents/%s?ref=%s' % (repo, wf, sha)],
+                                     capture_output=True, text=True, timeout=120)
+                  if p.returncode != 0:
+                      if 'HTTP 404' in (p.stderr or ''):
+                          return None
+                      raise RuntimeError((p.stderr or '').strip()[:200])
+                  return base64.b64decode(json.loads(p.stdout)['content']).decode('utf-8')
+
+              def list_runs():
+                  out, name = [], os.path.basename(wf)
+                  for page in range(1, 31):
+                      batch = gh_json('repos/%s/actions/workflows/%s/runs?per_page=100&page=%d' % (repo, name, page))['workflow_runs']
+                      out += [{'id': r['id'], 'head_sha': r['head_sha'], 'message': (r.get('head_commit') or {}).get('message', '')}
+                              for r in batch]
+                      if len(batch) < 100:
+                          return out
+                  raise RuntimeError('more than 3000 runs: cannot prove the approval is unused')
+
+              def fetch_environment(name):
+                  return gh_json('repos/%s/environments/%s' % (repo, name))
+
+              def fetch_approvals():
+                  return gh_json('repos/%s/actions/runs/%s/approvals' % (repo, ctx['run_id']))
+
+              now = datetime.datetime.now(datetime.timezone.utc)
+              go, reasons, aid = decide(ctx, fetch_workflow_at, list_runs, now, fetch_environment, fetch_approvals)
+              for r in reasons:
+                  print('DELIVERY_LOCK ' + r)
+              print('DELIVERY_LOCK stage=%s verdict=%s approval_id=%s pins=%s' % (env.get('LOCK_STAGE', 'gate'), 'GO' if go else 'LOCKED', aid or '-',
+                                                                         ' '.join('%s=%s' % (n, ctx['pins'][n]) for n in bind)))
+              if env.get('GITHUB_OUTPUT'):
+                  with open(env['GITHUB_OUTPUT'], 'a') as f:
+                      f.write('go=%s\napproval_id=%s\n' % ('yes' if go else 'no', aid if go else ''))
+              if env.get('LOCK_REQUIRE_GO') == '1' and not go:
+                  sys.exit(1)   # Paketjob: ohne gültige Freigabe JETZT kein Schritt weiter (auch nach Re-Run oder Ablauf)
+              sys.exit(0 if go or ctx['approval'] in CLOSED else 1)
+
+
+          if __name__ == '__main__':
+              main()
+          LOCKPY
+          sha256sum "$RUNNER_TEMP/delivery_lock.py" > "$RUNNER_TEMP/delivery_lock.sha256"
+          python3 -I "$RUNNER_TEMP/delivery_lock.py"
+          case ";$DELIVERY_APPROVAL;" in *";ID=$APPROVAL_ID;"*) ;; *) echo "approval ID mismatch" >&2; exit 1 ;; esac
+          echo "APPROVAL_ID=$APPROVAL_ID" >> "$GITHUB_ENV"
+          echo "ARTIFACT_NAME=helper-p4test-${SOURCE_SHA:0:7}-$APPROVAL_ID" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scope - only this workflow differs from the exact source; production UNAPPROVED; durable P4 path unchanged
+        run: |
+          set -euo pipefail
+          WORKFLOW_SHA="$(git rev-parse HEAD)"
+          git merge-base --is-ancestor "$SOURCE_SHA" "$WORKFLOW_SHA"
+          # Nur Liefer-/Prüfwerkzeuge dürfen nach SOURCE_SHA abweichen; alles, was in die APK eingeht, ist exakt SOURCE_SHA.
+          changed="$(git diff --name-only "$SOURCE_SHA" "$WORKFLOW_SHA" | grep -vxE '\.github/workflows/(p4-test-package|helper-channel|orphan-collision-probe)\.yml|tools/device_gate\.py|tools/delivery/[^/]+\.py|tools/run-flaky-repeat\.sh|tools/run-channel-publication-regression\.sh|tools/run-orphan-collision-probe\.sh|app/src/androidTestChanneltest/java/de/evp/helfer/OrphanNameCollisionProbeTest\.java|tests/(gate|delivery)/.+|evidence/.+|[^/]+\.md' || true)"
+          [ -z "$changed" ] || { echo "code differs from the approved source: $changed" >&2; exit 1; }
+          git checkout -q --detach "$SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          grep -q '"status": "UNAPPROVED"' release/production-policy.json
+          grep -qx '  "certificate_sha256": null,' release/p4test-signer.json
+          grep -qx '  "status": "KEY_NOT_YET_CREATED",' release/p4test-signer.json
+          # Geräte-Gate aus dem Workflow-Commit (strengere Fassung als in SOURCE_SHA), Hash in der Evidenz
+          git show "$WORKFLOW_SHA:tools/device_gate.py" > "$RUNNER_TEMP/device_gate.py"
+          echo "DEVICE_GATE_SHA256=$(sha256sum < "$RUNNER_TEMP/device_gate.py" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "WORKFLOW_SHA=$WORKFLOW_SHA" >> "$GITHUB_ENV"
+          echo "source $SOURCE_SHA, workflow commit $WORKFLOW_SHA; production UNAPPROVED; durable P4 identity not created (unchanged)"
+      - name: Required CI - source commit complete; device gate on EVERY emulator job of the same application code (only P4B-A10-SIZE on API 29)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # tools/delivery/ci_evidence.py aus dem Workflow-Commit: alle Läufe und Versuche aller Commits mit gleichem
+          # Anwendungscode zählen, damit ein späterer roter Lauf nicht durch einen grünen auf SOURCE_SHA verdeckt wird.
+          git show "$WORKFLOW_SHA:tools/delivery/ci_evidence.py" > "$RUNNER_TEMP/ci_evidence.py"
+          python3 -I "$RUNNER_TEMP/ci_evidence.py" --repo "$GITHUB_REPOSITORY" --source "$SOURCE_SHA" --workflow-sha "$WORKFLOW_SHA" --gate "$RUNNER_TEMP/device_gate.py"
+      - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Pinned toolchains (Rust from rust-toolchain.toml, NDK r27c, SDK 37.0, build-tools 36.0.0 + 34.0.0)
+        run: |
+          set -euo pipefail
+          (cd poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "platforms;android-37.0" "build-tools;36.0.0" "build-tools;34.0.0" < <(yes 2>/dev/null) > /dev/null
+          test -f "$ANDROID_HOME/ndk/$NDK_VERSION/source.properties"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Unsigned P4 test app - build A (checkout) and build B (copy in another path)
+        run: |
+          set -euo pipefail
+          bash tools/build-channel-native.sh "$RUNNER_TEMP/a"
+          bash tools/p4test/build-unsigned.sh "$RUNNER_TEMP/a" "$GITHUB_RUN_NUMBER"
+          mkdir -p "$RUNNER_TEMP/src-b" && git archive "$SOURCE_SHA" | tar -x -C "$RUNNER_TEMP/src-b"
+          (cd "$RUNNER_TEMP/src-b" && bash tools/build-channel-native.sh "$RUNNER_TEMP/b" && bash tools/p4test/build-unsigned.sh "$RUNNER_TEMP/b" "$GITHUB_RUN_NUMBER")
+          test ! -e app/build/outputs/apk/release && test ! -e app/build/outputs/apk/debug && test ! -e app/build/outputs/apk/channeltest
+      - name: Reproducibility - native libraries and every APK entry byte-identical
+        run: |
+          set -euo pipefail
+          for d in a b; do (cd "$RUNNER_TEMP/$d" && sha256sum jniLibs/*/*.so) > "$RUNNER_TEMP/$d.libs"; done
+          diff "$RUNNER_TEMP/a.libs" "$RUNNER_TEMP/b.libs"
+          entries() { python3 -c 'import hashlib,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); [print(hashlib.sha256(z.read(n)).hexdigest(), n) for n in sorted(z.namelist())]' "$1"; }
+          entries "$RUNNER_TEMP/a/p4/helper-p4test-unsigned.apk" > "$RUNNER_TEMP/a.entries"
+          entries "$RUNNER_TEMP/b/p4/helper-p4test-unsigned.apk" > "$RUNNER_TEMP/b.entries"
+          # Einzige Ausnahme: META-INF/version-control-info.textproto - AGP schreibt dort die Git-Revision hinein (Bau A im
+          # Git-Checkout, Bau B aus git archive ohne .git). Bau A muss genau den Quell-Commit nennen.
+          VCI=META-INF/version-control-info.textproto
+          grep -vx "[0-9a-f]\{64\} $VCI" "$RUNNER_TEMP/a.entries" > "$RUNNER_TEMP/a.code"
+          grep -vx "[0-9a-f]\{64\} $VCI" "$RUNNER_TEMP/b.entries" > "$RUNNER_TEMP/b.code"
+          [ "$(( $(wc -l < "$RUNNER_TEMP/a.entries") - $(wc -l < "$RUNNER_TEMP/a.code") ))" -le 1 ]
+          diff "$RUNNER_TEMP/a.code" "$RUNNER_TEMP/b.code"
+          unzip -p "$RUNNER_TEMP/a/p4/helper-p4test-unsigned.apk" "$VCI" | tee "$RUNNER_TEMP/vci.txt"
+          grep -q "$SOURCE_SHA" "$RUNNER_TEMP/vci.txt"
+          echo "REPRODUCIBLE: $(wc -l < "$RUNNER_TEMP/a.code") entries byte-identical (all but $VCI, which names $SOURCE_SHA); content hash $(sha256sum < "$RUNNER_TEMP/a.code" | cut -c1-16)"
+          rm -rf "$RUNNER_TEMP/b" "$RUNNER_TEMP/src-b"
+      - name: Delivery lock re-checked immediately before signing (approval still valid, first attempt, unused)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOCK_BIND: SOURCE_SHA KADRI_PAIR_SHA
+          LOCK_BRANCH: feature/c3-browser-downloads
+          LOCK_WORKFLOW: .github/workflows/p4-test-package.yml
+          LOCK_SCOPE: helper-p4test
+          LOCK_ENVIRONMENT: p4-delivery
+          LOCK_REVIEWERS: ''   # festgelegte Reviewer-Identität(en), nur der Eigentümer trägt sie ein (leer = gesperrt)
+          LOCK_REQUIRE_GO: "1"
+          LOCK_STAGE: before-signing
+        run: |
+          # DELIVERY_LOCK_RECHECK_BEFORE_SIGNING
+          set -euo pipefail
+          sha256sum -c "$RUNNER_TEMP/delivery_lock.sha256"
+          python3 -I "$RUNNER_TEMP/delivery_lock.py"
+      - name: Temporary test signing - throwaway key created, used once for the P4 test APK, deleted
+        run: |
+          set -euo pipefail
+          umask 077
+          . tools/p4test/lib.sh
+          K="$(mktemp -d "$RUNNER_TEMP/p4-throwaway.XXXXXX")"
+          wipe() { find "$K" -type f -exec shred -u -z {} + 2>/dev/null || true; rm -rf "$K"; }
+          trap 'unset P4_KS_PASS; wipe' EXIT
+          P4_KS_PASS="$(openssl rand -hex 32)"; export P4_KS_PASS
+          keytool -genkeypair -storetype PKCS12 -keystore "$K/throwaway.p12" -alias "$P4_ALIAS" -keyalg RSA -keysize 3072 \
+            -validity 2 -dname 'CN=Helper P4 TEST ONLY - throwaway' -storepass:env P4_KS_PASS -keypass:env P4_KS_PASS >/dev/null 2>&1
+          fp="$(keystore_cert_sha256 "$K/throwaway.p12")"
+          [[ "$fp" =~ ^[0-9a-f]{64}$ ]]
+          # Wegwerf-Festlegung im Wegwerf-Ordner (Kopie der Vorlage, nur der Fingerabdruck eingesetzt) - die Datei im
+          # Repository bleibt null.
+          sed -E 's/^  "certificate_sha256": null,$/  "certificate_sha256": "'"$fp"'",/' release/p4test-signer.json > "$K/throwaway-pin.json"
+          grep -qx "  \"certificate_sha256\": \"$fp\"," "$K/throwaway-pin.json"
+          mkdir -p "$RUNNER_TEMP/signed"
+          bash tools/p4test/sign.sh "$RUNNER_TEMP/a/p4/helper-p4test-unsigned.apk" "$K/throwaway.p12" "$RUNNER_TEMP/signed/helper-p4test.apk" "$K/throwaway-pin.json"
+          unset P4_KS_PASS
+          wipe; trap - EXIT
+          test ! -e "$K"
+          left="$(find "$RUNNER_TEMP" "$GITHUB_WORKSPACE" "$HOME/.android" -xdev \( -iname '*.p12' -o -iname '*.jks' -o -iname '*.keystore' -o -iname '*.pk8' -o -iname '*.bks' \) -print 2>/dev/null || true)"
+          [ -z "$left" ] || { echo "key material left: $left" >&2; exit 1; }
+          git diff --exit-code -- release/ tools/p4test/
+          git status --porcelain --ignored -- release/ tools/p4test/ | { ! grep .; }
+          echo "$fp" > "$RUNNER_TEMP/throwaway-cert.sha256"
+          echo "PASS: signed once with a throwaway key (certificate $fp); key, pin copy and password deleted; durable P4 files unchanged"
+      - name: Verification script (package, signer, permissions, libraries; used before and after the emulator)
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/verify-p4.sh" <<'SH'
+          #!/usr/bin/env bash
+          # verify-p4.sh APK CERT_SHA256 -> facts that must stay identical; exits non-zero on any violation.
+          set -euo pipefail
+          APK="$1"; WANT_CERT="$2"; BT="$ANDROID_HOME/build-tools/34.0.0"; TC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
+          die() { echo "REFUSED: $*" >&2; exit 1; }
+          badging="$("$BT/aapt2" dump badging "$APK")"
+          grep -q "^package: name='de.evp.helfer.p4test' versionCode='$GITHUB_RUN_NUMBER' versionName='[^']*-p4test'" <<<"$badging" || die "wrong package, version code or name"
+          grep -q "application-label:'P4 TEST Helfer'" <<<"$badging" || die "unexpected label"
+          grep -q "native-code: 'arm64-v8a' 'x86_64'" <<<"$badging" || die "unexpected ABIs"
+          if grep -q "application-debuggable" <<<"$badging"; then die "debuggable"; fi
+          if grep -q "testOnly" <<<"$("$BT/aapt2" dump xmltree --file AndroidManifest.xml "$APK")"; then die "testOnly"; fi
+          perms="$(grep '^uses-permission:' <<<"$badging" | sort)"
+          want="$(sort <<'P'
+          uses-permission: name='android.permission.INTERNET'
+          uses-permission: name='android.permission.ACCESS_NETWORK_STATE'
+          uses-permission: name='android.permission.FOREGROUND_SERVICE'
+          uses-permission: name='android.permission.FOREGROUND_SERVICE_SPECIAL_USE'
+          uses-permission: name='android.permission.POST_NOTIFICATIONS'
+          uses-permission: name='android.permission.WAKE_LOCK'
+          uses-permission: name='android.permission.RECEIVE_BOOT_COMPLETED'
+          uses-permission: name='android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'
+          uses-permission: name='android.permission.SYSTEM_ALERT_WINDOW'
+          uses-permission: name='android.permission.WRITE_SETTINGS'
+          uses-permission: name='android.permission.READ_EXTERNAL_STORAGE' maxSdkVersion='28'
+          uses-permission: name='android.permission.WRITE_EXTERNAL_STORAGE' maxSdkVersion='28'
+          P
+          )"
+          [ "$perms" = "$(sed 's/^ *//' <<<"$want")" ] || { diff <(sed 's/^ *//' <<<"$want") <(echo "$perms") >&2 || true; die "permissions differ from the manifest list"; }
+          if grep -q '^permission:' <<<"$badging"; then die "declares its own permission"; fi
+          manifest="$("$BT/aapt2" dump xmltree --file AndroidManifest.xml "$APK")"
+          grep -q 'allowBackup.*=false' <<<"$manifest" || die "allowBackup not false"
+          grep -q 'dataExtractionRules' <<<"$manifest" || die "dataExtractionRules missing"
+          grep -q 'InitializationProvider' <<<"$manifest" && die "androidx startup provider present"
+          certs="$("$BT/apksigner" verify --verbose --print-certs "$APK")" || die "signature does not verify"
+          grep -qx 'Verified using v2 scheme (APK Signature Scheme v2): true' <<<"$certs" || die "no v2 signature"
+          grep -qx 'Verified using v3 scheme (APK Signature Scheme v3): true' <<<"$certs" || die "no v3 signature"
+          [ "$(grep -c '^Signer #[0-9]* certificate DN' <<<"$certs")" = 1 ] || die "not exactly one signer"
+          grep -qx 'Signer #1 certificate DN: CN=Helper P4 TEST ONLY - throwaway' <<<"$certs" || die "not the throwaway signer"
+          got="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$certs")"
+          [ "$got" = "$WANT_CERT" ] || die "signer $got is not this run's throwaway certificate"
+          [ "$got" != ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5 ] || die "compromised old signer"
+          grep -qx '  "certificate_sha256": null,' "$GITHUB_WORKSPACE/release/p4test-signer.json" || die "durable pin changed"
+          "$BT/apksigner" verify --print-certs-pem "$APK" | sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' > "$W/cert.pem"
+          start="$(openssl x509 -in "$W/cert.pem" -noout -startdate | cut -d= -f2)"; end="$(openssl x509 -in "$W/cert.pem" -noout -enddate | cut -d= -f2)"
+          days=$(( ( $(date -d "$end" +%s) - $(date -d "$start" +%s) ) / 86400 ))
+          [ "$days" -le 3 ] || die "certificate valid $days days: not a throwaway certificate"
+          libs="$(unzip -Z1 "$APK" | grep '^lib/' | sort)"
+          [ "$libs" = "$(printf 'lib/arm64-v8a/libkadri_pairing_poc.so\nlib/x86_64/libkadri_pairing_poc.so')" ] || die "unexpected native libraries: $libs"
+          if unzip -Z1 "$APK" | grep -qi 'testinit'; then die "test library inside"; fi
+          for abi in arm64-v8a x86_64; do
+            unzip -p "$APK" "lib/$abi/libkadri_pairing_poc.so" > "$W/$abi.so"
+            machine="$("$TC/llvm-readelf" -h "$W/$abi.so" | sed -n 's/^ *Machine: *//p')"
+            case "$abi:$machine" in arm64-v8a:AArch64|x86_64:*X86-64*) ;; *) die "architecture mismatch $abi:$machine" ;; esac
+            if "$TC/llvm-nm" -D --defined-only "$W/$abi.so" | grep -q Java_poc_TestInitiator_; then die "test initiator in app library"; fi
+            "$TC/llvm-nm" -D --defined-only "$W/$abi.so" | grep -q ' Java_poc_Core_hostInit$' || die "channel JNI entry points missing ($abi)"
+          done
+          echo "apk_sha256=$(sha256sum < "$APK" | cut -d' ' -f1)"
+          grep -E "^package:|^sdkVersion|^targetSdkVersion|^native-code|^application-label:" <<<"$badging"
+          echo "$perms"
+          grep -E "Number of signers|Signer #1 certificate (DN|SHA-256 digest)" <<<"$certs"
+          echo "cert_not_before=$start"; echo "cert_not_after=$end"; echo "cert_validity_days=$days"
+          for abi in arm64-v8a x86_64; do echo "lib/$abi/libkadri_pairing_poc.so sha256=$(sha256sum < "$W/$abi.so" | cut -d' ' -f1)"; done
+          SH
+          chmod +x "$RUNNER_TEMP/verify-p4.sh"
+          # Gerätetest: installieren, starten, Kanal lauscht NUR auf 127.0.0.1:47899, wieder deinstallieren.
+          cat > "$RUNNER_TEMP/smoke-p4.sh" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          APK="$1"; PKG=de.evp.helfer.p4test
+          adb wait-for-device
+          [ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" = 1 ] || [ "$(adb shell getprop ro.boot.qemu | tr -d '\r')" = 1 ] || { echo "not an emulator" >&2; exit 2; }
+          before="$(adb shell pm list packages | tr -d '\r' | sort)"
+          adb install "$APK"
+          dump="$(adb shell dumpsys package "$PKG" | tr -d '\r')"
+          grep -q "versionCode=$GITHUB_RUN_NUMBER " <<<"$dump"
+          if grep -qE 'pkgFlags=\[[^]]*(DEBUGGABLE|ALLOW_BACKUP|TEST_ONLY)' <<<"$dump"; then echo "unexpected package flags" >&2; exit 1; fi
+          if adb shell run-as "$PKG" id 2>/dev/null | grep -q uid=; then echo "run-as works: debuggable" >&2; exit 1; fi
+          adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS || true
+          adb shell am start -W -n "$PKG/de.evp.helfer.MainActivity" > /dev/null
+          # 127.0.0.1 erscheint je nach Socket als IPv4 (tcp) oder als IPv4-gemappte Adresse ::ffff:127.0.0.1 (tcp6).
+          LOOP='^(0100007F|0000000000000000FFFF00000100007F):BB1B$'
+          ok=
+          for i in $(seq 1 60); do
+            l="$(adb shell 'cat /proc/net/tcp /proc/net/tcp6 2>/dev/null' | awk '$4=="0A"{print toupper($2)}')"
+            if grep -qE "$LOOP" <<<"$l"; then ok=1; break; fi
+            sleep 1
+          done
+          if [ -z "$ok" ]; then
+            echo "channel not listening on 127.0.0.1:47899; listeners: $(tr '\n' ' ' <<<"$l")" >&2
+            adb shell dumpsys activity services "$PKG" | tr -d '\r' | head -30 || true
+            adb shell pidof "$PKG" || true
+            adb logcat -d | grep -E 'evp|helfer|Helfer|AndroidRuntime|FATAL' | tail -60 || true
+            adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1 && adb shell cat /sdcard/ui.xml | tr '>' '\n' | grep -o 'text="[^"]*"' | head -40 || true
+            exit 1
+          fi
+          if grep -E ':BB1B$' <<<"$l" | grep -vqE "$LOOP"; then echo "listens beyond 127.0.0.1: $l" >&2; exit 1; fi
+          if grep -qE ':BA43$' <<<"$l"; then echo "legacy port 47811 open" >&2; exit 1; fi
+          adb shell dumpsys activity services "$PKG" | tr -d '\r' | grep -q 'de.evp.helfer.HelferService' || { echo "foreground service not running" >&2; exit 1; }
+          echo "SMOKE: installed, service running, channel only on 127.0.0.1:47899 ($(adb shell getprop ro.build.version.release | tr -d '\r'), API $(adb shell getprop ro.build.version.sdk | tr -d '\r'))"
+          adb uninstall "$PKG"
+          [ "$before" = "$(adb shell pm list packages | tr -d '\r' | sort)" ] || { echo "package list changed" >&2; exit 1; }
+          echo "SMOKE: uninstalled, package list as before"
+          SH
+          chmod +x "$RUNNER_TEMP/smoke-p4.sh"
+      - name: Verify the signed APK and record its hash BEFORE the emulator
+        run: |
+          set -euo pipefail
+          chmod a-w "$RUNNER_TEMP/signed/helper-p4test.apk"
+          "$RUNNER_TEMP/verify-p4.sh" "$RUNNER_TEMP/signed/helper-p4test.apk" "$(cat "$RUNNER_TEMP/throwaway-cert.sha256")" | tee "$RUNNER_TEMP/before.txt"
+          sha256sum "$RUNNER_TEMP/signed/helper-p4test.apk" > "$RUNNER_TEMP/apk-before.sha256"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install smoke test of exactly this APK (disposable API 34 emulator)
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash tools/wait-device-ready.sh && bash "$RUNNER_TEMP/smoke-p4.sh" "$RUNNER_TEMP/signed/helper-p4test.apk"
+      - name: AFTER the emulator - same file, same hash, same facts
+        run: |
+          set -euo pipefail
+          sha256sum -c "$RUNNER_TEMP/apk-before.sha256"
+          "$RUNNER_TEMP/verify-p4.sh" "$RUNNER_TEMP/signed/helper-p4test.apk" "$(cat "$RUNNER_TEMP/throwaway-cert.sha256")" > "$RUNNER_TEMP/after.txt"
+          diff -u "$RUNNER_TEMP/before.txt" "$RUNNER_TEMP/after.txt"
+      - name: Delivery - APK, SHA256SUMS, evidence (certificate, commits, expiry)
+        run: |
+          set -euo pipefail
+          D="$RUNNER_TEMP/deliver"; mkdir -p "$D"
+          cp "$RUNNER_TEMP/signed/helper-p4test.apk" "$D/helper-p4test.apk"
+          apk="$(sha256sum < "$D/helper-p4test.apk" | cut -d' ' -f1)"
+          test "$apk" = "$(sed -n 's/^apk_sha256=//p' "$RUNNER_TEMP/after.txt")"
+          python3 - "$D" "$RUNNER_TEMP/after.txt" <<'PY'
+          import datetime, json, os, re, sys
+          d, facts = sys.argv[1], open(sys.argv[2]).read()
+          f = lambda k: re.search('^' + re.escape(k) + '=(.*)$', facts, re.M).group(1)
+          now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+          days = int(os.environ['RETENTION_DAYS'])
+          ev = {
+            'purpose': 'Owner-approved isolated Samsung Android 17 diagnostic test. NOT a release. Production stays UNAPPROVED.',
+            'approval_id': os.environ['APPROVAL_ID'],
+            'package': 'de.evp.helfer.p4test', 'label': 'P4 TEST Helfer', 'version_code': int(os.environ['GITHUB_RUN_NUMBER']),
+            'apk': 'helper-p4test.apk', 'apk_sha256': f('apk_sha256'),
+            'signer': 'throwaway key generated in this workflow run, used once, deleted (never production, never the old signer)',
+            'certificate_dn': 'CN=Helper P4 TEST ONLY - throwaway',
+            'certificate_sha256': re.search(r'^Signer #1 certificate SHA-256 digest: ([0-9a-f]{64})$', facts, re.M).group(1),
+            'certificate_not_before': f('cert_not_before'), 'certificate_not_after': f('cert_not_after'),
+            'durable_p4_identity': 'KEY_NOT_YET_CREATED (release/p4test-signer.json unchanged)',
+            'native_libraries': dict(re.findall(r'^(lib/\S+) sha256=([0-9a-f]{64})$', facts, re.M)),
+            'permissions': re.findall(r"^uses-permission: name='([^']+)'", facts, re.M),
+            'helper_source_commit': os.environ['SOURCE_SHA'],
+            'helper_native_library_source': 'built from helper_source_commit (this APK)',
+            'helper_workflow_commit': os.environ['WORKFLOW_SHA'],
+            'device_gate_sha256': os.environ['DEVICE_GATE_SHA256'],
+            'kadri_pair_commit': os.environ['KADRI_PAIR_SHA'], 'kadri_p4_extension_id': os.environ['KADRI_P4_EXTENSION_ID'],
+            'kadri_wasm_core_origin_commit': os.environ['KADRI_WASM_CORE_ORIGIN_SHA'],
+            'kadri_wasm_core_note': 'Kadri vendors a WASM core rebuilt bit-identically from kadri_wasm_core_origin_commit; that is not this APK source.',
+            # Jeder Lauf erzeugt einen neuen Wegwerf-Signierer: eine vorhandene de.evp.helfer.p4test (anderer Signierer)
+            # lässt sich nicht aktualisieren. Sie muss deinstalliert werden; damit gehen ihre Kopplung und ihre App-Daten
+            # verloren, und Kadri P4 TEST muss neu gekoppelt werden.
+            'helper_update_required': True,
+            'replaces_existing_p4_install': 'uninstall any existing de.evp.helfer.p4test first (different throwaway signer; an in-place update is impossible)',
+            'pairing_reset_required': True,
+            'pairing_reset_reason': 'the new P4 app instance has a new channel identity; pair Kadri P4 TEST with it again',
+            'existing_p4_install_compatible': False,
+            'other_installations': 'unchanged: never touch de.evp.helfer, channeltest, C3 or production installations',
+            'workflow_run': f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+            'artifact': os.environ['ARTIFACT_NAME'],
+            'built_at': now.isoformat(), 'artifact_expires_at': (now + datetime.timedelta(days=days)).isoformat(),
+            'certificate_validity': 'throwaway certificate valid at most 3 days (see certificate_not_after)',
+            'known_limitation': 'P4B-A10-SIZE: Android 10 MediaStore SIZE column stays 0 (accepted by the owner only for the isolated Android 17 test; not an Android 10 approval).',
+            'residual_risks': ['sporadic MediaStore publish failure (publish rows=0) not causally explained', 'HLS engine completion path not fully hardened like the MP4 path'],
+            'changes': 'Since the last P4 delivery (8b906c5): address-free HLS planning failure phase; storage/internal failure classes and MediaStore publish diagnosis; every job ends and frees its slot despite failing cleanup steps. No change to network, DRM, cancellation or resume rules. Real HTTP 404/412 remains open.',
+            'production_status': 'UNAPPROVED',
+          }
+          open(os.path.join(d, 'p4test-evidence.json'), 'w').write(json.dumps(ev, indent=2) + '\n')
+          PY
+          (cd "$D" && sha256sum helper-p4test.apk p4test-evidence.json > SHA256SUMS)
+          chmod a-w "$D"/*
+          cat "$D/SHA256SUMS" "$D/p4test-evidence.json"
+          find "$D" -type f | sort
+          [ "$(find "$D" -type f | wc -l)" = 3 ]
+      - name: Delivery lock re-checked immediately before upload (approval still valid, first attempt, unused)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOCK_BIND: SOURCE_SHA KADRI_PAIR_SHA
+          LOCK_BRANCH: feature/c3-browser-downloads
+          LOCK_WORKFLOW: .github/workflows/p4-test-package.yml
+          LOCK_SCOPE: helper-p4test
+          LOCK_ENVIRONMENT: p4-delivery
+          LOCK_REVIEWERS: ''   # festgelegte Reviewer-Identität(en), nur der Eigentümer trägt sie ein (leer = gesperrt)
+          LOCK_REQUIRE_GO: "1"
+          LOCK_STAGE: before-upload
+        run: |
+          # DELIVERY_LOCK_RECHECK_BEFORE_UPLOAD
+          set -euo pipefail
+          sha256sum -c "$RUNNER_TEMP/delivery_lock.sha256"
+          python3 -I "$RUNNER_TEMP/delivery_lock.py"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/deliver
+          retention-days: ${{ env.RETENTION_DAYS }}
+          if-no-files-found: error

@@ -63,7 +63,7 @@ The interface is available in English and German – it follows the browser lang
 **Benachrichtigung & Sperrbildschirm**: Titel, Play/Pause, Springen und Position – auch Kopfhörer-Tasten.
 
 **Seiten**
-- Facebook (spiegelt das Bild des Facebook-Players → immer das richtige Video), Instagram, TikTok, Pornhub u. a.
+- Facebook (spiegelt das Bild des Facebook-Players → immer das richtige Video), Instagram, TikTok u. a.
 - eingebettete Player (Video in einem fremden iframe): der Kasten wird über den ganzen Bildschirm gelegt,
   Titel kommt von der Hauptseite
 - Seiten mit Kopierschutz (Netflix, Disney+, Prime …) bleiben bewusst aus
@@ -124,6 +124,7 @@ Unterschiede zu Vivaldi:
 
 ## Sicherheit der Helper-App
 
+- **Integrationszweig `feature/helper-channel-control`:** Der Klartext-Port 47811 und der `X-EVP-Key` entfallen. Der Helper spricht nur noch einen gekoppelten, verschlüsselten Kanal (127.0.0.1:47899, SPAKE2 + Noise KK) mit Steuerbefehlen für Helligkeit und Lautstärke; Downloads über den Helper und die Helferfunktionen des Userscripts sind dort vorübergehend aus. Siehe [HELPER-CHANNEL.md](HELPER-CHANNEL.md). Nicht freigegeben.
 - **Loopback und Schlüssel:** Der echte Helper lauscht auf `127.0.0.1:47811` und prüft bei geschützten Anfragen einen zufälligen 128-Bit-Schlüssel aus privatem App-Speicher (`X-EVP-Key`). Der Port ist kein Identitätsnachweis. Das anfängliche Kopplungsfragment wird nicht im HTTP-Abruf übertragen; anschließend sendet der Client den Schlüssel als Header. Der alte feste Schlüssel wird abgelehnt.
 - **Grenze der ersten Beta:** Gegenseitige kryptografische Serverauthentifizierung fehlt. Ein fremder lokaler Listener kann unter bestimmten Bedingungen den gespeicherten Schlüssel und sensible Helper-Daten erhalten. Host-/CORS-Schutz gegen gewöhnliche Webseiten schützt nicht vor bereits installierter Schadsoftware. Dieses Restrisiko ist für die erste GitHub-Beta akzeptiert; [Issue #4](https://github.com/Owndot/video-assistent-helper/issues/4) bleibt offen.
 - **Cookies:** Die App hat keinen Zugriff auf die Cookies des Browsers. Nur beim Download schickt das Skript die

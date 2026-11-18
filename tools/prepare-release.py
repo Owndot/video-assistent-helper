@@ -20,8 +20,8 @@ if not re.fullmatch('[0-9a-f]{40}', a.commit) or not 1 <= a.version_code <= 2100
     p.error('Full 40-character source commit and explicit valid versionCode/versionName required')
 repo = Path(run('git', '-C', ROOT, 'rev-parse', '--show-toplevel').strip())
 subprocess.run(['git', '-C', repo, 'merge-base', '--is-ancestor', 'd1119234e25273210d0807961058484058cc0f49', a.commit], check=True)
-if 'Gradle 8.9\n' not in run('gradle', '--version'):
-    p.error('Pinned Gradle 8.9 required')
+if 'Gradle 9.3.1\n' not in run('gradle', '--version'):
+    p.error('Pinned Gradle 9.3.1 required')
 java = subprocess.run(['java', '-version'], capture_output=True, text=True, check=True)
 if not re.search(r'version "17[.\"]', java.stderr+java.stdout):
     p.error('Pinned JDK major 17 required')
@@ -57,7 +57,7 @@ with tempfile.TemporaryDirectory(prefix='helper-unsigned-') as temp:
         (a.out/'build-provenance.json').write_text(json.dumps({
             'source_commit':a.commit,'version_code':a.version_code,'version_name':a.version_name,
             'unsigned_sha256':hashlib.sha256(prepared.read_bytes()).hexdigest(),
-            'gradle':'8.9','agp':'8.5.2','jdk_major':17,'build_tools':'34.0.0',
+            'gradle':'9.3.1','agp':'9.1.1','jdk_major':17,'build_tools':'34.0.0',
             'state':'UNSIGNED_NOT_INSTALLABLE_NOT_APPROVED'},indent=2)+'\n')
         print('PASS: unsigned aligned APK prepared; not a production release')
     finally:

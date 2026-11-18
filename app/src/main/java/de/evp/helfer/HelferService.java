@@ -15,39 +15,45 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 
 import java.util.Locale;
-import java.util.Map;
+
+import poc.Core;
 
 /**
- * Lokaler Empfänger für das Userscript "Video-Assistent".
+ * Lokaler Empfänger für Kadri – ausschließlich über den sicheren Kanal (SPAKE2-Kopplung, Noise-KK, geprüfter
+ * Rust-Kern) auf 127.0.0.1:47899 ({@link ChannelServer}). Kein Klartext-Weg, kein fester Schlüssel, kein alter Port.
  *
- * Lauscht NUR auf 127.0.0.1 (von außen und aus dem WLAN nicht erreichbar). Jede Anfrage braucht den Kopf
- * "X-EVP-Key" – normale Webseiten können den nicht mitschicken (der Browser würde vorher nachfragen und
- * wir antworten darauf nicht), nur das Userscript über Violentmonkey kann es.
+ * Steuerbefehle ({@link ControlCommands}): status, bright (Helligkeit, solange der Player offen ist), vol
+ * (Medienlautstärke), beat (Lebenszeichen, sonst Helligkeit nach 30 s zurück), end (Helligkeit sofort zurück).
+ * Downloads über den Helper sind in dieser Stufe nicht erreichbar (kommen später über denselben Kanal).
  *
- *   GET /ping            Zustand (Rechte, aktuelle Lautstärke/Helligkeit)
- *   GET /bright?v=0..1   Helligkeit setzen – solange der Player offen ist
- *   GET /vol?v=0..1      Medienlautstärke setzen (ohne v: nur abfragen)
- *   GET /beat            "Player ist noch offen" (sonst wird die Helligkeit nach 30 s zurückgegeben)
- *   GET /end             Player zu: Helligkeit sofort zurück wie vorher
- *   GET /download        Video speichern (Datei, HLS, DASH – direkt oder über den Browser)
- *   GET /pull, POST /push  Laden über den Browser: Anfragen abholen / Daten liefern
- *   GET /dlstate         Zustand eines Downloads
+ * Kopplung, Widerruf und Identitäts-Reset nur über die eigene Oberfläche (MainActivity); der Dienst ist nicht
+ * exportiert. Registrierungen werden über {@link SnapshotWriter} geschrieben (nur bei Änderung, in Reihenfolge).
  */
-public class HelferService extends Service {
-    static final int PORT = 47811;
-    static final String KEY = "evp-1";
+public class HelferService extends Service implements ChannelServer.Host, ControlCommands.Device {
+    static final int PORT = ChannelServer.PORT;
     static final String CHANNEL = "helfer";
+    static final String WRAP_ALIAS = "helfer-channel-identity-wrap-v1";
     static volatile boolean running = false;
     static volatile String startupError = null;
+    static volatile HelferService instance;
+    /** Kopplungscode nur zur Anzeige (nie protokolliert) und sein Ablauf (elapsedRealtime). */
+    volatile String code;
+    volatile long codeExpiresAt;
 
     private final Handler main = new Handler(Looper.getMainLooper());
-    private MiniServer server;
+    private ChannelServer server;
+    private Mp4Downloads mp4;   // null: direkte Downloads nicht verfügbar (Kanal lehnt dl-Befehle ab)
+    private HlsDownloads hls;   // null: HLS nicht verfügbar (Kanal lehnt hlsplan/hlsstart ab, Status ohne "hls")
+    private IdentityStore identityStore;
+    private RegistryStore registryStore;
+    private SnapshotWriter writer;
     private WindowManager wm;
     private AudioManager am;
 
@@ -69,14 +75,30 @@ public class HelferService extends Service {
         startupError = null;
         try { Downloads.serviceStarted(this); }
         catch(Exception e) { startupError="Interrupted download cleanup failed: "+e.getMessage();stopSelf();return; }
-        if (!startServer()) {
-            startupError = Tr.t(
-                "Port 47811 ist belegt oder nicht verfügbar. Stoppe den anderen Helper (Debug/Release) und starte diese App erneut.",
-                "Port 47811 is busy or unavailable. Stop the other helper (debug/release) and retry this app.");
+        // Phase C2: direkte MP4-Downloads. Unlesbares Journal → keine Downloads (sonst wären Doppelstarts möglich).
+        try { mp4 = Mp4Downloads.get(this); mp4.engine.serviceStarted(); }
+        catch (Exception e) { mp4 = null; }
+        if (mp4 != null) {   // P4c-3 (P2): verschlüsselte Quelle; Fehler → ohne Fortsetzen nach Prozessende
+            try { mp4.attachVault(this); } catch (Exception | LinkageError e) { /* unverändert ohne Tresor */ }
+        }
+        // P4b: HLS-VOD → MP4 (gleiche Ablage, gemeinsame Grenzen). Unlesbarer Auftragsordner → kein HLS.
+        if (mp4 != null) {
+            try { hls = HlsDownloads.get(this, mp4); hls.engine.serviceStarted(); }
+            catch (Exception | LinkageError e) { hls = null; }
+            // P4c-3 (P2): verschlüsselte Quelle (Keystore, höchstens 6 h, app-privat ohne Backup). Fehler → ohne Tresor.
+            if (hls != null) {
+                try { hls.attachVault(this); }
+                catch (Exception | LinkageError e) { /* kein Fortsetzen nach Prozessende, sonst unverändert */ }
+            }
+        }
+        String problem = startChannel();
+        if (problem != null) {
+            startupError = problem;
             android.widget.Toast.makeText(this, startupError, android.widget.Toast.LENGTH_LONG).show();
             stopSelf();
             return;
         }
+        instance = this;
         running = true;
         main.postDelayed(watchdog, 10000);
     }
@@ -84,10 +106,30 @@ public class HelferService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (!running) return START_NOT_STICKY;
+        // P4c-3 (P2): gewöhnlicher Neustart durch Android nach Prozessende (START_STICKY, intent == null) oder der Nutzer
+        // öffnet die App (ACTION_RESUME_STORED): unterbrochene Downloads mit gültiger gespeicherter Quelle fortsetzen.
+        // Nie beim Einschalten des Handys (BootReceiver startet ohne diese Aktion) und nie nach einem Abbruchwunsch.
+        if (intent == null || ACTION_RESUME_STORED.equals(intent.getAction())) {
+            resumeStoredAsync();
+            if (intent != null) return START_STICKY;
+        }
         if (intent != null && "cancel".equals(intent.getAction())) {
             // "Abbrechen" in der Download-Benachrichtigung
             int cancelledId = intent.getIntExtra("id", -1);
             Downloads.cancelJob(cancelledId);
+            return START_STICKY;
+        }
+        if (intent != null && Mp4Downloads.ACTION_CANCEL.equals(intent.getAction())) {
+            // "Abbrechen" in der Benachrichtigung eines direkten MP4-Downloads
+            String job = intent.getStringExtra(Mp4Downloads.EXTRA_JOB);
+            if (hls != null && Mp4Downloads.validJobId(job) && hls.engine.knows(job)) hls.engine.cancel(job);
+            else if (mp4 != null && Mp4Downloads.validJobId(job)) mp4.engine.cancel(job);
+            return START_STICKY;
+        }
+        if (intent != null && Mp4Downloads.ACTION_RESUME.equals(intent.getAction())) {
+            // P4c: "Fortsetzen" in der Benachrichtigung eines unterbrochenen Streams (nur mit Quelle im Arbeitsspeicher)
+            String job = intent.getStringExtra(Mp4Downloads.EXTRA_JOB);
+            if (hls != null && Mp4Downloads.validJobId(job) && !hls.engine.resumeLocal(job)) resumeStoredAsync();   // P2: sonst aus dem Tresor
             return START_STICKY;
         }
         if (intent != null && "test".equals(intent.getAction())) {
@@ -104,10 +146,13 @@ public class HelferService extends Service {
 
     @Override
     public void onDestroy() {
+        stopChannel();   // zuerst: Port frei, bevor „beendet“ sichtbar wird (sonst „Port belegt“ beim schnellen Neustart)
         running = false;
+        instance = null;
         main.removeCallbacks(watchdog);
         Downloads.stopAll();
-        if (server != null) server.stop();
+        if (mp4 != null) mp4.engine.stopAll();
+        if (hls != null) hls.engine.stopAll();
         clearBright();
         super.onDestroy();
     }
@@ -133,82 +178,157 @@ public class HelferService extends Service {
         else startForeground(1, n);
     }
 
-    // ---------- lokaler Mini-Server ----------
-    private boolean startServer() {
-        // Schlüssel: nur der eigene Zufallsschlüssel dieser App (128 Bit). Den alten festen "evp-1" konnte jeder kennen –
-        // er gilt nicht mehr, auch nicht vor dem Koppeln.
-        server = new MiniServer(PORT, (k) -> {
-            if (k.equals(Keys.key(this))) { Keys.markPaired(this); return true; }
-            return false;
-        }, new MiniServer.Handler() {
-            @Override public String get(String path, Map<String, String> p) { return route(path, p); }
-            @Override public String push(Map<String, String> p, byte[] body) { return MiniServer.push(Downloads.proxies, p, body); }
-            @Override public String pushStream(Map<String, String> p, java.io.InputStream in, long length) throws Exception { return MiniServer.pushStream(Downloads.proxies, p, in, length); }
+    // ---------- sicherer Kanal ----------
+    @Override public long now() { return SystemClock.elapsedRealtime(); }
+    @Override public void event(String line) { /* keine Protokollierung von Kanalereignissen in der App */ }
+
+    @Override public void persist(ChannelServer from) throws Exception {
+        writer.persist(() -> {
+            synchronized (ChannelServer.CORE) {
+                return ChannelServer.coreOwner == from ? Core.hostExportRegistrations() : null;
+            }
         });
-        return server.start();
     }
 
-    private String route(String path, Map<String, String> p) {
-        switch (path) {
-            case "/ping":
-                lastBeat = System.currentTimeMillis();
-                return status();
-            case "/bright": {
-                lastBeat = System.currentTimeMillis();
-                final float v = parse(p.get("v"), -1f);
-                if (v >= 0) main.post(() -> setBright(v));
-                return status();
+    private synchronized void stopChannel() {
+        if (server != null) server.stop();
+        synchronized (ChannelServer.CORE) { ChannelServer.coreOwner = null; }   // laufende Anfragen erreichen den Kern nicht mehr
+        server = null;
+        code = null;
+    }
+
+    /** Lädt Identität und Registrierungen und bindet den Kanal; null = bereit, sonst der Grund (kein Ausweichen). */
+    private synchronized String startChannel() {
+        stopChannel();
+        try {
+            if (identityStore == null) {
+                identityStore = new IdentityStore(getFilesDir(), WRAP_ALIAS, getPackageName());
+                registryStore = new RegistryStore(getFilesDir(), Settings.Global.getInt(getContentResolver(), Settings.Global.BOOT_COUNT, -1));
+                writer = new SnapshotWriter(registryStore::save);
             }
-            case "/vol": {
-                String v = p.get("v");
-                if (v != null) setVol(parse(v, 0f));
-                return status();
-            }
-            case "/beat":
-                lastBeat = System.currentTimeMillis();
-                return status();
-            case "/download": {
-                // Video speichern: u = Adresse, ref = Seite (Referer), ua = Browser-Kennung, t = Titel, k = file|hls|auto
-                String u = p.get("u");
-                if (u == null || !(u.startsWith("http://") || u.startsWith("https://"))) return "{\"ok\":false,\"error\":\"keine Adresse\"}";
-                try {
-                    int id = Downloads.start(this, u, p.get("ref"), p.get("ua"), p.get("c"), p.get("t"), p.get("k"), "1".equals(p.get("p")));
-                    return "{\"ok\":true,\"id\":" + id + "}";
-                } catch (Exception e) {
-                    return "{\"ok\":false,\"error\":\"" + String.valueOf(e.getMessage()).replace("\"", "'") + "\"}";
+            // Eine neue Identität nur bei der Erstinstallation: gespeicherte Registrierungen ohne Identität sind
+            // ein Widerspruch, kein Erststart (keine stille Neu-Identität).
+            IdentityStore.Result id = identityStore.load(!registryStore.exists());
+            if (id.identity == null) return Tr.t("Kanal-Identität nicht lesbar (" + id.state + ") – in der App „Identität zurücksetzen“ und neu koppeln.",
+                "Channel identity unreadable (" + id.state + ") – use “Reset identity” in the app and pair again.");
+            ChannelServer s = new ChannelServer(this, this, mp4 == null ? null : mp4.engine, hls == null ? null : hls.engine);
+            try {
+                RegistryStore.Loaded regs = registryStore.load();
+                synchronized (ChannelServer.CORE) {
+                    Core.hostInit(id.identity, regs.blob, now(), regs.sameBoot);
+                    ChannelServer.coreOwner = s;
                 }
+                persist(s);
+            } finally {
+                java.util.Arrays.fill(id.identity, (byte) 0);
             }
-            case "/pull":
-                return MiniServer.pull(Downloads.proxies, Downloads.state, p);
-            case "/dlstate": {
-                String st = Downloads.state.get(MiniServer.identity(p.get("id")));
-                return "{\"ok\":true,\"state\":" + MiniServer.js(st) + "}";
+            if (!s.start()) {
+                synchronized (ChannelServer.CORE) { ChannelServer.coreOwner = null; }
+                return Tr.t("Port " + PORT + " ist belegt. Stoppe den anderen Helper (z. B. Test- oder Debug-Version) und starte diese App erneut.",
+                    "Port " + PORT + " is busy. Stop the other helper (e.g. test or debug version) and retry this app.");
             }
-            case "/end":
-                main.post(this::clearBright);
-                return "{\"ok\":true}";
-            default:
-                return "{\"ok\":false,\"error\":\"unbekannt\"}";
+            server = s;
+            return null;
+        } catch (Throwable e) {   // auch fehlende native Bibliothek (UnsatisfiedLinkError): Kanal aus, kein Ausweichen
+            synchronized (ChannelServer.CORE) { ChannelServer.coreOwner = null; }
+            return Tr.t("Sicherer Kanal nicht verfügbar (" + e.getClass().getSimpleName() + ").", "Secure channel unavailable (" + e.getClass().getSimpleName() + ").");
         }
     }
 
-    private String status() {
+    /** Öffnet das einzige Kopplungsfenster (120 s, ein Versuch) und liefert den Code nur zur Anzeige. */
+    synchronized String openPairingWindow() {
+        if (server == null) return null;
+        synchronized (ChannelServer.CORE) {
+            if (ChannelServer.coreOwner != server) return null;
+            code = Core.windowOpen(null, now(), ChannelServer.PAIR_TTL_MS);
+        }
+        codeExpiresAt = now() + ChannelServer.PAIR_TTL_MS;
+        return code;
+    }
+
+    /** Registrierungen (öffentliche Schlüssel und IDs, keine Geheimnisse) für die Anzeige. */
+    synchronized java.util.List<Registration> registrations() {
+        java.util.List<Registration> out = new java.util.ArrayList<>();
+        if (server == null) return out;
+        byte[] b;
+        synchronized (ChannelServer.CORE) {
+            if (ChannelServer.coreOwner != server) return out;
+            b = Core.hostExportRegistrations();
+        }
+        for (int at = 0; at + 57 <= b.length; at += 57) out.add(new Registration(java.util.Arrays.copyOfRange(b, at, at + 16), b[at + 48] == 1));
+        return out;
+    }
+
+    static final class Registration {
+        final byte[] id; final boolean confirmed;
+        Registration(byte[] id, boolean confirmed) { this.id = id; this.confirmed = confirmed; }
+        /** Erste 8 Hex-Zeichen – dieselbe Kurzform zeigt Kadri in den Optionen. */
+        String shortId() { StringBuilder sb = new StringBuilder(); for (int i = 0; i < 4; i++) sb.append(String.format(Locale.ROOT, "%02x", id[i] & 0xff)); return sb.toString(); }
+    }
+
+    /**
+     * Widerruft eine Registrierung (id) oder alle (id == null), beendet deren Sitzungen und schließt ein offenes
+     * Kopplungsfenster beim Gesamtwiderruf. true erst, wenn der Widerruf gespeichert ist; scheitert das Speichern,
+     * wird der Kanal beendet (die Datei könnte die alten Registrierungen noch enthalten).
+     */
+    synchronized boolean revoke(byte[] id) {
+        if (server == null) return false;
+        ChannelServer s = server;
+        synchronized (ChannelServer.CORE) {
+            if (ChannelServer.coreOwner != s) return false;
+            if (id == null) Core.hostRevokeAll(); else Core.hostRevoke(id);
+        }
+        try { persist(s); }
+        catch (Exception e) {
+            stopChannel();
+            startupError = revokeFailedText();
+            return false;
+        }
+        return true;
+    }
+
+    /** Fehlgeschlagener Widerruf: die gespeicherte Registrierung kann nach einem Neustart weiter gelten. */
+    static String revokeFailedText() {
+        return Tr.t("Trennen fehlgeschlagen. Die bisherige Kopplung kann nach einem Neustart weiterhin bestehen. Bitte erneut trennen und den Erfolg überprüfen.",
+            "Disconnect failed. The previous pairing may still exist after a restart. Please disconnect again and check that it worked.");
+    }
+
+    /** Ausdrückliche Nutzeraktion: neue Helper-Identität, alle Registrierungen gelöscht; alle Browser koppeln neu. */
+    synchronized String resetIdentity() {
+        stopChannel();
+        try {
+            // Erst die Registrierungen: ein unterbrochener Reset hinterlässt die alte Identität ohne Registrierungen
+            // (stimmig), nie umgekehrt.
+            writer.delete(registryStore::delete);
+            identityStore.reset();
+        } catch (Exception e) {
+            return Tr.t("Zurücksetzen fehlgeschlagen.", "Reset failed.");
+        }
+        String problem = startChannel();
+        startupError = problem;
+        return problem;
+    }
+
+    // ---------- Steuerbefehle (ControlCommands.Device) ----------
+    @Override public void bright(float level) {
+        lastBeat = System.currentTimeMillis();
+        main.post(() -> setBright(level));
+    }
+    @Override public void vol(float level) { setVol(level); }
+    @Override public void beat() { lastBeat = System.currentTimeMillis(); }
+    @Override public void end() { main.post(this::clearBright); }
+
+    @Override public String status() {
         int max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
         int cur = am.getStreamVolume(AudioManager.STREAM_MUSIC);
         boolean overlayOk = Settings.canDrawOverlays(this);
         boolean writeOk = Settings.System.canWrite(this);
         float b = curBright >= 0 ? curBright : systemBright();
-        return String.format(Locale.US,
-                "{\"ok\":true,\"v\":3,\"dl\":true,\"dash\":true,\"proxy\":true,\"app\":\"%s\",\"overlay\":%b,\"write\":%b,\"vol\":%.4f,\"volStep\":%d,\"volMax\":%d,\"bright\":%.4f}",
-                appVersion(), overlayOk, writeOk, max > 0 ? (float) cur / max : 0f, cur, max, b);
+        return ControlCommands.statusJson(appVersion(), overlayOk, writeOk, cur, max, b, hls == null ? null : hls.opus);
     }
 
     private String appVersion() {
         try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception e) { return "?"; }
-    }
-
-    private static float parse(String s, float def) {
-        try { return Float.parseFloat(s); } catch (Exception e) { return def; }
     }
 
     // ---------- Lautstärke ----------
@@ -299,6 +419,26 @@ public class HelferService extends Service {
             if (running) main.postDelayed(this, 5000);
         }
     };
+
+    static final String ACTION_RESUME_STORED = "resume-stored";
+
+    private void resumeStoredAsync() {
+        HlsDownloads h = hls;
+        Mp4Downloads m = mp4;
+        if (h == null && m == null) return;
+        Thread t = new Thread(() -> {                                          // Datei + Keystore nicht im Hauptthread
+            if (m != null) m.engine.resumeStored();
+            if (h != null) h.engine.resumeStored();
+        }, "evp-resume-stored");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** Nutzer öffnet die App: Dienst starten (falls nötig) und gespeicherte Downloads fortsetzen. */
+    static void startAndResume(Context c) {
+        if (!running) startupError = null;
+        c.startForegroundService(new Intent(c, HelferService.class).setAction(ACTION_RESUME_STORED));
+    }
 
     static void start(Context c) {
         if (!running) startupError = null;

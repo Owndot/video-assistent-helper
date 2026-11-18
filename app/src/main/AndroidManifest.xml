@@ -1,23 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- lokaler Empfänger (nur 127.0.0.1, von außen nicht erreichbar) -->
+    <!-- lokaler Empfänger: sicherer Kanal nur auf 127.0.0.1:47899 (von außen nicht erreichbar) -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Netzwerkschicht: NAT64-Präfix des aktiven Netzes für die Zieladressprüfung (normale Berechtigung) -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Downloads: CPU bleibt nur während aktiver Aufträge wach (Zeitlimit, Verlängerung bei Fortschritt) -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Helligkeit: unsichtbares Mini-Fenster (bevorzugt) oder notfalls Systemeinstellung -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
-    <!-- nur Android 8/9: Download-Manager darf sonst nicht in "Download" schreiben -->
+    <!-- nur Android 8/9: öffentlicher Ordner Download/Video-Assistent. Android 8/9 vergibt die Schreib-Ansicht des
+         gemeinsamen Speichers nur mit READ und WRITE (READ war über die Split-Permission ohnehin angefordert, hier nur
+         ausdrücklich und ebenfalls bis API 28). Android 10+ fordert keine der beiden an. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <!-- Downloads explicitly support user-selected HTTP media and local HTTP media servers. -->
     <application
         android:usesCleartextTraffic="true"
         android:allowBackup="false"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
@@ -37,7 +47,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Lokaler Empfänger: stellt Helligkeit und Lautstärke für den Videoplayer im Browser ein" />
+                android:value="Lokaler Empfänger: stellt Helligkeit und Lautstärke für den Videoplayer im Browser ein und speichert vom Nutzer gestartete Video-Downloads" />
         </service>
 
         <receiver
@@ -48,5 +58,13 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- OkHttp registriert über AndroidX Startup einen Initializer, der bei jedem Prozessstart läuft und nur den
+             Anwendungs-Context setzt. Entfernt (offiziell unterstützt: androidx.startup „Disable automatic
+             initialization“); den Context setzt HttpClients über OkHttp.initialize. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            tools:node="remove" />
     </application>
 </manifest>

@@ -1,0 +1,9 @@
+app-project/.gradle/
+app-project/build/
+app-project/testapp/build/
+app-project/local.properties
+*.apk
+*.p12
+*.jks
+*.keystore
+__pycache__/

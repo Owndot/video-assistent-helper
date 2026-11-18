@@ -1,0 +1,7 @@
+Kein Upload der Debug-APK aus diesem Stand (build.yml, Schritt "Debug APK upload gate").
+
+Grund: Dieser Stand enthält den sicheren Steuerkanal (Integrationszweig feature/helper-channel-control). Beide
+Repositories sind öffentlich; ein Artefakt wäre eine Veröffentlichung. Produktionsstatus: UNAPPROVED.
+Installierbare Testpakete gibt es nur über channel-device-package.yml mit doppelter Freigabe.
+
+Entfernen nur mit ausdrücklicher Zustimmung des Eigentümers.

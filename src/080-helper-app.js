@@ -1,42 +1,15 @@
   // ---------- Helfer-App: echte Helligkeit und Lautstärke des Handys ----------
-  // Die App lauscht nur auf dem Handy selbst (127.0.0.1). Ohne App kommt schlicht keine Antwort – dann bleibt alles wie bisher.
-  const HELPER = 'http://127.0.0.1:47811';
-  // Schlüssel: nach dem Koppeln (Knopf „Verbinden“ in der Helfer-App) der eigene Zufallsschlüssel der App –
-  // dauerhaft gespeichert, übersteht auch Updates des Skripts. Bis zum Koppeln der feste Startschlüssel.
-  let helperKey = 'evp-1';
-  try { if (typeof GM_getValue === 'function') helperKey = GM_getValue('helperKey', '') || 'evp-1'; } catch (e) {}
-  // to = Wartezeit in ms (Abholen beim Laden über den Browser wartet bis zu 8 s), body = Daten für POST /push
-  async function helper(path, to, body, keyOverride, job) {
-    if (job && job.cancelled) return null;
-    to = to || 1200;
-    const x = CONFIG.systemHelper === false ? null : gmXhr();
-    if (!x) return null;
-    // Freeze one trusted key per request. Kadri must never fall back to its
-    // document cache when persistent storage is missing or fails.
-    let key;
-    try {
-      if (keyOverride !== undefined && keyOverride !== null) key = keyOverride;
-      else if (typeof __KADRI__ !== 'undefined' && __KADRI__) key = await KADRI_HELPER_KEY();
-      else key = typeof GM_getValue === 'function' ? (GM_getValue('helperKey', '') || 'evp-1') : helperKey;
-    } catch (e) { return null; }
-    if (typeof key !== 'string' || !key || job && job.cancelled) return null;
-    return new Promise((res) => {
-      let done = false, request;
-      const fin = (v) => { if (!done) { done = true; clearTimeout(timer); if (job) job.aborters.delete(abort); res(v); } };
-      const abort = () => { fin(null); try { if (request) request.abort(); } catch (e) {} };
-      const timer = setTimeout(abort, to + 400);
-      if (job) job.aborters.add(abort);
-      try {
-        request = x({
-          method: body ? 'POST' : 'GET', url: HELPER + path, headers: { 'X-EVP-Key': key }, timeout: to, anonymous: true,
-          data: body || undefined,
-          onload: (r) => { try { fin(r.status === 200 ? JSON.parse(r.responseText) : null); } catch (e) { fin(null); } },
-          onerror: () => fin(null), ontimeout: () => fin(null), onabort: () => fin(null),
-        });
-        if (done && job && job.cancelled && request) request.abort();
-      } catch (e) { fin(null); }
-    });
+  // Nur noch über den gekoppelten, verschlüsselten Kanal (127.0.0.1:47899, SPAKE2 + Noise KK). Den hat nur die
+  // Erweiterung Kadri für Chrome/Vivaldi: ihr Hintergrund führt die Steuerbefehle aus (KADRI_HELPER, nur Pfad, keine
+  // Daten). Userscript und Firefox haben ihn noch nicht – dort sendet helper() nichts und meldet „kein Helfer“, der
+  // Player läuft wie ohne App. Bewusst kein Rückfall auf den alten Klartext-Port; Downloads über den Helfer sind
+  // vorübergehend aus (Browser-Downloads wie bisher).
+  async function helper(path) {
+    if (CONFIG.systemHelper === false || typeof KADRI_HELPER !== 'function') return null;
+    try { return await KADRI_HELPER(String(path)); } catch (e) { return null; }
   }
+  // Einen früher gespeicherten Kopplungsschlüssel des alten Ports nicht weiter aufbewahren.
+  try { if (typeof GM_getValue === 'function' && typeof GM_setValue === 'function' && GM_getValue('helperKey', '')) GM_setValue('helperKey', ''); } catch (e) {}
   // ---------- Laden über den Browser (für Server, die nur dem eingeloggten Browser etwas geben) ----------
   // Der Helfer sagt, was er braucht (/pull) – das Skript lädt es mit der Sitzung des Browsers und liefert (/push).
   // Läuft, solange die Seite offen ist (der Player darf zu sein).
@@ -230,25 +203,6 @@
       }
     } catch (e) { cancelProxyJob(state); }
     finally { cancelProxyJob(state); proxyJobs.delete(job); }
-  }
-  // Koppel-Seite der Helfer-App (http://127.0.0.1:47811/pair#SCHLÜSSEL): Schlüssel prüfen und dauerhaft merken.
-  // Der Schlüssel steht nur im #-Teil – den sieht weder der Server noch eine andere App.
-  if (location.origin === HELPER && location.pathname === '/pair') {
-    const m = /^#([0-9a-f]{32})$/.exec(location.hash);
-    if (m) {
-      try { history.replaceState(null, '', '/pair'); } catch (e) {}
-      const say = (t, okc) => {
-        const show = () => { const el = document.getElementById('evp-pair'); if (el) { el.textContent = tr(t); el.style.color = okc ? '#4cd964' : '#ff9f0a'; } };
-        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show); else show();
-      };
-      helper('/ping', 2500, null, m[1]).then((r) => {
-        if (r && r.ok) {
-          try { GM_setValue('helperKey', m[1]); } catch (e) {}
-          helperKey = m[1];
-          say('✓ Verbunden. Ab jetzt kann nur noch dieses Skript den Helper benutzen. Du kannst diese Seite schließen.', true);
-        } else say('Verbinden hat nicht geklappt – läuft der Helper? In der App nochmal auf „Verbinden“ tippen.', false);
-      });
-    }
   }
   // Beim Wischen nicht jede Bewegung schicken: immer nur den neuesten Wert, sobald die vorige Antwort da ist
   const helperQ = {};

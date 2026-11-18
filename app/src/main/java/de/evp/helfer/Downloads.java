@@ -49,8 +49,26 @@ public class Downloads {
             new java.util.concurrent.LinkedBlockingQueue<>());
     static { credentialedFiles.allowCoreThreadTimeOut(true); }
     private static final Map<Integer, Task> active = new ConcurrentHashMap<>();
-    private static final Object fileNames = new Object();
+    static final Object fileNames = new Object();   // auch Mp4Downloads (Android 8–9)
     private static boolean initialized;
+    /**
+     * Nur Diagnose (P4c-3, nach Codex-Folgereview konservativ): gemeinsame Ereignisfolge der Pending-Einträge, Zähler
+     * der Pending-Bereinigung in DIESEM Prozess (begonnen / gerade aktiv) und die Besitzmarkierungen der von ihr
+     * entfernten Einträge. Die Markierung (zufälliger Dateiname) identifiziert einen Eintrag eindeutig; eine Zeilen-ID
+     * nicht. Die Liste wird nie still geleert: läuft sie über, ist das vermerkt und eine Zuordnung nur noch "unbekannt".
+     * Ändert kein Verhalten.
+     */
+    static final java.util.concurrent.atomic.AtomicLong diagSeq = new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicInteger cleanupStarted = new java.util.concurrent.atomic.AtomicInteger();
+    static final java.util.concurrent.atomic.AtomicInteger cleanupActive = new java.util.concurrent.atomic.AtomicInteger();
+    private static final int CLEANUP_HISTORY = 4096;
+    private static final java.util.Set<String> cleanupRemovedProofs = java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
+    static volatile boolean cleanupHistoryTruncated;
+    static boolean removedByCleanup(String proofName) { return cleanupRemovedProofs.contains(proofName); }
+    private static void noteRemovedByCleanup(String proofName) {
+        if (cleanupRemovedProofs.size() >= CLEANUP_HISTORY) { cleanupHistoryTruncated = true; return; }
+        cleanupRemovedProofs.add(proofName);
+    }
     private static final Object admission = new Object();
     private static boolean stopped;
     private static Object generation = new Object();
@@ -100,6 +118,8 @@ public class Downloads {
             if(!f.delete()&&f.exists())throw new java.io.IOException("Cannot remove interrupted download staging");
         }
         if(Build.VERSION.SDK_INT>=29) {
+          cleanupStarted.incrementAndGet(); cleanupActive.incrementAndGet();   // nur Diagnose
+          try {
             ContentResolver cr=c.getContentResolver();
             File proofs=new File(c.getFilesDir(),"download-pending-v1");
             File[] markers=proofs.exists()?proofs.listFiles():new File[0];
@@ -127,10 +147,12 @@ public class Downloads {
                     if(cr.delete(uri,selection+" AND "+MediaStore.Downloads.DISPLAY_NAME+"=? AND (download_uri IS NULL OR download_uri='')",
                             new String[]{scope[0],scope[1],scope[2],name})!=1)
                         throw new java.io.IOException("Interrupted pending download was not removed");
+                    noteRemovedByCleanup(proofName);   // nur Diagnose: genau dieser Eintrag wurde hier entfernt
                 }
             }
             // Keep every proof on query/delete failure; retry remains safe after partial cleanup.
             for(File f:markers)if(owned.contains(f.getName()))removeProof(f);
+          } finally { cleanupActive.decrementAndGet(); }
         }
         initialized=true;
     }
@@ -431,14 +453,14 @@ public class Downloads {
     private static void check(Task task) throws java.io.IOException {
         if(task!=null)task.check();else Fetcher.checkCancelled(null);
     }
-    private static File pendingProof(Context c) throws Exception {
+    static File pendingProof(Context c) throws Exception {
         File dir=new File(c.getFilesDir(),"download-pending-v1");
         if(!dir.isDirectory()&&!dir.mkdirs()&&!dir.isDirectory())throw new java.io.IOException("No pending ownership directory");
         File proof=File.createTempFile("evp-publish-",".pending",dir);
         try(FileOutputStream out=new FileOutputStream(proof)) { out.getFD().sync(); }
         return proof; // Created and synced BEFORE insert: an insert/return process kill retains proof.
     }
-    private static void removeProof(File proof) throws java.io.IOException {
+    static void removeProof(File proof) throws java.io.IOException {
         if(!proof.delete()&&proof.exists())throw new java.io.IOException("Cannot remove pending download ownership");
     }
     private static Uri save(Context c,File f,String name,String mime,Task task) throws Exception {

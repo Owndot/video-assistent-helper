@@ -7,6 +7,21 @@ def releaseCode = project.findProperty('releaseVersionCode')
 def releaseName = project.findProperty('releaseVersionName')
 def fixtureVersion = project.findProperty('migrationFixtureVersion')
 def fixtureMinSdk = project.findProperty('migrationFixtureMinSdk')
+// Secure channel (Rust core over JNI): libraries built by tools/build-channel-native.sh, never committed.
+def channelJniLibs = project.findProperty('channelJniLibs') ?: "$buildDir/channel-jni/jniLibs"
+def channelJniLibsTest = project.findProperty('channelJniLibsTest') ?: "$buildDir/channel-jni/jniLibs-test"
+// Test variant de.evp.helfer.channeltest only: throwaway key supplied at build time, never committed, never production.
+def channelKeystore = project.findProperty('channelKeystore')
+// P4b, nur Instrumentierung der Testvariante: synthetische HLS-Fixtures (poc/p4a-hls/tools/make-fixtures.sh) als
+// Assets der Test-APK – nie in der App selbst.
+def hlsFixtures = project.findProperty('hlsFixtures')
+// P4-Testapp de.evp.helfer.p4test (Option B): Gradle baut sie NUR unsigniert. Signiert wird ausschließlich lokal beim
+// Eigentümer mit der dauerhaften P4-Testidentität (tools/p4test/sign.sh, Zertifikat in release/p4test-signer.json
+// festgelegt). Kein Schlüssel in Gradle, CI oder Git. Versionscode monoton (Updates ohne Deinstallation).
+def p4VersionCode = project.findProperty('p4VersionCode')
+if (p4VersionCode != null && !(p4VersionCode.toString() ==~ /[1-9][0-9]{0,8}/)) {
+    throw new GradleException('p4VersionCode must be in 1..999999999.')
+}
 def debugCode = releaseCode != null ? 1 : (fixtureVersion ?: System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int
 if (releaseCode != null && !(releaseCode.toString() ==~ /[1-9][0-9]{0,9}/ && releaseCode.toString().toLong() <= 2100000000L)) {
     throw new GradleException('Explicit releaseVersionCode must be in 1..2100000000.')
@@ -14,8 +29,8 @@ if (releaseCode != null && !(releaseCode.toString() ==~ /[1-9][0-9]{0,9}/ && rel
 
 android {
     namespace 'de.evp.helfer'
-    compileSdk 34
-    buildToolsVersion '34.0.0'
+    compileSdk 37
+    buildToolsVersion '36.0.0'
     defaultConfig {
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         applicationId 'de.evp.helfer'
@@ -24,15 +39,64 @@ android {
         versionCode releaseCode != null ? releaseCode.toString().toInteger() : debugCode
         versionName releaseName != null ? releaseName.toString() : '1.0.' + debugCode
     }
+    signingConfigs {
+        channeltest {
+            if (channelKeystore != null) {
+                storeFile file(channelKeystore)
+                storePassword project.findProperty('channelKeystorePass')
+                keyAlias 'helper-channel-throwaway'
+                keyPassword project.findProperty('channelKeystorePass')
+            }
+        }
+    }
+    // Channel instrumentation (androidTestChanneltest) runs against the channeltest variant on request.
+    testBuildType project.hasProperty('channelTests') ? 'channeltest' : 'debug'
     buildTypes {
+        // R8 nur für die ausgelieferten bzw. auf dem Gerät getesteten Varianten (release, channeltest), mit denselben
+        // Regeln: App- und JNI-Code bleiben vollständig erhalten, gekürzt werden nur Bibliotheken (OkHttp, Okio, Kotlin).
         release {
-            minifyEnabled false
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro', 'r8-test-references.pro'
             debuggable false
             signingConfig null
         }
         debug {
             applicationIdSuffix '.debug'
         }
+        // Separate test package for device and emulator tests of the secure channel; installs next to (never over)
+        // the production app de.evp.helfer. Unsigned unless a throwaway key is supplied.
+        channeltest {
+            initWith debug
+            // Nicht debugfähig: kein run-as/JDWP auf die Kanaldaten am Gerät; D8 baut dann deterministisch.
+            debuggable false
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro', 'r8-test-references.pro'
+            testProguardFiles 'proguard-test-rules.pro'
+            applicationIdSuffix '.channeltest'
+            versionNameSuffix '-channeltest'
+            signingConfig channelKeystore != null ? signingConfigs.channeltest : null
+            matchingFallbacks = ['debug']
+        }
+        // P4b: eigene Test-App für den HLS-Gerätetest; installiert sich neben (nie über) de.evp.helfer und
+        // de.evp.helfer.channeltest, eigene Daten und eigene Kopplung. Gleicher Code und gleiche R8-Regeln wie
+        // channeltest, aber nie signiert durch Gradle.
+        p4test {
+            initWith channeltest
+            applicationIdSuffix '.p4test'
+            versionNameSuffix '-p4test'
+            signingConfig null
+            matchingFallbacks = ['debug']
+        }
+    }
+    sourceSets {
+        main { jniLibs.srcDirs = [channelJniLibs] }
+        androidTestChanneltest {
+            jniLibs.srcDirs = [channelJniLibsTest]
+            if (hlsFixtures != null) assets.srcDirs = [hlsFixtures]
+        }
+    }
+    packaging {
+        jniLibs { useLegacyPackaging false }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -59,8 +123,110 @@ tasks.configureEach {
     if (name != 'verifyReleaseInputs' && name.contains('Release')) dependsOn verifyReleaseInputs
 }
 
+// The channel test variant must carry the channel library for both ABIs (no APK without the secure channel).
+def verifyChannelLibs = tasks.register('verifyChannelLibs') {
+    doLast {
+        ['arm64-v8a', 'x86_64'].each { abi ->
+            if (!file("$channelJniLibs/$abi/libkadri_pairing_poc.so").isFile()) {
+                throw new GradleException("Channel library missing for $abi: run tools/build-channel-native.sh first.")
+            }
+        }
+    }
+}
+tasks.configureEach {
+    if (name.startsWith('pre') && (name.contains('Channeltest') || name.contains('P4test'))) dependsOn verifyChannelLibs
+}
+// Ohne festen, monotonen Versionscode keine P4-Testapp (sonst kein Update ohne Deinstallation).
+tasks.configureEach {
+    if (name.startsWith('pre') && name.contains('P4test') && !name.contains('AndroidTest')) {
+        doFirst { if (p4VersionCode == null) throw new GradleException('p4test needs -Pp4VersionCode (monotonic).') }
+    }
+}
+androidComponents {
+    onVariants(selector().withBuildType('p4test')) { v ->
+        if (p4VersionCode != null) v.outputs.each { o -> o.versionCode.set(p4VersionCode.toString().toInteger()) }
+    }
+}
+
+// HTTP-Client (Phase B: eingebunden und auf dem Gerät getestet, noch von keiner Funktion genutzt; siehe HttpClients).
 // Instrumentation only; debug and disposable fixtures retain their existing separation.
 dependencies {
+    implementation 'com.squareup.okhttp3:okhttp-android:5.5.1'
+    // P4b: HLS → MP4 ohne Neukodierung (nur Extractor + Mp4Muxer; kein ExoPlayer, keine Media3-Netzschicht/DataSource).
+    // Exakt gepinnt (AndroidX-Tag 1.11.1, Quellen geprüft in P4a), Hashes in gradle/verification-metadata.xml, Apache-2.0.
+    implementation 'androidx.media3:media3-extractor:1.11.1'
+    implementation 'androidx.media3:media3-muxer:1.11.1'
+    constraints {
+        // Media3 1.11.1 zieht Guava 33.3.1-android: GHSA-xxph-c9ww-hj94 / CVE-2026-102554 (Deserialisierung), behoben ab 33.7.2
+        implementation('com.google.guava:guava') { version { strictly '33.7.2-android' } }
+    }
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}
+
+// Keep-Regeln für das, was die Instrumentierungs-APK aus dem Laufzeit-Klassenpfad der App nutzt. AGP berücksichtigt
+// androidTest-Verwendungen beim Schrumpfen nicht, und die Test-APK enthält mit der App geteilte Bibliotheken
+// (Kotlin, androidx.tracing, OkHttp …) nicht selbst – ohne diese Regeln: NoClassDefFoundError im Testrunner.
+// TraceReferences (Teil von R8) erzeugt die Regeln; eingecheckt in r8-test-references.pro und für alle geschrumpften
+// Varianten gleich, damit die getestete APK dieselben Regeln hat wie die ausgelieferte. Prüfung auf Abweichung:
+// tools/build-channel-apk.sh.
+// Fehlerbehandlung: TraceReferences meldet fehlende Definitionen als Fehler; sie werden zu Warnungen herabgestuft, die
+// Ausgabe aber streng geprüft. Zulässig sind nur fehlende Definitionen mit bekanntem Ursprung (TRACE_ALLOWED_MISSING);
+// jede andere Meldung, jede unerwartete Zeile und jeder Abbruch lassen die Aufgabe fehlschlagen.
+def TRACE_ALLOWED_MISSING = [
+    'de.evp.helfer.', 'poc.',                       // App-Code: bleibt per -keep vollständig erhalten
+    'android.test.',                                // JUnit-3-Pfad des Testrunners (keine Bibliothek im SDK-Klassenpfad)
+    'androidx.test.',                               // interne/desugarte Lambdas der Testbibliothek
+    'com.google.errorprone.annotations.', 'org.codehaus.mojo.animal_sniffer.',   // nur zur Übersetzung
+    'java.lang.instrument.', 'sun.misc.',           // JVM-only-APIs in Testbibliotheken (kotlinx.coroutines.debug)
+    'androidx.tracing.Trace',                       // Testrunner erwartet tracing 1.1 (forceEnableAppTracing), App liefert 1.0.0
+]
+tasks.register('traceTestKeepRules', JavaExec) {
+    dependsOn 'assembleChanneltestAndroidTest'
+    def testApk = layout.buildDirectory.file('outputs/apk/androidTest/channeltest/app-channeltest-androidTest.apk')
+    def rules = layout.buildDirectory.file('test-keep/r8-test-references.pro')
+    def report = layout.buildDirectory.file('test-keep/missing-definitions.txt')
+    def bootClasspath = androidComponents.sdkComponents.bootClasspath
+    def stderr = new ByteArrayOutputStream()
+    classpath = files(new File(Class.forName('com.android.tools.r8.R8').protectionDomain.codeSource.location.toURI()))
+    mainClass = 'com.android.tools.r8.tracereferences.TraceReferences'
+    errorOutput = stderr
+    outputs.file(rules)
+    outputs.upToDateWhen { false }
+    doFirst {
+        def jars = configurations.getByName('channeltestRuntimeClasspath').incoming.artifactView {
+            attributes { attribute(Attribute.of('artifactType', String), 'android-classes-jar') }
+        }.files.files.sort { it.path }
+        ['okhttp', 'okio', 'kotlin-stdlib', 'tracing'].each { lib ->
+            if (!jars.any { it.path.contains(lib) }) throw new GradleException("traceTestKeepRules: $lib missing from the target jars")
+        }
+        def a = ['--keep-rules', '--map-diagnostics', 'error', 'warning']
+        bootClasspath.get().each { a += ['--lib', it.asFile.path] }
+        jars.each { a += ['--target', it.path] }
+        a += ['--source', testApk.get().asFile.path, '--output', rules.get().asFile.path]
+        rules.get().asFile.parentFile.mkdirs()
+        args(a)
+        logger.lifecycle("traceTestKeepRules: ${jars.size()} target jars: " + jars.collect { it.parentFile.parentFile.name + "/" + it.name }.join(", "))
+    }
+    doLast {
+        def owners = new TreeMap<String, Integer>()
+        def unexpected = []
+        def patterns = [
+            'Missing class ([\\w.$]+) \\(',
+            'Missing method \\S+ ([\\w.$]+)\\.[^.(]+\\(',
+            'Missing field \\S+ ([\\w.$]+)\\.[\\w$]+ \\(',
+        ].collect { java.util.regex.Pattern.compile('^(?:Warning: )?' + it) }
+        stderr.toString('UTF-8').readLines().each { line ->
+            if (line.trim().isEmpty()) return
+            def owner = patterns.collect { it.matcher(line) }.find { it.find() }?.group(1)
+            if (owner != null && TRACE_ALLOWED_MISSING.any { owner == it || owner.startsWith(it) }) owners[owner] = (owners[owner] ?: 0) + 1
+            else unexpected << line
+        }
+        report.get().asFile.text = owners.collect { k, v -> "$v $k" }.join('\n') + '\n'
+        if (!rules.get().asFile.isFile() || rules.get().asFile.length() == 0) throw new GradleException('traceTestKeepRules: no keep rules written')
+        if (!unexpected.isEmpty()) {
+            throw new GradleException("traceTestKeepRules: unexpected TraceReferences diagnostics (not ignored):\n  " + unexpected.take(40).join('\n  '))
+        }
+        logger.lifecycle("traceTestKeepRules: tolerated missing definitions in ${owners.size()} classes (see ${report.get().asFile})")
+    }
 }

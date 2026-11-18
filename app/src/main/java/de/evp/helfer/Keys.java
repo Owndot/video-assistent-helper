@@ -3,31 +3,16 @@ package de.evp.helfer;
 import android.content.Context;
 import android.content.SharedPreferences;
 
-import java.security.SecureRandom;
-
-/** Eigener Zufallsschlüssel der App (statt des festen "evp-1", den jede andere App kennen könnte). */
+/**
+ * Sprache der App. (Früher auch der feste Kopplungsschlüssel für den alten Klartext-Weg; den gibt es nicht mehr –
+ * gekoppelt wird nur noch über den sicheren Kanal, siehe {@link ChannelServer}.)
+ */
 final class Keys {
     private Keys() {}
 
     private static SharedPreferences prefs(Context c) {
         return c.getApplicationContext().getSharedPreferences("helfer", Context.MODE_PRIVATE);
     }
-
-    static synchronized String key(Context c) {
-        SharedPreferences p = prefs(c);
-        String k = p.getString("key", null);
-        if (k == null || k.length() < 32) {
-            byte[] b = new byte[16];
-            new SecureRandom().nextBytes(b);
-            StringBuilder sb = new StringBuilder();
-            for (byte x : b) sb.append(String.format("%02x", x & 0xff));
-            k = sb.toString();
-            p.edit().putString("key", k).apply();
-        }
-        return k;
-    }
-
-    static boolean paired(Context c) { return prefs(c).getBoolean("paired", false); }
 
     /** Sprache der App: "auto" (wie das Handy), "de" oder "en" – gilt für Bildschirm und Benachrichtigungen */
     static String lang(Context c) { return prefs(c).getString("lang", "auto"); }
@@ -42,13 +27,9 @@ final class Keys {
         applyLang(c);
     }
 
-    static void markPaired(Context c) {
-        if (!paired(c)) prefs(c).edit().putBoolean("paired", true).apply();
-    }
-
-    /** Neu koppeln: neuer Schlüssel, bis zur Kopplung gilt wieder der alte feste */
-    static synchronized void reset(Context c) {
-        prefs(c).edit().remove("key").putBoolean("paired", false).apply();
-        key(c);
+    /** Reste des alten Schlüssels aus früheren Installationen entfernen (er gilt nirgends mehr). */
+    static void dropLegacyKey(Context c) {
+        SharedPreferences p = prefs(c);
+        if (p.contains("key") || p.contains("paired")) p.edit().remove("key").remove("paired").apply();
     }
 }

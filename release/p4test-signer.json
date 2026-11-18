@@ -1,0 +1,8 @@
+{
+  "package": "de.evp.helfer.p4test",
+  "key_alias": "helper-p4-test",
+  "certificate_dn": "CN=Helper P4 TEST ONLY - durable",
+  "certificate_sha256": null,
+  "status": "KEY_NOT_YET_CREATED",
+  "note": "Test identity only. Never de.evp.helfer, never production. Production stays UNAPPROVED (production-policy.json)."
+}

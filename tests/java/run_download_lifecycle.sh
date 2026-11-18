@@ -7,7 +7,9 @@ out=tests/java/lifecycle-classes
 rm -rf "$out"
 mkdir -p "$out"
 mapfile -t fixtures < <(find tests/java/lifecycle -name '*.java' -print)
-javac -cp tests/java/classes -d "$out" "${fixtures[@]}" app/src/main/java/de/evp/helfer/Downloads.java app/src/main/java/de/evp/helfer/HelferService.java
+# HelferService benutzt den Kanal: die Android-freien Kanalklassen echt, IdentityStore/RegistryStore als Stummel (lifecycle/).
+channel=(app/src/main/java/poc/Core.java app/src/main/java/de/evp/helfer/{ChannelServer,ControlCommands,HttpRequestReader,SnapshotWriter}.java)
+javac -cp tests/java/classes -d "$out" "${fixtures[@]}" "${channel[@]}" app/src/main/java/de/evp/helfer/Downloads.java app/src/main/java/de/evp/helfer/HelferService.java
 classpath="$out:tests/java/classes"
 for case in pending blocking blocking-after admission interrupt-race legacy; do
   java -Djava.security.manager=allow -Xmx32m -cp "$classpath" de.evp.helfer.TestLifecycleReview "$case"

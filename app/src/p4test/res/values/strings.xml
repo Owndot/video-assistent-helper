@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P4 test app de.evp.helfer.p4test: clearly distinguishable from the production helper and from the C3 test pair. -->
+<resources>
+    <string name="app_name">P4 TEST Helfer</string>
+</resources>

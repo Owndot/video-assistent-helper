@@ -170,7 +170,7 @@ with sync_playwright() as p:
     r2 = page.evaluate('() => [!!document.fullscreenElement, !!window.__evpRoot.querySelector(".vp"), window.__lockReq || ""]')
     check('Nochmal Drehen: Hochformat, bleibt im Vollbild', r2[0] and r2[1] and r2[2] == 'portrait', r2)
 
-    # Wie auf Pornhub: Seite beendet das Vollbild selbst, kurz nachdem du auf Hochformat gedreht hast
+    # Wie auf Seite A: Seite beendet das Vollbild selbst, kurz nachdem du auf Hochformat gedreht hast
     show_ctl(); page.locator('button[aria-label="Drehen"]').click(); time.sleep(0.5)      # -> Querformat
     show_ctl(); page.locator('button[aria-label="Drehen"]').click(); time.sleep(0.2)      # -> Hochformat
     page.evaluate('() => document.exitFullscreen()'); time.sleep(1.2)                     # Seite wirft aus dem Vollbild
@@ -292,7 +292,7 @@ with sync_playwright() as p:
     time.sleep(0.3)
 
 
-    # ---------- Test 3: HLS-Stream wie auf Pornhub (Seite spielt per hls.js, Adresse kommt aus dem Netzwerk) ----------
+    # ---------- Test 3: HLS-Stream wie auf Seite A (Seite spielt per hls.js, Adresse kommt aus dem Netzwerk) ----------
     ctx3 = b.new_context(viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True)
     ctx3.add_init_script(PRE)
     ctx3.add_init_script(open(WEB + '/hls.min.js', encoding='utf-8').read())   # entspricht @require hls.js

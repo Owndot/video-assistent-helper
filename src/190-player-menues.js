@@ -63,7 +63,7 @@
           });
         return items;
       }
-      // Einzeldateien in mehreren Qualitäten (Facebook, Pornhub …)
+      // Einzeldateien in mehreren Qualitäten (Facebook, Seite A …)
       const files = st.sources.filter((u) => !PLAYLIST_RE.test(u) && st.srcRes[u]);
       if (files.length > 1 && st.mode === 'own') {
         files.slice().sort((a, b) => st.srcRes[b] - st.srcRes[a]).forEach((u) => items.push({
