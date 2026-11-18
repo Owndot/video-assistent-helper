@@ -37,7 +37,7 @@ _spec = importlib.util.spec_from_file_location('bootscan_parser_for_observe', os
 B = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(B)   # nur Parser/Rekonstruktion: parse, phases, digest, listing, foreign_diff, report_class
 
-TOOL = 'pkgab_observe v1'
+TOOL = 'pkgab_observe v2'
 PKG = 'de.evp.helfer.channeltest'
 SEQ0 = {'pre': 20000, 'post': 30000}
 OFFSETS = {'pre': [0, 250], 'post': [0, 250, 2000, 10000]}
@@ -351,10 +351,18 @@ def host_frames(o, text, fname):
                 cur['n'] += 1
             else:
                 cur['ok'] = False
+    if cur is not None:   # QT-BEGIN ohne abschließendes QT-END
+        bad.append('unterminated block at line %d' % cur['line'])
     if text is None:
         o.source('host_queries', ['missing'])
-    else:
-        o.source('host_queries', probs, detail={'used': used, 'discarded': len(bad), 'discarded_at': bad[:20]})
+        return out
+    # Fail-closed: jede verworfene oder unvollständige Abfrage und eine Datei ohne verwertbare Abfrage machen die Quelle
+    # unvollständig (verworfene Blöcke fließen nicht in die Beobachtungen ein, die Messung ist dann nicht COMPLETE)
+    if bad:
+        probs.append('%d host queries discarded or unterminated: %s' % (len(bad), bad[:10]))
+    if used == 0:
+        probs.append('no usable host query')
+    o.source('host_queries', probs, detail={'used': used, 'discarded': len(bad), 'discarded_at': bad[:20]})
     return out
 
 
@@ -530,8 +538,26 @@ def observe(a):
               for f in o.findings]
     lines += ['PKGAB_NOTE ' + n for n in NOTES]
     open(os.path.join(a.out, 'summary.txt'), 'w').write('\n'.join(lines) + '\n')
-    print('\n'.join(lines))
+    # Standardausgabe (öffentliches Job-Log): nur Werte aus festen Mengen, keine Rohinhalte, Pfade oder Problemtexte
+    print('\n'.join(joblog_lines(a.variant, a.run, measurement, summary, o)))
     return 3 if proven else (0 if measurement == 'COMPLETE' else 2)
+
+
+SAFE_TOKEN = re.compile(r'^[A-Za-z0-9_]{1,64}$')
+
+
+def joblog_lines(variant, run, measurement, summary, o):
+    """Zeilen für das öffentliche Job-Log: Variante, Lauf-ID (12 Hex), Aufzählungswerte, Quellnamen mit Status und Anzahl
+    Befunde je Art. Alles andere (Problemtexte, Pfade, Rohzeilen, Ergebnisse von Paketoperationen) steht nur in den
+    Dateien im Runner-Verzeichnis bzw. im geprüften Artefakt."""
+    safe = lambda v: v if SAFE_TOKEN.match(str(v)) else 'redacted'
+    out = ['PKGAB_SUMMARY variant=%s run=%s measurement=%s data_loss=%s overlap=%s findings=%d'
+           % (safe(variant), safe(run), safe(measurement), safe(summary['data_loss']), safe(summary['overlap']), len(o.findings))]
+    out += ['PKGAB_SOURCE %s %s' % (safe(s['name']), safe(s['status'])) for s in o.sources.values()]
+    out.append('PKGAB_FINDINGS %s' % (' '.join('%s=%d' % (safe(k), v) for k, v in sorted(summary['findings_by_kind'].items())) or 'none'))
+    out += ['PKGAB_NOTE ' + n for n in NOTES]
+    out.append('PKGAB_NOTE details (problems, findings, raw data) are only in summary.txt, observations.jsonl and the raw files')
+    return out
 
 
 def last_summary(d):

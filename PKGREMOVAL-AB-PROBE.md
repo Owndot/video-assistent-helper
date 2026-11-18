@@ -53,8 +53,13 @@ Provider-Antwort gilt nur mit ausdrücklichem „No result found.“.
 Je Arm entstehen in `report-pkgremoval-<variante>/`:
 
 - **Rohbelege, unverändert:** ungefilterter Logcat-Strom `logcat.txt` und Abschluss-Dump `logcat-all.txt` (`-b all`),
-  `instr-{pre,post,recheck}.txt`, `host-sampler.txt`, `pkgops.txt`, `foreign-{before,after}.txt` und `dl-lines.txt`.
-  Die `PKGAB_LOG`-Zeilen im Job-Log sind nur ein gefilterter Auszug.
+  `instr-{pre,post,recheck}.txt`, `host-sampler.txt`, `pkgops.txt`, `foreign-{before,after}.txt`, `dl-lines.txt` sowie
+  `host-stderr.txt` und `observe-stderr.txt`. Sie bleiben im Runner-Verzeichnis und gehen nur über das geprüfte
+  Artefakt hinaus.
+- **Öffentliches Job-Log:** keine Rohinhalte. Es enthält nur Zeilen aus festen Wertemengen: `PKGAB_HOST` (Variante,
+  Lauf-ID, Exit-Code, Dateianzahl), `PKGAB_SUMMARY`, `PKGAB_SOURCE` (Name und Status ohne Problemtext),
+  `PKGAB_FINDINGS` (Anzahl je Art) und feste `PKGAB_NOTE`. Ablehnungen tragen nur einen festen Grundcode
+  (`reason=not_emulator` usw.). `stderr` des Skripts geht nach `host-stderr.txt`.
 - **`observations.jsonl`**, die Beobachtungsliste: ein JSON-Objekt je Zeile.
 - **`summary.txt`**: Zeilen `PKGAB_SUMMARY`, `PKGAB_SOURCE`, `PKGAB_FINDING`, `PKGAB_NOTE`.
 
@@ -83,7 +88,7 @@ fehlend, 3 = Datenverlust.
 
 | `type` | Inhalt |
 |---|---|
-| `source` | `name`, `status` (`complete` \| `incomplete` \| `missing`), `problems`, `detail` – je Quelle: Logcat-Strom (2 Synchronisationsmarker, keine Laufzeile nur im Dump), Logcat-Dump, Laufzeilen, Paketschritte, Instrumentierung und Phase je `pre`/`post`/`recheck` (Rahmen, Prüfsummen, offene oder doppelte Änderungen, Zeiten, Schlussaufnahmen), Downloads (Zeitfolge, ID/URI), URI-Prüfungen, Host-Abfragen, `pkgops.txt`, Dateilisten, ggf. `host_script` (Abbruch) |
+| `source` | `name`, `status` (`complete` \| `incomplete` \| `missing`), `problems`, `detail` – je Quelle: Logcat-Strom (2 Synchronisationsmarker, keine Laufzeile nur im Dump), Logcat-Dump, Laufzeilen, Paketschritte, Instrumentierung und Phase je `pre`/`post`/`recheck` (Rahmen, Prüfsummen, offene oder doppelte Änderungen, Zeiten, Schlussaufnahmen), Downloads (Zeitfolge, ID/URI), URI-Prüfungen, Host-Abfragen (unvollständig bei leerer Datei, jeder verworfenen Abfrage, `rc≠0` oder fehlendem `QT-END`), `pkgops.txt`, Dateilisten, ggf. `host_script` (Abbruch) |
 | `run` | Werkzeugversion, Namen der Eingabedateien |
 | `marker`, `pkgop`, `absence` | Paketschritte und jede Paketoperation mit `rc`, Ergebnis, `t_begin`/`t_end` |
 | `pkgop_output` | jede Zeile von `pkgops.txt` wörtlich |
@@ -250,8 +255,8 @@ Zwei bestehende Fälle wurden an die neue Invariante angepasst, ohne die geprüf
 
 | Test | im Workflow | Ergebnis |
 |---|---|---|
-| `tests/bootscan/test_pkgab_observe.py` | ja | PASS, 42 Fälle (Beobachter; Regressionen siehe unten) |
-| `tests/bootscan/test_pkgremoval_script.py` | ja | PASS, 44 Fälle, darunter vollständige Hostabläufe (Exit 0, `COMPLETE`, `overlap PRESENT`, keine Urteilswörter) |
+| `tests/bootscan/test_pkgab_observe.py` | ja | PASS, 46 Fälle (Beobachter; Regressionen siehe unten) |
+| `tests/bootscan/test_pkgremoval_script.py` | ja | PASS, 51 Fälle, darunter vollständige Hostabläufe (Exit 0, `COMPLETE`, `overlap PRESENT`, keine Urteilswörter) und der Fake-Token-Test für Job-Log und Artefakt |
 | `tests/bootscan/test_probe_parsers.py` | ja | PASS, 24 Fälle (Java-Parser mit javac/java, Hostparser, Prüfsumme Java = Python) |
 | `tests/bootscan/test_bootscan_verdict.py` | ja (Parser) | PASS, 50 Fälle |
 | `tests/bootscan/test_archive_integrity.py` | ja | PASS, Originalbelege von Lauf 44281951152 byte-gleich, Ergebnis DATA_LOSS |
@@ -274,6 +279,8 @@ Gezielte Regressionen in `test_pkgab_observe.py` (zuletzt von Codex nachgewiesen
 | Restdatei nach fehlgeschlagenem Download intakt, verkürzt, verändert, fehlend | Befund mit Zustand, nie `PROVEN` |
 | Rückführbarkeit | jeder Datensatz mit `run`/`variant`, Bezüge zeigen auf existierende Rohzeilen mit passendem Inhalt |
 | Determinismus, Upload-Prüfung, keine Urteilswörter | byte-gleiche `observations.jsonl`; Tokens/Passwörter blockieren den Upload ohne Ausgabe des Werts |
+| Host-Abfragen: leere Datei, `QT-END rc=1`, `QT-BEGIN` ohne `QT-END`, ein gültiger und ein ungültiger Block | `host_queries` unvollständig, Messung `INCOMPLETE` (vorher fälschlich `complete`) |
+| Fake-Token in Logcat, `adb install`-Ausgabe und Dateiname (Hostskript-Test) | nicht im Job-Log; unverändert in den Rohdateien; `check-upload` blockiert das Artefakt (vorher Token im Job-Log) |
 
 ## Grenzen
 

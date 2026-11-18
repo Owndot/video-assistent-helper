@@ -220,6 +220,43 @@ for kind in ('removed', 'modified', 'added'):
     r = observe(s, 'control', 'foreign_' + kind)
     check((r['sum']['data_loss'] == 'PROVEN') == (kind != 'added') and kinds(r, 'FOREIGN_' + kind.upper()), 'foreign file %s -> %s' % (kind, r['sum']['data_loss']))
 
+# ---- Regression (GPT-6-Prüfung V4): Host-Abfragen fail-closed
+def host_case(name, mutate):
+    s_ = S.simulate('control', CTRL)
+    s_['hosts'] = mutate(s_['hosts'])
+    return observe(s_, 'control', 'host_' + name)
+
+
+def first_block(h):
+    L = h.splitlines(True)
+    a_ = next(k for k, l in enumerate(L) if l.startswith('QT-BEGIN'))
+    b_ = next(k for k, l in enumerate(L) if l.startswith('QT-END') and k > a_)
+    return L, a_, b_
+
+
+def rc1(h):
+    L, a_, b_ = first_block(h)
+    L[b_] = L[b_].replace('QT-END rc=0', 'QT-END rc=1')
+    return ''.join(L)
+
+
+def unterminated(h):
+    L, a_, b_ = first_block(h)
+    return ''.join(L) + L[a_]          # zusätzliche Abfrage ohne QT-END am Ende
+
+
+def one_bad(h):
+    L, a_, b_ = first_block(h)
+    return ''.join(L[a_:b_ + 1]) + ''.join(L[a_:b_]) + 'Error while accessing provider:media\n' + L[b_]   # ein gültiger, ein ungültiger Block
+
+
+for name, mutate in (('empty file', lambda h: ''), ('query with QT-END rc=1', rc1), ('QT-BEGIN without QT-END', unterminated),
+                     ('one valid and one invalid block', one_bad)):
+    r = host_case(name.replace(' ', '_').replace('=', ''), mutate)
+    check(r['src']['host_queries']['status'] == 'incomplete' and r['sum']['measurement'] == 'INCOMPLETE' and r['rc'] == 2
+          and 'host_queries' in r['sum']['incomplete_sources'], 'host queries: %s -> host_queries incomplete, measurement INCOMPLETE (%s)'
+          % (name, r['src']['host_queries']['problems'][:1]))
+
 # ---- unvollständige Quellen
 s = S.simulate('control', CTRL)
 h = s['hosts'].splitlines()

@@ -24,6 +24,8 @@ Szenario (dict):
   proc_events          True: am_kill "finished inst" und am_proc_died nach jeder Instrumentierung (reguläres Ende)
   pkg_step_kill        True: am_kill des App-Prozesses durch die Paketaktion (installPackageLI bzw. deletePackageX)
   crash                None | 'app_fatal' | 'app_kill_lmk' | 'provider_died' | 'oom' | 'anr' (3 s nach Beginn von post)
+  leak                 None | Zeichenkette (Fake-Token): erscheint in einer Logcat-Zeile einer fremden App und in der
+                       Ausgabe von "adb install" – Prüffall, dass keine Rohinhalte ins Job-Log gelangen
 """
 import hashlib
 import heapq
@@ -126,6 +128,8 @@ class Device:
         self.advance(20)
         self.emit('BOOTSCAN', ("BOOTSCAN PKG run=%s variant=%s event=%s %s" % (run, variant, event, extra)).rstrip())
         self.marks[event] = self.clock
+        if event == 'install1-end' and self.sc.get('leak'):
+            self.emit('LeakyApp', 'Authorization: Bearer %s' % self.sc['leak'], 3333, 3333)
         if event in ('install2-end', 'update-end') and self.sc['scan_after_pkg_end'] is not None:
             self.schedule(self.clock + self.sc['scan_after_pkg_end'], 'scan')
         if event == 'install1-end' and self.sc['scan_after_pkg_end'] is None:
@@ -142,6 +146,8 @@ class Device:
         if not self.installed[pkg] and pkg == PKG:
             self.uid += 1
         self.installed[pkg] = True
+        if self.sc.get('leak'):
+            return 0, 'Performing Streamed Install (session %s)\nSuccess' % self.sc['leak']
         return 0, 'Performing Streamed Install\nSuccess'
 
     def uninstall(self, pkg):

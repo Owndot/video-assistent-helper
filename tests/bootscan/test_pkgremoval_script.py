@@ -46,7 +46,7 @@ def check(cond, what):
         fails.append(what)
 
 
-def run(variant, **sc):
+def run(variant, leak_file=None, **sc):
     d = tempfile.mkdtemp()
     b = os.path.join(d, 'bin')
     os.makedirs(b)
@@ -61,6 +61,8 @@ def run(variant, **sc):
     os.makedirs(os.path.join(root, 'Android', 'data'))
     open(os.path.join(root, 'Download', 'existing.pdf'), 'wb').write(b'foreign')
     open(os.path.join(root, 'Android', 'data', 'skip.bin'), 'wb').write(b'x')
+    if leak_file:   # fremde Datei, deren Name ein Fake-Token enthält (landet in der Rohliste foreign-before.txt)
+        open(os.path.join(root, 'Download', leak_file + '.txt'), 'wb').write(b'x')
     out = os.path.join(d, 'out')
     os.makedirs(os.path.join(out, 'apk'))
     env = dict(os.environ, PATH=b + os.pathsep + os.environ['PATH'], FAKE_ROOT=d, FAKE_SIM_DIR=HERE, FAKE_SCENARIO=json.dumps(sc))
@@ -71,8 +73,22 @@ def run(variant, **sc):
     report = sorted(os.listdir(rd)) if os.path.isdir(rd) else []
     verdict = open(os.path.join(rd, 'summary.txt')).read() if 'summary.txt' in report else ''
     obs = [json.loads(l) for l in open(os.path.join(rd, 'observations.jsonl'))] if 'observations.jsonl' in report else []
+    files = {f: open(os.path.join(rd, f), encoding='utf-8', errors='replace').read() for f in report}
+    up = subprocess.run([sys.executable, '-I', os.path.join(ROOT, 'tools', 'pkgab_observe.py'), 'check-upload', rd], capture_output=True, text=True) \
+        if os.path.isdir(rd) else None
     shutil.rmtree(d)
-    return {'rc': p.returncode, 'out': p.stdout + p.stderr, 'cmds': cmds, 'foreign_ok': foreign_ok, 'report': report, 'verdict': verdict, 'obs': obs}
+    return {'rc': p.returncode, 'out': p.stdout + p.stderr, 'stdout': p.stdout, 'stderr': p.stderr, 'cmds': cmds, 'foreign_ok': foreign_ok,
+            'report': report, 'verdict': verdict, 'obs': obs, 'files': files, 'upload': up}
+
+
+JOBLOG_LINE = re.compile(r'^(PKGAB_HOST|PKGAB_SUMMARY|PKGAB_SOURCE|PKGAB_FINDINGS|PKGAB_NOTE) ')
+RAW_PREFIXES = ('PKGAB_INSTR', 'PKGAB_OPS', 'PKGAB_LOG', 'PKGAB_HOSTQ', 'PKGAB_LIST', 'PKGAB_OBS', 'PKGAB_FINDING ', 'PKGAB_REASON')
+
+
+def joblog_clean(r):
+    """Job-Log = stdout+stderr des Skripts: nur feste Statuszeilen, nichts aus den Rohdaten."""
+    lines = [l for l in r['out'].splitlines() if l.strip()]
+    return all(JOBLOG_LINE.match(l) for l in lines) and not any(l.startswith(RAW_PREFIXES) for l in lines)
 
 
 def result(r):
@@ -120,7 +136,7 @@ for sc, want, logs_allowed in [(dict(device='phone'), 'not an emulator', False),
         r = run(variant, **sc)
         logcat = [c for c in r['cmds'] if c.startswith('logcat')]
         check(r['rc'] == 2 and ('measurement=REFUSED' in r['out'] if not logs_allowed else ('measurement=INCOMPLETE' in r['out'] and finding(r, 'HOST_ABORT')))
-              and want in r['out'] and not unsafe(r['cmds']) and r['foreign_ok']
+              and want in r['files'].get('host-stderr.txt', '') and want not in r['out'] and joblog_clean(r) and not unsafe(r['cmds']) and r['foreign_ok']
               and not any(c.startswith('shell am instrument') or c.startswith('install') for c in r['cmds'])
               and (logs_allowed or (not logcat and 'PKGAB_LOG' not in r['out'] and 'logcat-all.txt' not in r['report'])),
               'refuses %s (%s): exit %d, REFUSED/aborted, nothing installed, %s' % (sc, variant, r['rc'], 'logs only on an accepted emulator' if logs_allowed
@@ -139,9 +155,10 @@ for key in ('control', 'supported', 'not_supported'):
           and not VERDICT_WORDS.search(''.join(re.findall(r'PKGAB_\w+ .*', r['out']))),
           'complete synthetic host run %s: exit %d, measurement %s, overlap %s, no verdict word' % (key, r['rc'], result(r), summ.get('overlap')))
     check({'summary.txt', 'observations.jsonl', 'logcat.txt', 'logcat-all.txt', 'host-sampler.txt', 'pkgops.txt'} <= set(r['report'])
-          and all(('PKGAB_INSTR %s instr-%s' % ('control' if key == 'control' else 'uninstall', ph)) in r['out'] for ph in ('pre', 'post', 'recheck'))
-          and 'PKGAB_OPS' in r['out'] and 'PKGAB_HOSTQ' in r['out'] and 'PKGAB_LIST' in r['out'] and 'PKGAB_OBS' in r['out'],
-          '%s: raw evidence and observations printed and kept in the report %s' % (key, r['report']))
+          and {'instr-pre.txt', 'instr-post.txt', 'instr-recheck.txt', 'foreign-before.txt', 'foreign-after.txt'} <= set(r['report'])
+          and 'BOOTSCAN DL ' in r['files']['logcat.txt'] and 'QT-BEGIN' in r['files']['host-sampler.txt'] and 'op=' in r['files']['pkgops.txt'],
+          '%s: raw evidence and observations kept unchanged in the report %s' % (key, r['report']))
+    check(joblog_clean(r) and not r['stderr'], '%s: job log carries only fixed status lines, no raw content' % key)
 again = run('uninstall', sim=SUPPORTED)
 stable = lambda r: [x for x in r['obs'] if x['type'] in ('download', 'pkgop', 'scan', 'owner_event', 'file_obs', 'uri_check')] + \
     [{k: r['obs'][-1].get(k) for k in ('measurement', 'data_loss', 'overlap')}] if r['obs'] else []
@@ -195,20 +212,31 @@ for label, sim in [('uninstall of the test package reports Failure with rc=0', d
     check(r['rc'] == 2 and 'measurement=INCOMPLETE' in r['verdict'] and finding(r, 'HOST_ABORT')
           and (finding(r, 'PKGOP_FAILED') or finding(r, 'ABSENCE_NOT_PROVEN'))
           and not any(c.startswith('install') or 'bootscanPhase post' in c for c in after)
-          and 'PKGAB_OPS' in r['out'] and 'PKGAB_LOG' in r['out'] and 'logcat.txt' in r['report'],
+          and 'op=uninstall' in r['files'].get('pkgops.txt', '') and 'logcat.txt' in r['report'] and joblog_clean(r),
           'aborted, INCOMPLETE: %s (failure listed, no reinstall, raw evidence kept)' % label)
 
 # ---- find-Fehler, kaputte Instrumentierung
 r = run('control', find_fails=True, sim={'scan_after_pkg_end': 2000})
-lists = [l for l in r['out'].splitlines() if l.startswith('PKGAB_LIST control foreign-before')]
+lists = r['files'].get('foreign-before.txt', '').splitlines()
 check(result(r) == ['INCOMPLETE'] and 'foreign_lists' in r['obs'][-1]['incomplete_sources'] and not any(l.endswith('LIST-END') for l in lists)
       and any('LIST-ERROR' in l for l in lists), 'failed find gives no valid listing (no LIST-END) -> foreign_lists incomplete %s' % result(r))
 r = run('control', instr_broken=True, sim={'scan_after_pkg_end': 2000})
-check(r['rc'] == 2 and result(r) == ['INCOMPLETE'] and 'PKGAB_INSTR control instr-pre' in r['out'] and 'PKGAB_LIST control foreign-before' in r['out'],
-      'broken instrumentation -> INCOMPLETE, evidence printed')
-lists = [l for l in ok['control']['out'].splitlines() if l.startswith('PKGAB_LIST control foreign-before ')]
+check(r['rc'] == 2 and result(r) == ['INCOMPLETE'] and 'Process crashed' in r['files'].get('instr-pre.txt', '') and 'foreign-before.txt' in r['report']
+      and joblog_clean(r), 'broken instrumentation -> INCOMPLETE, raw evidence kept, job log clean')
+lists = ok['control']['files']['foreign-before.txt'].splitlines()
 check(any(l.endswith('/storage/emulated/0/Download/existing.pdf') for l in lists) and not any('/Android/' in l for l in lists)
-      and lists[-1:] == ['PKGAB_LIST control foreign-before LIST-END'], 'listing of foreign files complete (SHA-256, LIST-END), Android/ excluded')
+      and lists[-1:] == ['LIST-END'], 'listing of foreign files complete (SHA-256, LIST-END), Android/ excluded')
+
+# ---- Fake-Token: nie im Job-Log, unverändert in den Rohdaten, Artefakt-Upload blockiert
+TOKEN = 'ghp_' + 'Fake0Token' * 4   # zur Laufzeit gebaut, kein echtes Geheimnis
+r = run('uninstall', leak_file=TOKEN, sim=dict(SUPPORTED, leak=TOKEN))
+check(r['rc'] == 0 and TOKEN not in r['out'] and joblog_clean(r), 'fake token in logcat, install output and a file name never reaches the job log (exit %d)' % r['rc'])
+check(TOKEN in r['files'].get('logcat.txt', '') and TOKEN in r['files'].get('pkgops.txt', '') and TOKEN in r['files'].get('foreign-before.txt', ''),
+      'raw data keep the token unchanged in the runner directory (no silent filtering)')
+check(r['upload'] is not None and r['upload'].returncode == 1 and 'PKGAB_UPLOAD_CHECK BLOCKED' in r['upload'].stdout and TOKEN not in r['upload'].stdout,
+      'artifact upload check blocks the report because of the token, without printing it')
+r = run('control', sim={'scan_after_pkg_end': 2000})
+check(r['upload'] is not None and r['upload'].returncode == 0, 'artifact upload check passes a report without credentials')
 
 src = open(SCRIPT).read()
 helpers = re.findall(r"<<'(QSH|FSH|QTSH)'\n(.*?)\n\1\n", src, re.S)

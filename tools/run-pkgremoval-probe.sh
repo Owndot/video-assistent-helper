@@ -23,19 +23,23 @@
 #     nachgewiesener Dateischaden und beobachtete Auffälligkeiten; die Ursachenanalyse erfolgt danach manuell).
 #     Exit 0 = Messung vollständig und kein Dateischaden nachgewiesen (keine Freigabe des Helpers, kein Hypothesenurteil),
 #     2 = unvollständig/abgebrochen/abgelehnt, 3 = Dateischaden nachgewiesen.
-# Rohdaten (ungefilterter Logcat-Strom und -Dump, Instrumentierungen, Host-Abfragen, Paketoperationen, Dateilisten) liegen
-# unverändert in report-pkgremoval-<variante>/; die PKGAB_LOG-Zeilen im Job-Log sind nur ein gefilterter Auszug.
+# Rohdaten (ungefilterter Logcat-Strom und -Dump, Instrumentierungen, Host-Abfragen, Paketoperationen, Dateilisten,
+# Beobachtungsliste) liegen unverändert in report-pkgremoval-<variante>/ im Runner-Verzeichnis. Ins öffentliche Job-Log
+# gelangen KEINE Rohinhalte: stdout trägt nur PKGAB_HOST-/PKGAB_SUMMARY-/PKGAB_SOURCE-/PKGAB_FINDINGS-/PKGAB_NOTE-Zeilen
+# aus festen Wertemengen; stderr des Skripts geht nach report-pkgremoval-<variante>/host-stderr.txt. Das Artefakt wird
+# vor dem Hochladen auf Zugangsdaten geprüft (pkgab_observe.py check-upload).
 # Es wird NICHTS gelöscht und nichts in die MediaProvider-Datenbank geschrieben; einzige verändernde Paketaktion ist die
 # Deinstallation des eigenen Testpakets in der Variante uninstall. Der Emulator wird nach dem Lauf verworfen.
 set -euo pipefail
 VARIANT="${1:-}"
-case "$VARIANT" in control|uninstall) ;; *) echo "refusing: variant '$VARIANT'"; echo "PKGAB_SUMMARY variant=- run=- measurement=REFUSED data_loss=NONE_PROVEN overlap=UNDETERMINED"; exit 2;; esac
+case "$VARIANT" in control|uninstall) ;; *) echo "PKGAB_SUMMARY variant=- run=- measurement=REFUSED data_loss=NONE_PROVEN overlap=UNDETERMINED reason=unknown_variant"; exit 2;; esac
 OUT="$(cd "${2:?usage: run-pkgremoval-probe.sh control|uninstall OUT}" && pwd)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PKG=de.evp.helfer.channeltest
 RUNNER="$PKG.test/androidx.test.runner.AndroidJUnitRunner"
 CLS=de.evp.helfer.MediaStoreBootScanProbeTest#probe
 REP="$OUT/report-pkgremoval-$VARIANT"; mkdir -p "$REP"
+exec 2>>"$REP/host-stderr.txt"   # Fehlerausgaben (auch von adb) nie ins Job-Log
 W="$(mktemp -d)"
 LOGCAT_PID=""; SAMPLER_PID=""
 DUMPED=0; EVIDENCE=0; SYNC=0; RUN="unknown"; STATE=""
@@ -46,19 +50,25 @@ evidence() {   # genau einmal, auch beim Abbruch; NUR nach bestandener Emulator-
   [ -n "$LOGCAT_PID" ] && { kill "$LOGCAT_PID" 2>/dev/null || true; wait "$LOGCAT_PID" 2>/dev/null || true; }
   if [ "$EVIDENCE" != 1 ]; then echo "PKGAB_HOST variant=$VARIANT no evidence collected (device not accepted)"; return 0; fi
   adb logcat -d -v epoch -b all > "$W/logcat-all.txt" 2>&1 || true
-  cp "$W"/*.txt "$REP/" 2>/dev/null || true
-  for f in instr-pre instr-post instr-recheck; do [ -f "$W/$f.txt" ] && sed "s/^/PKGAB_INSTR $VARIANT $f /" "$W/$f.txt"; done
-  [ -f "$W/pkgops.txt" ] && sed "s/^/PKGAB_OPS $VARIANT /" "$W/pkgops.txt"
-  [ -f "$W/logcat.txt" ] && grep -E "BOOTSCAN|MediaProvider: Scanned |owner_package_changed|MediaProvider: Moving |$PKG|PACKAGE_(REMOVED|FULLY_REMOVED|ADDED|REPLACED)|AndroidRuntime|OutOfMemoryError|am_crash|am_anr|am_proc_died|am_kill| [VDIWEF] (DEBUG|libc|crash_dump64|crash_dump|art) *:" "$W/logcat.txt" | sed "s/^/PKGAB_LOG $VARIANT /" || true
-  [ -f "$W/host-sampler.txt" ] && sed "s/^/PKGAB_HOSTQ $VARIANT /" "$W/host-sampler.txt"
-  for f in foreign-before foreign-after; do [ -f "$W/$f.txt" ] && sed "s/^/PKGAB_LIST $VARIANT $f /" "$W/$f.txt"; done
+  cp "$W"/*.txt "$REP/" 2>/dev/null || true   # Rohdaten unverändert ins Runner-Verzeichnis, NICHT ins Job-Log
+  echo "PKGAB_HOST variant=$VARIANT raw evidence kept in report-pkgremoval-$VARIANT ($(ls "$REP" | wc -l | tr -d ' ') files)"
   return 0
 }
-trap 'evidence; rm -rf "$W"' EXIT
+trap 'rc_exit=$?; evidence; echo "PKGAB_HOST variant=$VARIANT exit $rc_exit"; rm -rf "$W"' EXIT
+reason_code() {   # feste Codes für das Job-Log; der volle Grund steht nur in host-stderr.txt bzw. summary.txt
+  case "$1" in
+    "not an emulator"*) echo not_emulator;; "API "*) echo wrong_api;; "run id"*) echo run_id;;
+    "test package already installed"*) echo not_fresh;; "probe files already present"*) echo probe_files_present;;
+    "probe file check"*) echo probe_check_failed;; "pm path"*) echo pm_path_failed;; "package list"*) echo package_list_failed;;
+    *) echo other;;
+  esac
+}
 invalid() {
   echo "refusing: $*" >&2
   if [ "$EVIDENCE" != 1 ]; then   # abgelehnt, bevor irgendetwas erfasst wurde
-    echo "PKGAB_SUMMARY variant=$VARIANT run=$RUN measurement=REFUSED data_loss=NONE_PROVEN overlap=UNDETERMINED reason=$(printf '%s' "$*" | tr -c 'A-Za-z0-9_.:-' '_')" | tee "$REP/summary.txt"
+    local line="PKGAB_SUMMARY variant=$VARIANT run=$RUN measurement=REFUSED data_loss=NONE_PROVEN overlap=UNDETERMINED reason=$(reason_code "$*")"
+    echo "$line"
+    { echo "$line"; echo "PKGAB_REASON $*"; } > "$REP/summary.txt"
     exit 2
   fi
   evidence   # Rohbelege bleiben erhalten, auch beim Abbruch
@@ -72,11 +82,11 @@ observe() {   # Beobachtungsliste und Zusammenfassung; $1 = Abbruchgrund (option
   set +e
   python3 -I "$HERE/pkgab_observe.py" observe --variant "$VARIANT" --run "$RUN" --out "$REP" --logcat "$W/logcat.txt" --logcat-dump "$W/logcat-all.txt" \
     --host-sampler "$W/host-sampler.txt" --pkgops "$W/pkgops.txt" --instr-pre "$W/instr-pre.txt" --instr-post "$W/instr-post.txt" \
-    --instr-recheck "$W/instr-recheck.txt" --foreign-before "$W/foreign-before.txt" --foreign-after "$W/foreign-after.txt" ${1:+--abort "$1"} > "$W/observe-out.txt" 2>&1
+    --instr-recheck "$W/instr-recheck.txt" --foreign-before "$W/foreign-before.txt" --foreign-after "$W/foreign-after.txt" ${1:+--abort "$1"} \
+    > "$W/observe-out.txt" 2>>"$REP/observe-stderr.txt"
   rc=$?
   set -e
-  [ -f "$REP/observations.jsonl" ] && sed "s/^/PKGAB_OBS $VARIANT /" "$REP/observations.jsonl"
-  cat "$W/observe-out.txt"
+  cat "$W/observe-out.txt"   # nur die festen Statuszeilen des Beobachters (keine Rohinhalte)
   echo "PKGAB_HOST variant=$VARIANT observe exit $rc"
   return "$rc"
 }
@@ -98,13 +108,13 @@ uid() { adb shell cmd package list packages -U "$PKG" 2>/dev/null | tr -d '\r' |
 # Ergebnis in STATE (present | none); bewusst ohne Befehlsersetzung, damit invalid() das Skript beendet.
 pm_state() {
   local out; out="$(adb shell "pm path $1; echo PM-RC=\$?" 2>&1 | tr -d '\r')" || invalid "pm path $1: adb failed"
-  printf '%s\n' "$out" | grep -q '^PM-RC=' || invalid "pm path $1 did not run: $(printf '%s' "$out" | head -c 120)"
+  printf '%s\n' "$out" | grep -q '^PM-RC=' || { echo "pm path $1 did not run: $out" >> "$W/pkgops.txt"; invalid "pm path $1 did not run (output in pkgops.txt)"; }
   if printf '%s\n' "$out" | grep -q '^package:'; then STATE=present; else STATE=none; fi
   echo "pm path $1: $STATE ($(printf '%s' "$out" | tr '\n' ' ' | cut -c1-120))" >> "$W/pkgops.txt"
 }
 listed() {     # Testpaket oder App-Paket in der Paketliste?
   local out; out="$(adb shell "cmd package list packages $PKG; echo LIST-RC=\$?" 2>&1 | tr -d '\r')" || invalid "package list: adb failed"
-  printf '%s\n' "$out" | grep -q '^LIST-RC=0$' || invalid "package list did not run: $(printf '%s' "$out" | head -c 120)"
+  printf '%s\n' "$out" | grep -q '^LIST-RC=0$' || { echo "package list did not run: $out" >> "$W/pkgops.txt"; invalid "package list did not run (output in pkgops.txt)"; }
   if printf '%s\n' "$out" | grep -qE "^package:($PKG|$PKG\.test)\$"; then STATE=present; else STATE=none; fi
   echo "package list: $STATE ($(printf '%s' "$out" | tr '\n' ' ' | cut -c1-120))" >> "$W/pkgops.txt"
 }
@@ -114,7 +124,7 @@ install_both() {
       if pkgop "install-${apk%%:*}" "$i" adb install -r -t "$OUT/apk/${apk#*:}"; then ok=1; break; fi
       sleep 3   # Paketdienst kurz nach dem Booten evtl. noch nicht bereit; jeder Versuch ist protokolliert
     done
-    [ "$ok" = 1 ] || invalid "install of ${apk#*:} failed (see PKGAB_OPS)"
+    [ "$ok" = 1 ] || invalid "install of ${apk#*:} failed (see pkgops.txt)"
   done
   adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
 }
@@ -204,8 +214,8 @@ adb shell am instrument -w -r -e bootscanRun "$RUN" -e bootscanPhase pre -e boot
 SAMPLER_PID=$!
 if [ "$VARIANT" = uninstall ]; then
   marker uninstall-begin
-  pkgop uninstall-test 1 adb uninstall "$PKG.test" || invalid "uninstall of $PKG.test not successful (see PKGAB_OPS)"
-  pkgop uninstall-app 1 adb uninstall "$PKG" || invalid "uninstall of $PKG not successful (see PKGAB_OPS)"
+  pkgop uninstall-test 1 adb uninstall "$PKG.test" || invalid "uninstall of $PKG.test not successful (see pkgops.txt)"
+  pkgop uninstall-app 1 adb uninstall "$PKG" || invalid "uninstall of $PKG not successful (see pkgops.txt)"
   pm_state "$PKG"; A="$STATE"; pm_state "$PKG.test"; T="$STATE"; listed; L="$STATE"
   if [ "$A" != none ] || [ "$T" != none ] || [ "$L" != none ]; then
     marker absent-failed "pmApp=$A pmTest=$T listed=$L"
@@ -231,7 +241,7 @@ touch "$W/stop-sampler"; wait "$SAMPLER_PID" 2>/dev/null || true; SAMPLER_PID=""
 sync_stream
 tr -d '\r' < "$W/logcat.txt" | grep -o 'BOOTSCAN DL .*' | grep "run=$RUN " > "$W/dl-lines.txt" || true
 BASES="$(grep -o ' uri=content://[^ ]*' "$W/dl-lines.txt" | sed -E 's# uri=(.*/)[0-9]+$#\1#' | sort -u || true)"
-[ "$(printf '%s\n' "$BASES" | grep -c .)" -le 1 ] || invalid "downloads returned URIs with different bases: $BASES"
+[ "$(printf '%s\n' "$BASES" | grep -c .)" -le 1 ] || { printf '%s\n' "$BASES" > "$W/uri-bases.txt"; invalid "downloads returned URIs with different bases (see uri-bases.txt)"; }
 BASE="${BASES:-content://media/external/downloads/}"
 IDS="$(sed -nE 's/.* seq=([0-9]+) .* uri=content:[^ ]*\/([0-9]+) id=[0-9]+$/\1:\2/p' "$W/dl-lines.txt" | paste -sd, -)"
 adb shell am instrument -w -r -e bootscanRun "$RUN" -e bootscanPhase recheck -e bootscanBase "$BASE" -e bootscanIds "${IDS:--}" -e class "$CLS" "$RUNNER" > "$W/instr-recheck.txt" 2>&1 || true
