@@ -1,0 +1,90 @@
+name: MediaStore boot-scan diagnosis (disposable API 34 emulator only, nothing published)
+
+# Option B nach dem API-34-Befund auf 0f989ca: genau eine gezielte Diagnose. Veröffentlichungen während des ersten
+# Volume-Scans nach dem Booten ("Scanned external_primary due to REASON_MOUNTED") gegen kontrollierte Veröffentlichungen
+# nach dessen Abschluss, auf EINEM frisch gestarteten Wegwerf-Emulator. Nur Testinstrumentierung: die Testklasse liegt
+# unter tests/bootscan/ und wird nur in DIESEM Job vor dem Bau in die Test-APK kopiert; Produktcode unverändert.
+# Kein APK-Upload, keine Lieferung, keine Signierung außer dem Wegwerf-Testsignierer, kein Löschen auf dem Gerät.
+# Ergebnis nie PASS: BOOTSCAN_RESULT DIAGNOSED | INCONCLUSIVE | DATA_LOSS | INVALID (tools/bootscan_verdict.py).
+on:
+  push:
+    branches: [feature/c3-browser-downloads]
+    paths: [.github/workflows/bootscan-probe.yml, tests/bootscan/**, tools/run-bootscan-probe.sh, tools/bootscan_verdict.py]
+permissions:
+  contents: read
+concurrency:
+  group: bootscan-probe-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  probe:
+    name: Boot-scan diagnosis on a fresh disposable API 34 emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - name: Verdict and host-script self-tests (synthetic logs, fake adb; no device)
+        run: |
+          set -euo pipefail
+          python3 -I tests/bootscan/test_bootscan_verdict.py
+          python3 -I tests/bootscan/test_bootscan_script.py
+      - name: Pinned toolchains (Rust from rust-toolchain.toml, NDK r27c, SDK 37.0, build-tools 36.0.0 + 34.0.0)
+        run: |
+          set -euo pipefail
+          (cd poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018" "platforms;android-37.0" "build-tools;36.0.0" "build-tools;34.0.0" < <(yes 2>/dev/null) > /dev/null
+          test -f "$ANDROID_HOME/ndk/27.2.12479018/source.properties"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Native channel libraries (API 26 linker, arm64-v8a + x86_64)
+        run: set -o pipefail; bash tools/build-channel-native.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/native.txt"
+      - name: Diagnosis test class into the test APK (this job only; the only change to the checkout)
+        run: |
+          set -euo pipefail
+          cp tests/bootscan/MediaStoreBootScanProbeTest.java app/src/androidTestChanneltest/java/de/evp/helfer/
+          test "$(git status --porcelain)" = "?? app/src/androidTestChanneltest/java/de/evp/helfer/MediaStoreBootScanProbeTest.java"
+      - name: Test APKs with a throwaway signer (deleted after the build)
+        run: set -o pipefail; bash tools/build-channel-apk.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/apk.txt"
+      - name: Only the test variant was built (no release or debug APK of de.evp.helfer)
+        run: |
+          set -euo pipefail
+          ls app/build/outputs/apk
+          test ! -e app/build/outputs/apk/release
+          test ! -e app/build/outputs/apk/debug
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Boot-scan diagnosis on a fresh disposable API 34 x86_64 emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          emulator-boot-timeout: 1200
+          disable-animations: true
+          # frische Datenpartition und Kaltstart: der erste Volume-Scan nach dem Booten läuft sicher
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -wipe-data -noaudio -no-boot-anim -camera-back none
+          # bewusst OHNE tools/wait-device-ready.sh: der Boot-Scan darf nicht abgewartet werden
+          script: bash tools/run-bootscan-probe.sh "$RUNNER_TEMP/a"
+      - name: Collect text-only report (no APK, no keys)
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          cp -r "$RUNNER_TEMP/a/report-bootscan" "$RUNNER_TEMP/out/" 2>/dev/null || true
+          cp "$RUNNER_TEMP"/native.txt "$RUNNER_TEMP"/apk.txt "$RUNNER_TEMP/out/" 2>/dev/null || true
+          find "$RUNNER_TEMP/out" \( -name '*.apk' -o -name '*.so' -o -name '*.p12' -o -name '*.jks' \) -delete
+          ls -R "$RUNNER_TEMP/out"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: bootscan-diagnosis-report-text-only
+          path: ${{ runner.temp }}/out
+          retention-days: 14
+          if-no-files-found: warn
