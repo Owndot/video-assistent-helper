@@ -53,6 +53,9 @@ import java.util.regex.Pattern;
  * ("Scanned external_primary due to REASON_MOUNTED") gleichzeitig läuft – verloren, ersetzt, Besitzer geändert, nur
  * vorübergehend unsichtbar? Vergleich: Veröffentlichungen WÄHREND des Scans (phase=during) gegen kontrollierte nach
  * seinem Abschluss (phase=after); phase=recheck ist die abschließende Nachprüfung in einem neuen Prozess.
+ * A/B-Paketdiagnose (tools/run-pkgremoval-probe.sh): phase=pre veröffentlicht wenige Dateien mit der ersten Installation
+ * (nur Prüfungen +0/+250 ms, damit die Deinstallation noch während des Boot-Scans folgen kann), phase=post nach der
+ * Neuinstallation bzw. Aktualisierung gedrosselt bis kurz nach dem Mount-Scan; bootscanMax begrenzt die Anzahl.
  *
  * Der Test macht KEINE Produkt-Assertion und bewertet nichts: er protokolliert nur Rohbeobachtungen (Logcat-Tag
  * BOOTSCAN), die tools/bootscan_verdict.py einordnet. Er schreibt nur synthetische Dateien "BootScanProbe-<run>-<seq>.mp4"
@@ -68,6 +71,7 @@ public class MediaStoreBootScanProbeTest {
     static final String FILES_SH = "/data/local/tmp/bootscan-f.sh";
     static final long SNAPSHOT_MS = 500, DISK_MS = 2_000, SETTLE_MS = 12_000;
     static final long[] URI_OFFSETS = {0, 250, 2_000, 10_000};
+    static final long[] URI_OFFSETS_PRE = {0, 250};
     static final Pattern SCAN_LINE = Pattern.compile("Scanned external_primary due to REASON_MOUNTED");
     static final Pattern ROW = Pattern.compile("^Row: \\d+ _id=(\\d+), owner_package_name=([^,]*), is_pending=(\\d+), is_trashed=(\\d+), "
         + "_data=([^,]*), _display_name=([^,]*), _size=([^,]*)$");
@@ -281,14 +285,15 @@ public class MediaStoreBootScanProbeTest {
         phase = args.getString("bootscanPhase");
         assertNotNull("only run by tools/run-bootscan-probe.sh", run);
         assertTrue("run id", run.matches("[0-9a-f]{12}"));
-        assertTrue("phase", "during".equals(phase) || "after".equals(phase) || "recheck".equals(phase));
+        assertTrue("phase", java.util.Arrays.asList("during", "after", "recheck", "pre", "post").contains(phase));
         assertTrue("API 34 only (is_trashed, owner columns)", Build.VERSION.SDK_INT >= 30);
         RUN = run;
         token = "BootScanProbe-" + run + "-";
         ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
         cr = ctx.getContentResolver();
         pkg = ctx.getPackageName();
-        log("START run=" + run + " phase=" + phase + " sdk=" + Build.VERSION.SDK_INT + " pkg=" + pkg + " t=" + now());
+        log("START run=" + run + " phase=" + phase + " sdk=" + Build.VERSION.SDK_INT + " pkg=" + pkg + " appUid=" + ctx.getApplicationInfo().uid
+            + " pid=" + android.os.Process.myPid() + " t=" + now());
         Sampler sampler = new Sampler();
         ScheduledExecutorService ex = Executors.newScheduledThreadPool(3);
         int downloads = 0;
@@ -328,8 +333,13 @@ public class MediaStoreBootScanProbeTest {
     /** Veröffentlicht nacheinander je eine synthetische Datei über die echte Engine; höchstens zwei gleichzeitig. */
     int publish(Bundle args, ScheduledExecutorService ex) throws Exception {
         long seconds = Long.parseLong(args.getString("bootscanSeconds", "40"));
-        boolean during = "during".equals(phase);
-        int seq0 = during ? 0 : 10_000;
+        int max = Integer.parseInt(args.getString("bootscanMax", String.valueOf(Integer.MAX_VALUE)));
+        long pace = Long.parseLong(args.getString("bootscanPaceMs", "0"));
+        long afterScan = Long.parseLong(args.getString("bootscanAfterScanMs", "5000"));
+        boolean during = "during".equals(phase) || "post".equals(phase);   // bis kurz nach dem Mount-Scan
+        boolean pre = "pre".equals(phase);
+        int seq0 = "during".equals(phase) ? 0 : "after".equals(phase) ? 10_000 : pre ? 20_000 : 30_000;
+        int parallel = pace > 0 ? 1 : 2;
         long end = now() + seconds * 1000;
         long scanAt = -1;
         if (during && scanSeen()) { scanAt = now(); log("SCANSEEN run=" + run + " t=" + scanAt + " already=1"); }
@@ -366,8 +376,10 @@ public class MediaStoreBootScanProbeTest {
                         lastScanCheck = now();
                         if (scanSeen()) { scanAt = now(); log("SCANSEEN run=" + run + " t=" + scanAt + " already=0"); }
                     }
-                    if (during && scanAt > 0 && now() > scanAt + 5_000) break;   // bis 5 s nach dem Scan weiter veröffentlichen
-                    while (inFlight.size() < 2) {
+                    if (during && scanAt > 0 && now() > scanAt + afterScan) break;   // bis kurz nach dem Scan weiter veröffentlichen
+                    if (count >= max && inFlight.isEmpty()) break;
+                    while (inFlight.size() < parallel && count < max) {
+                        if (pace > 0 && count > 0) Thread.sleep(pace);
                         String key = String.valueOf(seq);
                         bodies.put(key, content(seq));
                         String id = Mp4DownloadsInstrumentedTest.newId();
@@ -379,6 +391,7 @@ public class MediaStoreBootScanProbeTest {
                         seq++;
                         count++;
                     }
+                    if (inFlight.isEmpty()) break;
                     Object[] first = inFlight.remove(0);
                     report((Integer) first[0], (String) first[2], (Done) first[3], timed, ex);
                 }
@@ -388,7 +401,7 @@ public class MediaStoreBootScanProbeTest {
                 engine.awaitIdle(30_000);
                 store.engine.stopAll();
             }
-            Thread.sleep(SETTLE_MS);   // alle Abfragen +10 s nach dem letzten "done" laufen noch
+            Thread.sleep(pre ? 600 : SETTLE_MS);   // alle geplanten Abfragen nach dem letzten "done" laufen noch
             return count;
         }
     }
@@ -408,7 +421,7 @@ public class MediaStoreBootScanProbeTest {
             + " reason=" + (d.reason.isEmpty() ? "-" : clean(d.reason)) + " uri=" + uri + " id=" + id);
         if (d.saved instanceof Uri) {
             Uri u = (Uri) d.saved;
-            for (long off : URI_OFFSETS) ex.schedule(() -> uriQuery(seq, off, u), off, TimeUnit.MILLISECONDS);
+            for (long off : "pre".equals(phase) ? URI_OFFSETS_PRE : URI_OFFSETS) ex.schedule(() -> uriQuery(seq, off, u), off, TimeUnit.MILLISECONDS);
         }
     }
 }

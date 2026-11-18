@@ -49,7 +49,7 @@ def dl(seq, phase, fate='OK', lo=None, hi=None):
 
 
 def build(downloads, scans=((SCAN_END - 184, SCAN_END),), recheck_priv='ok', recheck_cross='ok', recheck_uri_error=(),
-          drop=(), other_lines=(), foreign_changed=False, instr_bad=(), extra=None):
+          drop=(), other_lines=(), foreign_changed=False, instr_bad=(), extra=None, foreign_added=False, foreign_removed=False):
     """-> (logcat, instr dict, before, after). drop: Zeilenarten, die (zur Prüfung der Vollständigkeit) fehlen sollen."""
     L = []
 
@@ -132,6 +132,11 @@ def build(downloads, scans=((SCAN_END - 184, SCAN_END),), recheck_priv='ok', rec
     instr = {p: ('FAILURES!!!\nTests run: 1,  Failures: 1\n' if p in instr_bad else instr_ok()) for p in ('during', 'after', 'recheck')}
     before = {'/storage/emulated/0/Download/other.txt': ('b' * 64, 3)}
     after = {'/storage/emulated/0/Download/other.txt': ('c' * 64 if foreign_changed else 'b' * 64, 3)}
+    if foreign_added:   # wie Lauf 44281951152: vom System angelegte .nomedia-Dateien
+        after.update({'/storage/emulated/0/%s/.thumbnails/.nomedia' % d: ('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 0)
+                      for d in ('DCIM', 'Movies', 'Pictures')})
+    if foreign_removed:
+        del after['/storage/emulated/0/Download/other.txt']
     return '\n'.join(L) + '\n', instr, before, after
 
 
@@ -167,6 +172,15 @@ r, why, _, _ = verdict(BASE + [overlap(1, 'DATA_LOSS_MISSING')])
 check(r == 'DATA_LOSS' and 'missing' in why[0], 'file missing -> DATA_LOSS %s' % why[:1])
 r, why, _, _ = verdict(BASE + [overlap(1, 'OK')], foreign_changed=True)
 check(r == 'DATA_LOSS' and 'outside the probe' in why[0], 'foreign file changed -> DATA_LOSS %s' % why[:1])
+notes = []
+log, instr, before, after = build(BASE + [overlap(1, 'OK')], foreign_added=True)
+r, why, _, _ = V.evaluate(log, RUN, instr, before, after, PKG, notes)
+check(r != 'DATA_LOSS' and any(n.startswith('FOREIGN_ADDED') and 'foreign=v2' in n for n in notes),
+      'rule foreign=v2: files added by the system (.thumbnails/.nomedia) are a note, not DATA_LOSS (%s)' % r)
+r, why, _, _ = verdict(BASE + [overlap(1, 'OK')], foreign_added=True, foreign_removed=True)
+check(r == 'DATA_LOSS' and 'removed' in why[0] and 'other.txt' in why[0], 'existing foreign file removed -> DATA_LOSS even with added files %s' % why[:1])
+r, why, _, _ = verdict(BASE + [overlap(1, 'OK')], foreign_added=True, foreign_changed=True)
+check(r == 'DATA_LOSS' and 'modified' in why[0], 'existing foreign file modified -> DATA_LOSS even with added files %s' % why[:1])
 r, why, _, _ = verdict(BASE + [overlap(1, 'DATA_LOSS_SHA')], scans=())
 check(r == 'DATA_LOSS', 'data loss is reported even without an observed scan (not hidden behind INCONCLUSIVE)')
 
@@ -226,6 +240,6 @@ with tempfile.TemporaryDirectory() as d:
         check(p.returncode == code and ('BOOTSCAN_RESULT ' + word) in p.stdout and 'PASS' not in p.stdout,
               'cli %s: exit %d, BOOTSCAN_RESULT %s, no PASS' % (label, p.returncode, word))
 
-n = 7 + 2 + 4 + 3 + 4 + 11 + 5
+n = 7 + 2 + 4 + 3 + 4 + 11 + 5 + 3
 print('BOOTSCAN_VERDICT_SELFTEST %s %d cases, %d failed' % ('FAIL' if fails else 'PASS', n, len(fails)))
 sys.exit(1 if fails else 0)

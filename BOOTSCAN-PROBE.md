@@ -24,7 +24,7 @@ Dieselbe Signatur steht im früheren `publish rows=0`-Fall `be74008`. Ungeklärt
 | `tests/bootscan/MediaStoreBootScanProbeTest.java` | Gerätetest; wird **nur** im Diagnose-Job vor dem Bau in die Test-APK kopiert |
 | `tools/run-bootscan-probe.sh` | Hostskript, nur frischer Wegwerf-Emulator API 34 |
 | `tools/bootscan_verdict.py` | Einordnung; gibt nie PASS aus |
-| `tests/bootscan/test_bootscan_verdict.py` | 36 Fälle mit synthetischen Logs |
+| `tests/bootscan/test_bootscan_verdict.py` | 39 Fälle mit synthetischen Logs (3 davon für Regel `foreign=v2`) |
 | `tests/bootscan/test_bootscan_script.py` | 11 Fälle, Hostskript gegen nachgebildetes adb |
 | `.github/workflows/bootscan-probe.yml` | genau ein Job, startet nur bei einem Push dieser Dateien |
 
@@ -105,7 +105,7 @@ Dieselbe Signatur steht im früheren `publish rows=0`-Fall `be74008`. Ungeklärt
 |---|---|---|
 | `DIAGNOSED` | 0 | Vergleich möglich; `reproduced=yes/no`, `control_anomaly=yes/no` |
 | `INVALID` | 2 | Belege unvollständig |
-| `DATA_LOSS` | 3 | hat Vorrang |
+| `DATA_LOSS` | 3 | hat Vorrang; seit Regel `foreign=v2` nur bei gelöschten oder veränderten fremden Dateien, neu hinzugekommene sind `BOOTSCAN_NOTE FOREIGN_ADDED` (Lauf 44281951152 bleibt DATA_LOSS, archiviert unter `evidence/bootscan-diagnosis/run44281951152/`) |
 | `INCONCLUSIVE` | 4 | kein Scan beobachtet, keine Überschneidung oder keine Kontrolle |
 
 ## Voraussichtliche Ergebnisse

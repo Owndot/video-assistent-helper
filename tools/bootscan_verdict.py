@@ -30,7 +30,11 @@ letzten Mount-Scans, ohne Überschneidung), AFTER_UNCONTROLLED (Phase after, Bed
 
 Ergebnis (eine Zeile BOOTSCAN_RESULT, Exit-Code):
   INVALID (2)       unvollständige oder widersprüchliche Belege (Phasen, Zähler, Logzeilen, Instrumentierung)
-  DATA_LOSS (3)     irgendein Download DATA_LOSS oder eine fremde Datei verändert – hat Vorrang vor allem außer INVALID
+  DATA_LOSS (3)     irgendein Download DATA_LOSS oder eine schon vorher vorhandene fremde Datei gelöscht oder inhaltlich
+                    verändert – hat Vorrang vor allem außer INVALID. Seit Regel foreign=v2 (nach Lauf 44281951152, dessen
+                    Ergebnis unverändert archiviert ist: evidence/bootscan-diagnosis/run44281951152/) sind NEU hinzugekommene
+                    fremde Dateien (z. B. vom System angelegte .thumbnails/.nomedia) kein Datenverlust, sondern eine Zeile
+                    BOOTSCAN_NOTE FOREIGN_ADDED; Löschen oder Verändern bleibt DATA_LOSS.
   INCONCLUSIVE (4)  kein Mount-Scan beobachtet, keine Veröffentlichung überschneidet ihn, keine Kontrolle danach, oder
                     alle überschneidenden Downloads UNKNOWN
   DIAGNOSED (0)     Vergleich möglich; die Klassen je Gruppe stehen in BOOTSCAN_GROUP, "reproduced" sagt, ob in OVERLAP
@@ -289,7 +293,19 @@ def group(d, scans):
     return 'AFTER_UNCONTROLLED'
 
 
-def evaluate(logcat, run, instr, before, after, pkg='de.evp.helfer.channeltest'):
+FOREIGN_RULES = 'v2'   # v1 (c86d84b/8c4b2cb): jede Abweichung der Fremdliste = DATA_LOSS; v2: Hinzufügen nur Hinweis
+
+
+def foreign_diff(before, after):
+    """-> (gelöscht, verändert, hinzugefügt) zwischen zwei Listen {pfad: (sha256, größe)}."""
+    removed = sorted(set(before) - set(after))
+    modified = sorted(k for k in set(before) & set(after) if before[k] != after[k])
+    added = sorted(set(after) - set(before))
+    return removed, modified, added
+
+
+def evaluate(logcat, run, instr, before, after, pkg='de.evp.helfer.channeltest', notes=None):
+    notes = [] if notes is None else notes
     invalid = []
     scans, ev, problems = parse(logcat, run)
     invalid += problems
@@ -314,9 +330,11 @@ def evaluate(logcat, run, instr, before, after, pkg='de.evp.helfer.channeltest')
             groups[g][cls] += 1
             if cls == 'DATA_LOSS':
                 data_loss.append('seq %s: %s' % (d['seq'], why))
-    changed = sorted(set(before) ^ set(after)) + sorted(k for k in set(before) & set(after) if before[k] != after[k])
-    if changed:
-        data_loss.append('files outside the probe changed: %s' % changed[:5])
+    removed, modified, added = foreign_diff(before, after)
+    if added:
+        notes.append('FOREIGN_ADDED (not data loss, rule foreign=%s): %d new files outside the probe %s' % (FOREIGN_RULES, len(added), added[:6]))
+    if removed or modified:
+        data_loss.append('files outside the probe changed: removed %s, modified %s' % (removed[:5], modified[:5]))
     reasons = []
     ext = [s for s in scans if s['volume'] == 'external_primary' and s['reason'] == 'REASON_MOUNTED']
     if data_loss:
@@ -343,18 +361,21 @@ def main():
         a.add_argument('--' + k, required=True)
     a.add_argument('--package', default='de.evp.helfer.channeltest')
     o = a.parse_args()
-    rows, groups = [], {}
+    rows, groups, notes = [], {}, []
+    print('BOOTSCAN_RULES foreign=%s' % FOREIGN_RULES)
     try:
         read = lambda p: open(p, encoding='utf-8', errors='replace').read()
         result, reasons, rows, groups = evaluate(read(o.logcat), o.run, {'during': read(o.instr_during), 'after': read(o.instr_after),
                                                                          'recheck': read(o.instr_recheck)},
-                                                 listing(o.foreign_before), listing(o.foreign_after), o.package)
+                                                 listing(o.foreign_before), listing(o.foreign_after), o.package, notes)
     except Exception as e:  # noqa: BLE001 - jede unlesbare Eingabe ist INVALID, nie ein Ergebnis
         result, reasons = 'INVALID', ['evaluation error: %s: %s' % (type(e).__name__, e)]
     for seq, g, cls, why in rows:
         print('BOOTSCAN_DOWNLOAD seq=%s group=%s class=%s %s' % (seq, g, cls, why))
     for g, counts in sorted(groups.items()):
         print('BOOTSCAN_GROUP %s %s' % (g, ' '.join('%s=%d' % kv_ for kv_ in sorted(counts.items()))))
+    for n in notes:
+        print('BOOTSCAN_NOTE ' + n)
     for r in reasons:
         print('BOOTSCAN_REASON ' + r)
     print('BOOTSCAN_RESULT ' + result)
