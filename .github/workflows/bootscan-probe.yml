@@ -8,7 +8,7 @@ name: MediaStore boot-scan diagnosis (disposable API 34 emulator only, nothing p
 # Ergebnis nie PASS: BOOTSCAN_RESULT DIAGNOSED | INCONCLUSIVE | DATA_LOSS | INVALID (tools/bootscan_verdict.py).
 on:
   push:
-    branches: [feature/c3-browser-downloads]
+    branches: [feature/c3-browser-downloads, diag/bootscan-probe]
     paths: [.github/workflows/bootscan-probe.yml, tests/bootscan/**, tools/run-bootscan-probe.sh, tools/bootscan_verdict.py]
 permissions:
   contents: read
