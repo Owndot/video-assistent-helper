@@ -89,6 +89,7 @@ jobs:
           git diff --exit-code tests/gate/fixtures   # committed fixtures equal the generator
           python3 -I tests/gate/test_device_gate.py
           python3 -I tests/gate/test_isolation_script.py
+          python3 -I tests/gate/test_apt_mirror_rewrite.py
       - name: Delivery lock self-test (P4 package workflow stays closed; negative decisions; nothing built or signed)
         run: |
           set -euo pipefail

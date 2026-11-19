@@ -66,7 +66,10 @@ jobs:
           # Avoid the known hanging Azure mirror; retain normal Ubuntu trust.
           for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
             if [ -f "$source" ]; then
-              sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+              # Runde 8: wie build.yml (privacy) auch regionale offizielle EC2-Spiegel auf den Hauptspiegel umstellen
+              # (Job 135655434596: us-east-2.ec2.archive.ubuntu.com, Schrittlimit beim Paketdownload überschritten)
+              sudo sed -Ei -e 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+                           -e 's#https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
             fi
           done
           echo 'Acquire::Retries "1"; Acquire::http::Timeout "20"; Acquire::https::Timeout "20";' | sudo tee /etc/apt/apt.conf.d/99-evp-ci-timeouts > /dev/null
@@ -139,7 +142,10 @@ jobs:
           # Avoid the known hanging Azure mirror; retain normal Ubuntu trust.
           for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
             if [ -f "$source" ]; then
-              sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+              # Runde 8: wie build.yml (privacy) auch regionale offizielle EC2-Spiegel auf den Hauptspiegel umstellen
+              # (Job 135655434596: us-east-2.ec2.archive.ubuntu.com, Schrittlimit beim Paketdownload überschritten)
+              sudo sed -Ei -e 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+                           -e 's#https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
             fi
           done
           echo 'Acquire::Retries "1"; Acquire::http::Timeout "20"; Acquire::https::Timeout "20";' | sudo tee /etc/apt/apt.conf.d/99-evp-ci-timeouts > /dev/null
