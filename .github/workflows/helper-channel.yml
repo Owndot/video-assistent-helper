@@ -169,7 +169,12 @@ jobs:
         run: |
           set -euo pipefail
           for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
-            if [ -f "$source" ]; then sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"; fi
+            if [ -f "$source" ]; then
+              # Runde 9: wie build.yml und browser-tests.yml auch regionale offizielle EC2-Spiegel umstellen
+              # (Job 135804647418, API 26: us-east-2.ec2.archive.ubuntu.com, ffmpeg-Download überschritt 300 s)
+              sudo sed -Ei -e 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+                           -e 's#https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+            fi
           done
           timeout 120 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
           timeout 300 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends ffmpeg

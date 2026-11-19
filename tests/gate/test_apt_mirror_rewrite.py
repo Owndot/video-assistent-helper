@@ -2,13 +2,14 @@
 """Runde 8: Umschreibung der apt-Spiegel in den CI-Werkzeugschritten (nur Infrastruktur, keine Testlogik).
 
 Die sed-Ausdrücke werden DIREKT aus den Workflows gelesen, d. h. aus den beiden "Werkzeuge"-Schritten von
-browser-tests.yml (focused-precheck, test) und aus dem Schritt "Test tools only" des Jobs privacy in build.yml. Sie
+browser-tests.yml (focused-precheck, test), aus dem Schritt "Test tools only" des Jobs privacy in build.yml und (Runde 9)
+aus dem Schritt "Synthetic HLS fixtures …" des Jobs emulator in helper-channel.yml. Sie
 werden mit GNU sed -E auf Beispielzeilen angewandt (Spiegelliste und deb822-Format).
   * offizielle regionale EC2-Spiegel (u. a. us-east-2.ec2.archive.ubuntu.com aus Job 135655434596) und der
     Azure-Spiegel werden auf https://archive.ubuntu.com/ubuntu umgeschrieben;
   * Hauptspiegel, security.ubuntu.com, fremde Hosts (auch mit eingebettetem Spiegelnamen) und Nicht-Ubuntu-Pfade
     bleiben unverändert;
-  * alle drei Schritte verwenden dieselben zwei Ausdrücke.
+  * alle vier Schritte verwenden dieselben zwei Ausdrücke.
 Liegt unter tests/gate/: der Pfadfilter von helper-channel.yml (tests/gate/**) löst damit auf demselben Commit auch
 die Emulator-Matrix aus, die tools/delivery/ci_evidence.py auf dem Quell-Commit verlangt.
 Aufruf: python3 -I tests/gate/test_apt_mirror_rewrite.py
@@ -51,7 +52,8 @@ def sed_exprs(text):
 
 STEPS = [('.github/workflows/browser-tests.yml', 'focused-precheck', 'Werkzeuge'),
          ('.github/workflows/browser-tests.yml', 'test', 'Werkzeuge'),
-         ('.github/workflows/build.yml', 'privacy', 'Test tools only')]
+         ('.github/workflows/build.yml', 'privacy', 'Test tools only'),
+         ('.github/workflows/helper-channel.yml', 'emulator', 'Synthetic HLS fixtures for the device tests (own content, ffmpeg; test APK assets only)')]
 CASES = [
     # (Eingabe, erwartete Ausgabe)
     ('http://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:1', 'https://archive.ubuntu.com/ubuntu/\tpriority:1'),
@@ -76,7 +78,7 @@ for path, job, step in STEPS:
     ex = sed_exprs(step_text(path, job, step))
     found[(path, job)] = ex
     check(len(ex) == 2, '%s %s/%s: exactly two mirror expressions %s' % (os.path.basename(path), job, step, ex))
-check(len({tuple(v) for v in found.values()}) == 1, 'all three tool steps use the identical mirror rewrite')
+check(len(found) == len(STEPS) == 4 and len({tuple(v) for v in found.values()}) == 1, 'all four tool steps use the identical mirror rewrite')
 
 for (path, job), ex in found.items():
     if len(ex) != 2:
