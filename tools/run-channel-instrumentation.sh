@@ -17,6 +17,10 @@ if [ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" != "1" ] && [ "$(adb she
   echo "refusing: the connected device is not an emulator" >&2
   exit 2
 fi
+# Runde 7: Puffer VOR dem Isolationsstrom leeren. Danach hätte "logcat -c" auf Android 8 den laufenden Strom gestört
+# ("failed to clear the 'main' log", Marker fehlten; Lauf 44537491920, API 26). Bis zur Installation läuft dazwischen
+# nichts von uns; der Crash-Puffer umfasst damit wie bisher die Zeit ab vor der Installation.
+adb logcat -c
 iso_begin main "$REPORT"
 trap iso_stop EXIT
 adb shell getprop ro.build.version.release > "$REPORT/device.txt"
@@ -28,7 +32,6 @@ for prop in dalvik.vm.heapsize dalvik.vm.heapgrowthlimit qemu.dalvik.vm.heapsize
   echo "DEVICE_PROP $prop=$(adb shell getprop "$prop" | tr -d '\r')"
 done | tee -a "$REPORT/device.txt"
 adb shell pm list packages de.evp.helfer > "$REPORT/packages-before.txt"
-adb logcat -c
 iso_mark install
 adb install -r -t "$OUT/apk/helper-channeltest.apk" > /dev/null
 adb install -r -t "$OUT/apk/helper-channeltest-androidTest.apk" > /dev/null

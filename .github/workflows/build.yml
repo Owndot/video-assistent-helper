@@ -38,7 +38,11 @@ jobs:
           # Hosted runners can resolve Ubuntu through mirror+file lists as well as deb822.
           for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
             if [ -f "$source" ]; then
-              sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+              # Runde 7: auf AWS-gehosteten ubuntu-24.04-Runnern steht der regionale EC2-Spiegel in der Spiegelliste
+              # (Job 135606672708: us-east-2.ec2.archive.ubuntu.com, Zeitablauf beim Paketdownload); ebenfalls auf den
+              # offiziellen Hauptspiegel umstellen
+              sudo sed -Ei -e 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+                           -e 's#https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
             fi
           done
           timeout 90 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq

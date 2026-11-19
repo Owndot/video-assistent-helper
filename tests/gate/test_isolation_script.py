@@ -47,8 +47,23 @@ if a == ['devices']:
     elif SC == 'offline': print('emulator-5554\toffline')
     else: print('emulator-5554\tdevice')
     print(''); sys.exit(0)
+if a[:1] == ['logcat'] and '-c' in a:
+    # Runde 7: Android 8 (API 26) verweigert das Leeren bei laufendem Leser und trennt ihn ("failed to clear the 'main'
+    # log"); API 29/34 leeren ohne Störung. Ohne laufenden Strom gelingt das Leeren überall.
+    pidf = F + '/stream.pid'
+    alive = False
+    if os.path.exists(pidf):
+        try:
+            os.kill(int(open(pidf).read()), 0); alive = True
+        except (OSError, ValueError):
+            alive = False
+    if os.environ.get('FAKE_CLEAR_KICKS') == '1' and alive:
+        os.kill(int(open(pidf).read()), 9)
+        print("failed to clear the 'main' log", file=sys.stderr); sys.exit(1)
+    open(LOG, 'w').close(); sys.exit(0)
 if a[:1] == ['logcat']:
     if SC == 'stream_never_starts': sys.exit(1)
+    open(F + '/stream.pid', 'w').write(str(os.getpid()))
     pos, n = 0, 0
     while True:
         if os.path.exists(LOG):
@@ -105,7 +120,11 @@ echo "DRIVER-END rc=$rc"
 '''
 
 
-def run(scenario, phase='main', strict=False):
+CLEAR_AFTER = DRIVER.replace('trap iso_stop EXIT\n', 'trap iso_stop EXIT\nadb logcat -c || true\n')   # alte Reihenfolge (bis Runde 6)
+CLEAR_BEFORE = DRIVER.replace('. "$LIB"\n', '. "$LIB"\nadb logcat -c || true\n')                       # Runde 7
+
+
+def run(scenario, phase='main', strict=False, driver=None, kicks=False):
     d = tempfile.mkdtemp()
     bin_ = os.path.join(d, 'bin')
     os.makedirs(bin_)
@@ -113,8 +132,9 @@ def run(scenario, phase='main', strict=False):
     open(adb, 'w').write(FAKE_ADB)
     os.chmod(adb, os.stat(adb).st_mode | stat.S_IEXEC)
     env = dict(os.environ, PATH=bin_ + os.pathsep + os.environ['PATH'], FAKE_ROOT=d, FAKE_SCENARIO=scenario, LIB=LIB, PHASE=phase,
-               REP=os.path.join(d, 'report'))
-    drv = DRIVER.replace('set -uo pipefail', 'set -euo pipefail').replace('iso_end; rc=$?', 'rc=0; iso_end || rc=$?') if strict else DRIVER
+               REP=os.path.join(d, 'report'), FAKE_CLEAR_KICKS='1' if kicks else '0')
+    drv = driver or DRIVER
+    drv = drv.replace('set -uo pipefail', 'set -euo pipefail').replace('iso_end; rc=$?', 'rc=0; iso_end || rc=$?') if strict else drv
     p = subprocess.run(['bash', '-c', drv], env=env, capture_output=True, text=True, timeout=120)
     st = open(os.path.join(d, 'state.json')).read() if os.path.exists(os.path.join(d, 'state.json')) else '{}'
     return p.returncode, p.stdout.splitlines(), '"installs": 0' in st or st == '{}'
@@ -196,6 +216,25 @@ for sc, want in (('clean', 0), ('stale_orphan_measurement', 1), ('end_marker_los
 rc, out, no_install = run('app_present', 'mutant', strict=True)
 check(rc == 2 and no_install, 'set -e: package present -> exit 2 before any installation')
 
+# 8c) Runde 7: "logcat -c" und Isolationsstrom (Lauf 44537491920: auf API 26 fehlten danach alle Marker)
+rc, out, _ = run('own_uninstall_orphan', 'main', driver=CLEAR_AFTER, kicks=True)
+m = summary(out)
+check('DRIVER-END rc=1' in out and m and m.group('stream') == 'incomplete' and m.group('install') == '-',
+      'API 26 behaviour: logcat -c AFTER the stream started breaks it -> stream=incomplete, rc 1 (fail closed, reproduces the CI finding)', repr(out[-2:]))
+for kicks, what in ((True, 'API 26 (clear disconnects a running reader)'), (False, 'API 29/34 (clear does not disturb a reader)')):
+    for phase in ('main', 'repeat'):
+        rc, out, _ = run('own_uninstall_orphan', phase, driver=CLEAR_BEFORE, kicks=kicks)
+        m = summary(out)
+        ok = ('DRIVER-END rc=0' in out and m and m.group('stream') == 'complete' and '-' not in (m.group('install'), m.group('uninstall'), m.group('end'))
+              and m.group('orphan_after') == '1' and m.group('owner_changed_after') == '1'
+              and any('window=after-uninstall event=orphaned pkg=de.evp.helfer.channeltest count=19' in l for l in out))
+        check(ok, '%s, phase %s: logcat -c BEFORE the stream -> all markers, owner changes captured, rc 0' % (what, phase), repr(out[-3:]))
+for sc in ('stale_orphan_measurement', 'stream_dies', 'end_marker_lost'):
+    rc, out, _ = run(sc, 'main', driver=CLEAR_BEFORE, kicks=True)
+    check('DRIVER-END rc=1' in out, 'API 26 with logcat -c before the stream still fails closed: %s -> rc 1' % sc, repr(out[-2:]))
+rc, out, _ = run('own_uninstall_orphan', 'main', driver=CLEAR_BEFORE, kicks=True, strict=True)
+check(rc == 0 and 'DRIVER-END rc=0' in out, 'set -e: logcat -c before the stream on API 26 -> script continues, rc 0', repr(out[-2:]))
+
 # 9) Quellstand: jede Phase prüft die Frische VOR der ersten Installation und belegt Installation/Deinstallation
 for script, phase in [('run-channel-publication-regression.sh', 'mutant'), ('run-channel-instrumentation.sh', 'main'), ('run-flaky-repeat.sh', 'repeat')]:
     src = open(os.path.join(ROOT, 'tools', script), encoding='utf-8').read()
@@ -213,6 +252,18 @@ for script, phase in [('run-channel-publication-regression.sh', 'mutant'), ('run
     ok = ok and src.count('iso_begin ') == 1 and src.count('iso_mark install') == 1 and src.count('iso_mark uninstall') == 1
     check(ok, '%s: source, iso_begin, install mark, install, uninstall mark, uninstall, iso_end in this order (%s)' % (script, phase),
           repr((i_src, i_begin, i_mark, i_inst, i_un_mark, i_un, i_end)))
+
+# 10) Runde 7: in den Phasenskripten wird nie NACH dem Start des Isolationsstroms geleert; Hauptlauf und Wiederholungen
+#     leeren genau einmal davor (Crash-Puffer-Umfang wie bisher ab vor der Installation), die Mutantenphase gar nicht
+import re  # noqa: E402
+for script, n_clear in (('run-channel-instrumentation.sh', 1), ('run-flaky-repeat.sh', 1), ('run-channel-publication-regression.sh', 0)):
+    lines = [l.strip() for l in open(os.path.join(ROOT, 'tools', script), encoding='utf-8').read().splitlines() if not l.strip().startswith('#')]
+    clears = [i for i, l in enumerate(lines) if re.search(r'\badb\s+logcat\b[^|;&]*\s-c\b', l)]
+    begin = next(i for i, l in enumerate(lines) if l.startswith('iso_begin '))
+    ok = len(clears) == n_clear and all(i < begin for i in clears)
+    check(ok, '%s: %d buffer clear(s), none after iso_begin %s' % (script, n_clear, clears))
+lib = open(LIB, encoding='utf-8').read()
+check(not re.search(r'logcat[^\n]*\s-c\b', lib), 'isolation library never clears log buffers')
 
 print('RESULT isolation-script-selftest %s (%d failed)' % ('PASS' if not fails else 'FAIL', len(fails)))
 sys.exit(1 if fails else 0)

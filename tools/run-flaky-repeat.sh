@@ -14,12 +14,12 @@ adb wait-for-device
 if [ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" != "1" ] && [ "$(adb shell getprop ro.boot.qemu | tr -d '\r')" != "1" ]; then
   echo "refusing: the connected device is not an emulator" >&2; exit 2
 fi
-# Runde 5 (Testisolation): eigene Gerätephase "repeat" auf einem frischen Emulator (helper-channel.yml). Frischenachweis
-# vor der Installation; danach wie zuvor im Hauptlauf (dort "logcat -c" vor der Installation) die Puffer leeren, damit der
-# Crash-Puffer unten genau diese Phase umfasst. Der Isolationsstrom läuft bereits und ist davon nicht betroffen.
+# Runde 5 (Testisolation): eigene Gerätephase "repeat" auf einem frischen Emulator (helper-channel.yml). Wie im Hauptlauf
+# die Puffer vor der Installation leeren, damit der Crash-Puffer unten genau diese Phase umfasst. Runde 7: das Leeren steht
+# VOR dem Start des Isolationsstroms, weil "logcat -c" auf Android 8 einen laufenden Strom stört (Lauf 44537491920, API 26).
+adb logcat -c
 iso_begin repeat "$REPORT"
 trap iso_stop EXIT
-adb logcat -c
 iso_mark install
 adb install -r -t "$OUT/apk/helper-channeltest.apk" > /dev/null
 adb install -r -t "$OUT/apk/helper-channeltest-androidTest.apk" > /dev/null
