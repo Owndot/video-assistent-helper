@@ -78,9 +78,23 @@ public class Mp4DownloadsInstrumentedTest {
 
     /** URL, Host und Token der Testserver dürfen nie im Logcat stehen (auch nicht in Fehlermeldungen). */
     @org.junit.AfterClass public static void logcatHasNoUrl() throws Exception {
-        String logcat = shell("logcat -d");
-        assertFalse("URL token found in logcat", logcat.contains(SECRET));
-        assertFalse("test host found in logcat", logcat.contains("dl.test:"));
+        java.util.Set<String> found = shellScan("logcat -d", SECRET, "dl.test:");
+        assertFalse("URL token found in logcat", found.contains(SECRET));
+        assertFalse("test host found in logcat", found.contains("dl.test:"));
+    }
+
+    /**
+     * Review P3: zeilenweise Suche in einer Shell-Ausgabe (z. B. logcat), ohne alles in den Speicher zu laden – mit dem
+     * auf API 29 beobachteten 16-MiB-Heap des Emulators scheiterte das Puffern (OutOfMemoryError). Gleiche Prüfung.
+     */
+    static java.util.Set<String> shellScan(String cmd, String... needles) throws Exception {
+        java.util.Set<String> found = new java.util.HashSet<>();
+        ParcelFileDescriptor pfd = InstrumentationRegistry.getInstrumentation().getUiAutomation().executeShellCommand(cmd);
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(
+                new ParcelFileDescriptor.AutoCloseInputStream(pfd), StandardCharsets.UTF_8))) {
+            for (String line; (line = r.readLine()) != null; ) for (String n : needles) if (line.contains(n)) found.add(n);
+        }
+        return found;
     }
 
     static String shell(String cmd) throws Exception {
@@ -139,6 +153,8 @@ public class Mp4DownloadsInstrumentedTest {
         final ServerSocket ss;
         final AtomicInteger connections = new AtomicInteger(), requests = new AtomicInteger();
         final List<Socket> open = new CopyOnWriteArrayList<>();
+        /** Nur Diagnose: Ausnahmen beim Bedienen einer Verbindung (z. B. Client schloss vor dem Ende), mit Zeitpunkt. */
+        final List<String> errors = new CopyOnWriteArrayList<>();
 
         Server(Handler h) throws IOException {
             ss = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"));
@@ -170,7 +186,8 @@ public class Mp4DownloadsInstrumentedTest {
                     h.handle(line, hd, out, requests.getAndIncrement());
                     out.flush();
                 }
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                errors.add(SystemClock.elapsedRealtime() + "ms " + e.getClass().getSimpleName() + ": " + e.getMessage());
             } finally {
                 open.remove(s);
             }
@@ -245,25 +262,79 @@ public class Mp4DownloadsInstrumentedTest {
     Mp4Downloads store;
     Events events;
     DirectDownloads engine;
+    CommitStateStore observed;   // nur Diagnose: Zustand beim Scheitern von Anlegen/Veröffentlichen
     final List<Uri> cleanup = new ArrayList<>();
     final List<File> cleanupFiles = new ArrayList<>();
     String journalName;
 
     void engineFor(Server srv) throws Exception {
         journalName = "mp4-jobs-test-" + newId();
-        store = new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> Mp4Downloads.legacyWritePermitted(ctx));
+        store = track(new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> Mp4Downloads.legacyWritePermitted(ctx)));
         events = new Events(store);
-        engine = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), store, events);
+        observed = new CommitStateStore(store);
+        engine = track(new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), observed, events));
     }
 
-    @Before public void before() { cleanup.clear(); cleanupFiles.clear(); }
+    java.util.Set<String> proofsAtStart = new java.util.HashSet<>();
+    /** Review P3: JEDE in einem Test erzeugte Engine – Teardown stoppt und erwartet alle, auch nach Zeitüberschreitung/Fehlschlag. */
+    final List<DirectDownloads> engines = new CopyOnWriteArrayList<>();
 
-    @After public void after() {
-        if (engine != null) engine.stopAll();
-        ContentResolver cr = ctx.getContentResolver();
-        for (Uri u : cleanup) { try { if ("content".equals(u.getScheme())) cr.delete(u, null, null); } catch (RuntimeException ignored) { } }
-        for (File f : cleanupFiles) f.delete();
-        if (journalName != null) new File(ctx.getFilesDir(), journalName).delete();
+    DirectDownloads track(DirectDownloads d) { engines.add(d); return d; }
+    Mp4Downloads track(Mp4Downloads m) { engines.add(m.engine); return m; }
+
+    @Before public void before() { cleanup.clear(); cleanupFiles.clear(); engines.clear(); proofsAtStart = proofNames(); }
+
+    /**
+     * Isolation: erst warten, bis jeder Arbeiter dieses Tests aufgeräumt und sein Ende gemeldet hat (begrenzt, mit
+     * Befund statt stillem Weiterlaufen), dann Reste dieses Tests entfernen. So kann kein Test mit noch laufenden
+     * Arbeitern oder liegengebliebenen Besitzmarkierungen den nächsten beeinflussen (API-34-Befund: ein fremder Rest
+     * wurde vom nächsten Test mitgezählt bzw. mit entfernt).
+     */
+    @After public void after() throws Exception {
+        // Review P3: erst ALLE Engines dieses Tests stoppen und abwarten; nur wenn keiner ihrer Arbeiter mehr läuft,
+        // werden Einträge und Markierungen dieses Tests entfernt (sonst nichts löschen und den Befund melden).
+        if (engine != null && !engines.contains(engine)) engines.add(engine);
+        for (DirectDownloads d : engines) d.stopAll();
+        List<String> busy = new ArrayList<>();
+        long deadline = SystemClock.elapsedRealtime() + 30_000;
+        for (int i = 0; i < engines.size(); i++)
+            if (!engines.get(i).awaitIdle(Math.max(1, deadline - SystemClock.elapsedRealtime()))) busy.add("engine#" + i);
+        if (busy.isEmpty()) {
+            isolateLeftovers();
+            ContentResolver cr = ctx.getContentResolver();
+            for (Uri u : cleanup) {
+                try {
+                    if (!"content".equals(u.getScheme())) continue;
+                    // Review P2: jede testseitige Löschung per Uri (mit ID) in die Zeitleiste – Zeilen-IDs können wiederverwendet
+                    // werden; so ließe sich ein späteres "rows=0" einer verspäteten Löschung zuordnen
+                    logCleanup("after-delete " + u.getLastPathSegment() + " rows=" + cr.delete(u, null, null));
+                } catch (RuntimeException ignored) { }
+            }
+            for (File f : cleanupFiles) f.delete();
+            if (journalName != null) new File(ctx.getFilesDir(), journalName).delete();
+        } else {
+            logCleanup("teardown skipped deletions, still running: " + busy);
+        }
+        assertTrue("workers of this test finished within 30 s (nothing deleted otherwise): " + busy, busy.isEmpty());
+    }
+
+    /**
+     * Nur Diagnose in Fehlermeldungen: vorhandene Ablage-Ursache der Engine (Ausnahmeklasse und -meldung, keine URL)
+     * und das letzte Abbruch-Ergebnis der Ablage. Ändert keine Erwartung.
+     */
+    String storageCause(DirectDownloads e, String id) {
+        return "cause: " + e.diagnostics(id) + "; last abort: " + Mp4Downloads.lastAbortOutcome
+            + "; store: " + (observed == null ? "" : observed.lastFailure) + "; downloadsInitialized: " + downloadsInitialized()
+            + "; now=" + SystemClock.elapsedRealtime() + "ms; cleanups: " + CLEANUP_LOG;
+    }
+
+    /** Nur Diagnose: ob die einmalige Prozessstart-Bereinigung (Downloads.initialize) als erledigt gilt. */
+    static String downloadsInitialized() {
+        try {
+            java.lang.reflect.Field f = Downloads.class.getDeclaredField("initialized");
+            f.setAccessible(true);
+            synchronized (Downloads.class) { return String.valueOf(f.getBoolean(null)); }
+        } catch (ReflectiveOperationException e) { return "unknown"; }
     }
 
     /** Android 8–9: öffentlicher Ordner Download/Video-Assistent (bleibt nach Deinstallation). */
@@ -284,6 +355,56 @@ public class Mp4DownloadsInstrumentedTest {
             if (parts != null) for (File f : parts) if (f.getName().startsWith(Mp4Downloads.PART_PREFIX)) n++;
         }
         return n;
+    }
+
+    static java.util.Set<String> proofNames() {
+        java.util.Set<String> n = new java.util.TreeSet<>();
+        File[] l = new File(ctx.getFilesDir(), "download-pending-v1").listFiles();
+        if (l != null) for (File f : l) n.add(f.getName());
+        return n;
+    }
+
+    /** Nur Diagnose: Zeitpunkte testseitiger Bereinigungen (Prozessstart-Nachbildung, Isolation), für Fehlermeldungen. */
+    static final List<String> CLEANUP_LOG = new CopyOnWriteArrayList<>();
+
+    static void logCleanup(String what) {
+        CLEANUP_LOG.add(SystemClock.elapsedRealtime() + "ms " + what + " thread=" + Thread.currentThread().getName());
+        while (CLEANUP_LOG.size() > 40) CLEANUP_LOG.remove(0);   // Review P2: genug für Löschungen per Uri
+    }
+
+    /** Neue Besitzmarkierungen dieses Tests samt ihrer pending-Einträge entfernen (nur API 29+, nur eigene Namen). */
+    void isolateLeftovers() {
+        java.util.Set<String> fresh = proofNames();
+        fresh.removeAll(proofsAtStart);
+        if (fresh.isEmpty()) return;
+        logCleanup("isolateLeftovers proofs=" + fresh.size());
+        int removed = 0, kept = 0;
+        ContentResolver cr = ctx.getContentResolver();
+        for (String p : fresh) {
+            // Review P3: Markierung nur entfernen, wenn der zugehörige Rest nachweislich weg ist
+            boolean gone;
+            if (Build.VERSION.SDK_INT >= 29) {
+                String sel = "owner_package_name=? AND is_pending=1 AND _display_name LIKE ?";
+                String[] args = {ctx.getPackageName(), p + "--%"};
+                Uri all = MediaStore.setIncludePending(MediaStore.Downloads.EXTERNAL_CONTENT_URI);
+                try { cr.delete(all, sel, args); } catch (RuntimeException ignored) { }
+                try (Cursor c = cr.query(all, new String[] {MediaStore.Downloads._ID}, sel, args, null)) { gone = c != null && c.getCount() == 0; }
+                catch (RuntimeException e) { gone = false; }
+            } else {
+                File part = new File(legacyDir(), Mp4Downloads.PART_PREFIX + p + Mp4Downloads.PART_SUFFIX);
+                gone = (part.delete() || !part.exists());
+            }
+            if (gone && new File(new File(ctx.getFilesDir(), "download-pending-v1"), p).delete()) removed++; else kept++;
+        }
+        android.util.Log.i(TAG, "MP4_ISOLATION removedProofs=" + removed + " keptProofs=" + kept);
+    }
+
+    /** Wartet begrenzt, bis keine pending-Reste dieses Titels mehr sichtbar sind (Sichtbarkeit des MediaStore). */
+    static void awaitNoLeftovers(String title, long ms, String context) throws InterruptedException {
+        long end = SystemClock.elapsedRealtime() + ms;
+        int n;
+        while ((n = leftovers(title)) != 0 && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
+        assertEquals("no pending entry visible within " + ms + " ms (" + context + ")", 0, n);
     }
 
     static int proofs() {
@@ -315,11 +436,20 @@ public class Mp4DownloadsInstrumentedTest {
                     try { Thread.sleep(20); } catch (InterruptedException e) { return; }
                 }
             });
+            sampler.setDaemon(true);
             sampler.start();
-            String started = engine.start(id, srv.url("/v.mp4"), t);
-            assertTrue(started, started.contains("\"state\":\"running\""));
-            assertEquals("done", events.await(id, 120_000));
-            sampler.interrupt();
+            String result;
+            try {
+                String started = engine.start(id, srv.url("/v.mp4"), t);
+                assertTrue(started, started.contains("\"state\":\"running\""));
+                result = events.await(id, 120_000);
+            } finally {
+                // Auch bei einem Fehlschlag: der Messfaden darf den nächsten Test nicht überdauern.
+                sampler.interrupt();
+                sampler.join(5_000);
+            }
+            // P4c-3: Ursache eines seltenen API-34-failed:storage (nur Diagnose, Erwartung unverändert)
+            assertEquals("publish result (" + storageCause(engine, id) + "; server: " + srv.errors + ")", "done", result);
             long ms = SystemClock.elapsedRealtime() - t0, cpuMs = android.os.Process.getElapsedCpuTime() - cpu0;
             android.os.Debug.MemoryInfo m1 = new android.os.Debug.MemoryInfo();
             android.os.Debug.getMemoryInfo(m1);
@@ -331,13 +461,13 @@ public class Mp4DownloadsInstrumentedTest {
             if (Build.VERSION.SDK_INT >= 29) {
                 assertEquals("content", uri.getScheme());
                 try (Cursor c = cr.query(uri, new String[] {MediaStore.Downloads.DISPLAY_NAME, MediaStore.Downloads.IS_PENDING,
-                        MediaStore.Downloads.RELATIVE_PATH, MediaStore.Downloads.SIZE, MediaStore.Downloads.MIME_TYPE}, null, null, null)) {
+                        MediaStore.Downloads.RELATIVE_PATH, MediaStore.Downloads.SIZE, MediaStore.Downloads.MIME_TYPE, MediaStore.MediaColumns.DATA}, null, null, null)) {
                     assertNotNull(c);
                     assertTrue(c.moveToFirst());
                     assertEquals(t + ".mp4", c.getString(0));
                     assertEquals(0, c.getInt(1));
                     assertEquals(Environment.DIRECTORY_DOWNLOADS + "/" + Downloads.FOLDER + "/", c.getString(2));
-                    assertEquals(total, c.getLong(3));
+                    assertEquals("SIZE column (file " + c.getString(5) + ", length " + new File(c.getString(5)).length() + ")", total, c.getLong(3));
                     assertEquals("video/mp4", c.getString(4));
                 }
                 try (InputStream in = cr.openInputStream(uri)) { assertArrayEquals(expectedSha(total), sha(in)); }
@@ -377,6 +507,36 @@ public class Mp4DownloadsInstrumentedTest {
         }
     }
 
+    /**
+     * Android-Energiesparen: solange ein Download über den echten Weg (Mp4Downloads → gemeinsame Grenzen) läuft, hält
+     * die App eine teilweise CPU-Sperre; danach ist sie wieder frei (kein dauerhaftes Wachhalten).
+     */
+    @Test public void cpuStaysAwakeOnlyWhileDownloading() throws Exception {
+        long total = 64L << 20;
+        try (Server srv = new Server((line, h, out, i) -> {
+            head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: " + total, "ETag: \"awake\"");
+            for (long p = 0; p < total; p += 64 << 10) { content(out, p, Math.min(total, p + (64 << 10))); out.flush(); Thread.sleep(5); }
+        })) {
+            engineFor(srv);
+            long end = SystemClock.elapsedRealtime() + 30_000;
+            while (Mp4Downloads.SLOTS.inUse() > 0 && SystemClock.elapsedRealtime() < end) Thread.sleep(20);
+            assertEquals("no download from earlier tests", 0, Mp4Downloads.SLOTS.inUse());
+            assertFalse("idle: no CPU lock", Mp4Downloads.awake());
+            String id = newId(), t = title("Awake");
+            store.engine.start(id, srv.url("/v.mp4"), t);
+            end = SystemClock.elapsedRealtime() + 20_000;
+            while (!Mp4Downloads.awake() && SystemClock.elapsedRealtime() < end) Thread.sleep(20);
+            assertTrue("CPU lock held while downloading", Mp4Downloads.awake());
+            store.engine.cancel(id);
+            end = SystemClock.elapsedRealtime() + 20_000;
+            while ((Mp4Downloads.awake() || !store.engine.status(id).contains("\"state\":\"cancelled\"")) && SystemClock.elapsedRealtime() < end) Thread.sleep(20);
+            assertTrue(store.engine.status(id), store.engine.status(id).contains("\"state\":\"cancelled\""));
+            assertFalse("CPU lock released when no download runs", Mp4Downloads.awake());
+            assertEquals(0, Mp4Downloads.SLOTS.inUse());
+            awaitNoLeftovers(t, 5_000, "cancelled download");
+        }
+    }
+
     /** Abbruch während des Rumpfs: kein sichtbarer oder pending Eintrag, keine Markierung, keine Teil-Datei. */
     @Test public void cancelRemovesEverything() throws Exception {
         long total = 256L << 20;
@@ -397,7 +557,10 @@ public class Mp4DownloadsInstrumentedTest {
             assertEquals("cancelled", events.await(id, 10_000));
             long ms = SystemClock.elapsedRealtime() - t0;
             assertTrue("cancel took " + ms + " ms", ms < 5_000);
-            assertEquals(0, leftovers(t));
+            // Zuerst der Zustand der App (hat SIE den Eintrag entfernt?), dann die Sichtbarkeit im MediaStore.
+            String outcome = Mp4Downloads.lastAbortOutcome;
+            if (Build.VERSION.SDK_INT >= 29) assertTrue("app removed its pending entry: " + outcome, outcome.startsWith("deleted"));
+            awaitNoLeftovers(t, 3_000, "app cleanup " + outcome);
             assertEquals(proofsBefore, proofs());
             assertEquals(1, srv.requests.get());
             assertTrue(engine.status(id).contains("\"state\":\"cancelled\""));
@@ -418,7 +581,8 @@ public class Mp4DownloadsInstrumentedTest {
             assertEquals(proofsBefore, proofs());
             String b = newId(), tb = title("Resume");
             engine.start(b, srv.url("/etag"), tb);
-            assertEquals("done", events.await(b, 60_000));
+            String rb = events.await(b, 60_000);
+            assertEquals("result (" + storageCause(engine, b) + "; server: " + srv.errors + ")", "done", rb);   // P4c-3: Ursache von failed:storage
             Uri uri = (Uri) events.saved.get(b);
             cleanup.add(uri);
             if (Build.VERSION.SDK_INT >= 29) {
@@ -468,15 +632,17 @@ public class Mp4DownloadsInstrumentedTest {
             engine.start(id, srv.url("/v.mp4"), t);
             engine.start(id, srv.url("/v.mp4"), t);
             engine.start(id, srv.url("/other.mp4"), "Other");
-            assertEquals("done", events.await(id, 30_000));
+            String r = events.await(id, 30_000);
+            assertEquals("result (" + storageCause(engine, id) + ")", "done", r);   // Review P2: inkl. Provider-Zustand
             cleanup.add((Uri) events.saved.get(id));
             if (Build.VERSION.SDK_INT < 29) cleanupFiles.add(new File(legacyDir(), t + ".mp4"));
             assertTrue(engine.start(id, srv.url("/v.mp4"), t).contains("\"state\":\"done\""));
-            DirectDownloads restarted = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), store, events);
+            DirectDownloads restarted = track(new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), store, events));
             assertTrue(restarted.start(id, srv.url("/v.mp4"), t).contains("\"state\":\"done\""));
             Thread.sleep(300);
             assertEquals(1, srv.requests.get());
             restarted.stopAll();
+            assertTrue("restarted engine idle", restarted.awaitIdle(30_000));
         }
     }
 
@@ -491,6 +657,7 @@ public class Mp4DownloadsInstrumentedTest {
             assertEquals(1, leftovers(t));
             assertFalse("unfinished entry is not published", store.isPublished(target.ref(), 8));
             int proofsBefore = proofs();
+            assertEquals("only this test's ownership proof exists before the simulated restart: " + proofNames(), 1, proofsBefore);
             newProcessCleanup();
             assertEquals(0, leftovers(t));
             assertEquals("ownership proof removed with the leftover", proofsBefore - 1, proofs());
@@ -504,9 +671,10 @@ public class Mp4DownloadsInstrumentedTest {
             java.lang.reflect.Field f = Downloads.class.getDeclaredField("initialized");
             f.setAccessible(true);
             synchronized (Downloads.class) { f.setBoolean(null, false); }
+            logCleanup("newProcessCleanup/Downloads.initialize");
             Downloads.initialize(ctx);
         } else {
-            new Mp4Downloads(ctx, journalName + "-cleanup", DeviceTestClients.loopback(1), () -> Mp4Downloads.legacyWritePermitted(ctx)).engine.stopAll();
+            track(new Mp4Downloads(ctx, journalName + "-cleanup", DeviceTestClients.loopback(1), () -> Mp4Downloads.legacyWritePermitted(ctx))).engine.stopAll();
             new File(ctx.getFilesDir(), journalName + "-cleanup").delete();
         }
     }
@@ -524,7 +692,7 @@ public class Mp4DownloadsInstrumentedTest {
                         || p.equals("android.permission.MANAGE_EXTERNAL_STORAGE") || p.startsWith("android.permission.READ_MEDIA_"));
             }
             try (Server srv = new Server((line, h, out, i) -> serveFile(h, out, 4096, null, -1))) {
-                Mp4Downloads denied = new Mp4Downloads(ctx, "mp4-jobs-test-" + newId(), DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> false);
+                Mp4Downloads denied = track(new Mp4Downloads(ctx, "mp4-jobs-test-" + newId(), DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> false));
                 assertTrue("MediaStore needs no permission", denied.writable());
                 denied.engine.stopAll();
             }
@@ -534,9 +702,9 @@ public class Mp4DownloadsInstrumentedTest {
         assertTrue("granted for the other tests", Mp4Downloads.legacyWritePermitted(ctx));
         try (Server srv = new Server((line, h, out, i) -> serveFile(h, out, 4096, null, -1))) {
             journalName = "mp4-jobs-test-" + newId();
-            Mp4Downloads denied = new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> false);
+            Mp4Downloads denied = track(new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> false));
             Events ev = new Events(denied);
-            engine = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), denied, ev);
+            engine = track(new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), denied, ev));
             String id = newId(), t = title("Denied");
             engine.start(id, srv.url("/v.mp4"), t);
             assertEquals("failed:storage_permission", ev.await(id, 10_000));
@@ -574,6 +742,219 @@ public class Mp4DownloadsInstrumentedTest {
         }
     }
 
+    /** Echte Dateisystemstörung: Besitzmarkierung darf nach publish nicht gelöscht werden.
+     * Optional bleibt das Journal wie bei einem Prozessabsturz vor DONE stehen. Keine Produktions-Testschalter.
+     */
+    /**
+     * Nur Diagnose: reicht alles an die echte Ablage durch; scheitert {@code commit()}, wird VOR dem Aufräumen der
+     * Engine der Zustand des MediaStore-Eintrags gelesen (nur Lesen, keine Wiederholung, Verhalten unverändert).
+     */
+    static final class CommitStateStore implements DownloadStore {
+        final Mp4Downloads real;
+        volatile String lastFailure = "";
+        CommitStateStore(Mp4Downloads real) { this.real = real; }
+        @Override public boolean writable() { return real.writable(); }
+        @Override public long freeBytes() throws IOException { return real.freeBytes(); }
+        @Override public byte[] loadJournal() throws IOException { return real.loadJournal(); }
+        @Override public void saveJournal(byte[] data) throws IOException { real.saveJournal(data); }
+        @Override public boolean isPublished(String ref, long total) throws IOException { return real.isPublished(ref, total); }
+        @Override public Target create(String name, String mime) throws IOException {
+            Target target;
+            try { target = real.create(name, mime); }
+            catch (IOException | RuntimeException e) { lastFailure = "create " + e; throw e; }
+            long created = SystemClock.elapsedRealtime();
+            File proof = proofOf(target);
+            return new Target() {
+                @Override public OutputStream out() throws IOException {
+                    OutputStream raw = target.out();
+                    return new OutputStream() {   // reine Durchleitung; hält nur Ausnahmen beim Schreiben/Schließen fest
+                        @Override public void write(int b) throws IOException { write(new byte[] {(byte) b}, 0, 1); }
+                        @Override public void write(byte[] b, int off, int len) throws IOException {
+                            try { raw.write(b, off, len); }
+                            catch (IOException | RuntimeException e) { lastFailure = "write " + e + " " + where(); throw e; }
+                        }
+                        @Override public void flush() throws IOException { raw.flush(); }
+                        @Override public void close() throws IOException {
+                            try { raw.close(); }
+                            catch (IOException | RuntimeException e) { lastFailure = "close " + e + " " + where(); throw e; }
+                        }
+                    };
+                }
+                private String where() {
+                    return "ageMs=" + (SystemClock.elapsedRealtime() - created) + " proofExists=" + (proof == null ? "?" : proof.exists())
+                        + " state={" + entryState(Uri.parse(target.ref())) + "}";
+                }
+                @Override public String ref() { return target.ref(); }
+                @Override public Object commit() throws IOException {
+                    try { return target.commit(); }
+                    catch (IOException | RuntimeException e) {
+                        // RuntimeException meldet die Engine als "network": hier der eigentliche Ablagefehler
+                        lastFailure = "commit " + e + " at=" + SystemClock.elapsedRealtime() + "ms " + where()
+                            + " provider={" + providerState(ctx.getContentResolver(), Uri.parse(target.ref()), name, proof) + "}";
+                        // Review P2: jeder Ablagefehler jedes MP4-Tests landet so im Job-Log (Messzeilen), auch wenn die
+                        // Assertion des Tests ihn nicht ausgibt – Grundlage für die Trennung der Hypothesen H1/H2/H3.
+                        Log.i(TAG, "MP4_STORE_FAILURE sdk=" + Build.VERSION.SDK_INT + " " + lastFailure);
+                        throw e;
+                    }
+                }
+                @Override public void abort() { target.abort(); }
+            };
+        }
+    }
+
+    /** Besitzmarkierung des Ablageziels (Feld "proof" der App-Ziele); null, wenn nicht lesbar. */
+    static File proofOf(Object target) {
+        try {
+            java.lang.reflect.Field f = target.getClass().getDeclaredField("proof");
+            f.setAccessible(true);
+            return (File) f.get(target);
+        } catch (ReflectiveOperationException | ClassCastException e) { return null; }
+    }
+
+    /** Zustand eines (auch noch ausstehenden) MediaStore-Eintrags, nur für Fehlermeldungen. */
+    static String entryState(Uri u) {
+        if (Build.VERSION.SDK_INT < 29 || !"content".equals(u.getScheme())) return "n/a";
+        try (Cursor c = ctx.getContentResolver().query(MediaStore.setIncludePending(u), new String[] {MediaStore.Downloads.IS_PENDING,
+                MediaStore.Downloads.DISPLAY_NAME, MediaStore.Downloads.SIZE, MediaStore.MediaColumns.DATA}, null, null, null)) {
+            if (c == null) return "query=null";
+            if (!c.moveToFirst()) return "rows=0";
+            File f = c.getString(3) == null ? null : new File(c.getString(3));
+            return "pending=" + c.getInt(0) + " name=" + c.getString(1) + " size=" + c.getLong(2) + " fileExists="
+                + (f != null && f.exists()) + " fileLength=" + (f == null ? -1 : f.length());
+        } catch (RuntimeException e) {
+            return "query=" + e.getClass().getSimpleName() + ": " + e.getMessage();
+        }
+    }
+
+    /**
+     * Nur Gerätetests (Review P2, Hypothesen zu "rows=0"): Zustand nach einem gescheiterten Veröffentlichen, getrennt nach
+     * (1) Downloads-Zeile über die eigene Uri, (2) dieselbe ID in MediaStore.Files (H2: dort vorhanden, über Downloads
+     * nicht sichtbar), (3) Zeilen mit dem Endnamen unter anderer ID (neu angelegt), (4) Dateien auf dem Datenträger
+     * (Endname bzw. ausstehender Name). Läuft nur im Test, nie im Produktpfad.
+     */
+    static String providerState(ContentResolver cr, Uri u, String finalName, File proof) {
+        if (Build.VERSION.SDK_INT < 29 || !"content".equals(u.getScheme())) return "n/a";
+        StringBuilder b = new StringBuilder("downloads=");
+        try (Cursor c = cr.query(MediaStore.setIncludePending(u), new String[] {MediaStore.Downloads.IS_PENDING, MediaStore.Downloads.DISPLAY_NAME},
+                null, null, null)) {
+            b.append(c == null ? "null" : !c.moveToFirst() ? "absent"
+                : "present(pending=" + c.getInt(0) + ",name=" + (c.getString(1) != null && c.getString(1).contains("--") ? "pending-name" : "final-name") + ")");
+        } catch (RuntimeException e) { b.append(e.getClass().getSimpleName()); }
+        long id = -1;
+        try { id = android.content.ContentUris.parseId(u); } catch (RuntimeException ignored) { }
+        try (Cursor c = cr.query(MediaStore.setIncludePending(MediaStore.Files.getContentUri("external")),
+                new String[] {MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.MEDIA_TYPE, MediaStore.MediaColumns.IS_PENDING,
+                    MediaStore.MediaColumns.DISPLAY_NAME}, MediaStore.Files.FileColumns._ID + "=?", new String[] {Long.toString(id)}, null)) {
+            b.append(" filesSameId=").append(c == null ? "null" : !c.moveToFirst() ? "absent"
+                : "present(mediaType=" + c.getInt(1) + ",pending=" + c.getInt(2) + ",name=" + (c.getString(3) != null && c.getString(3).contains("--") ? "pending-name" : "final-name") + ")");
+        } catch (RuntimeException e) { b.append(" filesSameId=").append(e.getClass().getSimpleName()); }
+        String folder = Environment.DIRECTORY_DOWNLOADS + "/" + Downloads.FOLDER;
+        try (Cursor c = cr.query(MediaStore.setIncludePending(MediaStore.Files.getContentUri("external")),
+                new String[] {MediaStore.Files.FileColumns._ID}, MediaStore.MediaColumns.DISPLAY_NAME + "=? AND (" + MediaStore.MediaColumns.RELATIVE_PATH
+                    + "=? OR " + MediaStore.MediaColumns.RELATIVE_PATH + "=?)", new String[] {finalName, folder + "/", folder}, null)) {
+            int other = 0;
+            if (c != null) while (c.moveToNext()) if (c.getLong(0) != id) other++;
+            b.append(" finalNameOtherIds=").append(c == null ? "null" : Integer.toString(other));
+        } catch (RuntimeException e) { b.append(" finalNameOtherIds=").append(e.getClass().getSimpleName()); }
+        File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), Downloads.FOLDER);
+        File fin = new File(dir, finalName);
+        b.append(" diskFinal=").append(fin.exists() ? "exists(" + fin.length() + ")" : "absent");
+        if (proof != null) b.append(" diskPending=").append(new File(dir, proof.getName() + "--" + finalName).exists() ? "exists" : "absent");
+        return b.toString();
+    }
+
+    static final class MarkerFailureStore implements DownloadStore {
+        final Mp4Downloads real;
+        final boolean crashAfterPublish;
+        boolean dead;
+        File proof;
+        String publishedRef;
+        MarkerFailureStore(Mp4Downloads real, boolean crashAfterPublish) { this.real = real; this.crashAfterPublish = crashAfterPublish; }
+        @Override public boolean writable() { return real.writable(); }
+        @Override public long freeBytes() throws IOException { return real.freeBytes(); }
+        @Override public byte[] loadJournal() throws IOException { return real.loadJournal(); }
+        @Override public void saveJournal(byte[] data) throws IOException { if (!dead) real.saveJournal(data); }
+        @Override public boolean isPublished(String ref, long total) throws IOException { return real.isPublished(ref, total); }
+        @Override public Target create(String name, String mime) throws IOException {
+            Target target = real.create(name, mime);
+            try {
+                java.lang.reflect.Field f = target.getClass().getDeclaredField("proof");
+                f.setAccessible(true);
+                proof = (File) f.get(target);
+            } catch (ReflectiveOperationException e) { throw new IOException(e); }
+            return new Target() {
+                @Override public OutputStream out() throws IOException { return target.out(); }
+                @Override public String ref() { return target.ref(); }
+                @Override public Object commit() throws IOException {
+                    File dir = proof.getParentFile();
+                    int mode;
+                    try { mode = android.system.Os.stat(dir.getPath()).st_mode & 0777; android.system.Os.chmod(dir.getPath(), 0500); }
+                    catch (android.system.ErrnoException e) { throw new IOException(e); }
+                    try {
+                        assertFalse("fault injection must prevent unlink", proof.delete());
+                        dead = crashAfterPublish;
+                        Object saved = target.commit();
+                        publishedRef = target.ref();
+                        return saved;
+                    } finally {
+                        publishedRef = target.ref();
+                        try { android.system.Os.chmod(dir.getPath(), mode); }
+                        catch (android.system.ErrnoException e) { throw new IOException(e); }
+                    }
+                }
+                @Override public void abort() { target.abort(); }
+            };
+        }
+    }
+
+    @Test public void publishedFileSurvivesMarkerFailureAndRestart() throws Exception {
+        final long total = 65536;
+        try (Server srv = new Server((line, h, out, i) -> serveFile(h, out, total, "\"marker\"", -1))) {
+            for (boolean crash : new boolean[] {false, true}) {
+                engineFor(srv);
+                engine.stopAll();
+                MarkerFailureStore fault = new MarkerFailureStore(store, crash);
+                engine = track(new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), fault, events));
+                String id = newId(), t = title(crash ? "MarkerCrash" : "MarkerDone");
+                // Gleich aussehende fremde Teil-Datei OHNE private Besitzmarkierung muss erhalten bleiben.
+                File foreign = null;
+                if (Build.VERSION.SDK_INT < 29) {
+                    java.nio.file.Files.createDirectories(legacyDir().toPath());
+                    foreign = new File(legacyDir(), Mp4Downloads.PART_PREFIX + "evp-publish-123456789.pending" + Mp4Downloads.PART_SUFFIX);
+                    assertTrue("isolated fixture name", foreign.createNewFile());
+                    cleanupFiles.add(foreign);
+                }
+                engine.start(id, srv.url("/marker.mp4"), t);
+                if (Build.VERSION.SDK_INT < 29) cleanupFiles.add(new File(legacyDir(), t + ".mp4"));
+                String result = events.await(id, 30_000);
+                Uri savedUri = Build.VERSION.SDK_INT >= 29 ? Uri.parse(fault.publishedRef) : Uri.fromFile(new File(fault.publishedRef));
+                cleanup.add(savedUri);   // auch die Fehler-Gegenprobe räumt ihre veröffentlichte Datei auf
+                assertEquals("published file is successful despite marker failure (" + storageCause(engine, id) + ")", "done", result);
+                assertTrue("proof retained for next startup", fault.proof.isFile());
+                assertTrue(store.isPublished(fault.publishedRef, total));
+                String journal = new String(store.loadJournal(), StandardCharsets.US_ASCII);
+                assertTrue(journal, journal.contains(id + (crash ? " RUNNING " : " DONE ")));
+                assertTrue(engine.start(id, srv.url("/marker.mp4"), t).contains("\"state\":\"done\""));
+                engine.stopAll();
+                newProcessCleanup();
+                assertFalse("obsolete proof removed at next startup", fault.proof.exists());
+                if (foreign != null) assertTrue("foreign file untouched", foreign.isFile());
+                assertTrue("published file untouched", store.isPublished(fault.publishedRef, total));
+                try (InputStream in = ctx.getContentResolver().openInputStream(savedUri)) {
+                    assertArrayEquals(expectedSha(total), sha(in));
+                }
+                Mp4Downloads restarted = track(new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> Mp4Downloads.legacyWritePermitted(ctx)));
+                int requests = srv.requests.get();
+                assertTrue(restarted.engine.status(id).contains("\"state\":\"done\""));
+                assertTrue(restarted.engine.start(id, srv.url("/marker.mp4"), t).contains("\"state\":\"done\""));
+                assertEquals("same id must not fetch again after restart", requests, srv.requests.get());
+                restarted.engine.stopAll();
+                if (foreign != null) assertTrue(foreign.delete());
+                new File(ctx.getFilesDir(), journalName).delete();
+            }
+        }
+    }
+
     /** Journal und Ablage nach Abstürzen: veröffentlicht -> fertig; nicht veröffentlicht -> unterbrochen und Reste entfernt. */
     @Test public void crashConsistencyBetweenJournalAndStorage() throws Exception {
         long total = 1L << 20;
@@ -583,16 +964,17 @@ public class Mp4DownloadsInstrumentedTest {
             // (a) Absturz nach dem Veröffentlichen, bevor "DONE" gespeichert war.
             CrashingStore afterPublish = new CrashingStore(store, false);
             Events ev = new Events(store);
-            DirectDownloads crashing = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), afterPublish, ev);
+            DirectDownloads crashing = track(new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), afterPublish, ev));
             String a = newId(), ta = title("CrashAfter");
             crashing.start(a, srv.url("/v.mp4"), ta);
-            assertEquals("done", ev.await(a, 30_000));
+            String resultA = ev.await(a, 30_000);   // Review-Befund A: Diagnose erst nach dem Endereignis
+            assertEquals("crash after publish (" + storageCause(crashing, a) + ")", "done", resultA);
             Uri published = (Uri) ev.saved.get(a);
             cleanup.add(published);
             if (Build.VERSION.SDK_INT < 29) cleanupFiles.add(new File(legacyDir(), ta + ".mp4"));
             String onDisk = new String(store.loadJournal(), StandardCharsets.US_ASCII);
             assertTrue(onDisk, onDisk.contains(a + " RUNNING "));
-            Mp4Downloads restarted = new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> Mp4Downloads.legacyWritePermitted(ctx));
+            Mp4Downloads restarted = track(new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> Mp4Downloads.legacyWritePermitted(ctx)));
             String st = restarted.engine.status(a);
             assertTrue("published file after crash: " + st, st.contains("\"state\":\"done\"") && st.contains("\"bytes\":" + total));
             int before = srv.requests.get();
@@ -604,13 +986,13 @@ public class Mp4DownloadsInstrumentedTest {
             // (b) Absturz vor dem Veröffentlichen: unterbrochen, unfertiger Eintrag nie sichtbar und beim Start entfernt.
             CrashingStore beforePublish = new CrashingStore(store, true);
             Events ev2 = new Events(store);
-            DirectDownloads crashing2 = new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), beforePublish, ev2);
+            DirectDownloads crashing2 = track(new DirectDownloads(DeviceTestClients.loopback(srv.ss.getLocalPort()), beforePublish, ev2));
             String b = newId(), tb = title("CrashBefore");
             crashing2.start(b, srv.url("/v.mp4"), tb);
             ev2.await(b, 30_000);
             assertEquals("unfinished entry left behind by the dead process", 1, leftovers(tb));
             assertFalse("never visible under its final name", new File(legacyDir(), tb + ".mp4").exists() && Build.VERSION.SDK_INT < 29);
-            Mp4Downloads restarted2 = new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> Mp4Downloads.legacyWritePermitted(ctx));
+            Mp4Downloads restarted2 = track(new Mp4Downloads(ctx, journalName, DeviceTestClients.loopback(srv.ss.getLocalPort()), () -> Mp4Downloads.legacyWritePermitted(ctx)));
             assertTrue(restarted2.engine.status(b), restarted2.engine.status(b).contains("\"state\":\"interrupted\""));
             restarted2.engine.stopAll();
             newProcessCleanup();
@@ -629,7 +1011,10 @@ public class Mp4DownloadsInstrumentedTest {
             engineFor(srv);
             String id = newId(), t = "C2 Persist " + Build.VERSION.SDK_INT;
             engine.start(id, srv.url("/v.mp4"), t);
-            assertEquals("done", events.await(id, 30_000));
+            // Review-Befund A: erst das Endereignis abwarten, dann die Diagnose lesen (vorher beschrieb sie den Zustand
+            // vor dem Fehler, weil Java das erste Argument zuerst auswertet).
+            String result = events.await(id, 30_000);
+            assertEquals("persist (" + storageCause(engine, id) + "; server: " + srv.errors + ")", "done", result);
             Log.i(TAG, "MP4_PERSIST sdk=" + Build.VERSION.SDK_INT + " name=" + t + ".mp4 bytes=65536");
         }
     }

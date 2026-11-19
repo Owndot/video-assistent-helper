@@ -30,6 +30,9 @@
   public static void beginSection(java.lang.String);
   public static void endSection();
 }
+-keep interface com.google.common.util.concurrent.ListenableFuture {
+  public void addListener(java.lang.Runnable, java.util.concurrent.Executor);
+}
 -keep @interface kotlin.BuilderInference {
 }
 -keep @interface kotlin.Deprecated {

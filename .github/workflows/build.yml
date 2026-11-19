@@ -11,7 +11,8 @@ permissions:
 jobs:
   privacy:
     if: github.head_ref != 'codex/pip-lifecycle' && github.head_ref != 'codex/download-lifecycle' && github.head_ref != 'codex/firefox-nine' && github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory' && github.head_ref != 'codex/browser-proxy-memory'
-    runs-on: ubuntu-latest
+    # Runde 6: vorerst ubuntu-24.04 (Playwright 1.56 installiert auf ubuntu-26.04 kein Chromium); Tests unverändert
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -34,9 +35,16 @@ jobs:
         run: |
           set -euo pipefail
           # The existing native job uses the same official mirror to avoid Azure stalls.
-          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
-            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
-          fi
+          # Hosted runners can resolve Ubuntu through mirror+file lists as well as deb822.
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              # Runde 7: auf AWS-gehosteten ubuntu-24.04-Runnern steht der regionale EC2-Spiegel in der Spiegelliste
+              # (Job 135606672708: us-east-2.ec2.archive.ubuntu.com, Zeitablauf beim Paketdownload); ebenfalls auf den
+              # offiziellen Hauptspiegel umstellen
+              sudo sed -Ei -e 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+                           -e 's#https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+            fi
+          done
           timeout 90 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
           timeout 180 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends ffmpeg xvfb
           pip install --timeout 30 --retries 1 playwright==1.56.0
@@ -178,6 +186,7 @@ jobs:
         shell: bash
         run: |
           node tools/build.js --check
+          node tests/confidential_names_check.js
           node tests/security/hls_license.js
           node tests/cookie_sites.js
           old="$RUNNER_TEMP/old-cookie-sites.js"
@@ -288,6 +297,8 @@ jobs:
           gradle :app:assembleDebug -PmigrationFixtureVersion=122 --no-daemon
           sha256sum app/build/outputs/apk/debug/app-debug.apk > "$RUNNER_TEMP/pre-fixture-debug.sha256"
       - name: Unsigned release and disposable signing validation
+        # C3: only disposable emulator APKs; no production-package/signing fixtures or delivery artifacts.
+        if: github.head_ref != 'feature/c3-browser-downloads' && github.ref_name != 'feature/c3-browser-downloads'
         # run_local_release.sh creates test-only.jks; no production identity is loaded.
         run: bash tests/security/run_local_release.sh
       - name: Prove fixture build invalidates the earlier APK checksum
@@ -299,6 +310,8 @@ jobs:
           fi
           echo 'PASS: real fixture version 123 overwrote version 122; earlier hash is stale'
       - name: Isolated debug APK with disposable test key
+        # C3: only disposable emulator APKs; no production-package/signing fixtures or delivery artifacts.
+        if: github.head_ref != 'feature/c3-browser-downloads' && github.ref_name != 'feature/c3-browser-downloads'
         shell: bash
         run: |
           set -euo pipefail
@@ -308,6 +321,8 @@ jobs:
           trap 'rm -f "$HOME/.android/debug.keystore"' EXIT
           gradle :app:assembleDebug --no-daemon
       - name: Verify PSL data packaged into the debug APK
+        # C3: only disposable emulator APKs; no production-package/signing fixtures or delivery artifacts.
+        if: github.head_ref != 'feature/c3-browser-downloads' && github.ref_name != 'feature/c3-browser-downloads'
         run: |
           python3 - <<'PY'
           import hashlib,zipfile
@@ -317,6 +332,8 @@ jobs:
           print("PASS: pinned PSL present in APK")
           PY
       - name: Record isolated debug APK provenance
+        # C3: only disposable emulator APKs; no production-package/signing fixtures or delivery artifacts.
+        if: github.head_ref != 'feature/c3-browser-downloads' && github.ref_name != 'feature/c3-browser-downloads'
         shell: bash
         run: |
           mkdir -p validation-results
@@ -331,9 +348,12 @@ jobs:
         if: github.head_ref != 'codex/local-release-option-a'
         run: |
           # Use Ubuntu's signed official mirror; the Azure mirror stalled in run40219442784.
-          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
-            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
-          fi
+          # Hosted runners can resolve Ubuntu through mirror+file lists as well as deb822.
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -Ei 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+            fi
+          done
           timeout 90 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
           timeout 180 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install --no-install-recommends -y ffmpeg
           tests/java/run_core_tests.sh
@@ -360,6 +380,8 @@ jobs:
           grep -Eq 'differ|EOF' "$work/signature.log"
           echo 'PASS: upload gate rejects stale real-APK hash and signature records'
       - name: Verify final debug artifact immediately before upload
+        # C3: only disposable emulator APKs; no production-package/signing fixtures or delivery artifacts.
+        if: github.head_ref != 'feature/c3-browser-downloads' && github.ref_name != 'feature/c3-browser-downloads'
         id: debug_artifact_verified
         run: bash .github/scripts/verify-debug-artifact.sh
       # Kanal-Integration: keine installierbare APK veröffentlichen (Freigabe des Eigentümers fehlt). Die Sperre gilt für

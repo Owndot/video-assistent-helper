@@ -103,9 +103,13 @@ public class ChannelInstrumentedTest {
 
     @AfterClass public static void scanLogcat() throws Exception {
         Log.i(TAG, "CHANNEL_MEASURE end " + memory());
-        String logcat = shell("logcat -d");
-        for (String s : SECRETS) assertFalse("secret material found in logcat", logcat.contains(s));
-        assertTrue("log scan saw our own test output", logcat.contains("CHANNEL_MEASURE"));
+        // Review P3: zeilenweise (kein Puffern der ganzen Ausgabe; 16-MiB-Heap auf API 29 beobachtet), gleiche Prüfungen
+        List<String> all = new ArrayList<>(SECRETS);
+        all.add("CHANNEL_MEASURE");
+        String[] needles = all.toArray(new String[0]);
+        java.util.Set<String> found = Mp4DownloadsInstrumentedTest.shellScan("logcat -d", needles);
+        for (String s : SECRETS) assertFalse("secret material found in logcat", found.contains(s));
+        assertTrue("log scan saw our own test output", found.contains("CHANNEL_MEASURE"));
     }
 
     static String memory() {
@@ -434,9 +438,22 @@ public class ChannelInstrumentedTest {
             Thread t = new Thread(() -> {
                 try (Socket s = rogue.accept()) {
                     s.setSoTimeout(3000);
-                    byte[] buf = new byte[70000];
-                    int n = s.getInputStream().read(buf);
-                    captured.write(buf, 0, Math.max(n, 0));
+                    // Die ganze Anfrage lesen (Kopf + Content-Length Bytes): der Client schreibt Kopf und Körper getrennt;
+                    // ein Schließen mit ungelesenen Bytes sendet RST, und der Client sähe "Connection reset" statt der Antwort.
+                    InputStream in = s.getInputStream();
+                    ByteArrayOutputStream req = new ByteArrayOutputStream();
+                    int body = -1;
+                    for (int c; (c = in.read()) >= 0; ) {
+                        req.write(c);
+                        String h = req.toString("ISO-8859-1");
+                        if (h.endsWith("\r\n\r\n")) {
+                            java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?i)\r\ncontent-length: *(\\d+)").matcher(h);
+                            body = m.find() ? Integer.parseInt(m.group(1)) : 0;
+                            break;
+                        }
+                    }
+                    for (int i = 0; i < body; i++) { int c = in.read(); if (c < 0) break; req.write(c); }
+                    captured.write(req.toByteArray());
                     byte[] forged = "{\"ok\":true,\"bright\":1}".getBytes(StandardCharsets.UTF_8);
                     s.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: " + forged.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
                     s.getOutputStream().write(forged);

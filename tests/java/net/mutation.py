@@ -48,9 +48,15 @@ MUTATIONS = [
 ]
 
 
+sys.path.insert(0, os.path.dirname(HERE))
+import mutation_verdict as mv  # noqa: E402
+
+KILLED = [r'^FAIL ', r'RESULT safe-http FAIL']
+
+
 def main():
     cache = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.environ.get('RUNNER_TEMP', '/tmp'), 'safe-http-deps')
-    survivors = []
+    tally = mv.Tally('safe-http-mutations')
     for name, rel, old, new in MUTATIONS:
         work = tempfile.mkdtemp(prefix='safehttp-mut-')
         try:
@@ -59,21 +65,14 @@ def main():
             path = os.path.join(work, rel)
             src = open(path, encoding='utf-8').read()
             if src.count(old) != 1:
-                print('ERROR mutation does not apply exactly once:', name)
-                survivors.append(name)
+                tally.add('%s (fragment found %d times)' % (name, src.count(old)), 'STALE')
                 continue
             open(path, 'w', encoding='utf-8').write(src.replace(old, new))
-            r = subprocess.run(['bash', os.path.join(work, 'tests/java/net/run.sh'), cache], capture_output=True, text=True, timeout=900)
-            fails = [l for l in r.stdout.splitlines() if l.startswith('FAIL ')]
-            if r.returncode == 0:
-                print('SURVIVED', name)
-                survivors.append(name)
-            else:
-                print('KILLED  ', name, '|', fails[0][5:90] if fails else 'build/run failure')
+            v, out = mv.run(['bash', os.path.join(work, 'tests/java/net/run.sh'), cache], dict(os.environ), 900, KILLED)
+            tally.add(name, v, out)
         finally:
             shutil.rmtree(work, ignore_errors=True)
-    print('RESULT safe-http-mutations', 'PASS' if not survivors else 'FAIL', len(MUTATIONS) - len(survivors), '/', len(MUTATIONS))
-    sys.exit(0 if not survivors else 1)
+    sys.exit(tally.finish())
 
 
 if __name__ == '__main__':

@@ -23,7 +23,8 @@ keytool -genkeypair -storetype PKCS12 -keystore "$KEYDIR/throwaway.p12" -alias h
   -storepass:env ORG_GRADLE_PROJECT_channelKeystorePass -keypass:env ORG_GRADLE_PROJECT_channelKeystorePass >/dev/null 2>&1
 "$ROOT/gradlew" --no-daemon -q -p "$ROOT" \
   :app:assembleChanneltest :app:assembleChanneltestAndroidTest :app:traceTestKeepRules -PchannelTests -Pandroid.useAndroidX=true \
-  -PchannelJniLibs="$OUT/jniLibs" -PchannelJniLibsTest="$OUT/jniLibs-test" -PchannelKeystore="$KEYDIR/throwaway.p12"
+  -PchannelJniLibs="$OUT/jniLibs" -PchannelJniLibsTest="$OUT/jniLibs-test" -PchannelKeystore="$KEYDIR/throwaway.p12" \
+  ${HLS_FIXTURES:+-PhlsFixtures="$HLS_FIXTURES"}
 # R8: die App ist geschrumpft (Mapping vorhanden), und die eingecheckten Test-Keep-Regeln entsprechen dem, was die
 # Instrumentierungs-APK tatsächlich aus der App nutzt (sonst NoClassDefFoundError im Testrunner).
 test -s "$ROOT/app/build/outputs/mapping/channeltest/mapping.txt" || { echo "channeltest APK was not processed by R8" >&2; exit 1; }

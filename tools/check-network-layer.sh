@@ -44,6 +44,10 @@ if [ "${1:-}" = "--self-test" ]; then
   probe "Mp4Downloads with another client" de/evp/helfer/HelferService.java '// new Mp4Downloads(this, "x", null, () -> true);'
   probe "android types in dl" de/evp/helfer/dl/DirectDownloads.java '// android.util.Log.i("x", "y");'
   probe "cookie manager in Mp4Downloads" de/evp/helfer/Mp4Downloads.java '// android.webkit.CookieManager.getInstance();'
+  probe "HttpURLConnection in hls" de/evp/helfer/hls/HlsFetch.java '// java.net.HttpURLConnection c;'
+  probe "Media3 data source in hls" de/evp/helfer/hls/HlsPlan.java '// androidx.media3.datasource.DefaultHttpDataSource d;'
+  probe "android types in hls" de/evp/helfer/hls/HlsPlaylist.java '// android.util.Log.i("x", "y");'
+  probe "network in remuxer" de/evp/helfer/hlsmux/Probe.java 'final class Probe { de.evp.helfer.net.SafeHttpClient c; }'
   [ "$fails" = 0 ] && echo "RESULT network-layer-guard self-test PASS" || { echo "RESULT network-layer-guard self-test FAIL"; exit 1; }
   exit 0
 fi
@@ -68,6 +72,18 @@ for f in "${C2_FILES[@]}"; do
   # ChannelServer ist selbst der lokale Kanal-Server (ServerSocket/Socket auf 127.0.0.1): nur dort Sockets erlaubt.
   [ "${f##*/}" = ChannelServer.java ] && pattern='HttpURLConnection|URLConnection|openConnection|openStream|java\.net\.(URL|HttpCookie|CookieHandler)\b|new URL\(|DownloadManager|Fetcher|Downloads\.start|HlsCore|DashCore|WebView|CookieManager'
   if grep -qE "$pattern" "$f"; then add "unprotected network path in ${f#$MAIN/}: $(grep -noE "$pattern" "$f" | head -1)"; fi
+done
+# Phase P4b (HLS): der Kern de.evp.helfer.hls lädt nur über SafeHttpClient und bleibt ohne Android-Typen (JVM-getestet);
+# der Remuxer de.evp.helfer.hlsmux hat überhaupt keinen Netzwerkzugang (liest nur verifizierte lokale Ressourcen).
+HLS_FORBIDDEN="$C2_FORBIDDEN|HlsDownloader|SegmentDownloader|DefaultHttpDataSource|DataSource\\b|Media3"
+for f in "$MAIN"/de/evp/helfer/hls/*.java; do
+  [ -f "$f" ] || continue
+  if grep -qE "$HLS_FORBIDDEN" "$f"; then add "unprotected network path in ${f#$MAIN/}: $(grep -noE "$HLS_FORBIDDEN" "$f" | head -1)"; fi
+  if grep -qE '(^|[^A-Za-z0-9_])(android|androidx)\.' "$f"; then add "Android types in de.evp.helfer.hls: ${f#$MAIN/}"; fi
+done
+for f in "$MAIN"/de/evp/helfer/hlsmux/*.java; do
+  [ -f "$f" ] || continue
+  if grep -qE 'SafeHttp|okhttp3|java\.net\.|HttpURLConnection|URLConnection|HlsFetch|DataSource|Socket' "$f"; then add "network access in remuxer ${f#$MAIN/}"; fi
 done
 while IFS= read -r f; do add "Mp4Downloads constructed outside Mp4Downloads.get: ${f#$MAIN/}"; done < <(grep -rl 'new Mp4Downloads(' "$MAIN" --include=*.java | grep -v '/de/evp/helfer/Mp4Downloads\.java$' || true)
 [ "$(grep -c 'new Mp4Downloads(' "$MAIN/de/evp/helfer/Mp4Downloads.java")" = 1 ] && grep -qF 'new Mp4Downloads(app, "mp4-jobs-v1", SafeHttp.client(app), () -> legacyWritePermitted(app))' "$MAIN/de/evp/helfer/Mp4Downloads.java" \

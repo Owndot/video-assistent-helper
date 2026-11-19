@@ -28,3 +28,5 @@ javac -d "$WORK/classes" -cp "$CP" \
   "$HERE"/de/evp/helfer/net/*.java "$HERE"/de/evp/helfer/dl/*.java
 mkdir -p "$WORK/files"
 java -Xmx48m ${DL_JAVA_OPTS:-} -cp "$WORK/classes:$CP" de.evp.helfer.dl.TestDirectDownloads "$WORK/files"
+# P4c-3: Anzeige-Regeln des Fortschritts (Prozent nur aus exaktem Zähler/Nenner)
+java -cp "$WORK/classes" de.evp.helfer.dl.TestProgress

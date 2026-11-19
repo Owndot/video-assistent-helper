@@ -1,0 +1,41 @@
+# P4c-3 – Übergabe
+
+Die Übergabe steht im Kadri-Repository: [`P4C3-HANDOFF.md`](https://github.com/Owndot/Kadri/blob/feature/c3-helper-mp4/P4C3-HANDOFF.md) (Branch `feature/c3-helper-mp4`).
+Helfer-spezifische Details: `P4C-VORBEREITUNG.md` (§6–§8), `DOWNLOADS-P4B.md`, `DOWNLOADS-C3.md`.
+
+**Codex-Release-Readiness (CONDITIONAL GO, 2026-11-17) vorbereitet:** [P4-DELIVERY-READINESS.md](P4-DELIVERY-READINESS.md)
+– Freigabesperre in beiden Lieferworkflows (standardmäßig geschlossen, einmalig, an SHAs gebunden), Pins
+Helper `546af14` ↔ Kadri `7978a41` (WASM-Herkunft `bd5ab29` getrennt), vollständiges Geräte-Gate, korrigierte
+Liefermetadaten (Ersatz der P4-App und Neukopplung nötig). **Keine Lieferung gestartet**, Freigabe nur durch den
+Eigentümer nach dem letzten Codex-Review.
+
+**Codex-Folgereview von `291cff1` (CHANGES REQUIRED) abgearbeitet (2026-11-17):** [REVIEW-CODEX-FOLLOWUP.md](REVIEW-CODEX-FOLLOWUP.md)
+– P1 Abschluss trotz Aufräumfehlern, P2 Diagnose ohne Blockade/konservative Zuordnung, P3 Testisolation und strenge
+Mutationsbewertung, P4 Liefer-Gate. **Korrektur:** API 29 auf `291cff1` war NICHT „nur SIZE“ – Versuch 2 hatte zusätzlich
+`publish rows=0` und danach einen System-OOM (getrennte Befunde, Zusammenhang nicht belegt). Lieferung weiter **BLOCKED**.
+
+**Codex-Review abgeglichen (2026-11-16):** [REVIEW-CODEX-P4C3.md](REVIEW-CODEX-P4C3.md) – A/B bestätigt und
+korrigiert, C Diagnose je Eintrag, D im Produktionsstart nicht möglich, E nur Vorschlag (API 29 bleibt rot).
+
+**Stand davor (2026-11-16, Claude Code):** API-34-`failed:storage` lokalisiert auf
+`IOException: publish` (MediaStore-Update beim Veröffentlichen, Lauf 43874560604); Ursache des Updates offen,
+Diagnosesonde `MediaStorePublishProbeTest`. API-29-Zusatzfehler `memory` war ein 16-MiB-Heap des Emulators.
+Lieferung weiter **BLOCKED**. Details in der Kadri-Übergabe (Abschnitt „Claude-Fortsetzung“).
+
+Aktuell (2026-11-16): [Claude-Code-Übergabe](https://github.com/Owndot/Kadri/blob/feature/c3-helper-mp4/CLAUDE-HANDOFF.md)
+mit verifizierten Quellständen, CI, Befunden und exaktem nächsten Schritt.
+[Adressfreie HLS-Planungsdiagnose](P4-HLS-PLAN-DIAG.md), Helper-Code `bd5ab29`, Kadri `7978a41`:
+lokal Koordinator 255/255 und Netzschichtwächter grün; HLS-/Kanal-JVM-CI grün, Samsung **NEEDS_TEST**.
+Erste App-Codeänderung seit `8b906c5`: ausschließlich optionale Phasen-/Listenzähler in fehlgeschlagenen
+Planantworten. Kein Downloadfix behauptet, keine Netz-/Kanalgrenze verändert, noch kein Paket verteilt.
+**BLOCKED – Lieferung:** zusätzlicher API-34-Fehler `failed:storage` im MP4-Veröffentlichungstest;
+erster Job `128934502193`. Vergleich `133224722018` wurde durch die vorhandene CI-Concurrency-Regel
+beim Dokumentations-Push abgebrochen, kein PASS. Aktuelle Ersatzläufe und nächste Schritte stehen
+in der zentralen Claude-Übergabe; nicht erneut Dokumentations-Checkpoints während eines Vergleichs pushen.
+Bekannter
+API-29-SIZE-Fehler bleibt separat rot. Paketänderungen als [Entwurf](P4-DELIVERY-DRAFT.md) gesichert,
+aktive Workflows unverändert. Keine neue Produktionsfreigabe.
+
+Aktueller Zusatz (2026-11-08): isolierte adressfreie Medienablage mit unverändertem App-Remuxer,
+nur Testcode: [P4-PASSIVE-MEDIA-PROBE.md](P4-PASSIVE-MEDIA-PROBE.md). Keine App-/Kanal-/APK-Änderung;
+maßgeblicher Gesamtstand und CI-Nachweise weiterhin in der oben verlinkten Kadri-Übergabe.

@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -21,6 +22,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -197,7 +200,7 @@ public final class TestDirectDownloads {
 
     // ------------------------------------------------------------------ Testablage (Ordner)
 
-    static final class DirStore implements DownloadStore {
+    static class DirStore implements DownloadStore {
         final File dir;
         final AtomicLong free = new AtomicLong(Long.MAX_VALUE / 4);
         volatile long freeAfterBytes = -1, freeLater = 0;      // ab so vielen geschriebenen Bytes: free = freeLater
@@ -210,6 +213,7 @@ public final class TestDirectDownloads {
         volatile boolean writable = true;
         volatile byte[] journalAtCreate, journalAtCommit;     // Stand des Journals bei einem "Absturz" an dieser Stelle
         volatile boolean failPublishedCheck;
+        volatile RuntimeException commitThrows;   // P4c-3: RuntimeException beim Veröffentlichen (MediaStore)
         int saves;
 
         DirStore(String name) throws IOException {
@@ -252,6 +256,8 @@ public final class TestDirectDownloads {
                 @Override public String ref() { return fin.getPath(); }
                 @Override public synchronized Object commit() throws IOException {
                     fos.close();
+                    RuntimeException boom = commitThrows;
+                    if (boom != null) throw boom;          // P4c-3: Providerfehler beim Veröffentlichen nachbilden
                     if (!part.renameTo(fin)) throw new IOException("rename");
                     done = true;
                     committed.incrementAndGet();
@@ -282,10 +288,12 @@ public final class TestDirectDownloads {
 
     // ------------------------------------------------------------------ Rückmeldungen
 
-    static final class Events implements DirectDownloads.Listener {
+    static class Events implements DirectDownloads.Listener {
         final Map<String, String> finished = new ConcurrentHashMap<>();
         final List<String> all = new CopyOnWriteArrayList<>();
         @Override public void progress(String id, String title, long bytes, long total) { all.add("progress " + id + " " + title + " " + bytes + "/" + total); }
+        final List<String> waits = new CopyOnWriteArrayList<>();   // P4c: jede Pause vor einem erneuten Versuch
+        @Override public void waiting(String id, String title, Retry.Wait wait) { if (wait != Retry.Wait.NONE) waits.add(id + " " + wait); }
         @Override public synchronized void finished(String id, String title, String state, String reason, Object saved) {
             expect(state.equals("done") == (saved instanceof File), "saved handle only on done: " + state + " " + saved);
             all.add("finished " + id + " " + title + " " + state + " " + reason);
@@ -306,8 +314,21 @@ public final class TestDirectDownloads {
     static int idCounter;
     static synchronized String newId() { return String.format(Locale.ROOT, "%032x", ++idCounter); }
 
+    /** P4c: Wartezeiten 1000-fach verkürzt (2 ms … 600 ms), Netz immer da. */
+    static final Retry FAST = new Retry(Retry.Network.ALWAYS, Retry.Clock.SYSTEM, 1000);
+
     static DirectDownloads engine(SafeHttpClient c, DirStore store, Events ev) throws IOException {
-        return new DirectDownloads(c, store, ev, 60_000);
+        DirectDownloads d = new DirectDownloads(c, store, ev, 60_000);
+        d.setRetry(FAST);
+        return d;
+    }
+
+    /** Steuerbares Netz für die Wiederaufnahme-Tests. */
+    static final class Net implements Retry.Network {
+        final java.util.concurrent.atomic.AtomicBoolean on = new java.util.concurrent.atomic.AtomicBoolean(true);
+        Retry retry;
+        @Override public boolean online() { return on.get(); }
+        void set(boolean v) { on.set(v); if (retry != null) retry.networkChanged(); }
     }
 
     /** Startet einen Download und wartet auf das Ende; liefert "zustand[:grund]". */
@@ -334,13 +355,21 @@ public final class TestDirectDownloads {
         check("weak etag does not allow resume", TestDirectDownloads::weakEtag);
         check("interruption resumed with exact range, content identical", TestDirectDownloads::resumeOk);
         check("range errors: 200 to range, wrong start/end/total, length, changed etag", TestDirectDownloads::rangeErrors);
-        check("at most 3 resumes", TestDirectDownloads::maxResumes);
+        check("at most MAX_RESUMES (" + DirectDownloads.MAX_RESUMES + ") automatic resumes, then failed", TestDirectDownloads::maxResumes);
+        check("P4c: 503 then 200 on the first request: retried with pause, one file", TestDirectDownloads::retryInitial503);
+        check("P4c: 401/403/404/410 never retried (exactly one request)", TestDirectDownloads::noRetryFinal);
+        check("P4c: offline after interruption: no request while offline, resumes when back, exact content", TestDirectDownloads::offlineThenResume);
+        check("P4c: 503 on a resume request: retried, then resumed exactly", TestDirectDownloads::resume503);
+        check("P4c: cancel while waiting for the network: cancelled at once, never resumed", TestDirectDownloads::cancelWhileOffline);
+        check("P4c: offline longer than the limit: failed, partial removed", TestDirectDownloads::offlineTooLong);
+        check("P4c: no strong ETag: interruption is not retried (one request)", TestDirectDownloads::noValidatorNoRetry);
         check("If-Range honoured: changed representation answers 200, never mixed", TestDirectDownloads::ifRangeHonoured);
         check("only syntactically strong ETags allow resume", TestDirectDownloads::etagSyntax);
         check("content-encoding other than identity rejected", TestDirectDownloads::contentEncoding);
         check("storage not writable (permission): failed before any network access", TestDirectDownloads::storagePermission);
         check("crash recovery: published -> done, unpublished -> interrupted, unsure -> interrupted", TestDirectDownloads::crashRecovery);
         check("journal write failure after create: failed, partial removed", TestDirectDownloads::journalFailureAfterCreate);
+        check("job slots report activity only on 0->1 and 1->0 (CPU lock on Android)", TestDirectDownloads::slotActivity);
         check("no space before download: nothing created", TestDirectDownloads::noSpaceBefore);
         check("no space during download: stopped and cleaned", TestDirectDownloads::noSpaceDuring);
         check("write error (ENOSPC) is a storage failure, never resumed", TestDirectDownloads::writeError);
@@ -348,6 +377,9 @@ public final class TestDirectDownloads {
         check("cancel while waiting for headers (no 30 s read timeout)", TestDirectDownloads::cancelHeaders);
         check("cancel unknown id / after done", TestDirectDownloads::cancelOther);
         check("duplicate and late start: one request only", TestDirectDownloads::duplicates);
+        check("server closed the idle keep-alive connection: next download uses a new one (no retry needed)", TestDirectDownloads::staleIdleConnection);
+        check("parallel eviction leaves active body intact during redirect and strong-ETag resume", TestDirectDownloads::parallelRedirectResume);
+        check("parallel job returns a closed connection after the other job's eviction", TestDirectDownloads::parallelIdleReturn);
         check("journal across restart: done stays done, running becomes interrupted", TestDirectDownloads::journal);
         check("journal failure: start refused, nothing fetched", TestDirectDownloads::journalFailure);
         check("corrupt journal fails closed", TestDirectDownloads::corruptJournal);
@@ -358,8 +390,33 @@ public final class TestDirectDownloads {
         check("no cookies or credentials sent", TestDirectDownloads::noCredentials);
         check("stopAll cancels running downloads", TestDirectDownloads::stopAll);
         check("file name never from URL", TestDirectDownloads::names);
+        check("P4c-3: failure classes are distinguishable (storage commit, progress listener, real network cut)", TestDirectDownloads::failureClasses);
+        check("P1: every job ends and frees its slot despite failing cleanup (response/output close, abort, journal, wake lock, listener, after publish, Error)", TestDirectDownloads::cleanupFailures);
+        check("P4c-3 P2: encrypted source – resume after process end, changed file, cancel, no strong ETag, expiry", TestDirectDownloads::vault);
         System.out.println("dl tests: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    static void slotActivity() {
+        JobSlots s = new JobSlots(2, 4);
+        List<Boolean> ev = new ArrayList<>();
+        s.setActivity(ev::add);
+        expect(ev.isEmpty(), "no report while idle");
+        expect(s.tryAcquire(), "first");
+        expect(s.tryAcquireWithConnection(), "second");
+        expect(!s.tryAcquire(), "third refused");
+        expect(ev.equals(Arrays.asList(true)), "one 'active' for two jobs: " + ev);
+        s.release();
+        expect(ev.equals(Arrays.asList(true)), "still active with one job: " + ev);
+        s.releaseWithConnection();
+        expect(ev.equals(Arrays.asList(true, false)), "'idle' after the last job: " + ev);
+        expect(s.tryAcquireWithConnection(), "again");
+        List<Boolean> late = new ArrayList<>();
+        s.setActivity(late::add);
+        expect(late.equals(Arrays.asList(true)), "a listener set while a job runs learns it at once: " + late);
+        s.releaseWithConnection();
+        expect(late.equals(Arrays.asList(true, false)) && ev.size() == 3, "only the current listener: " + late + " " + ev);
+        expect(s.inUse() == 0 && s.httpInUse() == 0, "all free");
     }
 
     static void largeFile() throws Exception {
@@ -449,6 +506,317 @@ public final class TestDirectDownloads {
             DirStore store = new DirStore("toolarge");
             expect(run(srv, store, "/huge").equals("failed:too_large"), "too large");
             expect(store.created.get() == 0, "nothing created");
+        }
+    }
+
+    /**
+     * P4c-3 (Review-Befund B): drei Fehlerquellen, drei Klassen. Vorher meldete jede RuntimeException „failed:network“,
+     * sodass ein verschwundener MediaStore-Eintrag oder eine fehlschlagende Benachrichtigung wie ein Netzabbruch aussah.
+     * Abbruch- und Sicherheitsregeln bleiben gleich: in allen Fällen nichts veröffentlicht, Teil-Datei entfernt.
+     */
+    static void failureClasses() throws Exception {
+        long total = 1 << 20;
+        // 1) RuntimeException beim Veröffentlichen (wie MediaStore „No item at …“ nach fremdem Löschen)
+        try (Server srv = new Server((r, out, i) -> serveFile(r, out, total, null, -1))) {
+            DirStore store = new DirStore("cls-commit");
+            store.commitThrows = new IllegalStateException("java.io.FileNotFoundException: No item at content://media/external/downloads/39");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4?sig=SECRET"), "Commit");
+            String r = ev.await(id, 30_000);
+            expect(r.equals("failed:storage"), "commit RuntimeException is a storage failure, got " + r);
+            String cause = d.diagnostics(id);
+            expect(cause.startsWith("IllegalStateException") && cause.contains("No item at"), "cause names the provider failure: " + cause);
+            expect(!cause.contains("SECRET") && !cause.contains("127.0.0.1"), "no source address in the cause: " + cause);
+            expect(store.committed.get() == 0 && store.aborted.get() == 1, "nothing published, partial removed");
+            store.expectEmpty();
+            expect(srv.requests.get() == 1, "no retry after a storage failure");
+            d.stopAll();
+        }
+        // 2) RuntimeException in der Fortschrittsmeldung (Benachrichtigung)
+        try (Server srv = new Server((r, out, i) -> serveFile(r, out, total, null, -1))) {
+            DirStore store = new DirStore("cls-listener");
+            Events ev = new Events() {
+                @Override public void progress(String id, String title, long bytes, long total) { throw new IllegalArgumentException("notification failed"); }
+            };
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4"), "Listener");
+            String r = ev.await(id, 30_000);
+            expect(r.equals("failed:internal"), "listener RuntimeException is internal, not network, got " + r);
+            String cause = d.diagnostics(id);
+            expect(cause.startsWith("IllegalArgumentException at ") && !cause.contains("notification failed"), "class and app location only: " + cause);
+            expect(store.committed.get() == 0 && store.aborted.get() == 1, "nothing published, partial removed");
+            store.expectEmpty();
+            d.stopAll();
+        }
+        // 2b) unerwartete RuntimeException außerhalb der Ablagegrenzen (hier: Schreibrecht-Abfrage) – „internal“
+        try (Server srv = new Server((r, out, i) -> serveFile(r, out, total, null, -1))) {
+            DirStore store = new DirStore("cls-unexpected") {
+                @Override public boolean writable() { throw new SecurityException("permission service unavailable"); }
+            };
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4"), "Unexpected");
+            String r = ev.await(id, 30_000);
+            expect(r.equals("failed:internal"), "unexpected RuntimeException is internal, got " + r);
+            expect(d.diagnostics(id).startsWith("SecurityException at "), "class and location: " + d.diagnostics(id));
+            expect(srv.requests.get() == 0 && store.created.get() == 0, "nothing fetched, nothing created");
+            d.stopAll();
+        }
+        // 3) echter Netzabbruch mitten im Body (ohne starken ETag: kein Fortsetzen)
+        try (Server srv = new Server((r, out, i) -> serveFile(r, out, total, null, 300_000))) {
+            DirStore store = new DirStore("cls-network");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4?sig=SECRET"), "Network");
+            String r = ev.await(id, 30_000);
+            expect(r.equals("failed:network"), "a cut connection stays a network failure, got " + r);
+            String cause = d.diagnostics(id);
+            expect(!cause.isEmpty() && cause.contains("Exception") && !cause.contains("SECRET") && !cause.contains("127.0.0.1"),
+                "network cause is class/location only, no address: " + cause);
+            expect(store.committed.get() == 0 && store.aborted.get() == 1, "nothing published, partial removed");
+            store.expectEmpty();
+            d.stopAll();
+        }
+    }
+
+    // ------------------------------------------------------------------ P1 (Codex-Folgereview): Abschluss trotz Aufräumfehlern
+
+    /** Ablage, deren Ziele beim Abbrechen bzw. nach dem Veröffentlichen (ref) einmalig scheitern; optional Journal-RuntimeException. */
+    static class FaultyStore extends DirStore {
+        volatile boolean abortThrows, refThrowsAfterCommit, outCloseThrows;
+        volatile RuntimeException journalThrows;
+        FaultyStore(String name) throws IOException { super(name); }
+        @Override public Target create(String displayName, String mime) throws IOException {
+            Target t = super.create(displayName, mime);
+            return new Target() {
+                volatile boolean committed;
+                final OutputStream out = new java.io.FilterOutputStream(t.out()) {
+                    @Override public void write(byte[] b, int off, int len) throws IOException { this.out.write(b, off, len); }
+                    @Override public void close() throws IOException {
+                        super.close();
+                        if (outCloseThrows) { outCloseThrows = false; throw new IOException("close failed"); }
+                    }
+                };
+                @Override public OutputStream out() { return out; }
+                @Override public String ref() {
+                    if (committed && refThrowsAfterCommit) { refThrowsAfterCommit = false; throw new IllegalStateException("ref after publish"); }
+                    return t.ref();
+                }
+                @Override public Object commit() throws IOException { Object o = t.commit(); committed = true; return o; }
+                @Override public void abort() {
+                    t.abort();
+                    if (abortThrows) { abortThrows = false; throw new IllegalStateException("abort failed"); }
+                }
+            };
+        }
+        @Override public synchronized void saveJournal(byte[] data) throws IOException {
+            RuntimeException j = journalThrows;
+            if (j != null) throw j;
+            super.saveJournal(data);
+        }
+    }
+
+    static final class Boom extends Error { Boom(String m) { super(m); } }
+
+    /** Ein weiterer Auftrag derselben Engine muss danach normal fertig werden (Plätze und Zähler frei). */
+    static void followUp(DirectDownloads d, Events ev, Server srv, DirStore store, String what) throws Exception {
+        String id = newId();
+        int before = store.committed.get();
+        String s = d.start(id, srv.url("/v.mp4"), "FollowUp");
+        expect(!s.contains("busy"), what + ": follow-up job accepted, got " + s);
+        String r = ev.await(id, 30_000);
+        expect(r.equals("done"), what + ": follow-up job done, got " + r);
+        expect(store.committed.get() == before + 1, what + ": follow-up published");
+    }
+
+    /** Teilfall: Fehler sammeln statt abbrechen, damit jeder Fall einzeln sichtbar ist (alter Code: alle roten Fälle). */
+    static void sub(java.util.List<String> failures, String name, Body b) {
+        try { b.run(); System.out.println("  ok   " + name); }
+        catch (Throwable t) { failures.add(name); System.out.println("  FAIL " + name + ": " + t); }
+    }
+
+    static void cleanupFailures() throws Exception {
+        long total = 1 << 20;
+        Handler files = (r, out, i) -> {
+            if (r.line.contains("/missing")) head(out, "404 Not Found", "Content-Length: 0");
+            else serveFile(r, out, total, null, -1);
+        };
+        java.util.List<Throwable> uncaught = new CopyOnWriteArrayList<>();
+        Thread.UncaughtExceptionHandler old = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> uncaught.add(e));
+        try {
+            java.util.List<String> subFailures = new ArrayList<>();
+            // (1) response.close() wirft – auf dem Fehlerweg (404) und auf dem Erfolgsweg (Folgeauftrag)
+            sub(subFailures, "(1) response.close() wirft – auf dem Fehlerweg (404) und auf dem Erfolgsweg (Folgeauftrag)", () -> {
+                try (Server srv = new Server(files)) {
+                    FaultyStore store = new FaultyStore("p1-response-close");
+                    Events ev = new Events();
+                    SafeHttpClient http = LocalTestClients.loopback(srv.port());
+                    LocalTestClients.closeThrows(http, () -> new IllegalStateException("response close failed"));
+                    DirectDownloads d = engine(http, store, ev);
+                    String id = newId();
+                    d.start(id, srv.url("/missing.mp4"), "RespClose");
+                    String r = ev.await(id, 10_000);
+                    expect(r.equals("failed:http_404"), "response close: original reason kept, got " + r);
+                    expect(d.awaitIdle(5_000), "response close: worker accounted as finished");
+                    followUp(d, ev, srv, store, "response close (success path)");
+                    File[] fs = store.dir.listFiles((dd, n) -> n.endsWith(".mp4"));
+                    expect(fs != null && fs.length == 1 && fs[0].length() == total, "response close: published file kept after close failure");
+                    d.stopAll();
+                }
+            });
+            // (2) Output-Close scheitert vor dem Veröffentlichen: Ablagefehler, Teil-Datei weg, kein Publish
+            sub(subFailures, "(2) Output-Close scheitert vor dem Veröffentlichen: Ablagefehler, Teil-Datei weg, kein Publish", () -> {
+                try (Server srv = new Server(files)) {
+                    FaultyStore store = new FaultyStore("p1-out-close");
+                    store.outCloseThrows = true;
+                    Events ev = new Events();
+                    DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+                    String id = newId();
+                    d.start(id, srv.url("/v.mp4"), "OutClose");
+                    String r = ev.await(id, 10_000);
+                    expect(r.equals("failed:storage"), "output close: storage failure, got " + r);
+                    expect(store.committed.get() == 0 && store.aborted.get() == 1, "output close: not published, partial removed");
+                    followUp(d, ev, srv, store, "output close");
+                    d.stopAll();
+                }
+            });
+            // (3) target.abort() scheitert nach einem Schreibfehler: ursprüngliche Ursache bleibt, Auftrag endet
+            sub(subFailures, "(3) target.abort() scheitert nach einem Schreibfehler: ursprüngliche Ursache bleibt, Auftrag endet", () -> {
+                try (Server srv = new Server(files)) {
+                    FaultyStore store = new FaultyStore("p1-abort");
+                    store.failWriteAfter = 300_000;
+                    store.abortThrows = true;
+                    Events ev = new Events();
+                    DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+                    String id = newId();
+                    d.start(id, srv.url("/v.mp4"), "Abort");
+                    String r = ev.await(id, 10_000);
+                    expect(r.equals("failed:storage"), "abort failure: original reason kept, got " + r);
+                    String cause = d.diagnostics(id);
+                    expect(cause.startsWith("IOException: ENOSPC"), "abort failure: primary cause first: " + cause);
+                    expect(cause.contains("IllegalStateException"), "abort failure: secondary failure recorded: " + cause);
+                    expect(d.awaitIdle(5_000), "abort failure: worker accounted as finished");
+                    store.failWriteAfter = -1;
+                    followUp(d, ev, srv, store, "abort failure");
+                    d.stopAll();
+                }
+            });
+            // (4) Journal wirft eine RuntimeException vor dem Arbeiterstart: nichts bleibt reserviert
+            sub(subFailures, "(4) Journal wirft eine RuntimeException vor dem Arbeiterstart: nichts bleibt reserviert", () -> {
+                try (Server srv = new Server(files)) {
+                    FaultyStore store = new FaultyStore("p1-journal");
+                    Events ev = new Events();
+                    DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+                    store.journalThrows = new IllegalStateException("journal provider");
+                    String id = newId();
+                    String s;
+                    try { s = d.start(id, srv.url("/v.mp4"), "Journal"); } catch (RuntimeException e) { s = "threw " + e; }
+                    expect(s.contains("busy"), "journal failure: start refused cleanly, got " + s);
+                    expect(d.status(id).contains("\"state\":\"unknown\""), "journal failure: job not reserved: " + d.status(id));
+                    expect(d.awaitIdle(1_000), "journal failure: no running job left");
+                    expect(srv.requests.get() == 0, "journal failure: nothing fetched");
+                    store.journalThrows = null;
+                    String again = d.start(id, srv.url("/v.mp4"), "Journal");
+                    expect(!again.contains("busy") && ev.await(id, 10_000).equals("done"), "journal failure: same id starts later, got " + again);
+                    d.stopAll();
+                }
+            });
+            // (5) CPU-Sperre (Platz-Aktivität) wirft beim Freigeben (wie DeadSystemException in WakeLock.release)
+            sub(subFailures, "(5) CPU-Sperre (Platz-Aktivität) wirft beim Freigeben (wie DeadSystemException in WakeLock.release)", () -> {
+                try (Server srv = new Server(files)) {
+                    FaultyStore store = new FaultyStore("p1-wakelock");
+                    Events ev = new Events();
+                    JobSlots slots = new JobSlots(DirectDownloads.MAX_PARALLEL, 4);
+                    java.util.concurrent.atomic.AtomicInteger releaseFailures = new java.util.concurrent.atomic.AtomicInteger(1);
+                    slots.setActivity(any -> { if (!any && releaseFailures.getAndDecrement() > 0) throw new IllegalStateException("DeadSystemException"); });
+                    DirectDownloads d = new DirectDownloads(LocalTestClients.loopback(srv.port()), store, ev, 60_000, slots);
+                    d.setRetry(FAST);
+                    String id = newId();
+                    d.start(id, srv.url("/v.mp4"), "Wake");
+                    String r = ev.await(id, 10_000);
+                    expect(r.equals("done"), "wake lock release failure: terminal event still delivered, got " + r);
+                    String journal = new String(store.loadJournal(), StandardCharsets.US_ASCII);
+                    expect(journal.contains(id + " DONE "), "wake lock release failure: journal records DONE: " + journal);
+                    expect(slots.inUse() == 0 && slots.httpInUse() == 0, "wake lock release failure: slots free");
+                expect(slots.lastActivityFailure.startsWith("release IllegalStateException"), "wake lock release failure recorded in the slots: " + slots.lastActivityFailure);
+                // auch direkt (HLS nutzt dieselben Plätze ohne die Absicherung der MP4-Engine): Melden wirft nie
+                JobSlots direct = new JobSlots(1, 2);
+                direct.setActivity(any -> { throw new IllegalStateException("DeadSystemException"); });
+                expect(direct.tryAcquireWithConnection(), "acquire despite a failing wake lock");
+                direct.releaseWithConnection();
+                expect(direct.inUse() == 0 && direct.httpInUse() == 0 && direct.lastActivityFailure.startsWith("release"), "release despite a failing wake lock");
+                    followUp(d, ev, srv, store, "wake lock release failure");
+                    d.stopAll();
+                }
+            });
+            // (6) Abschluss-Listener wirft: Auftrag bleibt fertig, Arbeiter stirbt nicht unbemerkt, Folgeauftrag läuft
+            sub(subFailures, "(6) Abschluss-Listener wirft: Auftrag bleibt fertig, Arbeiter stirbt nicht unbemerkt, Folgeauftrag läuft", () -> {
+                try (Server srv = new Server(files)) {
+                    FaultyStore store = new FaultyStore("p1-listener");
+                    java.util.concurrent.atomic.AtomicInteger failures = new java.util.concurrent.atomic.AtomicInteger(1);
+                    Events ev = new Events() {
+                        @Override public synchronized void finished(String id, String title, String state, String reason, Object saved) {
+                            super.finished(id, title, state, reason, saved);
+                            if (failures.getAndDecrement() > 0) throw new IllegalStateException("notification failed");
+                        }
+                    };
+                    DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+                    int before = uncaught.size();
+                    String id = newId();
+                    d.start(id, srv.url("/v.mp4"), "Listener");
+                    expect(ev.await(id, 10_000).equals("done"), "finish listener failure: done reported");
+                    expect(d.awaitIdle(5_000) && d.status(id).contains("\"state\":\"done\""), "finish listener failure: state stays done");
+                    Thread.sleep(200);
+                    expect(uncaught.size() == before, "finish listener failure is contained, not thrown out of the worker: " + uncaught);
+                    followUp(d, ev, srv, store, "finish listener failure");
+                    d.stopAll();
+                }
+            });
+            // (7) Veröffentlicht, danach scheitert ein Folgeschritt (ref): bleibt fertig, Datei bleibt
+            sub(subFailures, "(7) Veröffentlicht, danach scheitert ein Folgeschritt (ref): bleibt fertig, Datei bleibt", () -> {
+                try (Server srv = new Server(files)) {
+                    FaultyStore store = new FaultyStore("p1-after-publish");
+                    store.refThrowsAfterCommit = true;
+                    Events ev = new Events();
+                    DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+                    String id = newId();
+                    d.start(id, srv.url("/v.mp4"), "AfterPublish");
+                    String r = ev.await(id, 10_000);
+                    expect(r.equals("done"), "failure after publish: download stays done, got " + r);
+                    expect(store.committed.get() == 1 && store.aborted.get() == 0, "failure after publish: published, never aborted");
+                    File[] fs = store.dir.listFiles((dd, n) -> n.endsWith(".mp4"));
+                    expect(fs != null && fs.length == 1 && fs[0].length() == total, "failure after publish: file kept");
+                    d.stopAll();
+                }
+            });
+            // (8) Error im Ablauf (z. B. OutOfMemoryError in der Anzeige): Endzustand, Plätze frei
+            sub(subFailures, "(8) Error im Ablauf (z. B. OutOfMemoryError in der Anzeige): Endzustand, Plätze frei", () -> {
+                try (Server srv = new Server(files)) {
+                    FaultyStore store = new FaultyStore("p1-error");
+                    java.util.concurrent.atomic.AtomicInteger failures = new java.util.concurrent.atomic.AtomicInteger(1);
+                    Events ev = new Events() {
+                        @Override public void progress(String id, String title, long bytes, long total) { if (failures.getAndDecrement() > 0) throw new Boom("progress"); }
+                    };
+                    DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+                    String id = newId();
+                    d.start(id, srv.url("/v.mp4"), "Error");
+                    String r = ev.await(id, 10_000);
+                    expect(r.equals("failed:internal"), "error: terminal failure, got " + r);
+                    expect(store.committed.get() == 0 && store.aborted.get() == 1, "error: nothing published, partial removed");
+                    expect(d.awaitIdle(5_000), "error: worker accounted as finished");
+                    followUp(d, ev, srv, store, "error");
+                    d.stopAll();
+                }
+            });
+            if (!subFailures.isEmpty()) throw new AssertionError(subFailures.size() + " case(s) failed: " + subFailures);
+        } finally {
+            Thread.setDefaultUncaughtExceptionHandler(old);
         }
     }
 
@@ -575,6 +943,132 @@ public final class TestDirectDownloads {
             DirStore store = new DirStore("maxres");
             expect(run(srv, store, "/v.mp4").equals("failed:network"), "network");
             expect(srv.requests.get() == 1 + DirectDownloads.MAX_RESUMES, "requests " + srv.requests.get());
+            store.expectEmpty();
+        }
+    }
+
+    // ------------------------------------------------------------------ P4c: automatische Wiederaufnahme
+
+    static void retryInitial503() throws Exception {
+        long total = 256 << 10;
+        try (Server srv = new Server((r, out, i) -> {
+            if (i < 2) { head(out, "503 Service Unavailable", "Content-Length: 0"); return; }
+            serveFile(r, out, total, "\"x\"", -1);
+        })) {
+            DirStore store = new DirStore("retry503");
+            expect(run(srv, store, "/v.mp4").equals("done"), "done after 503");
+            expect(srv.requests.get() == 3, "requests " + srv.requests.get());
+            expect(store.created.get() == 1 && store.committed.get() == 1, "one file");
+        }
+    }
+
+    static void noRetryFinal() throws Exception {
+        for (String code : new String[] {"401 Unauthorized", "403 Forbidden", "404 Not Found", "410 Gone"}) {
+            try (Server srv = new Server((r, out, i) -> head(out, code, "Content-Length: 0"))) {
+                DirStore store = new DirStore("final-" + code.substring(0, 3));
+                String r = run(srv, store, "/v.mp4");
+                expect(r.equals("failed:http_" + code.substring(0, 3)), code + ": " + r);
+                expect(srv.requests.get() == 1, code + ": requests " + srv.requests.get());
+                store.expectEmpty();
+            }
+        }
+    }
+
+    /** Erster Abruf bricht bei {@code cut} ab und schaltet dabei das Netz ab; danach liefert der Server ab Range. */
+    static void offlineThenResume() throws Exception {
+        long total = 1 << 20, cut = 300_000;
+        Net net = new Net();
+        Retry retry = new Retry(net, Retry.Clock.SYSTEM, 1000);
+        net.retry = retry;
+        try (Server srv = new Server((r, out, i) -> {
+            if (i == 0) net.set(false);           // Flugmodus mitten im Download
+            serveFile(r, out, total, "\"x\"", i == 0 ? cut : -1);
+        })) {
+            DirStore store = new DirStore("offline");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            d.setRetry(retry);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4"), "Clip");
+            long until = System.currentTimeMillis() + 5_000;
+            while (!d.status(id).contains("\"wait\":\"offline\"") && System.currentTimeMillis() < until) Thread.sleep(10);
+            expect(d.status(id).contains("\"state\":\"running\"") && d.status(id).contains("\"wait\":\"offline\""), d.status(id));
+            Thread.sleep(1_500);                  // länger als alle verkürzten Pausen zusammen
+            expect(srv.requests.get() == 1, "no request while offline: " + srv.requests.get());
+            expect(ev.all.stream().noneMatch(e -> e.startsWith("finished")), "still running while offline");
+            net.set(true);
+            expect(ev.await(id, 10_000).equals("done"), "done after network returned");
+            expect(srv.requests.get() == 2, "exactly one resume: " + srv.requests.get());
+            expect(("bytes=" + cut + "-" + (total - 1)).equals(srv.seen.get(1).header("range")), "range " + srv.seen.get(1).header("range"));
+            expect("\"x\"".equals(srv.seen.get(1).header("if-range")), "If-Range");
+            expect(!d.status(id).contains("\"wait\""), d.status(id));
+            expect(java.util.Arrays.equals(fileSha(store.only()), expectedSha(total)), "sha-256 after resume");
+        }
+    }
+
+    static void resume503() throws Exception {
+        long total = 1 << 20, cut = 200_000;
+        try (Server srv = new Server((r, out, i) -> {
+            if (i == 1 || i == 2) { head(out, "503 Service Unavailable", "Content-Length: 0"); return; }
+            serveFile(r, out, total, "\"x\"", i == 0 ? cut : -1);
+        })) {
+            DirStore store = new DirStore("resume503");
+            expect(run(srv, store, "/v.mp4").equals("done"), "done");
+            expect(srv.requests.get() == 4, "requests " + srv.requests.get());
+            expect(java.util.Arrays.equals(fileSha(store.only()), expectedSha(total)), "sha-256 after resume");
+        }
+    }
+
+    static void cancelWhileOffline() throws Exception {
+        long total = 1 << 20;
+        Net net = new Net();
+        Retry retry = new Retry(net, Retry.Clock.SYSTEM, 1000);
+        net.retry = retry;
+        try (Server srv = new Server((r, out, i) -> { net.set(false); serveFile(r, out, total, "\"x\"", 100_000); })) {
+            DirStore store = new DirStore("cancel-offline");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            d.setRetry(retry);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4"), "Clip");
+            long until = System.currentTimeMillis() + 5_000;
+            while (!d.status(id).contains("\"wait\":\"offline\"") && System.currentTimeMillis() < until) Thread.sleep(10);
+            expect(d.status(id).contains("\"wait\":\"offline\""), d.status(id));
+            long t0 = System.nanoTime();
+            d.cancel(id);
+            expect(ev.await(id, 5_000).equals("cancelled"), "cancelled");
+            expect((System.nanoTime() - t0) / 1_000_000 < 1_500, "cancel took too long");
+            net.set(true);
+            Thread.sleep(800);
+            expect(srv.requests.get() == 1, "never resumed after cancel: " + srv.requests.get());
+            store.expectEmpty();
+        }
+    }
+
+    static void offlineTooLong() throws Exception {
+        long total = 1 << 20;
+        Net net = new Net();
+        Retry retry = new Retry(net, Retry.Clock.SYSTEM, 100_000);   // höchstens 72 ms ohne Netz
+        net.retry = retry;
+        try (Server srv = new Server((r, out, i) -> { net.set(false); serveFile(r, out, total, "\"x\"", 100_000); })) {
+            DirStore store = new DirStore("offline-long");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            d.setRetry(retry);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4"), "Clip");
+            expect(ev.await(id, 10_000).equals("failed:network"), "failed after offline limit");
+            expect(srv.requests.get() == 1, "requests " + srv.requests.get());
+            store.expectEmpty();
+        }
+    }
+
+    static void noValidatorNoRetry() throws Exception {
+        long total = 1 << 20;
+        try (Server srv = new Server((r, out, i) -> serveFile(r, out, total, null, 100_000))) {
+            DirStore store = new DirStore("novalidator");
+            expect(run(srv, store, "/v.mp4").equals("failed:network"), "failed");
+            expect(srv.requests.get() == 1, "requests " + srv.requests.get());
             store.expectEmpty();
         }
     }
@@ -710,6 +1204,209 @@ public final class TestDirectDownloads {
             expect(srv.requests.get() == 1, "requests " + srv.requests.get());
             expect(store.files().length == 1 && store.created.get() == 1, "one file");
             d.stopAll();
+        }
+    }
+
+    /**
+     * Ein Server beendet eine ruhende Keep-Alive-Verbindung (Zeitgrenze, HTTP/1.0-Server). Ohne automatische Wiederholung
+     * (SafeHttpClient) darf der nächste Download nicht über diese tote Pool-Verbindung laufen (gefunden mit Kadri, C3).
+     */
+    static void staleIdleConnection() throws Exception {
+        try (Server srv = new Server((r, out, i) -> {
+            serveFile(r, out, 4096, "\"v1\"", -1);
+            out.flush();
+            Thread.sleep(50);
+            throw new IOException("idle close");      // Verbindung nach der Antwort schließen (FIN), ohne "Connection: close"
+        })) {
+            DirStore store = new DirStore("stale");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);   // EIN Client für alle Aufträge
+            for (int n = 0; n < 3; n++) {
+                String id = newId();
+                d.start(id, srv.url("/s" + n + ".mp4"), "Clip");
+                String r = ev.await(id, 10_000);
+                expect(r.equals("done"), "download " + n + ": " + r);
+                Thread.sleep(300);                    // Server hat die Verbindung inzwischen geschlossen
+            }
+            expect(srv.requests.get() == 3 && srv.connections.get() == 3, "requests " + srv.requests.get() + ", connections " + srv.connections.get());
+            // P4c: die automatische Wiederholung darf eine tote Verbindung nicht verdecken – es gibt nichts zu wiederholen
+            expect(ev.waits.isEmpty(), "no retry needed, but paused: " + ev.waits);
+            d.stopAll();
+        }
+    }
+
+    static void awaitGate(CountDownLatch latch) {
+        try { expect(latch.await(10, TimeUnit.SECONDS), "schedule gate timed out"); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AssertionError(e); }
+    }
+
+    static void parallelRedirectResume() throws Exception {
+        CountDownLatch firstBody = new CountDownLatch(1), releaseFirst = new CountDownLatch(1);
+        try (Server srv = new Server((r, out, i) -> {
+            if (r.line.contains("/first.mp4")) {
+                head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: 65536");
+                content(out, 0, 8); out.flush(); firstBody.countDown();
+                awaitGate(releaseFirst); content(out, 8, 65536);
+            } else if (r.line.contains("/redirect")) {
+                head(out, "302 Found", "Location: /resume.mp4", "Content-Length: 0");
+            } else {
+                serveFile(r, out, 4096, "\"parallel\"", r.rangeStart() < 0 ? 1024 : -1);
+            }
+        })) {
+            DirStore store = new DirStore("parallel-redirect-resume");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            try {
+                String first = newId(), second = newId();
+                d.start(first, srv.url("/first.mp4"), "First");
+                awaitGate(firstBody);
+                d.start(second, srv.url("/redirect"), "Second");
+                expect(ev.await(second, 10_000).equals("done"), "redirect/resume job failed");
+                expect(!ev.finished.containsKey(first), "active job must still be held, not cancelled");
+                releaseFirst.countDown();
+                expect(ev.await(first, 10_000).equals("done"), "active body interrupted by other job");
+                expect(srv.requests.get() == 4, "unexpected retry/request count: " + srv.requests.get());
+                expect(srv.seen.stream().filter(r -> r.rangeStart() >= 0).allMatch(r -> "\"parallel\"".equals(r.header("if-range"))), "strong validator missing");
+                expect(srv.seen.stream().allMatch(r -> r.header("cookie") == null && r.header("authorization") == null && r.header("referer") == null), "credentials leaked");
+                expect(java.util.Arrays.equals(fileSha(new File(store.dir, "First.mp4")), expectedSha(65536)), "first hash");
+                expect(java.util.Arrays.equals(fileSha(new File(store.dir, "Second.mp4")), expectedSha(4096)), "second hash");
+            } finally { releaseFirst.countDown(); d.stopAll(); }
+        }
+    }
+
+    static void parallelIdleReturn() throws Exception {
+        CountDownLatch firstBody = new CountDownLatch(1), releaseFirst = new CountDownLatch(1);
+        CountDownLatch secondCall = new CountDownLatch(1), releaseSecond = new CountDownLatch(1);
+        Map<String, okhttp3.Connection> acquired = new ConcurrentHashMap<>();
+        try (Server srv = new Server((r, out, i) -> {
+            if (r.line.contains("/first.mp4")) {
+                head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: 4096");
+                content(out, 0, 8); out.flush(); firstBody.countDown();
+                awaitGate(releaseFirst); content(out, 8, 4096);
+            } else serveFile(r, out, 4096, null, -1);
+        })) {
+            SafeHttpClient http = LocalTestClients.loopback(srv.port());
+            LocalTestClients.observe(http, new okhttp3.EventListener() {
+                @Override public void callStart(okhttp3.Call call) {
+                    if (call.request().url().encodedPath().equals("/second.mp4")) {
+                        secondCall.countDown(); awaitGate(releaseSecond);
+                    }
+                }
+                @Override public void connectionAcquired(okhttp3.Call call, okhttp3.Connection connection) {
+                    acquired.put(call.request().url().encodedPath(), connection);
+                }
+            });
+            DirStore store = new DirStore("parallel-idle-return");
+            Events ev = new Events();
+            DirectDownloads d = engine(http, store, ev);
+            try {
+                String first = newId(), second = newId();
+                d.start(first, srv.url("/first.mp4"), "First");
+                awaitGate(firstBody);
+                Socket firstSocket = srv.open.get(0);
+                d.start(second, srv.url("/second.mp4"), "Second");
+                awaitGate(secondCall);      // second job has evicted while first connection was active
+                releaseFirst.countDown();
+                expect(ev.await(first, 10_000).equals("done"), "first job"); // connection returned to pool
+                firstSocket.close();       // server closes that now-idle connection, before second acquires
+                releaseSecond.countDown();
+                String outcome = ev.await(second, 10_000);
+                boolean reused = acquired.get("/first.mp4") == acquired.get("/second.mp4");
+                expect(outcome.equals("done"), "second=" + outcome + ", reusedClosedConnection=" + reused);
+                expect(srv.requests.get() == 2, "exactly one request per job");
+                expect(java.util.Arrays.equals(fileSha(new File(store.dir, "Second.mp4")), expectedSha(4096)), "second hash");
+            } finally { releaseFirst.countDown(); releaseSecond.countDown(); d.stopAll(); }
+        }
+    }
+
+    /** P2: Software-AES-GCM für die JVM (App: Android-Keystore). */
+    static final class SoftSealer implements SourceVault.Sealer {
+        final javax.crypto.SecretKey key;
+        SoftSealer() throws Exception { javax.crypto.KeyGenerator g = javax.crypto.KeyGenerator.getInstance("AES"); g.init(256); key = g.generateKey(); }
+        @Override public byte[] seal(byte[] aad, byte[] plain) throws java.security.GeneralSecurityException {
+            byte[] iv = new byte[12]; new java.security.SecureRandom().nextBytes(iv);
+            javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(javax.crypto.Cipher.ENCRYPT_MODE, key, new javax.crypto.spec.GCMParameterSpec(128, iv));
+            c.updateAAD(aad);
+            byte[] ct = c.doFinal(plain), out = new byte[12 + ct.length];
+            System.arraycopy(iv, 0, out, 0, 12); System.arraycopy(ct, 0, out, 12, ct.length);
+            return out;
+        }
+        @Override public byte[] open(byte[] aad, byte[] sealed) throws java.security.GeneralSecurityException {
+            javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(javax.crypto.Cipher.DECRYPT_MODE, key, new javax.crypto.spec.GCMParameterSpec(128, sealed, 0, 12));
+            c.updateAAD(aad);
+            return c.doFinal(sealed, 12, sealed.length - 12);
+        }
+    }
+
+    static void vault() throws Exception {
+        java.util.concurrent.atomic.AtomicBoolean stall = new java.util.concurrent.atomic.AtomicBoolean(true);
+        java.util.concurrent.atomic.AtomicReference<String> etag = new java.util.concurrent.atomic.AtomicReference<>("\"v1-65536\"");
+        final long total = 65536;
+        try (Server srv = new Server((r, out, i) -> {
+            String e = r.line.contains("/plain") ? null : etag.get();
+            if (stall.get()) {
+                head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: " + total, e == null ? "" : "ETag: " + e);
+                content(out, 0, 8); out.flush(); Thread.sleep(60_000);
+            } else serveFile(r, out, total, e, -1);
+        })) {
+            SoftSealer key = new SoftSealer();
+            java.util.concurrent.atomic.AtomicLong now = new java.util.concurrent.atomic.AtomicLong(1_000_000);
+            for (String mode : new String[] {"resume", "changed", "cancel", "plain", "expired"}) {
+                stall.set(true);
+                etag.set("\"v1-65536\"");
+                File vdir = new File(root, "vault-" + mode);
+                SourceVault v = new SourceVault(vdir, key, now::get);
+                DirStore store = new DirStore("vault-store-" + mode);
+                Events ev = new Events();
+                DirectDownloads d1 = engine(LocalTestClients.loopback(srv.port()), store, ev);
+                d1.setVault(v);
+                String id = newId();
+                d1.start(id, srv.url(mode.equals("plain") ? "/plain.mp4?sig=TOKEN" : "/s.mp4?sig=TOKEN"), "Tresor " + mode);
+                long until = System.currentTimeMillis() + 5_000;
+                while (store.created.get() < 1 && System.currentTimeMillis() < until) Thread.sleep(10);
+                File rec = new File(vdir, id + ".src");
+                if (mode.equals("plain")) expect(!rec.exists(), "plain: no stored source without a strong ETag");
+                else {
+                    expect(rec.isFile(), mode + ": stored");
+                    String raw = new String(Files.readAllBytes(rec.toPath()), StandardCharsets.ISO_8859_1);
+                    expect(!raw.contains("127.0.0.1") && !raw.contains("TOKEN") && !raw.contains("s.mp4") && !raw.contains("http") && !raw.contains("Tresor"), "record has no plaintext: " + raw);
+                }
+                // "Absturz": Journal mitten im Lauf, neue Engine (neuer Prozess) mit demselben Tresor
+                DirStore crashed = new DirStore("vault-crashed-" + mode);
+                crashed.journal = store.loadJournal();
+                Events ev2 = new Events();
+                DirectDownloads d2 = engine(LocalTestClients.loopback(srv.port()), crashed, ev2);
+                d2.setVault(new SourceVault(vdir, key, now::get));
+                expect(d2.status(id).contains("\"state\":\"interrupted\""), mode + ": interrupted after restart " + d2.status(id));
+                stall.set(false);
+                int req = srv.requests.get();
+                if (mode.equals("resume")) {
+                    expect(d2.canResumeStored(id) && d2.resumeStored() == 1, "resume: started");
+                    expect(ev2.await(id, 20_000).equals("done"), "resume: done");
+                    File[] fs = crashed.dir.listFiles((dd, n) -> n.endsWith(".mp4"));
+                    expect(fs != null && fs.length == 1 && fs[0].length() == total && fs[0].getName().startsWith("Tresor resume"), "resume: exact file with the stored name");
+                    expect(!rec.exists(), "resume: stored source deleted after success");
+                } else if (mode.equals("changed")) {
+                    etag.set("\"v2-65536\"");
+                    expect(d2.resumeStored() == 1, "changed: started");
+                    expect(ev2.await(id, 20_000).equals("failed:changed"), "changed: failed:changed");
+                    File[] fs = crashed.dir.listFiles((dd, n) -> n.endsWith(".mp4"));
+                    expect(fs == null || fs.length == 0, "changed: nothing published");
+                    expect(!rec.exists(), "changed: stored source deleted");
+                } else if (mode.equals("cancel")) {
+                    d2.cancel(id);
+                    expect(!rec.exists() && d2.resumeStored() == 0 && srv.requests.get() == req, "cancel: deleted at once, never resumed, no request");
+                } else if (mode.equals("plain")) {
+                    expect(d2.resumeStored() == 0 && srv.requests.get() == req, "plain: nothing to resume");
+                } else {
+                    now.addAndGet(SourceVault.MAX_AGE_MS);
+                    expect(d2.resumeStored() == 0 && srv.requests.get() == req && !rec.exists(), "expired: not resumed, deleted");
+                }
+                d1.stopAll();
+                d2.stopAll();
+            }
         }
     }
 

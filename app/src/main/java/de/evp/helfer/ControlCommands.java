@@ -14,6 +14,10 @@ import java.nio.charset.StandardCharsets;
  * ungültiges UTF-8 – wird abgelehnt (nicht gekürzt, nicht geraten). Die Antwort ist die bisherige Status-JSON
  * des Helpers bzw. {"ok":true} für "end"; der Player in Kadri bleibt dadurch unverändert.
  *
+ * HLS (P4b, nur mit {@link HlsControl}; alte Helfer lehnen ab):
+ *   {"op":"hlsplan","v":1,"url":"…","bind":{"player":"…","gen":N,"rev":N}}
+ *   {"op":"hlsstart","v":1,"id":"<32 hex>","planId":"<32 hex>","option":"<24 hex>","bind":{…}[,"name":"…"]}
+ *
  * Download-Befehle (Phase C2, nur wenn ein {@link DownloadControl} angebunden ist, sonst abgelehnt):
  *   {"op":"dlstart","id":"<32 hex>","url":"http(s)://…"[,"name":"…"]}  {"op":"dlstatus","id":"…"}  {"op":"dlcancel","id":"…"}
  * dlstart darf bis {@link #MAX_DOWNLOAD_REQUEST} Byte groß sein (die URL); alle anderen Befehle bleiben bei
@@ -40,6 +44,18 @@ public final class ControlCommands {
         String cancel(String id);
     }
 
+    /**
+     * P4b: HLS-Downloads (nur wenn angebunden, sonst abgelehnt). {@code peer}: Kennung der authentifizierten
+     * Kanal-Sitzung (vom Kanal, nie aus der Anfrage); {@code bind}: Kadris Bindung "player|gen|rev". Antworten ohne URL.
+     */
+    public interface HlsControl {
+        String plan(byte[] peer, String bind, String url);
+        String start(byte[] peer, String bind, String id, String planId, String option, String name);
+        boolean knows(String id);
+        String status(String id);
+        String cancel(String id);
+    }
+
     public static final int MAX_REQUEST = 256;
     public static final int MAX_DOWNLOAD_REQUEST = 4096;
     public static final int MAX_URL = 2048;
@@ -52,16 +68,31 @@ public final class ControlCommands {
     public static String handle(byte[] request, Device device) { return handle(request, device, null); }
 
     /** Wie {@link #handle(byte[], Device)}; Download-Befehle nur mit {@code downloads} (sonst abgelehnt). */
-    public static String handle(byte[] request, Device device, DownloadControl downloads) {
+    public static String handle(byte[] request, Device device, DownloadControl downloads) { return handle(request, device, downloads, null, null); }
+
+    /**
+     * Wie oben, zusätzlich HLS ({@code hls} null: hlsplan/hlsstart abgelehnt wie bei einem alten Helfer). dlstatus und
+     * dlcancel gelten für beide Arten: eine Kennung gehört genau einer Art (eine HLS-Kennung startet nie einen MP4-Auftrag
+     * und umgekehrt).
+     */
+    public static String handle(byte[] request, Device device, DownloadControl downloads, HlsControl hls, byte[] peer) {
         Request r;
         try { r = parse(request); }
         catch (IllegalArgumentException invalid) { return REJECTED; }
+        if (r.op.startsWith("hls")) {
+            if (hls == null || downloads == null || peer == null) return REJECTED;
+            if (r.op.equals("hlsplan")) return hls.plan(peer, r.bind, r.url);
+            if (hls.knows(r.id)) return hls.start(peer, r.bind, r.id, r.planId, r.option, r.name);
+            if (!downloads.status(r.id).contains("\"state\":\"unknown\"")) return "{\"ok\":false,\"id\":\"" + r.id + "\",\"state\":\"rejected\",\"reason\":\"id_in_use\"}";
+            return hls.start(peer, r.bind, r.id, r.planId, r.option, r.name);
+        }
         if (r.op.startsWith("dl")) {
             if (downloads == null) return REJECTED;
+            boolean isHls = hls != null && hls.knows(r.id);
             switch (r.op) {
-                case "dlstart": return downloads.start(r.id, r.url, r.name);
-                case "dlstatus": return downloads.status(r.id);
-                case "dlcancel": return downloads.cancel(r.id);
+                case "dlstart": return isHls ? hls.status(r.id) : downloads.start(r.id, r.url, r.name);
+                case "dlstatus": return isHls ? hls.status(r.id) : downloads.status(r.id);
+                case "dlcancel": return isHls ? hls.cancel(r.id) : downloads.cancel(r.id);
                 default: return REJECTED;   // unerreichbar
             }
         }
@@ -80,6 +111,20 @@ public final class ControlCommands {
      * Downloads, DASH und Proxy sind über den Kanal noch nicht verfügbar und stehen deshalb auf false.
      */
     public static String statusJson(String appVersion, boolean overlay, boolean write, int volStep, int volMax, float bright) {
+        return statusJson(appVersion, overlay, write, volStep, volMax, bright, null);
+    }
+
+    /**
+     * Wie oben; {@code hlsOpus} nicht null: der Helfer kann HLS-VOD speichern (P4b) – dann zusätzlich
+     * {@code "hls":{"v":1,"profiles":["ts-avc-aac","fmp4-avc-aac"],"opus":<bool>}}. Alte Helfer melden nichts.
+     */
+    public static String statusJson(String appVersion, boolean overlay, boolean write, int volStep, int volMax, float bright, Boolean hlsOpus) {
+        String base = statusJsonBase(appVersion, overlay, write, volStep, volMax, bright);
+        if (hlsOpus == null) return base;
+        return base.substring(0, base.length() - 1) + ",\"hls\":{\"v\":1,\"profiles\":[\"ts-avc-aac\",\"fmp4-avc-aac\"],\"opus\":" + hlsOpus + "}}";
+    }
+
+    private static String statusJsonBase(String appVersion, boolean overlay, boolean write, int volStep, int volMax, float bright) {
         String app = appVersion == null ? "?" : appVersion.replaceAll("[^0-9A-Za-z.+-]", "");
         if (app.length() > 32) app = app.substring(0, 32);
         int max = Math.max(volMax, 0), step = Math.max(0, Math.min(volStep, max));
@@ -92,6 +137,7 @@ public final class ControlCommands {
     static final class Request {
         final String op; final boolean hasValue; final double value;
         final String id, url, name;   // nur Download-Befehle
+        String planId, option, bind;  // nur HLS
         Request(String op, boolean hasValue, double value) { this(op, hasValue, value, null, null, null); }
         Request(String op, boolean hasValue, double value, String id, String url, String name) {
             this.op = op; this.hasValue = hasValue; this.value = value; this.id = id; this.url = url; this.name = name;
@@ -108,14 +154,14 @@ public final class ControlCommands {
         } catch (CharacterCodingException e) { throw new IllegalArgumentException("utf-8"); }
         Parser p = new Parser(s);
         String op = null; boolean hasValue = false; double value = 0;
-        String id = null, url = null, name = null;
+        String id = null, url = null, name = null, planId = null, option = null, bind = null;
         p.expect('{');
         boolean first = true;
         while (true) {
             p.ws();
             if (p.peek() == '}') { if (first) throw new IllegalArgumentException("empty"); p.pos++; break; }
             if (!first) { p.expect(','); p.ws(); }
-            String key = p.string();
+            String key = p.key();
             p.ws(); p.expect(':'); p.ws();
             if ("op".equals(key)) {
                 if (op != null) throw new IllegalArgumentException("duplicate op");
@@ -132,12 +178,37 @@ public final class ControlCommands {
             } else if ("name".equals(key)) {
                 if (name != null) throw new IllegalArgumentException("duplicate name");
                 name = p.name();
+            } else if ("planId".equals(key)) {
+                if (planId != null) throw new IllegalArgumentException("duplicate planId");
+                planId = p.hex(32);
+            } else if ("option".equals(key)) {
+                if (option != null) throw new IllegalArgumentException("duplicate option");
+                option = p.hex(24);
+            } else if ("bind".equals(key)) {
+                if (bind != null) throw new IllegalArgumentException("duplicate bind");
+                bind = p.bind();
             } else throw new IllegalArgumentException("field");
             first = false;
         }
         p.ws();
         if (p.pos != s.length()) throw new IllegalArgumentException("trailing");
         if (op == null) throw new IllegalArgumentException("op missing");
+        if (op.equals("hlsplan") || op.equals("hlsstart")) {
+            // Versioniert: genau v:1. hlsplan {op,v,url,bind}; hlsstart {op,v,id,planId,option,bind[,name]}
+            if (!hasValue || value != 1.0 || bind == null) throw new IllegalArgumentException("hls fields");
+            Request r;
+            if (op.equals("hlsplan")) {
+                if (url == null || id != null || name != null || planId != null || option != null) throw new IllegalArgumentException("hls fields");
+                r = new Request(op, true, 1, null, url, null);
+            } else {
+                if (url != null || id == null || planId == null || option == null) throw new IllegalArgumentException("hls fields");
+                if (raw.length > 1024) throw new IllegalArgumentException("size");
+                r = new Request(op, true, 1, id, null, name);
+            }
+            r.planId = planId; r.option = option; r.bind = bind;
+            return r;
+        }
+        if (planId != null || option != null || bind != null) throw new IllegalArgumentException("hls field");
         boolean download = op.equals("dlstart") || op.equals("dlstatus") || op.equals("dlcancel");
         if (!download && (id != null || url != null || name != null)) throw new IllegalArgumentException("download field");
         if (download) {
@@ -181,6 +252,76 @@ public final class ControlCommands {
             String out = s.substring(start, pos);
             pos++;
             return out;
+        }
+        /** Feldname: nur ASCII-Buchstaben (z. B. planId), keine Escapes, höchstens 16 Zeichen. */
+        String key() {
+            expect('"');
+            int start = pos;
+            while (peek() != '"') {
+                char c = s.charAt(pos);
+                if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) throw new IllegalArgumentException("key");
+                if (pos - start >= 16) throw new IllegalArgumentException("key length");
+                pos++;
+            }
+            pos++;
+            return s.substring(start, pos - 1);
+        }
+        /** Genau {@code n} Kleinbuchstaben-Hexziffern (Plan- und Optionskennung des Helfers). */
+        String hex(int n) {
+            expect('"');
+            int start = pos;
+            while (peek() != '"') {
+                char c = s.charAt(pos);
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) throw new IllegalArgumentException("hex");
+                if (pos - start >= n) throw new IllegalArgumentException("hex length");
+                pos++;
+            }
+            if (pos - start != n) throw new IllegalArgumentException("hex length");
+            pos++;
+            return s.substring(start, pos - 1);
+        }
+        /**
+         * Kadris Bindung {"player":"[A-Za-z0-9_-]{1,64}","gen":N,"rev":N} (N ganzzahlig 0…999999999), genau diese drei
+         * Felder in beliebiger Reihenfolge, je einmal → "player|gen|rev".
+         */
+        String bind() {
+            expect('{');
+            String player = null;
+            long gen = -1, rev = -1;
+            for (int i = 0; i < 3; i++) {
+                if (i > 0) expect(',');
+                ws();
+                String key = key();
+                ws(); expect(':'); ws();
+                if ("player".equals(key) && player == null) player = token(64);
+                else if ("gen".equals(key) && gen < 0) gen = integer();
+                else if ("rev".equals(key) && rev < 0) rev = integer();
+                else throw new IllegalArgumentException("bind field");
+                ws();
+            }
+            expect('}');
+            return player + "|" + gen + "|" + rev;
+        }
+        String token(int max) {
+            expect('"');
+            int start = pos;
+            while (peek() != '"') {
+                char c = s.charAt(pos);
+                if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-')) throw new IllegalArgumentException("token");
+                if (pos - start >= max) throw new IllegalArgumentException("token length");
+                pos++;
+            }
+            if (pos == start) throw new IllegalArgumentException("token empty");
+            pos++;
+            return s.substring(start, pos - 1);
+        }
+        long integer() {
+            int start = pos;
+            if (peek() == '0') pos++;
+            else if (peek() >= '1' && peek() <= '9') { while (pos < s.length() && Character.isDigit(s.charAt(pos))) { pos++; if (pos - start > 9) throw new IllegalArgumentException("integer"); } }
+            else throw new IllegalArgumentException("integer");
+            if (pos < s.length() && (Character.isDigit(s.charAt(pos)) || s.charAt(pos) == '.')) throw new IllegalArgumentException("integer");
+            return Long.parseLong(s.substring(start, pos));
         }
         /** Auftragskennung des Browsers: genau 32 Kleinbuchstaben-Hexziffern. */
         String jobId() {

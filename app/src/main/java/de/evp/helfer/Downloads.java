@@ -51,6 +51,24 @@ public class Downloads {
     private static final Map<Integer, Task> active = new ConcurrentHashMap<>();
     static final Object fileNames = new Object();   // auch Mp4Downloads (Android 8–9)
     private static boolean initialized;
+    /**
+     * Nur Diagnose (P4c-3, nach Codex-Folgereview konservativ): gemeinsame Ereignisfolge der Pending-Einträge, Zähler
+     * der Pending-Bereinigung in DIESEM Prozess (begonnen / gerade aktiv) und die Besitzmarkierungen der von ihr
+     * entfernten Einträge. Die Markierung (zufälliger Dateiname) identifiziert einen Eintrag eindeutig; eine Zeilen-ID
+     * nicht. Die Liste wird nie still geleert: läuft sie über, ist das vermerkt und eine Zuordnung nur noch "unbekannt".
+     * Ändert kein Verhalten.
+     */
+    static final java.util.concurrent.atomic.AtomicLong diagSeq = new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicInteger cleanupStarted = new java.util.concurrent.atomic.AtomicInteger();
+    static final java.util.concurrent.atomic.AtomicInteger cleanupActive = new java.util.concurrent.atomic.AtomicInteger();
+    private static final int CLEANUP_HISTORY = 4096;
+    private static final java.util.Set<String> cleanupRemovedProofs = java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
+    static volatile boolean cleanupHistoryTruncated;
+    static boolean removedByCleanup(String proofName) { return cleanupRemovedProofs.contains(proofName); }
+    private static void noteRemovedByCleanup(String proofName) {
+        if (cleanupRemovedProofs.size() >= CLEANUP_HISTORY) { cleanupHistoryTruncated = true; return; }
+        cleanupRemovedProofs.add(proofName);
+    }
     private static final Object admission = new Object();
     private static boolean stopped;
     private static Object generation = new Object();
@@ -100,6 +118,8 @@ public class Downloads {
             if(!f.delete()&&f.exists())throw new java.io.IOException("Cannot remove interrupted download staging");
         }
         if(Build.VERSION.SDK_INT>=29) {
+          cleanupStarted.incrementAndGet(); cleanupActive.incrementAndGet();   // nur Diagnose
+          try {
             ContentResolver cr=c.getContentResolver();
             File proofs=new File(c.getFilesDir(),"download-pending-v1");
             File[] markers=proofs.exists()?proofs.listFiles():new File[0];
@@ -127,10 +147,12 @@ public class Downloads {
                     if(cr.delete(uri,selection+" AND "+MediaStore.Downloads.DISPLAY_NAME+"=? AND (download_uri IS NULL OR download_uri='')",
                             new String[]{scope[0],scope[1],scope[2],name})!=1)
                         throw new java.io.IOException("Interrupted pending download was not removed");
+                    noteRemovedByCleanup(proofName);   // nur Diagnose: genau dieser Eintrag wurde hier entfernt
                 }
             }
             // Keep every proof on query/delete failure; retry remains safe after partial cleanup.
             for(File f:markers)if(owned.contains(f.getName()))removeProof(f);
+          } finally { cleanupActive.decrementAndGet(); }
         }
         initialized=true;
     }

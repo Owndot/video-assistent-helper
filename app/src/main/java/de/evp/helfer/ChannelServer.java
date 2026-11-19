@@ -47,6 +47,7 @@ public final class ChannelServer {
     private final Host host;
     private final ControlCommands.Device device;
     private final ControlCommands.DownloadControl downloads;   // null: Download-Befehle werden abgelehnt
+    private final ControlCommands.HlsControl hls;               // null: HLS-Befehle werden abgelehnt (wie ein alter Helfer)
     private final ThreadPoolExecutor pool = new ThreadPoolExecutor(4, 4, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(16));
     private ServerSocket server;
     private Thread acceptThread;
@@ -54,10 +55,17 @@ public final class ChannelServer {
     public ChannelServer(Host host, ControlCommands.Device device) { this(host, device, null); }
 
     /** Phase C2: zusätzlich Download-Befehle (dlstart/dlstatus/dlcancel) über denselben verschlüsselten Kanal. */
-    public ChannelServer(Host host, ControlCommands.Device device, ControlCommands.DownloadControl downloads) {
+    public ChannelServer(Host host, ControlCommands.Device device, ControlCommands.DownloadControl downloads) { this(host, device, downloads, null); }
+
+    /**
+     * P4b: zusätzlich HLS (hlsplan/hlsstart). Pläne werden an die authentifizierte Kanal-Sitzung gebunden: die
+     * Sitzungskennung kommt aus dem Rust-Kern (hostOpen), nie aus der Anfrage.
+     */
+    public ChannelServer(Host host, ControlCommands.Device device, ControlCommands.DownloadControl downloads, ControlCommands.HlsControl hls) {
         this.host = host;
         this.device = device;
         this.downloads = downloads;
+        this.hls = hls;
     }
 
     /** Bindet vor der Bereitschaftsmeldung; ein belegter Port meldet false (kein Ausweichen). */
@@ -180,7 +188,7 @@ public final class ChannelServer {
                 byte[] sid = Arrays.copyOfRange(opened, 0, 16);
                 // Nur Steuer-Records (Art 1); Medien- oder Ende-Records gibt es in diesem Kanal nicht.
                 String answer = opened.length > 17 && opened[16] == 1
-                    ? ControlCommands.handle(Arrays.copyOfRange(opened, 17, opened.length), device, downloads)
+                    ? ControlCommands.handle(Arrays.copyOfRange(opened, 17, opened.length), device, downloads, hls, sid)
                     : ControlCommands.REJECTED;
                 host.event(ControlCommands.REJECTED.equals(answer) ? "REC_REJECTED" : "REC");
                 synchronized (CORE) {

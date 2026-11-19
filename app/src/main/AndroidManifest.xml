@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Downloads: CPU bleibt nur während aktiver Aufträge wach (Zeitlimit, Verlängerung bei Fortschritt) -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Helligkeit: unsichtbares Mini-Fenster (bevorzugt) oder notfalls Systemeinstellung -->
@@ -45,7 +47,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Lokaler Empfänger: stellt Helligkeit und Lautstärke für den Videoplayer im Browser ein" />
+                android:value="Lokaler Empfänger: stellt Helligkeit und Lautstärke für den Videoplayer im Browser ein und speichert vom Nutzer gestartete Video-Downloads" />
         </service>
 
         <receiver

@@ -1,0 +1,471 @@
+name: C3 pinned private test pair (encrypted transport only)
+'on':
+  push:
+    branches:
+    - feature/c3-browser-downloads
+    paths:
+    - .github/workflows/c3-private-test-pair.yml
+permissions:
+  contents: read
+concurrency:
+  group: c3-private-pair
+  cancel-in-progress: false
+jobs:
+  helper-security:
+    name: Core, JVM channel checks, mutation probes, WASM unchanged
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ca605408924644eeba6c29b4037dd90a324bb078
+        persist-credentials: false
+    - name: Exact source and production status
+      run: 'test "$(git rev-parse HEAD)" = ca605408924644eeba6c29b4037dd90a324bb078
+
+        grep -q ''"status": "UNAPPROVED"'' release/production-policy.json'
+    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - name: Toolchains (Rust 1.97.0 from rust-toolchain.toml, wasm-bindgen-cli 0.2.104)
+      run: 'set -euo pipefail
+
+        (cd poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+
+        cargo install wasm-bindgen-cli --version 0.2.104 --locked
+
+        '
+    - name: Core tests (unchanged protocol, existing revocation)
+      run: cd poc/pake-channel/core && cargo test --locked
+    - name: Channel checks against the real ChannelServer/ControlCommands and the Rust core (JNI)
+      run: bash tests/java/channel/run.sh "$RUNNER_TEMP/desk"
+    - name: Mutation probes (each weakened copy must fail the checks)
+      run: python3 -I tests/java/channel/mutation.py "$RUNNER_TEMP/desk"
+    - name: Reviewed JVM checks (F1, F3, F4) against the app copies of SnapshotWriter and HttpRequestReader
+      run: "set -euo pipefail\ncopy=\"$RUNNER_TEMP/jvmchecks\"; mkdir -p \"$copy\"\nfor f in SnapshotWriter HttpRequestReader; do\n  sed 's/^package de\\.evp\\.helfer;$/package de.evp.pakepoc;/' \"app/src/main/java/de/evp/helfer/$f.java\" > \"$copy/$f.java\"\n  grep -q '^package de.evp.pakepoc;$' \"$copy/$f.java\"\ndone\nbash poc/android-capability/tools/run-jvm-checks.sh \"$copy\"\n"
+    - name: Network layer guard (OkHttp only via de.evp.helfer.net; no unhardened client; no test hooks in production)
+      run: 'set -euo pipefail
+
+        bash tools/check-network-layer.sh
+
+        bash tools/check-network-layer.sh --self-test
+
+        '
+    - name: Secure network layer - negative and functional tests (JVM, real sockets, 48 MiB heap)
+      run: bash tests/java/net/run.sh "$RUNNER_TEMP/safe-http-deps"
+    - name: Secure network layer - mutation probes (each weakened copy must fail the tests)
+      run: python3 -I tests/java/net/mutation.py "$RUNNER_TEMP/safe-http-deps"
+    - name: Direct MP4 downloads (C2) - engine tests against real local servers (JVM, 48 MiB heap, 512 MiB file)
+      run: bash tests/java/dl/run.sh "$RUNNER_TEMP/safe-http-deps"
+    - name: Direct MP4 downloads (C2) - mutation probes (each weakened copy must fail the tests)
+      run: python3 -I tests/java/dl/mutation.py "$RUNNER_TEMP/safe-http-deps"
+    - name: Kadri's vendored WASM is byte-identical (the JNI binding does not change the browser side)
+      run: 'set -euo pipefail
+
+        bash poc/android-capability/tools/build-wasm-kadri.sh "$RUNNER_TEMP/wasm" | tee "$RUNNER_TEMP/wasm.txt"
+
+        grep -q ''^bda8018d18c08ae01b4a935e5761f1ce7d13e67928636ce3e3f7261451bde874  kadri_pairing_poc.js$'' "$RUNNER_TEMP/wasm.txt"
+
+        grep -q ''^d84e09bbfd365f69f50de99491705ba80a8ee85174dad220c6f5ed94c8fb79a4  kadri_pairing_poc_bg.wasm$'' "$RUNNER_TEMP/wasm.txt"
+
+        '
+  android-package:
+    name: One disposable-signed APK tested on API 26 and API 34; encrypted delivery
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ca605408924644eeba6c29b4037dd90a324bb078
+        persist-credentials: false
+    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a
+    - name: Pinned toolchains (Rust from rust-toolchain.toml, NDK r27c, SDK 37.0, build-tools 36.0.0 + 34.0.0)
+      run: 'set -euo pipefail
+
+        (cd poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+
+        "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018" "platforms;android-37.0" "build-tools;36.0.0" "build-tools;34.0.0" < <(yes 2>/dev/null) > /dev/null
+
+        test -f "$ANDROID_HOME/ndk/27.2.12479018/source.properties"
+
+        echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+        '
+    - name: Native channel libraries (API 26 linker, arm64-v8a + x86_64)
+      run: set -o pipefail; bash tools/build-channel-native.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/native.txt"
+    - name: Test APKs with a throwaway signer (deleted after the build)
+      run: set -o pipefail; bash tools/build-channel-apk.sh "$RUNNER_TEMP/a" | tee "$RUNNER_TEMP/apk.txt"
+    - name: Only the test variant was built (no release or debug APK of de.evp.helfer)
+      run: 'set -euo pipefail
+
+        ls app/build/outputs/apk
+
+        test ! -e app/build/outputs/apk/release
+
+        test ! -e app/build/outputs/apk/debug
+
+        '
+    - name: Publication regression - build the previous failing cleanup in a disposable test variant
+      run: 'set -euo pipefail
+
+        SRC=app/src/main/java/de/evp/helfer/Mp4Downloads.java
+
+        cp "$SRC" "$RUNNER_TEMP/Mp4Downloads.fixed.java"
+
+        trap ''cp "$RUNNER_TEMP/Mp4Downloads.fixed.java" "$SRC"'' EXIT
+
+        python3 - <<''PY''
+
+        from pathlib import Path
+
+        p=Path(''app/src/main/java/de/evp/helfer/Mp4Downloads.java'')
+
+        s=p.read_text()
+
+        assert s.count(''            cleanupPublishedProof(proof);'') == 2
+
+        p.write_text(s.replace(''            cleanupPublishedProof(proof);'', ''            Downloads.removeProof(proof);''))
+
+        PY
+
+        mkdir -p "$RUNNER_TEMP/publication-mutant"
+
+        cp -r "$RUNNER_TEMP/a/jniLibs" "$RUNNER_TEMP/a/jniLibs-test" "$RUNNER_TEMP/publication-mutant/"
+
+        bash tools/build-channel-apk.sh "$RUNNER_TEMP/publication-mutant"
+
+        '
+    - name: Enable KVM
+      run: 'echo ''KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"'' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+
+        sudo udevadm control --reload-rules
+
+        sudo udevadm trigger --name-match=kvm
+
+        '
+    - name: Record hashes of the exact APKs before both emulators
+      run: sha256sum "$RUNNER_TEMP/a/apk/"*.apk > "$RUNNER_TEMP/apks-before.sha256"
+    - name: Publication predecessor and corrected APK on API 26
+      uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+      with:
+        api-level: 26
+        arch: x86_64
+        target: google_apis
+        disable-animations: true
+        emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+        script: bash tools/run-channel-publication-regression.sh "$RUNNER_TEMP/publication-mutant" && bash tools/run-channel-instrumentation.sh "$RUNNER_TEMP/a"
+        avd-name: c3-api26
+        force-avd-creation: true
+    - name: Preserve API 26 evidence; APKs unchanged
+      run: 'set -euo pipefail
+
+        sha256sum -c "$RUNNER_TEMP/apks-before.sha256"
+
+        grep -q "^OK (" "$RUNNER_TEMP/a/report/instrumentation.txt"
+
+        cp -r "$RUNNER_TEMP/a/report" "$RUNNER_TEMP/report-api26"'
+    - name: Publication predecessor and corrected APK on API 34
+      uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+      with:
+        api-level: 34
+        arch: x86_64
+        target: google_apis
+        disable-animations: true
+        emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+        script: bash tools/run-channel-publication-regression.sh "$RUNNER_TEMP/publication-mutant" && bash tools/run-channel-instrumentation.sh "$RUNNER_TEMP/a"
+        avd-name: c3-api34
+        force-avd-creation: true
+    - name: Preserve API 34 evidence; APKs unchanged
+      run: 'set -euo pipefail
+
+        sha256sum -c "$RUNNER_TEMP/apks-before.sha256"
+
+        grep -q "^OK (" "$RUNNER_TEMP/a/report/instrumentation.txt"
+
+        cp -r "$RUNNER_TEMP/a/report" "$RUNNER_TEMP/report-api34"'
+    - name: Public test identity and encrypted transport (no private recipient key in CI)
+      run: "set -euo pipefail\ncat > \"$RUNNER_TEMP/public-pair.json\" <<'C3_PUBLIC_EOF'\n{\n  \"existing_extension_id\": \"ladlndddhohknfpnfibchcadhgbpdlhm\",\n  \"test_extension_id\": \"fhjmppadldgkhdgkdplpalmoooocoinn\",\n  \"manifest_key\": \"MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAvIyEogqFvLfeRmhYNffm39ejXD4zPMV5lSvjftyIiOWb8ou8M6YmWEA/5yFRoueH8iZKsLqdGsQlFB12RD68UOpMAwQy151S+JLtuP/lrVXY92xtOhzC6Ado3x+zBI/c9QT3/iDbMXBhhxAco7q01thNZ6VDsOdiejF2nI74IKdekd3hoLY0tEHpDZH28WMY+q38ZcWNd5i6MS2vVWyixcz5ho8+KpoDn+sekqEnsRwFbpQGAhppHBLWk/yNa07ZfGVlnf3ZlWFZUoagMdi8cqJDjOXK+fFWggsGNJg5x29GWPC0qmBg1Cxqi4E+zbu6F0fRHa42khFxigkBfY8GHYMcKnEt1oq/Y/8c2GDH6CrTbgcdvHK01Mgt4/gZEPHMBSfL3qU7qoUbK57UHiL+V2vQ1sS3mIZpfrfgx+FpXrluw5PYfcgZE8nKixm6hp7hsnW8Xa3kOllPHt9d/BZ1fII5TyFpFqgkWh3IOdYoXdpPFaciukUzWcURwyGqokUdAgMBAAE=\",\n  \"kadri_commit\": \"fb66e9138f27661532e2fe136c835afbcb37a489\",\n  \"helper_commit\": \"ca605408924644eeba6c29b4037dd90a324bb078\",\n  \"production_status\": \"UNAPPROVED\"\n}\nC3_PUBLIC_EOF\ncat > \"$RUNNER_TEMP/recipient-public.pem\" <<'C3_PUBLIC_EOF'\n-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAxPDe/SlFYaDLwnA+d24T\n4Rt65Pkw3n3+Vg9AfGgY9th24N73hrLAsDCXh+raCjiykm9ZiqL2RzLwGdQeL6X3\nQL5PolexHtIOHHlm5yzuGRgqpvoeLEWAZHfgtX9JgV/K/KNaAKIpWqXK3dEmnccn\n8Xe/AmXYpmuSHGG7WGRnqKugCGVByDpq28asUe3G5pZ2sVrphPpZpV7OLdejT8VE\nYm/qWyi6h20eDy+ThM17PbTPLtF2GffALzXloV5Sbi0Ku9i6MXP5wjyN8BHx50d3\no9fNHUvFv5uB60onZcbo1caYwZIOuP4ItB8aR6t3KIdCjj5rGFGDP+mUNbXWTlCL\nnUl5nriSd6V/alLIdKAlc9C2V6D8teVoPnx0mZ9+epUE8lVcZwdpGfwn6XMTR2l2\nK8esgF3omlsX3mlOSUFFF2Ko2D85pdGaWL+L5T/g4d02t29oUoRxkLjxmlJoLwkd\ntdO6/+7F1e42cqjvcFXrtiBLq25DsUVvZK/xVTc8srODAgMBAAE=\n-----END PUBLIC KEY-----\nC3_PUBLIC_EOF\ncat > \"$RUNNER_TEMP/encrypt.py\" <<'C3_PUBLIC_EOF'\n\"\"\"Only ciphertext leaves the public runner. Recipient private key never enters CI.\"\"\"\nimport base64\nimport io\nimport json\nimport os\nimport sys\nimport zipfile\nfrom pathlib import Path\nfrom cryptography.hazmat.primitives import hashes, serialization\nfrom cryptography.hazmat.primitives.asymmetric import padding\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\n\nsource, recipient, destination = map(Path, sys.argv[1:])\nassert destination.suffix == '.enc'\nfiles = sorted(p for p in source.rglob('*') if p.is_file())\nassert files and all(not p.is_symlink() for p in files)\nassert all(p.suffix in {'.apk', '.zip', '.json', '.txt'} or p.name == 'SHA256SUMS' for p in files)\nassert not any('androidTest' in p.name or 'private' in p.name.lower() for p in files)\nbuffer = io.BytesIO()\nwith zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as z:\n    for p in files: z.write(p, p.relative_to(source).as_posix())\nkey, nonce = AESGCM.generate_key(bit_length=256), os.urandom(12)\naad = b'C3 private test pair | fb66e9138f27661532e2fe136c835afbcb37a489 | ca605408924644eeba6c29b4037dd90a324bb078 | UNAPPROVED | v1'\npublic = serialization.load_pem_public_key(recipient.read_bytes())\nassert public.key_size >= 3072\nwrapped = public.encrypt(key, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))\nciphertext = AESGCM(key).encrypt(nonce, buffer.getvalue(), aad)\nenvelope = {'version':1, 'algorithm':'RSA-OAEP-SHA256+AES-256-GCM', **{k:base64.b64encode(v).decode() for k,v in {'wrapped_key':wrapped, 'nonce':nonce, 'aad':aad, 'ciphertext':ciphertext}.items()}}\ndestination.parent.mkdir(parents=True, exist_ok=True)\ndestination.write_text(json.dumps(envelope))\nassert destination.stat().st_size < 31*1024*1024\nprint('PASS: encrypted delivery archive created; plaintext and private signing keys are not uploaded')\nC3_PUBLIC_EOF\n"
+    - name: Verification script (used before and after the emulator)
+      run: "set -euo pipefail\ncat > \"$RUNNER_TEMP/verify-apk.sh\" <<'SH'\n#!/usr/bin/env bash\n# verify-apk.sh APK -> prints the facts that must stay identical; exits non-zero on any violation.\nset -euo pipefail\nAPK=\"$1\"; BT=\"$ANDROID_HOME/build-tools/34.0.0\"; TC=\"$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin\"\nW=\"$(mktemp -d)\"; trap 'rm -rf \"$W\"' EXIT\nbadging=\"$(\"$BT/aapt2\" dump badging \"$APK\")\"\necho \"$badging\" | grep -q \"^package: name='de.evp.helfer.channeltest'\" || { echo \"wrong package\" >&2; exit 1; }\necho \"$badging\" | grep -q \"application-label:'TEST Helper-Kanal'\" || { echo \"unexpected label\" >&2; exit 1; }\necho \"$badging\" | grep -q \"native-code: 'arm64-v8a' 'x86_64'\" || { echo \"unexpected ABIs\" >&2; exit 1; }\nif echo \"$badging\" | grep -q \"application-debuggable\"; then echo \"debuggable APK\" >&2; exit 1; fi\nmanifest=\"$(\"$BT/aapt2\" dump xmltree --file AndroidManifest.xml \"$APK\")\"\ngrep -q 'allowBackup.*=false' <<<\"$manifest\" || { echo \"allowBackup not false\" >&2; exit 1; }\ngrep -q 'dataExtractionRules' <<<\"$manifest\" || { echo \"dataExtractionRules missing\" >&2; exit 1; }\ncerts=\"$(\"$BT/apksigner\" verify --verbose --print-certs \"$APK\")\"\ntest \"$(echo \"$certs\" | grep -c '^Signer #[0-9]* certificate DN')\" = 1 || { echo \"not exactly one signer\" >&2; exit 1; }\necho \"$certs\" | grep -q \"Signer #1 certificate DN: CN=Helper channel TEST ONLY - throwaway\" || { echo \"not the throwaway signer\" >&2; exit 1; }\n\"$BT/apksigner\" verify --print-certs-pem \"$APK\" | sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' > \"$W/cert.pem\"\nstart=\"$(openssl x509 -in \"$W/cert.pem\" -noout -startdate | cut -d= -f2)\"; end=\"$(openssl x509 -in \"$W/cert.pem\" -noout -enddate | cut -d= -f2)\"\ndays=$(( ( $(date -d \"$end\" +%s) - $(date -d \"$start\" +%s) ) / 86400 ))\n[ \"$days\" -le 3 ] || { echo \"certificate valid $days days: not a throwaway certificate\" >&2; exit 1; }\nlibs=\"$(unzip -Z1 \"$APK\" | grep '^lib/' | sort)\"\n[ \"$libs\" = \"$(printf 'lib/arm64-v8a/libkadri_pairing_poc.so\\nlib/x86_64/libkadri_pairing_poc.so')\" ] || { echo \"unexpected native libraries: $libs\" >&2; exit 1; }\nfor abi in arm64-v8a x86_64; do\n  unzip -p \"$APK\" \"lib/$abi/libkadri_pairing_poc.so\" > \"$W/$abi.so\"\n  machine=\"$(\"$TC/llvm-readelf\" -h \"$W/$abi.so\" | sed -n 's/^ *Machine: *//p')\"\n  case \"$abi:$machine\" in arm64-v8a:AArch64|x86_64:*X86-64*) ;; *) echo \"architecture mismatch $abi:$machine\" >&2; exit 1 ;; esac\n  if \"$TC/llvm-nm\" -D --defined-only \"$W/$abi.so\" | grep -q Java_poc_TestInitiator_; then echo \"test initiator in app library\" >&2; exit 1; fi\ndone\necho \"apk_sha256=$(sha256sum < \"$APK\" | cut -d' ' -f1)\"\necho \"$badging\" | grep -E \"^package:|^sdkVersion|^targetSdkVersion|^native-code|^application-label:\"\necho \"$certs\" | grep -E \"Number of signers|Signer #1 certificate (DN|SHA-256 digest)\"\necho \"cert_validity_days=$days\"\nfor abi in arm64-v8a x86_64; do echo \"lib/$abi/libkadri_pairing_poc.so sha256=$(sha256sum < \"$W/$abi.so\" | cut -d' ' -f1)\"; done\nSH\nchmod +x \"$RUNNER_TEMP/verify-apk.sh\"\n"
+    - name: Verify exact delivered APK; assemble non-installable metadata
+      run: 'set -euo pipefail
+
+        python3 -m pip install --disable-pip-version-check cryptography==46.0.3
+
+        git diff --exit-code
+
+        test "$(git rev-parse HEAD)" = ca605408924644eeba6c29b4037dd90a324bb078
+
+        grep -q ''"status": "UNAPPROVED"'' release/production-policy.json
+
+        bash "$RUNNER_TEMP/verify-apk.sh" "$RUNNER_TEMP/a/apk/helper-channeltest.apk" > "$RUNNER_TEMP/apk-verification.txt"
+
+        sha256sum -c "$RUNNER_TEMP/apks-before.sha256"
+
+        mkdir -p "$RUNNER_TEMP/deliver-helper"
+
+        cp "$RUNNER_TEMP/a/apk/helper-channeltest.apk" "$RUNNER_TEMP/deliver-helper/helper-c3-ca60540-channeltest.apk"
+
+        cp "$RUNNER_TEMP/apk-verification.txt" "$RUNNER_TEMP/deliver-helper/"
+
+        cp "$RUNNER_TEMP/public-pair.json" "$RUNNER_TEMP/deliver-helper/pair.json"
+
+        for api in 26 34; do cp "$RUNNER_TEMP/report-api$api/summary.txt" "$RUNNER_TEMP/deliver-helper/api$api-summary.txt"; done
+
+        python3 - <<''PY''
+
+        import hashlib,json,os,re
+
+        from pathlib import Path
+
+        p=Path(os.environ[''RUNNER_TEMP''])/''deliver-helper''
+
+        apk=p/''helper-c3-ca60540-channeltest.apk''
+
+        facts=(p/''apk-verification.txt'').read_text()
+
+        assert "package: name=''de.evp.helfer.channeltest''" in facts
+
+        assert ''CN=Helper channel TEST ONLY - throwaway'' in facts
+
+        cert=re.search(r''Signer #1 certificate SHA-256 digest: ([0-9a-f]+)'',facts).group(1)
+
+        meta=dict(json.loads((p/''pair.json'').read_text()),apk_sha256=hashlib.sha256(apk.read_bytes()).hexdigest(),signer_sha256=cert,package=''de.evp.helfer.channeltest'',emulator_apis=[26,34],workflow_run=os.environ[''GITHUB_RUN_ID''])
+
+        (p/''build-evidence.json'').write_text(json.dumps(meta,indent=2)+''\n'')
+
+        (p/''SHA256SUMS'').write_text(hashlib.sha256(apk.read_bytes()).hexdigest()+''  ''+apk.name+''\n'')
+
+        print(''PASS: exact APK verified; both emulator runs succeeded; fresh test signer'')
+
+        PY
+
+        python3 "$RUNNER_TEMP/encrypt.py" "$RUNNER_TEMP/deliver-helper" "$RUNNER_TEMP/recipient-public.pem" "$RUNNER_TEMP/encrypted/helper.enc"
+
+        '
+    - name: Upload encrypted bytes only (no APK, ZIP or private key)
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: c3-encrypted-helper
+        path: ${{ runner.temp }}/encrypted/helper.enc
+        retention-days: 1
+        if-no-files-found: error
+  kadri-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: Owndot/Kadri
+        ref: fb66e9138f27661532e2fe136c835afbcb37a489
+        persist-credentials: false
+    - name: Exact paired sources
+      run: 'set -euo pipefail
+
+        test "$(git rev-parse HEAD)" = fb66e9138f27661532e2fe136c835afbcb37a489
+
+        grep -qx ''helper_commit=ca605408924644eeba6c29b4037dd90a324bb078'' vendor/kadri-pairing-poc/SOURCE'
+    - name: Pinned helper commit
+      id: pin
+      run: 'sha=$(sed -n ''s/^helper_commit=\([0-9a-f]\{40\}\)$/\1/p'' vendor/kadri-pairing-poc/SOURCE)
+
+        test -n "$sha"
+
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+        '
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: Owndot/video-assistent-helper
+        ref: ${{ steps.pin.outputs.sha }}
+        path: helper
+        persist-credentials: false
+    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '22'
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Toolchains (Rust 1.97.0 from the helper's rust-toolchain.toml, wasm-bindgen-cli 0.2.104)
+      run: 'set -euo pipefail
+
+        (cd helper/poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+
+        cargo install wasm-bindgen-cli --version 0.2.104 --locked
+
+        '
+    - name: Rebuild the vendored WASM core from the pinned commit and compare
+      run: 'set -euo pipefail
+
+        grep -q ''"status": "UNAPPROVED"'' helper/release/production-policy.json
+
+        bash helper/poc/android-capability/tools/build-wasm-kadri.sh "$RUNNER_TEMP/wasm"
+
+        for f in kadri_pairing_poc.js kadri_pairing_poc_bg.wasm; do cmp "$RUNNER_TEMP/wasm/kadri-wasm/$f" "vendor/kadri-pairing-poc/$f"; done
+
+        test "$(sha256sum < vendor/kadri-pairing-poc/kadri_pairing_poc_bg.wasm | cut -d'' '' -f1)" = "$(sed -n ''s/^sha256_wasm=//p'' vendor/kadri-pairing-poc/SOURCE)"
+
+        test "$(sha256sum < vendor/kadri-pairing-poc/kadri_pairing_poc.js | cut -d'' '' -f1)" = "$(sed -n ''s/^sha256_js=//p'' vendor/kadri-pairing-poc/SOURCE)"
+
+        echo ''PASS: vendored WASM core rebuilt bit-identically from the pinned helper commit; helper production policy UNAPPROVED''
+
+        '
+    - name: Desktop helper (real ChannelServer of the helper app)
+      run: bash helper/tests/java/channel/build.sh "$RUNNER_TEMP/helper-host"
+    - name: Playwright (Chromium) for Node and Python
+      run: 'set -euo pipefail
+
+        npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.0
+
+        npx playwright install --with-deps chromium
+
+        pip install playwright==1.56.0
+
+        python -m playwright install chromium
+
+        sudo apt-get install -y xvfb
+
+        '
+    - name: Build; channel only in the Chrome build, nothing of the legacy helper anywhere
+      run: 'set -euo pipefail
+
+        node tools/build.js --test
+
+        test -f dist/chrome/channel/kadri_pairing_poc_bg.wasm
+
+        test ! -e dist/firefox/channel
+
+        if unzip -l dist/kadri-firefox-*.zip | grep -qE ''channel|wasm''; then echo ''channel in the Firefox zip''; exit 1; fi
+
+        if grep -rnE "''X-EVP-Key'' *:|[''\"]http://127\\.0\\.0\\.1:47811|KADRI_HELPER_KEY" dist/chrome dist/firefox --include=*.js | grep -vE ''^[^:]+:[0-9]+: *//''; then echo ''legacy helper client in a build''; exit 1; fi
+
+        echo ''PASS: channel in dist/chrome only; no legacy helper client, key or port in any build''
+
+        '
+    - name: Channel and download unit, integration, browser, fail-closed and mutation tests
+      env:
+        HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
+      run: 'set -euo pipefail
+
+        node tests/channel/channel_unit_check.js
+
+        node tests/channel/download_unit_check.js
+
+        # The fixed commit is fetched explicitly for the regression proof (default checkout is shallow).
+
+        git fetch --no-tags origin e044acad5b427ea4a008fed468201e6c6f19cb8a
+
+        node tests/channel/download_regression_check.js
+
+        node tests/channel/channel_integration_check.js
+
+        node tests/channel/download_integration_check.js
+
+        node tests/channel/channel_browser_check.js
+
+        node tests/channel/channel_netguard_failure_check.js
+
+        node tests/channel/channel_mutation_check.js
+
+        '
+    - name: Player with the real channel helper (gestures, menu, direct MP4 downloads via the real engine, legacy port never reached)
+      env:
+        HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
+      run: TESTS="test_helper.py test_menu.py test_mp4.py" tests/run_all.sh
+    - name: Public test identity and encrypted transport (no private recipient key in CI)
+      run: "set -euo pipefail\ncat > \"$RUNNER_TEMP/public-pair.json\" <<'C3_PUBLIC_EOF'\n{\n  \"existing_extension_id\": \"ladlndddhohknfpnfibchcadhgbpdlhm\",\n  \"test_extension_id\": \"fhjmppadldgkhdgkdplpalmoooocoinn\",\n  \"manifest_key\": \"MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAvIyEogqFvLfeRmhYNffm39ejXD4zPMV5lSvjftyIiOWb8ou8M6YmWEA/5yFRoueH8iZKsLqdGsQlFB12RD68UOpMAwQy151S+JLtuP/lrVXY92xtOhzC6Ado3x+zBI/c9QT3/iDbMXBhhxAco7q01thNZ6VDsOdiejF2nI74IKdekd3hoLY0tEHpDZH28WMY+q38ZcWNd5i6MS2vVWyixcz5ho8+KpoDn+sekqEnsRwFbpQGAhppHBLWk/yNa07ZfGVlnf3ZlWFZUoagMdi8cqJDjOXK+fFWggsGNJg5x29GWPC0qmBg1Cxqi4E+zbu6F0fRHa42khFxigkBfY8GHYMcKnEt1oq/Y/8c2GDH6CrTbgcdvHK01Mgt4/gZEPHMBSfL3qU7qoUbK57UHiL+V2vQ1sS3mIZpfrfgx+FpXrluw5PYfcgZE8nKixm6hp7hsnW8Xa3kOllPHt9d/BZ1fII5TyFpFqgkWh3IOdYoXdpPFaciukUzWcURwyGqokUdAgMBAAE=\",\n  \"kadri_commit\": \"fb66e9138f27661532e2fe136c835afbcb37a489\",\n  \"helper_commit\": \"ca605408924644eeba6c29b4037dd90a324bb078\",\n  \"production_status\": \"UNAPPROVED\"\n}\nC3_PUBLIC_EOF\ncat > \"$RUNNER_TEMP/recipient-public.pem\" <<'C3_PUBLIC_EOF'\n-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAxPDe/SlFYaDLwnA+d24T\n4Rt65Pkw3n3+Vg9AfGgY9th24N73hrLAsDCXh+raCjiykm9ZiqL2RzLwGdQeL6X3\nQL5PolexHtIOHHlm5yzuGRgqpvoeLEWAZHfgtX9JgV/K/KNaAKIpWqXK3dEmnccn\n8Xe/AmXYpmuSHGG7WGRnqKugCGVByDpq28asUe3G5pZ2sVrphPpZpV7OLdejT8VE\nYm/qWyi6h20eDy+ThM17PbTPLtF2GffALzXloV5Sbi0Ku9i6MXP5wjyN8BHx50d3\no9fNHUvFv5uB60onZcbo1caYwZIOuP4ItB8aR6t3KIdCjj5rGFGDP+mUNbXWTlCL\nnUl5nriSd6V/alLIdKAlc9C2V6D8teVoPnx0mZ9+epUE8lVcZwdpGfwn6XMTR2l2\nK8esgF3omlsX3mlOSUFFF2Ko2D85pdGaWL+L5T/g4d02t29oUoRxkLjxmlJoLwkd\ntdO6/+7F1e42cqjvcFXrtiBLq25DsUVvZK/xVTc8srODAgMBAAE=\n-----END PUBLIC KEY-----\nC3_PUBLIC_EOF\ncat > \"$RUNNER_TEMP/pack_extension.py\" <<'C3_PUBLIC_EOF'\nimport base64\nimport hashlib\nimport json\nimport sys\nimport zipfile\nfrom pathlib import Path\n\nroot, output, config_path = map(Path, sys.argv[1:])\nconfig = json.loads(config_path.read_text())\npublic = base64.b64decode(config['manifest_key'], validate=True)\nextension_id = hashlib.sha256(public).hexdigest()[:32].translate(str.maketrans('0123456789abcdef', 'abcdefghijklmnop'))\nassert extension_id == config['test_extension_id']\nassert extension_id != config['existing_extension_id']\nbase = json.loads((root/'manifest.json').read_text())\nassert not any(k in base for k in ['key', 'update_url', 'externally_connectable'])\nassert base['permissions'] == ['storage', 'declarativeNetRequestWithHostAccess', 'scripting']\nassert base['content_security_policy']['extension_pages'] == \"script-src 'self' 'wasm-unsafe-eval'; object-src 'self';\"\nmanifest = dict(base, name='Kadri C3 TEST', description='Isoliertes C3-Testpaar fb66e91 / ca60540. UNAPPROVED.', key=config['manifest_key'])\nassert {k for k in set(base)|set(manifest) if base.get(k) != manifest.get(k)} == {'name', 'description', 'key'}\nentries = sorted(p for p in root.rglob('*') if p.is_file())\nassert entries and all(not p.is_symlink() for p in entries)\nwith zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as z:\n    for p in entries:\n        name = p.relative_to(root).as_posix()\n        content = (json.dumps(manifest, indent=2, ensure_ascii=False)+'\\n').encode() if name == 'manifest.json' else p.read_bytes()\n        info = zipfile.ZipInfo(name, date_time=(1980,1,1,0,0,0))\n        info.external_attr = 0o644 << 16\n        info.compress_type = zipfile.ZIP_DEFLATED\n        z.writestr(info, content)\nwith zipfile.ZipFile(output) as z:\n    assert z.namelist() == [p.relative_to(root).as_posix() for p in entries]\n    for p in entries:\n        name = p.relative_to(root).as_posix()\n        if name != 'manifest.json':\n            assert z.read(name) == p.read_bytes(), name\nprint('PASS: only test name, description and fixed public key differ; extension ID', extension_id)\nC3_PUBLIC_EOF\ncat > \"$RUNNER_TEMP/encrypt.py\" <<'C3_PUBLIC_EOF'\n\"\"\"Only ciphertext leaves the public runner. Recipient private key never enters CI.\"\"\"\nimport base64\nimport io\nimport json\nimport os\nimport sys\nimport zipfile\nfrom pathlib import Path\nfrom cryptography.hazmat.primitives import hashes, serialization\nfrom cryptography.hazmat.primitives.asymmetric import padding\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\n\nsource, recipient, destination = map(Path, sys.argv[1:])\nassert destination.suffix == '.enc'\nfiles = sorted(p for p in source.rglob('*') if p.is_file())\nassert files and all(not p.is_symlink() for p in files)\nassert all(p.suffix in {'.apk', '.zip', '.json', '.txt'} or p.name == 'SHA256SUMS' for p in files)\nassert not any('androidTest' in p.name or 'private' in p.name.lower() for p in files)\nbuffer = io.BytesIO()\nwith zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as z:\n    for p in files: z.write(p, p.relative_to(source).as_posix())\nkey, nonce = AESGCM.generate_key(bit_length=256), os.urandom(12)\naad = b'C3 private test pair | fb66e9138f27661532e2fe136c835afbcb37a489 | ca605408924644eeba6c29b4037dd90a324bb078 | UNAPPROVED | v1'\npublic = serialization.load_pem_public_key(recipient.read_bytes())\nassert public.key_size >= 3072\nwrapped = public.encrypt(key, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))\nciphertext = AESGCM(key).encrypt(nonce, buffer.getvalue(), aad)\nenvelope = {'version':1, 'algorithm':'RSA-OAEP-SHA256+AES-256-GCM', **{k:base64.b64encode(v).decode() for k,v in {'wrapped_key':wrapped, 'nonce':nonce, 'aad':aad, 'ciphertext':ciphertext}.items()}}\ndestination.parent.mkdir(parents=True, exist_ok=True)\ndestination.write_text(json.dumps(envelope))\nassert destination.stat().st_size < 31*1024*1024\nprint('PASS: encrypted delivery archive created; plaintext and private signing keys are not uploaded')\nC3_PUBLIC_EOF\ncat > \"$RUNNER_TEMP/isolation.cjs\" <<'C3_PUBLIC_EOF'\nconst {chromium}=require('playwright');\nconst fs=require('fs'), path=require('path'), os=require('os'), assert=require('assert/strict');\nconst [pack,control,expected,existing]=process.argv.slice(2);\nconst tmp=fs.mkdtempSync(path.join(os.tmpdir(),'c3-identity-'));\nasync function launch(paths, profile) {\n  return chromium.launchPersistentContext(profile,{headless:false,args:[`--disable-extensions-except=${paths.join(',')}`,`--load-extension=${paths.join(',')}`]});\n}\nasync function workers(ctx,n){\n  for(let i=0;i<150;i++) {\n    const w=ctx.serviceWorkers();\n    if(w.length===n) return w;\n    await new Promise(r=>setTimeout(r,100));\n  }\n  throw Error('extension workers missing');\n}\nasync function idb(w,write,value){return w.evaluate(async({write,value})=>{\n  const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('c3-isolation-probe',1);r.onupgradeneeded=()=>r.result.createObjectStore('s');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});\n  try {return await new Promise((resolve,reject)=>{const tx=db.transaction('s',write?'readwrite':'readonly');const r=write?tx.objectStore('s').put(value,'marker'):tx.objectStore('s').get('marker');let result;r.onsuccess=()=>{result=r.result;};tx.oncomplete=()=>resolve(result);tx.onerror=()=>reject(tx.error);});}finally{db.close();}\n},{write,value});}\n(async()=>{\n  assert.notEqual(expected,existing);\n  let ctx=await launch([pack,control],path.join(tmp,'profile1'));\n  try{\n    const ws=await workers(ctx,2);\n    const test=ws.find(w=>new URL(w.url()).host===expected);\n    const other=ws.find(w=>new URL(w.url()).host!==expected);\n    assert.ok(test&&other,'two distinct extension IDs');\n    assert.equal(await test.evaluate(()=>chrome.runtime.id),expected);\n    await test.evaluate(()=>chrome.storage.local.set({'c3-isolation-probe':'test'}));\n    assert.deepEqual(await other.evaluate(()=>chrome.storage.local.get('c3-isolation-probe')),{});\n    await other.evaluate(()=>chrome.storage.local.set({'c3-isolation-probe':'control'}));\n    assert.equal((await test.evaluate(()=>chrome.storage.local.get('c3-isolation-probe')))['c3-isolation-probe'],'test');\n    await idb(test,true,'test');\n    assert.equal(await idb(other,false),undefined);\n    await idb(other,true,'control');\n    assert.equal(await idb(test,false),'test');\n    console.log('PASS: two extensions, separate storage.local and IndexedDB; no existing installation used');\n  }finally{await ctx.close();}\n  const relocated=path.join(tmp,'different-path');fs.cpSync(pack,relocated,{recursive:true});\n  ctx=await launch([relocated],path.join(tmp,'profile2'));\n  try{const [w]=await workers(ctx,1);assert.equal(new URL(w.url()).host,expected);console.log('PASS: same test ID after relocation and fresh browser profile');}\n  finally{await ctx.close();}\n})().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>fs.rmSync(tmp,{recursive:true,force:true}));\nC3_PUBLIC_EOF\n"
+    - name: Independent test packaging from two build paths; production gates unchanged
+      run: 'set -euo pipefail
+
+        mkdir -p "$RUNNER_TEMP/second-source"
+
+        git archive HEAD | tar -x -C "$RUNNER_TEMP/second-source"
+
+        (cd "$RUNNER_TEMP/second-source" && node tools/build.js)
+
+        python3 "$RUNNER_TEMP/pack_extension.py" dist/chrome "$RUNNER_TEMP/kadri-a.zip" "$RUNNER_TEMP/public-pair.json"
+
+        python3 "$RUNNER_TEMP/pack_extension.py" "$RUNNER_TEMP/second-source/dist/chrome" "$RUNNER_TEMP/kadri-b.zip" "$RUNNER_TEMP/public-pair.json"
+
+        cmp "$RUNNER_TEMP/kadri-a.zip" "$RUNNER_TEMP/kadri-b.zip"
+
+        mkdir -p "$RUNNER_TEMP/packaged-extension"
+
+        unzip -q "$RUNNER_TEMP/kadri-a.zip" -d "$RUNNER_TEMP/packaged-extension"
+
+        sha256sum "$RUNNER_TEMP/kadri-a.zip" > "$RUNNER_TEMP/zip-before.sha256"
+
+        '
+    - name: Exact packaged extension - channel security and fail-closed checks
+      env:
+        HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
+        CHANNEL_DIST_DIR: ${{ runner.temp }}/packaged-extension
+      run: 'set -euo pipefail
+
+        node tests/channel/channel_browser_check.js
+
+        node tests/channel/channel_netguard_failure_check.js'
+    - name: Stable ID and separated extension data in a disposable Chromium profile
+      run: 'set -euo pipefail
+
+        NODE_PATH="$PWD/node_modules" xvfb-run -a node "$RUNNER_TEMP/isolation.cjs" "$RUNNER_TEMP/packaged-extension" "$PWD/dist/chrome" fhjmppadldgkhdgkdplpalmoooocoinn ladlndddhohknfpnfibchcadhgbpdlhm
+
+        sha256sum -c "$RUNNER_TEMP/zip-before.sha256"
+
+        '
+    - name: Encrypt extension and paired provenance; no public installable artifact
+      run: 'set -euo pipefail
+
+        python3 -m pip install --disable-pip-version-check cryptography==46.0.3
+
+        git diff --exit-code
+
+        test "$(git rev-parse HEAD)" = fb66e9138f27661532e2fe136c835afbcb37a489
+
+        mkdir -p "$RUNNER_TEMP/deliver-kadri"
+
+        cp "$RUNNER_TEMP/kadri-a.zip" "$RUNNER_TEMP/deliver-kadri/kadri-c3-fb66e91-vivaldi-test.zip"
+
+        cp "$RUNNER_TEMP/public-pair.json" "$RUNNER_TEMP/deliver-kadri/pair.json"
+
+        python3 - <<''PY''
+
+        import hashlib,json,os
+
+        from pathlib import Path
+
+        p=Path(os.environ[''RUNNER_TEMP''])/''deliver-kadri''
+
+        z=p/''kadri-c3-fb66e91-vivaldi-test.zip''
+
+        meta=dict(json.loads((p/''pair.json'').read_text()),zip_sha256=hashlib.sha256(z.read_bytes()).hexdigest(),workflow_run=os.environ[''GITHUB_RUN_ID''],identity_and_storage_check=''PASS: packaged extension with separate control extension, two installation paths'',packaging_differences=[''manifest.name'',''manifest.description'',''manifest.key''])
+
+        (p/''build-evidence.json'').write_text(json.dumps(meta,indent=2)+''\n'')
+
+        (p/''SHA256SUMS'').write_text(hashlib.sha256(z.read_bytes()).hexdigest()+''  ''+z.name+''\n'')
+
+        PY
+
+        python3 "$RUNNER_TEMP/encrypt.py" "$RUNNER_TEMP/deliver-kadri" "$RUNNER_TEMP/recipient-public.pem" "$RUNNER_TEMP/encrypted/kadri.enc"
+
+        '
+    - name: Upload encrypted bytes only (no APK, ZIP or private key)
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: c3-encrypted-kadri
+        path: ${{ runner.temp }}/encrypted/kadri.enc
+        retention-days: 1
+        if-no-files-found: error
+    name: Pinned Kadri regressions and isolated extension; encrypted delivery

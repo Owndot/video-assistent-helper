@@ -10,6 +10,19 @@ APP = os.path.join(ROOT, 'app', 'src', 'main', 'java')
 CC = 'de/evp/helfer/ControlCommands.java'
 CS = 'de/evp/helfer/ChannelServer.java'
 MUTANTS = [
+    # P4b: HLS-Befehle
+    ('HLS ohne Versionsprüfung', CC, 'if (!hasValue || value != 1.0 || bind == null) throw new IllegalArgumentException("hls fields");', 'if (bind == null) throw new IllegalArgumentException("hls fields");'),
+    ('HLS ohne Kanal-Sitzung', CC, 'if (hls == null || downloads == null || peer == null) return REJECTED;', 'if (hls == null || downloads == null) return REJECTED;'),
+    ('HLS übernimmt MP4-Kennung', CC, 'if (!downloads.status(r.id).contains("\\"state\\":\\"unknown\\"")) return', 'if (false) return'),
+    ('dlcancel nicht zu HLS', CC, 'case "dlcancel": return isHls ? hls.cancel(r.id) : downloads.cancel(r.id);', 'case "dlcancel": return downloads.cancel(r.id);'),
+    ('dlstart startet MP4 mit HLS-Kennung', CC, 'case "dlstart": return isHls ? hls.status(r.id) : downloads.start(r.id, r.url, r.name);', 'case "dlstart": return downloads.start(r.id, r.url, r.name);'),
+    ('hlsstart mit URL', CC, 'if (url != null || id == null || planId == null || option == null) throw new IllegalArgumentException("hls fields");', 'if (id == null || planId == null || option == null) throw new IllegalArgumentException("hls fields");'),
+    ('Bindung mit Zusatzfeld', CC, 'else throw new IllegalArgumentException("bind field");', 'else { if (peek() == \'"\') token(64); else integer(); }'),
+    ('Bindungs-Player beliebig', CC, "if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-')) throw new IllegalArgumentException(\"token\");", ''),
+    ('Plan-Kennung beliebiger Länge', CC, 'if (pos - start != n) throw new IllegalArgumentException("hex length");', ''),
+    ('HLS-Felder bei MP4', CC, 'if (planId != null || option != null || bind != null) throw new IllegalArgumentException("hls field");', ''),
+    ('hlsstart ohne Größengrenze', CC, 'if (raw.length > 1024) throw new IllegalArgumentException("size");', ''),
+    ('Sitzung nicht an HLS', CS, 'device, downloads, hls, sid)', 'device, downloads, hls, new byte[16])'),
     ('fremdes Feld wird ignoriert', CC, '} else throw new IllegalArgumentException("field");', '} else { p.string(); }'),
     ('doppeltes op erlaubt', CC, 'if (op != null) throw new IllegalArgumentException("duplicate op");', ''),
     ('Helligkeit ohne Untergrenze', CC, 'value >= 0.004 && value <= 1.0', 'value <= 1.0'),
@@ -31,23 +44,28 @@ MUTANTS = [
     ('veralteter Server darf an den Kern', CS, 'if (coreOwner != this) throw new SecurityException("StaleServer");', ''),
 ]
 
+sys.path.insert(0, os.path.dirname(HERE))
+import mutation_verdict as mv  # noqa: E402
+
+KILLED = [r'AssertionError']
+
+
 def run(out, src):
+    """Urteil (mutation_verdict) für eine Kopie der App-Quellen; Übersetzungsfehler sind INVALID, nie erkannt."""
     env = dict(os.environ, APP_SRC=src)
     b = subprocess.run(['bash', os.path.join(HERE, 'build.sh'), out], env=env, capture_output=True, text=True)
     if b.returncode != 0:
-        return 'build'
-    try:
-        r = subprocess.run(['java', '-Djava.library.path=' + os.path.join(out, 'lib'), '-cp', os.path.join(out, 'classes'),
-                            'de.evp.helfer.ChannelChecks'], capture_output=True, text=True, timeout=120)
-    except subprocess.TimeoutExpired:
-        return 'timeout'
-    return 'pass' if r.returncode == 0 else 'fail'
+        o = b.stdout + b.stderr
+        v = mv.verdict(b.returncode, o, [])
+        return ('INVALID' if v == 'UNCLASSIFIED' else v), o
+    return mv.run(['java', '-Djava.library.path=' + os.path.join(out, 'lib'), '-cp', os.path.join(out, 'classes'),
+                   'de.evp.helfer.ChannelChecks'], dict(os.environ), 120, KILLED)
 
 def main():
     out = sys.argv[1]
-    if run(out, APP) != 'pass':
+    if run(out, APP)[0] != 'SURVIVED':
         print('Ausgangszustand besteht nicht'); return 1
-    survivors = 0
+    tally = mv.Tally('channel-mutations')
     for name, rel, old, new in MUTANTS:
         tmp = tempfile.mkdtemp()
         try:
@@ -55,16 +73,13 @@ def main():
             path = os.path.join(tmp, 'java', rel)
             text = open(path, encoding='utf-8').read()
             if text.count(old) != 1:
-                print('PROBE VERALTET: %s' % name); survivors += 1; continue
+                tally.add('%s (fragment found %d times)' % (name, text.count(old)), 'STALE'); continue
             open(path, 'w', encoding='utf-8').write(text.replace(old, new))
-            res = run(out, os.path.join(tmp, 'java'))
-            ok = res in ('fail', 'timeout')
-            survivors += 0 if ok else 1
-            print('%s %-36s -> %s' % ('ERKANNT ' if ok else 'ÜBERLEBT', name, res))
+            v, o = run(out, os.path.join(tmp, 'java'))
+            tally.add(name, v, o)
         finally:
             shutil.rmtree(tmp)
     run(out, APP)   # Build-Ausgabe wieder auf den echten Stand
-    print('%d/%d Mutanten erkannt' % (len(MUTANTS) - survivors, len(MUTANTS)))
-    return 1 if survivors else 0
+    return tally.finish()
 
 sys.exit(main())

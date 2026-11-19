@@ -63,7 +63,7 @@ The interface is available in English and German – it follows the browser lang
 **Benachrichtigung & Sperrbildschirm**: Titel, Play/Pause, Springen und Position – auch Kopfhörer-Tasten.
 
 **Seiten**
-- Facebook (spiegelt das Bild des Facebook-Players → immer das richtige Video), Instagram, TikTok, Pornhub u. a.
+- Facebook (spiegelt das Bild des Facebook-Players → immer das richtige Video), Instagram, TikTok u. a.
 - eingebettete Player (Video in einem fremden iframe): der Kasten wird über den ganzen Bildschirm gelegt,
   Titel kommt von der Hauptseite
 - Seiten mit Kopierschutz (Netflix, Disney+, Prime …) bleiben bewusst aus
