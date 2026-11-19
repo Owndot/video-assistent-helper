@@ -460,6 +460,16 @@ R6_NEG = [
     ('executed git command logged as [command]', REAL_CO + '\n' + ts('[command]/usr/bin/git switch -')),
     ('executed git restore after the checkout', REAL_CO + '\n' + ts('git restore --source=1234567 app')),
     ('second checkout command with its own advice', REAL_CO + '\n' + ts('[command]/usr/bin/git checkout --progress --force refs/remotes/pull/26/merge')),
+    # Runde 6b (Review-NO-GO): ausgeführte git-Befehle mit globalen Optionen vor dem Unterbefehl
+    ('git -c option then checkout of other files', REAL_CO + '\n' + ts('[command]/usr/bin/git -c core.test=x checkout 123456 -- app')),
+    ('git -c option then reset --hard', REAL_CO + '\n' + ts('[command]/usr/bin/git -c core.test=x reset --hard 123456')),
+    ('git --git-dir=... then checkout', REAL_CO + '\n' + ts('[command]/usr/bin/git --git-dir=/tmp/repo/.git checkout 123456 -- app')),
+    ('git --git-dir with separate argument then reset', REAL_CO + '\n' + ts('[command]/usr/bin/git --git-dir /tmp/repo/.git reset --hard 123456')),
+    ('git --work-tree with separate argument then restore', REAL_CO + '\n' + ts('[command]/usr/bin/git --work-tree /w restore --source=123456 app')),
+    ('several global options then switch', REAL_CO + '\n' + ts('[command]/usr/bin/git --no-pager -c a=b -c c=d -C /w switch other')),
+    ('git -C path -c option then cherry-pick', REAL_CO + '\n' + ts('[command]/usr/bin/git -C /w -c x=y cherry-pick 123456')),
+    ('script line git -c ... checkout (ANSI)', REAL_CO + '\n' + ts('\x1b[36;1mgit -c core.test=x checkout 123456 -- app\x1b[0m')),
+    ('second fetch with a global option (not the checkout fetch)', REAL_CO + '\n' + ts('[command]/usr/bin/git -c protocol.version=2 fetch origin other-branch')),
 ]
 for name, log in R6_NEG:
     sha, why = E.checkout_of(log)

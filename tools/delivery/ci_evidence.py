@@ -77,8 +77,12 @@ PRODUCT = re.compile(r'AssertionError|ComparisonFailure|panicked at|test result:
 # Getesteter Code: genau EIN Checkout (actions/checkout) mit vollständiger SHA; jede weitere Arbeitsbaum-Änderung per git
 CHECKOUT_FETCH = re.compile(r'^\[command\]/usr/bin/git -c protocol\.version=2 fetch .* origin \+?([0-9a-f]{40}):(\S+)$')
 CHECKOUT_CMD = re.compile(r'^\[command\]/usr/bin/git checkout --progress --force \S+')
-# Runde 6: auch als Pfad aufgerufenes git ("[command]/usr/bin/git switch …") zählt; vorher übersah das Muster diese Form
-TREE_CHANGE = re.compile(r'(^|[\s;&|(`/])git(\s+-C\s+\S+)?\s+(checkout|switch|reset|restore|stash|merge|rebase|cherry-pick|am|apply|pull|read-tree|worktree|clone|fetch)\b')
+# Runde 6: auch als Pfad aufgerufenes git ("[command]/usr/bin/git switch …") zählt; vorher übersah das Muster diese Form.
+# Runde 6b: beliebig viele globale Optionen vor dem Unterbefehl ("git -c k=v checkout", "git --git-dir=… reset",
+# "git --work-tree /w restore"); Optionen mit getrenntem Argument (-c, -C, --git-dir, --work-tree, --namespace, …)
+# verbrauchen ihr Argument, jede andere Option ist ein einzelnes Wort, das mit "-" beginnt.
+GIT_GLOBAL_OPT = r'(?:\s+(?:-[cC]|--git-dir|--work-tree|--namespace|--exec-path|--config-env|--super-prefix|--list-cmds)\s+\S+|\s+-\S+)*'
+TREE_CHANGE = re.compile(r'(^|[\s;&|(`/])git' + GIT_GLOBAL_OPT + r'\s+(checkout|switch|reset|restore|stash|merge|rebase|cherry-pick|am|apply|pull|read-tree|worktree|clone|fetch)\b')
 HEAD_AT = re.compile(r'^HEAD is now at ([0-9a-f]{7,40}) (.*)$')
 # Runde 6: Hinweistext von git beim Wechsel auf einen losgelösten HEAD (actions/checkout, git >= 2.23). Er enthält zwei
 # Beispielzeilen ("git switch …"), die TREE_CHANGE sonst als Befehl wertet. Ausgenommen werden NUR diese zwei Zeilen und
