@@ -125,7 +125,8 @@ jobs:
   hls-remux-jvm:
     # App-Remuxer (de.evp.helfer.hlsmux) mit denselben Media3-1.11.1-Artefakten wie die App (SHA-256 gepinnt) gegen alle
     # Fixtures; jede Ausgabe gegen die Quelle analysiert (Bilder, Dauer, A/V-Versatz über Blitz/Ton). Dann Mutationen.
-    runs-on: ubuntu-latest
+    # Runde 6: vorerst ubuntu-24.04 (Chromium-Aufnahmeprobe mit Playwright 1.56); Tests unverändert
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

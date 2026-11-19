@@ -11,7 +11,8 @@ permissions:
 jobs:
   privacy:
     if: github.head_ref != 'codex/pip-lifecycle' && github.head_ref != 'codex/download-lifecycle' && github.head_ref != 'codex/firefox-nine' && github.event_name != 'push' && github.head_ref != 'codex/helper-beta-auth-beta1' && github.head_ref != 'codex/local-release-option-a' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/native-media-memory' && github.head_ref != 'codex/browser-proxy-memory'
-    runs-on: ubuntu-latest
+    # Runde 6: vorerst ubuntu-24.04 (Playwright 1.56 installiert auf ubuntu-26.04 kein Chromium); Tests unverändert
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

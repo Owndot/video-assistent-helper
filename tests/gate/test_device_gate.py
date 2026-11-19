@@ -150,6 +150,42 @@ ok = conds == [[], ["steps.dev_mutant.outcome == 'success'"],
                ["${{ !cancelled() && steps.dev_mutant.outcome == 'success' && (steps.dev_main.outcome == 'success' || steps.dev_main.outcome == 'failure') }}"]]
 fails += 0 if ok else 1
 print('%s helper-channel.yml: main only after a proven mutant, repeats also after a red main, never after cancel/red mutant %s' % ('PASS' if ok else 'FAIL', conds))
+# Runde 6: eigener Emulator-Port je Phase, frischer adb-Server vor jedem Emulatorstart, Zeitlimit je Geräteschritt
+
+
+def runde6_problems(text):
+    """Strukturprüfung der drei Geräteschritte (Runde 6) -> Liste der Abweichungen (leer = in Ordnung)."""
+    e = text[text.index('\n  emulator:\n'):]
+    d = [st for st in re.split(r'\n      - ', e) if 'android-emulator-runner@' in st]
+    out = []
+    ports = [re.findall(r'\n          emulator-port: (\d+)\n', st) for st in d]
+    if ports != [['5554'], ['5556'], ['5558']]:
+        out.append('ports %s' % ports)
+    pre = [re.findall(r'\n          pre-emulator-launch-script: (.*)\n', st) for st in d]
+    if pre != [['adb kill-server || true']] * 3:
+        out.append('pre-launch %s' % pre)
+    tmo = [re.findall(r'\n        timeout-minutes: (\d+)\n', st) for st in d]
+    job = re.search(r'\n    timeout-minutes: (\d+)\n', e)
+    if [t for t in tmo if len(t) != 1] or job is None or [t[0] for t in tmo] != ['20', '40', '25'] or sum(int(t[0]) for t in tmo) >= int(job.group(1)):
+        out.append('timeouts %s (job %s)' % (tmo, job and job.group(1)))
+    return out
+
+
+got = runde6_problems(wf)
+ok = not got
+fails += 0 if ok else 1
+print('%s helper-channel.yml: ports 5554/5556/5558, adb kill-server before each start, step timeouts 20/40/25 min below the job limit %s' % ('PASS' if ok else 'FAIL', got))
+for what, bad in [
+        ('same port twice', wf.replace('emulator-port: 5556', 'emulator-port: 5554', 1)),
+        ('port missing', wf.replace('          emulator-port: 5558\n', '', 1)),
+        ('adb kill-server missing', wf.replace("          pre-emulator-launch-script: adb kill-server || true\n", '', 1)),
+        ('adb kill-server without || true', wf.replace('adb kill-server || true', 'adb kill-server', 1)),
+        ('step timeout missing', wf.replace('        timeout-minutes: 40\n', '', 1)),
+        ('step timeouts above the job limit', wf.replace('        timeout-minutes: 40\n', '        timeout-minutes: 60\n', 1)),
+        ('job limit below the step sum', wf.replace('\n    timeout-minutes: 90\n', '\n    timeout-minutes: 80\n', 1))]:
+    ok = bad != wf and bool(runde6_problems(bad))
+    fails += 0 if ok else 1
+    print('%s helper-channel.yml negative: %s is detected' % ('PASS' if ok else 'FAIL', what))
 ok = not re.search(r'^\s*continue-on-error:', emu, re.M) and device_gate.LEGACY_DEVICE_COMMAND[len('[command]/usr/bin/sh -c '):] not in wf
 fails += 0 if ok else 1
 print('%s helper-channel.yml: no continue-on-error in the emulator job, legacy single-emulator command gone' % ('PASS' if ok else 'FAIL'))

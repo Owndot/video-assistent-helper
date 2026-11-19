@@ -4,6 +4,24 @@ Stand 2026-11-17. Codex-Urteil: **CONDITIONAL GO** für eine isolierte Samsung-A
 Diese Vorbereitung behebt die Lieferketten- und Gate-Blocker. **Keine Lieferung gestartet**, beide Freigaben
 geschlossen (`DELIVERY_APPROVAL: 'none'`), Produktion **UNAPPROVED**.
 
+## Runde 6 – CI-/Werkzeugfix nach Lauf 44486552681 (2026-11-19, maßgeblich vor allem Folgenden)
+
+Lokal, nicht gepusht. Kein App-Code, keine Änderung an Sperren, Freigaben oder `p4-test-package.yml`.
+
+| Problem | Änderung |
+|---|---|
+| Runner `ubuntu-26.04`: `pyyaml==6.0.2` nicht installierbar, Pflichtjob Core/JVM rot | `helper-channel.yml`: `pyyaml==6.0.3` |
+| API 26: die erste Boot-Abfrage des Emulator-Runners auf die wiederverwendete Kennung `emulator-5554` kehrte nie zurück (83 min, Abbruch durch Job-Zeitlimit) | Je Geräteschritt eigener Port (5554/5556/5558), `adb kill-server \|\| true` vor jedem Emulatorstart und Zeitlimits 20/40/25 min (Summe unter dem Job-Limit von 90 min). Bedingungen, Befehle, Gate und Isolation sind unverändert; ein Zeitablauf ist nie ein Positivbeleg. |
+| `ci_evidence.py` wertete den git-Hinweis zum losgelösten HEAD (`  git switch -c <new-branch-name>`, `  git switch -`) als baumverändernden Befehl, sodass auf echten Logs nie ein Positivbeleg möglich war | Ausgenommen sind nur diese zwei Zeilen und nur, wenn direkt nach dem einen Checkout-Befehl exakt der bekannte Hinweistext steht (Zeile für Zeile). Jede Abweichung hebt die Ausnahme auf. |
+| Zusätzlich gefundene Lücke derselben Prüfung: als `[command]/usr/bin/git switch …` protokollierte Befehle wurden nicht erkannt | Ein `/` vor `git` zählt jetzt ebenfalls |
+| Playwright 1.56 installiert auf `ubuntu-26.04` kein Chromium (`focused-precheck (chromium)`, `privacy`) | Nur die Chromium-Jobs vorerst auf `ubuntu-24.04`: `browser-tests.yml` (beide Matrix-Jobs, nur für `chromium`), `build.yml` (Job `privacy`) und `hls-download.yml` (Job `hls-remux-jvm`, Chromium-Aufnahmeprobe). Firefox, Playwright-Versionen und Tests sind unverändert. |
+
+Der Gerätejob bleibt auf `ubuntu-26.04` wie in Lauf 44486552681. Eine Änderung an `hls-download.yml` löst diesen Workflow beim Push über seinen Pfadfilter selbst aus.
+
+Neue Regressionen:
+- **Workflow-Struktur:** Ports, Neustart des adb-Servers und Zeitlimits; dazu 7 Negativvarianten.
+- **CI-Evidenz:** echter Checkout-Log aus Job 135431345678 (positiv, auch mit Baumnachweis) und 13 Negativfälle mit eingeschleusten oder ausgeführten git-Befehlen.
+
 ## Runde 5 – Testisolation der Gerätephasen (2026-11-19, maßgeblich vor allem Folgenden)
 
 Lokal umgesetzt, **nicht gepusht, kein CI-Lauf**. Beide Lieferworkflows bleiben `LOCKED`, Freigabe `none`. Unverändert:

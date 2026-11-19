@@ -416,6 +416,55 @@ for fx, api, concl, dc, want in [
     got, detail = E.gate_verdict(REAL_GATE, open(os.path.join(FXD, fx + '.log'), encoding='utf-8').read(), api, concl, TMP, 7, dc)
     check(got == want, 'real gate with step conclusions: %s %s -> %s (got %s %s)' % (fx, dc, want, got, detail[:80]))
 
+# ---- Runde 6: echter Checkout-Log (git-Hinweis zum losgelösten HEAD) und gezielte Manipulationen ------------------------
+REAL_CO = open(os.path.join(ROOT, 'tests', 'delivery', 'fixtures', 'checkout-real-api34-b01db6e.log'), encoding='utf-8').read()
+REAL_MERGE, REAL_HEAD, REAL_BASE = '0b18305ed3a29641d82277eb5b487b822b22d2ee', 'b01db6e7bbd80f50a8e0ed8525333719ee6f2c1e', '61612ef3bf9cc062992a0ca3ae6eb8ebc1ab70cb'
+REAL_TREE = '2932dfa952beddf83668cd46410a0720bd3fb4e3'
+
+
+def ts(text):
+    return '2026-11-19T08:19:03.9999999Z ' + text
+
+
+def after(marker, *new):
+    """Fügt Zeilen direkt nach der ersten Zeile ein, die marker enthält."""
+    L = REAL_CO.split('\n')
+    i = next(k for k, l in enumerate(L) if marker in l)
+    return '\n'.join(L[:i + 1] + [ts(x) for x in new] + L[i + 1:])
+
+
+def replace_line(old, new):
+    L = REAL_CO.split('\n')
+    i = next(k for k, l in enumerate(L) if l.endswith(' ' + old) or l.endswith('Z ' + old))
+    return '\n'.join(L[:i] + [ts(new)] + L[i + 1:])
+
+
+sha, why = E.checkout_of(REAL_CO)
+check(sha == REAL_MERGE, 'R6 positive: real actions/checkout log with the detached-HEAD advice -> checkout %s (%s)' % ((sha or '')[:7], why[:60]))
+real_gh = FakeGh([], {}, {}, commits={REAL_MERGE: {'tree': {'sha': REAL_TREE}, 'parents': [{'sha': REAL_BASE}, {'sha': REAL_HEAD}]}})
+real_git = type('G', (FakeGit,), {'trees': {REAL_HEAD: REAL_TREE}})()
+ok, why = E.tested_code_matches(real_gh, real_git, REAL_CO, REAL_HEAD, 'pull_request')
+check(ok, 'R6 positive: real checkout + merge tree equal to the run commit -> tested code proven (%s)' % why[:70])
+ok, why = E.tested_code_matches(real_gh, type('G', (FakeGit,), {'trees': {REAL_HEAD: '7' * 40}})(), REAL_CO, REAL_HEAD, 'pull_request')
+check(not ok, 'R6 negative: real checkout but different tree of the run commit -> not proven (%s)' % why[:60])
+R6_NEG = [
+    ('tree-changing git command injected inside the advice block', after('  git switch -c <new-branch-name>', '  git checkout 1234567 -- app/src/main')),
+    ('hint line altered into a real command', replace_line('  git switch -', '  git switch - && git reset --hard HEAD~1')),
+    ('hint line replaced by another switch target', replace_line('  git switch -c <new-branch-name>', '  git switch -c evil origin/other')),
+    ('extra git reset line appended to the advice', after('Turn off this advice by setting config variable advice.detachedHead to false', '  git reset --hard 1234567')),
+    ('advice line removed (block no longer exact)', REAL_CO.replace(' Or undo this operation with:\n', ' \n', 1)),
+    ('Note line missing (block not anchored at the checkout)', '\n'.join(l for l in REAL_CO.split('\n') if 'Note: switching to' not in l)),
+    ('hint text copied outside the advice block', REAL_CO + '\n' + ts('  git switch -c <new-branch-name>')),
+    ('run step executes git switch (ANSI script line)', REAL_CO + '\n' + ts('\x1b[36;1mgit switch -c x\x1b[0m')),
+    ('run step executes git checkout of other files', REAL_CO + '\n' + ts('\x1b[36;1mgit checkout 1234567 -- app/src/main\x1b[0m')),
+    ('executed git command logged as [command]', REAL_CO + '\n' + ts('[command]/usr/bin/git switch -')),
+    ('executed git restore after the checkout', REAL_CO + '\n' + ts('git restore --source=1234567 app')),
+    ('second checkout command with its own advice', REAL_CO + '\n' + ts('[command]/usr/bin/git checkout --progress --force refs/remotes/pull/26/merge')),
+]
+for name, log in R6_NEG:
+    sha, why = E.checkout_of(log)
+    check(log != REAL_CO and sha is None, 'R6 negative: %s -> rejected (%s)' % (name, why[:70]))
+
 # Runde 5: die Schrittnamen in helper-channel.yml sind genau die erwarteten (Matrix-Ausdruck statt API-Nummer)
 import re  # noqa: E402
 wf = open(os.path.join(ROOT, '.github', 'workflows', 'helper-channel.yml'), encoding='utf-8').read()
@@ -423,5 +472,5 @@ names = re.findall(r'^      - name: (Device phase .*|Instrumentation on a dispos
 check(names == [E.DEVICE_STEPS[p].replace('%d', '${{ matrix.api }}') for p in E.DEVICE_PHASES],
       'helper-channel.yml device step names are exactly ci_evidence.DEVICE_STEPS in order %s' % names)
 
-print('CI_EVIDENCE_SELFTEST %s %d cases, %d failed' % ('FAIL' if fails else 'PASS', len(CASES) + 11 + len(NEUTRAL), len(fails)))
+print('CI_EVIDENCE_SELFTEST %s %d cases, %d failed' % ('FAIL' if fails else 'PASS', len(CASES) + 11 + 3 + len(R6_NEG) + len(NEUTRAL), len(fails)))
 sys.exit(1 if fails else 0)

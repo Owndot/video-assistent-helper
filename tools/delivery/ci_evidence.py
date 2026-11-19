@@ -77,8 +77,31 @@ PRODUCT = re.compile(r'AssertionError|ComparisonFailure|panicked at|test result:
 # Getesteter Code: genau EIN Checkout (actions/checkout) mit vollständiger SHA; jede weitere Arbeitsbaum-Änderung per git
 CHECKOUT_FETCH = re.compile(r'^\[command\]/usr/bin/git -c protocol\.version=2 fetch .* origin \+?([0-9a-f]{40}):(\S+)$')
 CHECKOUT_CMD = re.compile(r'^\[command\]/usr/bin/git checkout --progress --force \S+')
-TREE_CHANGE = re.compile(r'(^|[\s;&|(`])git(\s+-C\s+\S+)?\s+(checkout|switch|reset|restore|stash|merge|rebase|cherry-pick|am|apply|pull|read-tree|worktree|clone|fetch)\b')
+# Runde 6: auch als Pfad aufgerufenes git ("[command]/usr/bin/git switch …") zählt; vorher übersah das Muster diese Form
+TREE_CHANGE = re.compile(r'(^|[\s;&|(`/])git(\s+-C\s+\S+)?\s+(checkout|switch|reset|restore|stash|merge|rebase|cherry-pick|am|apply|pull|read-tree|worktree|clone|fetch)\b')
 HEAD_AT = re.compile(r'^HEAD is now at ([0-9a-f]{7,40}) (.*)$')
+# Runde 6: Hinweistext von git beim Wechsel auf einen losgelösten HEAD (actions/checkout, git >= 2.23). Er enthält zwei
+# Beispielzeilen ("git switch …"), die TREE_CHANGE sonst als Befehl wertet. Ausgenommen werden NUR diese zwei Zeilen und
+# NUR, wenn unmittelbar nach dem einen Checkout-Befehl exakt dieser Text steht (Zeile für Zeile, ohne Zusatz). Jede
+# Abweichung (eingefügte, fehlende oder geänderte Zeile) hebt die Ausnahme auf: dann zählen alle Zeilen (fail closed).
+DETACHED_NOTE = re.compile(r"^Note: switching to '[^']+'\.$")
+DETACHED_ADVICE = ['',
+                   "You are in 'detached HEAD' state. You can look around, make experimental",
+                   'changes and commit them, and you can discard any commits you make in this',
+                   'state without impacting any branches by switching back to a branch.',
+                   '',
+                   'If you want to create a new branch to retain commits you create, you may',
+                   'do so (now or later) by using -c with the switch command. Example:',
+                   '',
+                   '  git switch -c <new-branch-name>',
+                   '',
+                   'Or undo this operation with:',
+                   '',
+                   '  git switch -',
+                   '',
+                   'Turn off this advice by setting config variable advice.detachedHead to false',
+                   '']
+DETACHED_HINT_LINES = ('  git switch -c <new-branch-name>', '  git switch -')
 ANSI = re.compile(r'\x1b\[[0-9;]*m|\[[0-9;]*m')
 PER_PAGE = 100
 MAX_PAGES = 50
@@ -207,6 +230,17 @@ def strip_ts(line):
     return ANSI.sub('', re.sub(r'^﻿?\d{4}-\d\d-\d\dT[\d:.]+Z ', '', line.rstrip('\r')))
 
 
+def detached_hint_lines(lines, i_cmd):
+    """Runde 6: Indizes der zwei Beispielzeilen des git-Hinweises, nur wenn direkt nach dem Checkout-Befehl (Zeile i_cmd)
+    genau "Note: switching to '<ref>'.", der vollständige bekannte Hinweistext und "HEAD is now at …" folgen. Sonst leer."""
+    lo, n = i_cmd + 1, len(DETACHED_ADVICE)
+    block = [l.rstrip() for l in lines[lo + 1:lo + 1 + n]]
+    if (lo + 1 + n >= len(lines) or not DETACHED_NOTE.match(lines[lo].rstrip()) or block != DETACHED_ADVICE
+            or not HEAD_AT.match(lines[lo + 1 + n])):
+        return set()
+    return {lo + 1 + k for k, l in enumerate(DETACHED_ADVICE) if l in DETACHED_HINT_LINES}
+
+
 def checkout_of(log):
     """-> (vollständige Checkout-SHA, Erklärung) oder (None, Grund). Genau ein actions/checkout: ein Fetch der SHA, ein
     "git checkout", ein "git log -1 --format=%H" mit derselben SHA; keine weitere Arbeitsbaum-Änderung per git."""
@@ -221,7 +255,8 @@ def checkout_of(log):
         return None, 'checkout SHA not printed'
     if nxt != fetch[0].group(1):
         return None, 'checked-out %s differs from the fetched %s' % (nxt[:7], fetch[0].group(1)[:7])
-    other = [l for i, l in enumerate(lines) if i != cmds[0] and TREE_CHANGE.search(l) and not CHECKOUT_FETCH.match(l)]
+    hint = detached_hint_lines(lines, cmds[0])
+    other = [l for i, l in enumerate(lines) if i != cmds[0] and i not in hint and TREE_CHANGE.search(l) and not CHECKOUT_FETCH.match(l)]
     if other:
         return None, 'further git command that can change the tested tree: %s' % other[0][:100]
     heads = [m for m in (HEAD_AT.match(l) for l in lines) if m]

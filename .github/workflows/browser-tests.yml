@@ -25,7 +25,9 @@ jobs:
   focused-precheck:
     # First only the two reviewed files in both engines; gate the eight-file regression.
     if: github.event_name == 'pull_request' && github.head_ref != 'codex/pip-lifecycle'
-    runs-on: ubuntu-latest
+    # Runde 6: Chromium-Jobs vorerst auf ubuntu-24.04 (Playwright 1.56 installiert auf ubuntu-26.04 kein Chromium);
+    # Firefox unverändert auf ubuntu-latest. Playwright-Versionen und Tests unverändert.
+    runs-on: ${{ matrix.browser == 'chromium' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     timeout-minutes: 12
     strategy:
       fail-fast: false
@@ -99,7 +101,9 @@ jobs:
   test:
     needs: focused-precheck
     if: ${{ !cancelled() && (needs.focused-precheck.result == 'success' || needs.focused-precheck.result == 'skipped') }}
-    runs-on: ubuntu-latest
+    # Runde 6: Chromium-Jobs vorerst auf ubuntu-24.04 (Playwright 1.56 installiert auf ubuntu-26.04 kein Chromium);
+    # Firefox unverändert auf ubuntu-latest. Playwright-Versionen und Tests unverändert.
+    runs-on: ${{ matrix.browser == 'chromium' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     timeout-minutes: ${{ github.head_ref == 'codex/pip-lifecycle' && 18 || 60 }}
     strategy:
       fail-fast: false

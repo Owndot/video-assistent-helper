@@ -93,7 +93,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m venv "$RUNNER_TEMP/lockvenv"
-          "$RUNNER_TEMP/lockvenv/bin/pip" install -q --only-binary :all: pyyaml==6.0.2
+          "$RUNNER_TEMP/lockvenv/bin/pip" install -q --only-binary :all: pyyaml==6.0.3
           "$RUNNER_TEMP/lockvenv/bin/python" -I tests/delivery/test_lock.py .github/workflows/p4-test-package.yml feature/c3-browser-downloads "SOURCE_SHA KADRI_PAIR_SHA" "Temporary test signing"
           python3 -I tests/delivery/test_ci_evidence.py
           python3 -I tests/delivery/test_orphan_verdict.py
@@ -212,6 +212,8 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      # Runde 6: je Geräteschritt eigener Emulator-Port (5554/5556/5558), "adb kill-server" vor dem Emulatorstart und ein
+      # eigenes Zeitlimit (20/40/25 min, zusammen unter dem Job-Limit); ein Zeitablauf ist nie ein Positivbeleg.
       # Runde 5 (Testisolation, P4-DELIVERY-READINESS.md): Mutantenprobe, Hauptlauf und Wiederholungen laufen je auf einem
       # EIGENEN, frisch erzeugten Emulator (neue AVD, -wipe-data). Grund: Eine Deinstallation der Testvariante während der
       # Boot-Scans kann ein verspätetes PACKAGE_FULLY_REMOVED auslösen, das Zeilen einer danach neu installierten Testvariante
@@ -222,6 +224,7 @@ jobs:
       # das Gate), aber nie nach Abbruch, roter Mutante oder übersprungenem Hauptlauf. Keine Wartezeiten zwischen den Phasen.
       - name: Device phase 1/3 - publication mutant on a fresh API ${{ matrix.api }} x86_64 emulator
         id: dev_mutant
+        timeout-minutes: 20
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: ${{ matrix.api }}
@@ -236,10 +239,15 @@ jobs:
           disable-animations: true
           # API 37: surfaceflinger stürzte mit swiftshader_indirect ab (Assertion hasReadColorBufferDma der Host-GPU-
           # Emulation, riss system_server mit) – dort Rendering im Gast
+          # Runde 6: eigener Port je Phase und frischer adb-Server vor dem Start (API-26-Hänger in Lauf 44486552681:
+          # die erste Boot-Abfrage auf die wiederverwendete Kennung emulator-5554 kehrte nie zurück)
+          emulator-port: 5554
+          pre-emulator-launch-script: adb kill-server || true
           emulator-options: -no-window -gpu ${{ matrix.api == '37.0' && 'guest' || 'swiftshader_indirect' }} -no-snapshot -wipe-data -noaudio -no-boot-anim -camera-back none
           script: bash tools/wait-device-ready.sh && bash tools/run-channel-publication-regression.sh "$RUNNER_TEMP/publication-mutant"
       - name: Device phase 2/3 - main instrumentation on a fresh API ${{ matrix.api }} x86_64 emulator
         id: dev_main
+        timeout-minutes: 40
         if: steps.dev_mutant.outcome == 'success'
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
@@ -255,10 +263,15 @@ jobs:
           disable-animations: true
           # API 37: surfaceflinger stürzte mit swiftshader_indirect ab (Assertion hasReadColorBufferDma der Host-GPU-
           # Emulation, riss system_server mit) – dort Rendering im Gast
+          # Runde 6: eigener Port je Phase und frischer adb-Server vor dem Start (API-26-Hänger in Lauf 44486552681:
+          # die erste Boot-Abfrage auf die wiederverwendete Kennung emulator-5554 kehrte nie zurück)
+          emulator-port: 5556
+          pre-emulator-launch-script: adb kill-server || true
           emulator-options: -no-window -gpu ${{ matrix.api == '37.0' && 'guest' || 'swiftshader_indirect' }} -no-snapshot -wipe-data -noaudio -no-boot-anim -camera-back none
           script: bash tools/wait-device-ready.sh && bash tools/run-channel-instrumentation.sh "$RUNNER_TEMP/a"
       - name: Device phase 3/3 - repeat runs on a fresh API ${{ matrix.api }} x86_64 emulator
         id: dev_repeat
+        timeout-minutes: 25
         if: ${{ !cancelled() && steps.dev_mutant.outcome == 'success' && (steps.dev_main.outcome == 'success' || steps.dev_main.outcome == 'failure') }}
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
@@ -274,6 +287,10 @@ jobs:
           disable-animations: true
           # API 37: surfaceflinger stürzte mit swiftshader_indirect ab (Assertion hasReadColorBufferDma der Host-GPU-
           # Emulation, riss system_server mit) – dort Rendering im Gast
+          # Runde 6: eigener Port je Phase und frischer adb-Server vor dem Start (API-26-Hänger in Lauf 44486552681:
+          # die erste Boot-Abfrage auf die wiederverwendete Kennung emulator-5554 kehrte nie zurück)
+          emulator-port: 5558
+          pre-emulator-launch-script: adb kill-server || true
           emulator-options: -no-window -gpu ${{ matrix.api == '37.0' && 'guest' || 'swiftshader_indirect' }} -no-snapshot -wipe-data -noaudio -no-boot-anim -camera-back none
           script: bash tools/wait-device-ready.sh && bash tools/run-flaky-repeat.sh "$RUNNER_TEMP/a" 20
       - name: Collect text-only report (no APK, no keys)
