@@ -8,10 +8,19 @@ OUT="$(cd "${1:?usage: run-flaky-repeat.sh OUT [N]}" && pwd)"; N="${2:-20}"
 REPORT="$OUT/report"; mkdir -p "$REPORT"
 PKG=de.evp.helfer.channeltest
 T=de.evp.helfer.Mp4DownloadsInstrumentedTest
+# shellcheck source=tools/run-channel-isolation.sh
+. "$(cd "$(dirname "$0")" && pwd)/run-channel-isolation.sh"
 adb wait-for-device
 if [ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" != "1" ] && [ "$(adb shell getprop ro.boot.qemu | tr -d '\r')" != "1" ]; then
   echo "refusing: the connected device is not an emulator" >&2; exit 2
 fi
+# Runde 5 (Testisolation): eigene Gerätephase "repeat" auf einem frischen Emulator (helper-channel.yml). Frischenachweis
+# vor der Installation; danach wie zuvor im Hauptlauf (dort "logcat -c" vor der Installation) die Puffer leeren, damit der
+# Crash-Puffer unten genau diese Phase umfasst. Der Isolationsstrom läuft bereits und ist davon nicht betroffen.
+iso_begin repeat "$REPORT"
+trap iso_stop EXIT
+adb logcat -c
+iso_mark install
 adb install -r -t "$OUT/apk/helper-channeltest.apk" > /dev/null
 adb install -r -t "$OUT/apk/helper-channeltest-androidTest.apk" > /dev/null
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS 2>/dev/null || true
@@ -19,9 +28,10 @@ fail=0; pass=0
 API="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
 # Codex Release-Readiness P2: JEDER der Läufe (auch erfolgreiche) wird vollständig mit eindeutiger Kennung und API
 # ins Job-Log geschrieben; tools/device_gate.py prüft Anzahl, Kennungen, Testmengen und Ergebnis jedes Laufs.
-# Format 3 (Codex NO-GO 3): danach wird der Crash-Puffer erneut ausgelesen (Abschnitt repeat-crash). Er wurde zuletzt vom
-# logcat -c in tools/run-channel-instrumentation.sh geleert und umfasst damit Hauptlauf, Sonden, Neustarts und alle 22
-# Wiederholungen; ein Absturz außerhalb der Instrumentierungsausgabe (z. B. Hintergrundfaden) bleibt so nicht unsichtbar.
+# Format 3 (Codex NO-GO 3): danach wird der Crash-Puffer erneut ausgelesen (Abschnitt repeat-crash). Seit Runde 5 läuft
+# diese Phase auf einem eigenen Emulator: Der Puffer wurde oben vor der Installation geleert und umfasst alle 22
+# Wiederholungen; Hauptlauf, Sonden und Neustarts deckt der Abschnitt crash der Phase main ab. Ein Absturz außerhalb der
+# Instrumentierungsausgabe (z. B. Hintergrundfaden) bleibt so nicht unsichtbar.
 echo "REPEAT-FORMAT 3"
 run() {   # run LABEL CLASSSPEC [NOTCLASS]
   local log="$REPORT/repeat-$1.txt"
@@ -43,7 +53,10 @@ if adb logcat -d -b crash > "$REPORT/repeat-crash.txt" 2>&1; then
 else
   echo "GATE-BEGIN repeat-crash"; echo "GATE-MISSING repeat-crash"; echo "GATE-END repeat-crash"; fail=$((fail+1))
 fi
+iso_mark uninstall
 adb uninstall "$PKG.test" > /dev/null || true
 adb uninstall "$PKG" > /dev/null || true
+iso_ok=1
+iso_end || iso_ok=0
 echo "REPEAT api=$API runs=$((pass+fail)) passed=$pass failed=$fail" | tee -a "$REPORT/summary.txt"
-[ "$fail" = 0 ]
+[ "$fail" = 0 ] && [ "$iso_ok" = 1 ]

@@ -3,7 +3,7 @@
 
 Review P4 (Codex-Folgereview) und Codex Release-Readiness P2 (Vollständigkeit).
 
-Aufruf:  device_gate.py JOB_LOG --api N [--job-conclusion success|failure]
+Aufruf:  device_gate.py JOB_LOG --api N [--job-conclusion success|failure] [--step-conclusions mutant=X,main=Y,repeat=Z]
 Exit:    0 = PASS (alles grün, vollständig belegt)
          3 = ACCEPTED_SIZE_ONLY (nur API 29: genau der dokumentierte Befund P4B-A10-SIZE, sonst alles belegt grün)
          4 = INSUFFICIENT_EVIDENCE (kein Fehler belegt, aber nicht vollständig nachweisbar, z. B. altes Format der
@@ -22,8 +22,19 @@ außerhalb der Abschnitte müssen exakt die Kopie des Hauptberichts sein (raw_co
 Kopf; PUBLISH_RACE-Zähler positiv mit Summe RACE_CYCLES; Crash-Puffer nach den 22 Wiederholungen erneut ausgelesen
 (Format 3, Abschnitt repeat-crash, muss leer sein; Format 2 = INSUFFICIENT_EVIDENCE).
 
+Runde 5 (Testisolation, P4-DELIVERY-READINESS.md): Der Job hat DREI Geräteschritte auf je einem eigenen, frisch erzeugten
+Emulator: mutant (Mutantenprobe), main (Gerätetest, Sonden, Neustarts), repeat (20 Dreier- und 2 Klassen-Wiederholungen).
+Jede Phase ist der Log-Bereich ab ihrem Gerätebefehl bis zum nächsten; jede Ausgabe muss in ihrer Phase stehen. Je Phase
+Pflicht: genau ein DEVICE_READY, genau ein Frischenachweis (ISOLATION-FRESH: ein Gerät, beide Testpakete fehlen) vor
+jeder Testausgabe, genau eine vollständige Zusammenfassung (ISOLATION-SUMMARY) mit zur Phase passenden Besitzbelegen
+(ISOLATION-OWNER, Zeitfenster nachgerechnet); drei verschiedene Boot-IDs. Eine Verwaisung der Testpakete vor der
+Installation oder während der Messung ist ein Isolationsbruch (REJECT); nach der eigenen Deinstallation ist sie erwartbar
+und nur dokumentiert. Fehlerzeilen des Jobs werden je Phase geprüft; optional werden die Schrittergebnisse der GitHub-API
+(--step-conclusions) gegen die Belege geprüft.
+
 Bewertet wird gegen eine FESTE erwartete Testmenge (Quellstand der Gerätetests, siehe EXPECTED_*). Bewertet werden:
-  * Gerätebefehl: genau der erwartete Befehl (Mutantenprobe, Gerätetest, 20 Dreier- und 2 Klassen-Wiederholungen);
+  * Gerätebefehle: genau die drei erwarteten Befehle in dieser Reihenfolge (Mutantenprobe, Gerätetest, 20 Dreier- und
+    2 Klassen-Wiederholungen), jeder genau einmal, kein weiterer Gerätebefehl (auch nicht der frühere Sammelbefehl);
   * Mutantenprobe: genau ein Lauf mit genau dem erwarteten Fehlschlag, getrennt vor dem Gerätetest;
   * Haupttest: genau die 46 erwarteten Tests der 4 Klassen, jeder genau einmal begonnen und beendet, Zählung konsistent;
   * Veröffentlichungssonden (ab API 29): genau die 5 Sondentests, jede Variante genau einmal mit der festgelegten
@@ -88,9 +99,32 @@ REPEAT_THREE = ['duplicateAndLateStartsFetchOnce', 'leftoversAfterProcessDeathAr
 REPEAT_CLASS_EXCLUDED = 'publicFileForUninstallCheck'
 REPEAT_N, REPEAT_CLASS_RUNS = 20, 2
 REPEAT_RUNS = REPEAT_N + REPEAT_CLASS_RUNS
-DEVICE_COMMAND = ('[command]/usr/bin/sh -c bash tools/wait-device-ready.sh && bash tools/run-channel-publication-regression.sh '
-                  '"$RUNNER_TEMP/publication-mutant" && { bash tools/run-channel-instrumentation.sh "$RUNNER_TEMP/a"; s=$?; '
-                  'bash tools/run-flaky-repeat.sh "$RUNNER_TEMP/a" %d && exit $s; }' % REPEAT_N)
+# Runde 5: drei Geräteschritte (helper-channel.yml), je ein frischer Emulator. Reihenfolge = PHASES.
+PHASES = ('mutant', 'main', 'repeat')
+COMMAND_PREFIX = '[command]/usr/bin/sh -c bash tools/'
+DEVICE_COMMANDS = {
+    'mutant': COMMAND_PREFIX + 'wait-device-ready.sh && bash tools/run-channel-publication-regression.sh "$RUNNER_TEMP/publication-mutant"',
+    'main': COMMAND_PREFIX + 'wait-device-ready.sh && bash tools/run-channel-instrumentation.sh "$RUNNER_TEMP/a"',
+    'repeat': COMMAND_PREFIX + 'wait-device-ready.sh && bash tools/run-flaky-repeat.sh "$RUNNER_TEMP/a" %d' % REPEAT_N,
+}
+# Früherer Sammelbefehl (alle drei Phasen auf EINEM Emulator): nie mehr zulässig (Isolationsbruch, A/B-Lauf 44405696921)
+LEGACY_DEVICE_COMMAND = ('[command]/usr/bin/sh -c bash tools/wait-device-ready.sh && bash tools/run-channel-publication-regression.sh '
+                         '"$RUNNER_TEMP/publication-mutant" && { bash tools/run-channel-instrumentation.sh "$RUNNER_TEMP/a"; s=$?; '
+                         'bash tools/run-flaky-repeat.sh "$RUNNER_TEMP/a" %d && exit $s; }' % REPEAT_N)
+TEST_PACKAGES = ('de.evp.helfer.channeltest', 'de.evp.helfer.channeltest.test')
+_T = r'\d+\.\d+'
+ISO_FRESH = re.compile(r'^ISOLATION-FRESH phase=(?P<phase>\S+) api=(?P<api>\d+) boot=(?P<boot>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) '
+                       r'devices=1 listed=(?P<listed>[1-9]\d*) app=absent test=absent$')
+ISO_OWNER = re.compile(r'^ISOLATION-OWNER phase=(?P<phase>\S+) api=(?P<api>\d+) t=(?P<t>' + _T + r') '
+                       r'window=(?P<window>before-install|measurement|after-uninstall) '
+                       r'event=(?:orphaned pkg=(?P<pkg>[A-Za-z0-9_.]+) count=(?P<count>\d+)|(?P<changed>owner-changed))$')
+ISO_SUMMARY = re.compile(r'^ISOLATION-SUMMARY phase=(?P<phase>\S+) api=(?P<api>\d+) boot=(?P<boot>\S+) begin=(?P<begin>\S+) install=(?P<install>\S+) '
+                         r'uninstall=(?P<uninstall>\S+) end=(?P<end>\S+) stream=(?P<stream>complete|incomplete) '
+                         r'orphan_before=(?P<orphan_before>\d+) orphan_measurement=(?P<orphan_measurement>\d+) orphan_after=(?P<orphan_after>\d+) '
+                         r'owner_changed_before=(?P<owner_changed_before>\d+) owner_changed_measurement=(?P<owner_changed_measurement>\d+) '
+                         r'owner_changed_after=(?P<owner_changed_after>\d+)$')
+WINDOWS = {'before-install': 'before', 'measurement': 'measurement', 'after-uninstall': 'after'}
+STEP_RESULTS = ('success', 'failure')
 SIZE_ERROR = "##[error]The process '/usr/bin/sh' failed with exit code 1"
 JOB_END = 'Cleaning up orphan processes'
 
@@ -120,6 +154,8 @@ PUBLISH_CAUSE = re.compile(r'publish rows=|publish threw=|IOException: publish|p
 REPEAT_FORMAT = 'REPEAT-FORMAT 3'   # 3: zusätzlich Crash-Puffer NACH den 22 Wiederholungen (Abschnitt repeat-crash)
 REPEAT_FORMAT_OLD = {'REPEAT-FORMAT 2'}
 REPEAT_CRASH = 'repeat-crash'
+# Runde 5: Crash-Puffer der Phase main nach Deinstallation und Persistenzprüfung (früher Teil von repeat-crash)
+CRASH_AFTER_UNINSTALL = 'crash-after-uninstall'
 RACE_CYCLES = 30   # MediaStorePublishProbeTest.RACE_CYCLES: Summe aller PUBLISH_RACE-Zähler
 # Kopien des Hauptberichts außerhalb der Abschnitte (tools/run-channel-instrumentation.sh): exakt nachgebildet
 SUMMARY_GREP = re.compile(r'INSTRUMENTATION_STATUS: (test|class)=|INSTRUMENTATION_STATUS_CODE|^OK \(|FAILURES|Tests run|AssertionError|Exception')
@@ -256,6 +292,115 @@ def failure_evidence(log, api):
 BLOCKING = ('publish', 'crash', 'test-failure')
 
 
+def phase_regions(lines):
+    """Runde 5: Bereich jeder Gerätephase = ab ihrem Gerätebefehl bis vor den nächsten (letzte Phase: bis Log-Ende).
+    -> ({Phase: (lo, hi)} nur bei vollständiger, eindeutiger und geordneter Befehlsfolge, sonst {}), [Gründe]."""
+    reasons = []
+    cmds = [(i, l) for i, l in enumerate(lines) if l.startswith(COMMAND_PREFIX)]
+    want = [DEVICE_COMMANDS[p] for p in PHASES]
+    got = [l for _, l in cmds]
+    if any(l == LEGACY_DEVICE_COMMAND for l in got):
+        reasons.append('legacy device command: all phases on ONE emulator (not isolated)')
+    for p in PHASES:
+        n = got.count(DEVICE_COMMANDS[p])
+        if n != 1:
+            reasons.append('device command of phase %s: expected exactly one, found %d' % (p, n))
+    unknown = [l for l in got if l not in want]
+    if unknown:
+        reasons.append('unexpected device command(s): %s' % [l[len(COMMAND_PREFIX) - len('bash tools/'):][:90] for l in unknown])
+    if got != want:
+        if not reasons:
+            reasons.append('device phases out of order (expected %s)' % ' -> '.join(PHASES))
+        else:
+            reasons.append('device phases missing, repeated or out of order (expected %s)' % ' -> '.join(PHASES))
+        return {}, reasons
+    idx = [i for i, _ in cmds] + [len(lines)]
+    return {p: (idx[k], idx[k + 1]) for k, p in enumerate(PHASES)}, reasons
+
+
+def isolation_problems(lines, regions, api, ready):
+    """Runde 5: Frischenachweis, Besitzbelege und Zusammenfassung je Phase (fail closed). ready: {Phase: DEVICE_READY}."""
+    out = []
+    found = {p: {'fresh': [], 'owner': [], 'summary': []} for p in PHASES}
+    for i, l in enumerate(lines):
+        if 'ISOLATION-' not in l:
+            continue
+        if l.startswith('ISOLATION-FAILED '):
+            out.append('isolation precondition failed (line %d): %s' % (i + 1, l[:120]))
+            continue
+        for kind, rx in (('fresh', ISO_FRESH), ('owner', ISO_OWNER), ('summary', ISO_SUMMARY)):
+            m = rx.match(l)
+            if m:
+                if m.group('phase') not in found:
+                    out.append('isolation evidence of an unknown phase (line %d): %s' % (i + 1, l[:120]))
+                else:
+                    found[m.group('phase')][kind].append((i, m))
+                break
+        else:
+            out.append('malformed or unexpected isolation line %d: %s' % (i + 1, l[:120]))
+    boots = {}
+    for p in PHASES:
+        f = found[p]
+        if p not in regions:
+            continue
+        lo, hi = regions[p]
+        if len(f['fresh']) != 1:
+            out.append('freshness evidence of phase %s: expected exactly one ISOLATION-FRESH, found %d' % (p, len(f['fresh'])))
+            continue
+        fi, fm = f['fresh'][0]
+        if not (lo < fi < hi) or ready.get(p) is None or not (ready[p] < fi):
+            out.append('freshness evidence of phase %s outside its phase or before its DEVICE_READY' % p)
+        if int(fm.group('api')) != api:
+            out.append('freshness evidence of phase %s is API %s, gate asked for API %d' % (p, fm.group('api'), api))
+        test_out = [j for j in range(lo, hi) if lines[j].startswith(('INSTRUMENTATION_', 'GATE-', 'REPEAT-', 'PUBLISH_PROBE', 'PUBLISH_RACE'))]
+        if test_out and test_out[0] < fi:
+            out.append('phase %s: test output (line %d) before the freshness evidence' % (p, test_out[0] + 1))
+        boots[p] = fm.group('boot')
+        if len(f['summary']) != 1:
+            out.append('isolation summary of phase %s: expected exactly one ISOLATION-SUMMARY, found %d' % (p, len(f['summary'])))
+            continue
+        si, sm = f['summary'][0]
+        if not (fi < si < hi):
+            out.append('isolation summary of phase %s outside its phase or before its freshness evidence' % p)
+        if int(sm.group('api')) != api or sm.group('boot') != fm.group('boot'):
+            out.append('isolation summary of phase %s contradicts its freshness evidence (API %s, boot %s)' % (p, sm.group('api'), sm.group('boot')))
+        if sm.group('stream') != 'complete':
+            out.append('isolation evidence of phase %s incomplete (MediaProvider/marker stream not complete)' % p)
+            continue
+        try:
+            t = {k: float(sm.group(k)) for k in ('begin', 'install', 'uninstall', 'end')}
+        except ValueError:
+            out.append('isolation summary of phase %s: unreadable time window' % p)
+            continue
+        if not (t['begin'] <= t['install'] <= t['uninstall'] <= t['end']):
+            out.append('isolation summary of phase %s: time window not monotone %s' % (p, t))
+            continue
+        orphan = {'before': 0, 'measurement': 0, 'after': 0}
+        changed = dict(orphan)
+        for oi, om in f['owner']:
+            if not (fi < oi < si) or int(om.group('api')) != api:
+                out.append('isolation owner evidence of phase %s outside its window in the log or of another API (line %d)' % (p, oi + 1))
+                continue
+            ts = float(om.group('t'))
+            want = 'before' if ts < t['install'] else 'measurement' if ts < t['uninstall'] else 'after'
+            if WINDOWS[om.group('window')] != want:
+                out.append('isolation owner evidence of phase %s: time %s lies in window %s, labelled %s (line %d)' % (p, om.group('t'), want, om.group('window'), oi + 1))
+            if om.group('changed'):
+                changed[want] += 1
+            elif om.group('pkg') in TEST_PACKAGES:
+                orphan[want] += 1
+        for w in ('before', 'measurement', 'after'):
+            if int(sm.group('orphan_' + w)) != orphan[w] or int(sm.group('owner_changed_' + w)) != changed[w]:
+                out.append('isolation summary of phase %s: counts for window %s do not match the owner evidence (summary orphan %s/changed %s, evidence %d/%d)'
+                           % (p, w, sm.group('orphan_' + w), sm.group('owner_changed_' + w), orphan[w], changed[w]))
+        for w, why in (('before', 'before the installation'), ('measurement', 'during the measurement')):
+            if orphan[w] or int(sm.group('orphan_' + w)):
+                out.append('stale package removal: MediaProvider orphaned rows of the test package %s in phase %s - not isolated' % (why, p))
+    if len(boots) == len(PHASES) and len(set(boots.values())) != len(PHASES):
+        out.append('device phases did not run on separate fresh emulators (boot ids %s)' % boots)
+    return out
+
+
 def sections(lines):
     """-> ({Name: Zeilen}, doppelte Namen, offener Abschnitt, Zeilenindex Begin je Name)."""
     out, cur, name, dup, pos = {}, None, None, [], {}
@@ -373,15 +518,29 @@ def is_size_only(rep):
     return bool(SIZE_RE.search(st)) and not PUBLISH_FAILURE.search(st)
 
 
-def evaluate(log, api, job_conclusion=None):
-    """Jeder Parser- oder Programmfehler führt zur Ablehnung (fail closed)."""
+def parse_steps(text):
+    """'mutant=success,main=failure,repeat=success' -> {Phase: Ergebnis}; jede Abweichung -> ValueError (fail closed)."""
+    out = {}
+    for part in text.split(','):
+        k, sep, v = part.partition('=')
+        if not sep or k not in PHASES or k in out or not v:
+            raise ValueError('step conclusions %r: expected %s' % (text, ','.join('%s=<result>' % p for p in PHASES)))
+        out[k] = v
+    if sorted(out) != sorted(PHASES):
+        raise ValueError('step conclusions %r: expected all of %s' % (text, list(PHASES)))
+    return out
+
+
+def evaluate(log, api, job_conclusion=None, step_conclusions=None):
+    """Jeder Parser- oder Programmfehler führt zur Ablehnung (fail closed). step_conclusions: {Phase: Ergebnis} der
+    GitHub-API (tools/delivery/ci_evidence.py) oder None."""
     try:
-        return _evaluate(log, api, job_conclusion)
+        return _evaluate(log, api, job_conclusion, step_conclusions)
     except Exception as e:  # noqa: BLE001 - absichtlich: nie ein PASS durch einen Fehler im Gate
         return 'REJECT', ['gate parser error: %s: %s' % (type(e).__name__, e)]
 
 
-def _evaluate(log, api, job_conclusion=None):
+def _evaluate(log, api, job_conclusion=None, step_conclusions=None):
     lines = [strip(l) for l in log.splitlines()]
     text = '\n'.join(lines)
     reasons, size_exception, repeat_size_only, insufficient = [], False, False, []
@@ -392,7 +551,7 @@ def _evaluate(log, api, job_conclusion=None):
         reasons.append('section reported twice or nested: %s' % dup)
     if open_sec:
         reasons.append('section not terminated (truncated log): %s' % open_sec)
-    allowed = {'main', 'restart-summary', 'crash'} | set(RESTARTS) | ({'probe', 'probe-lines'} if api >= 29 else set())
+    allowed = {'main', 'restart-summary', 'crash', CRASH_AFTER_UNINSTALL} | set(RESTARTS) | ({'probe', 'probe-lines'} if api >= 29 else set())
     allowed |= {'repeat-three-%d' % i for i in range(1, REPEAT_N + 1)} | {'repeat-class-%d' % i for i in range(1, REPEAT_CLASS_RUNS + 1)}
     allowed |= {REPEAT_CRASH}
     unknown = sorted(set(secs) - allowed)
@@ -409,29 +568,55 @@ def _evaluate(log, api, job_conclusion=None):
             return None
         return hits[0]
 
-    # 0) Vollständiges Log, genau der erwartete Gerätebefehl, Reihenfolge der Phasen
-    i_cmd = idx(r'^' + re.escape(DEVICE_COMMAND) + r'$', 'device command (mutant probe, device test, %d+%d repeats)' % (REPEAT_N, REPEAT_CLASS_RUNS))
-    i_ready = idx(r'^DEVICE_READY after \d+ s$', 'DEVICE_READY line')
+    # 0) Vollständiges Log, genau die drei erwarteten Gerätebefehle (Runde 5: je ein frischer Emulator), Reihenfolge
+    regions, why = phase_regions(lines)
+    reasons += why
     i_mut = idx(r'^' + re.escape(MUTANT_PASS) + r'$', 'expected mutant failure (publication regression)')
     i_status = idx(r'^PUBLISH_PROBE_STATUS \S+$', 'PUBLISH_PROBE_STATUS line')
     i_api = idx(r'^GATE-API \d+$', 'GATE-API line')
     i_script = idx(r'^GATE-SCRIPT-STATUS \d+$', 'GATE-SCRIPT-STATUS line')
     i_rep = idx(r'^REPEAT api=\d+ runs=\d+ passed=\d+ failed=\d+$', 'REPEAT result line')
     i_end = idx(r'^' + re.escape(JOB_END) + r'$', 'job end (complete job log)')
-    order = [i_cmd, i_ready, i_mut, i_status, i_api, pos.get('main'), i_script, i_rep, i_end]
-    if None not in order and order != sorted(order):
-        reasons.append('device output out of order (command, ready, mutant, probe status, GATE-API, main, script status, repeats, end)')
-    if i_script is not None:
-        late = [n for n, p in pos.items() if not n.startswith('repeat-') and p > i_script]
-        early = [n for n, p in pos.items() if n.startswith('repeat-') and p < i_script]
+    readies = [i for i, l in enumerate(lines) if re.match(r'^DEVICE_READY after \d+ s$', l)]
+    ready = {}
+    if regions:
+        for ph in PHASES:
+            lo, hi = regions[ph]
+            hits = [i for i in readies if lo < i < hi]
+            if len(hits) != 1:
+                reasons.append('DEVICE_READY of phase %s: expected exactly one, found %d' % (ph, len(hits)))
+            else:
+                ready[ph] = hits[0]
+        if len(readies) != len(PHASES):
+            reasons.append('DEVICE_READY lines: expected %d, found %d' % (len(PHASES), len(readies)))
+
+        def inside(i, ph):
+            return i is not None and regions[ph][0] < i < regions[ph][1]
+        for i, ph, what in ((i_mut, 'mutant', 'mutant PASS line'), (i_status, 'main', 'PUBLISH_PROBE_STATUS'), (i_api, 'main', 'GATE-API'),
+                            (i_script, 'main', 'GATE-SCRIPT-STATUS'), (i_rep, 'repeat', 'REPEAT result line'), (i_end, 'repeat', 'job end')):
+            if i is not None and not inside(i, ph):
+                reasons.append('%s outside device phase %s' % (what, ph))
+        late = sorted(n for n, q in pos.items() if not n.startswith('repeat-') and not inside(q, 'main'))
+        early = sorted(n for n, q in pos.items() if n.startswith('repeat-') and not inside(q, 'repeat'))
         if late or early:
             reasons.append('sections in the wrong phase: %s' % (late + early))
+    order = [ready.get('mutant'), i_mut, ready.get('main'), i_status, i_api, pos.get('main'), i_script, ready.get('repeat'), i_rep, i_end]
+    if None not in order and order != sorted(order):
+        reasons.append('device output out of order (ready, mutant, ready, probe status, GATE-API, main, script status, ready, repeats, end)')
+    if regions:
+        reasons += isolation_problems(lines, regions, api, ready)
+        iso_sum = {m.group('phase'): i for i, l in enumerate(lines) for m in [ISO_SUMMARY.match(l)] if m}
+        if None not in (iso_sum.get('main'), i_status, i_api) and not (i_status < iso_sum['main'] < i_api):
+            reasons.append('isolation summary of phase main not between the probe status and GATE-API')
+        if None not in (iso_sum.get('repeat'), i_rep) and pos.get(REPEAT_CRASH) is not None and not (pos[REPEAT_CRASH] < iso_sum['repeat'] < i_rep):
+            reasons.append('isolation summary of phase repeat not between the crash report after the repeats and the REPEAT line')
     if i_api is not None:
         m = re.match(r'^GATE-API (\d+)$', lines[i_api])
         if int(m.group(1)) != api:
             reasons.append('log is API %s, gate asked for API %d' % (m.group(1), api))
 
-    # 0b) Mutantenprobe (vor dem Gerätetest, getrennt bewertet): genau der erwartete Fehlschlag
+    # 0b) Mutantenprobe (eigene Phase vor dem Gerätetest, getrennt bewertet): genau der erwartete Fehlschlag
+    i_ready = ready.get('mutant')
     if i_ready is not None and i_mut is not None and i_ready < i_mut:
         reasons += mutant_problems(lines, i_ready + 1, i_mut)
 
@@ -578,6 +763,11 @@ def _evaluate(log, api, job_conclusion=None):
         reasons.append('crash buffer report missing')
     elif crash.strip():
         reasons.append('crash buffer not empty: %s' % crash.strip().splitlines()[0][:120])
+    after = secs.get(CRASH_AFTER_UNINSTALL)
+    if after is None:
+        reasons.append('crash buffer report after the uninstall of the main phase missing (%s)' % CRASH_AFTER_UNINSTALL)
+    elif any(l.strip() for l in after):
+        reasons.append('crash buffer not empty after the uninstall of the main phase: %s' % next(l for l in after if l.strip())[:120])
     if re.search(r'FATAL EXCEPTION IN SYSTEM PROCESS|System has crashed|DeadSystemException|system_server.*died|Watchdog', text):
         reasons.append('emulator/system crash in this job')
     for pat, why in [(r'(?m)^LISTENER ON 47811$', 'legacy port 47811 listening'), (r'(?m)^package list changed$', 'package list changed'),
@@ -659,11 +849,18 @@ def _evaluate(log, api, job_conclusion=None):
         if fmt and (n_ok, n_fail) != (passed, failed):
             reasons.append('repeat reports show %d passed / %d failed, summary says %d / %d' % (n_ok, n_fail, passed, failed))
 
-    # 6) Unbekannte Fehlerzeilen des Jobs
-    errors = [l for l in lines if l.startswith('##[error]')]
-    allowed_errors = [SIZE_ERROR] if size_exception else []
+    # 6) Fehlerzeilen des Jobs JE PHASE (Runde 5: jeder Geräteschritt meldet sein eigenes Ergebnis). Erlaubt ist nur der
+    #    Exit-Fehler des Hauptlaufs bzw. der Wiederholungen bei genau dem dokumentierten Befund P4B-A10-SIZE (API 29).
+    allowed_errors = {'before': [], 'mutant': [], 'main': [SIZE_ERROR] if size_exception else [],
+                      'repeat': [SIZE_ERROR] if repeat_size_only else []}
+    errors = {k: [] for k in allowed_errors}
+    for i, l in enumerate(lines):
+        if l.startswith('##[error]'):
+            ph = next((q for q in PHASES if regions and regions[q][0] < i < regions[q][1]), 'before')
+            errors[ph].append(l)
     if errors != allowed_errors:
-        reasons.append('job error lines %s (expected %s)' % ([e[:100] for e in errors], allowed_errors))
+        reasons.append('job error lines per phase %s (expected %s)' % ({k: [e[:80] for e in v] for k, v in errors.items() if v},
+                                                                       {k: v for k, v in allowed_errors.items() if v}))
 
     # 7) Script-Status und Job-Ergebnis passen zum Ergebnis
     st = re.findall(r'(?m)^GATE-SCRIPT-STATUS (\d+)$', text)
@@ -677,6 +874,16 @@ def _evaluate(log, api, job_conclusion=None):
             reasons.append('SIZE exception but job conclusion %s' % job_conclusion)
         if not size_exception and job_conclusion != 'success':
             reasons.append('all evidence green but job conclusion %s' % job_conclusion)
+    # Runde 5: Schrittergebnisse der GitHub-API müssen genau zu den Belegen der Phasen passen (sonst widersprüchlich)
+    if step_conclusions is not None:
+        want_steps = {'mutant': 'success', 'main': 'failure' if size_exception else 'success',
+                      'repeat': 'failure' if repeat_size_only else 'success'}
+        if any(step_conclusions.get(p) not in STEP_RESULTS for p in PHASES):
+            reasons.append('device step not completed (skipped, cancelled or missing): %s' % step_conclusions)
+        elif not reasons and step_conclusions != want_steps:
+            reasons.append('step conclusions %s contradict the evidence (expected %s)' % (step_conclusions, want_steps))
+        if job_conclusion is not None and (job_conclusion == 'success') != all(step_conclusions.get(p) == 'success' for p in PHASES):
+            reasons.append('job conclusion %s contradicts the step conclusions %s' % (job_conclusion, step_conclusions))
     if repeat_size_only and not size_exception:
         reasons.append('repeat runs failed by SIZE but the main run did not show the documented SIZE finding')
 
@@ -693,6 +900,7 @@ def main():
     a.add_argument('log')
     a.add_argument('--api', type=int, required=True)
     a.add_argument('--job-conclusion', choices=['success', 'failure'])
+    a.add_argument('--step-conclusions', help='Runde 5: Ergebnisse der drei Geräteschritte, z. B. mutant=success,main=success,repeat=success')
     a.add_argument('--failure-evidence', action='store_true',
                    help='nur Fehlerbelege klassifizieren (abgebrochene Jobs); Exit 0 = keiner, 1 = blockierender Beleg oder Fehler')
     o = a.parse_args()
@@ -707,7 +915,13 @@ def main():
         blocking = [e for e in ev if e[0] in BLOCKING]
         print('FAILURE_EVIDENCE_RESULT %s' % ('blocking' if blocking else 'size-only' if ev else 'none'))
         sys.exit(1 if blocking else 0)
-    verdict, reasons = evaluate(open(o.log, encoding='utf-8', errors='replace').read(), o.api, o.job_conclusion)
+    try:
+        steps = parse_steps(o.step_conclusions) if o.step_conclusions is not None else None
+    except ValueError as e:
+        print('DEVICE_GATE api=%d verdict=REJECT' % o.api)
+        print('  REJECT-REASON %s' % e)
+        sys.exit(1)
+    verdict, reasons = evaluate(open(o.log, encoding='utf-8', errors='replace').read(), o.api, o.job_conclusion, steps)
     print('DEVICE_GATE api=%d verdict=%s' % (o.api, verdict))
     for r in reasons:
         print('  %s-REASON %s' % ('INSUFFICIENT' if verdict == 'INSUFFICIENT_EVIDENCE' else 'REJECT', r))

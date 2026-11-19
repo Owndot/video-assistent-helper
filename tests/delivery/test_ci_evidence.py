@@ -29,6 +29,13 @@ FAKE_GATE = os.path.join(TMP, 'fake_gate.py')
 open(FAKE_GATE, 'w').write('''import re, sys
 log = open(sys.argv[1]).read()
 v = re.search(r'FAKE-VERDICT=(\\S+)', log).group(1)
+# Runde 5: das echte Gate prüft die Schrittergebnisse gegen die Belege; die Attrappe verlangt sie und vergleicht sie mit
+# FAKE-STEPS (Standard: alle drei grün bzw. beim SIZE-Befund Hauptlauf rot)
+steps = sys.argv[sys.argv.index('--step-conclusions') + 1] if '--step-conclusions' in sys.argv else None
+want = re.search(r'FAKE-STEPS=(\\S+)', log)
+want = want.group(1) if want else ('mutant=success,main=failure,repeat=success' if v == 'ACCEPTED_SIZE_ONLY' else 'mutant=success,main=success,repeat=success')
+if v != 'REJECT' and steps != want:
+    v = 'REJECT'
 print('DEVICE_GATE api=%s verdict=%s' % (sys.argv[3], v))
 sys.exit({'PASS': 0, 'ACCEPTED_SIZE_ONLY': 3, 'INSUFFICIENT_EVIDENCE': 4}.get(v, 1))
 ''')
@@ -49,11 +56,26 @@ def plain(rid, path, sha=SRC):
     return {'id': rid, 'head_sha': sha, 'path': path, 'status': 'completed', 'conclusion': 'success', 'run_attempt': 1, 'event': 'pull_request'}
 
 
+def dev_steps(api, mutant, main, repeat, build='success'):
+    """Runde 5: Schritte eines Emulator-Jobs mit den drei Geräteschritten (Namen aus ci_evidence.DEVICE_STEPS)."""
+    return [{'name': 'Test APKs with a throwaway signer', 'conclusion': build, 'number': 7}] + [
+        {'name': E.DEVICE_STEPS[p] % api, 'conclusion': c, 'number': 10 + k} for k, (p, c) in enumerate(zip(E.DEVICE_PHASES, (mutant, main, repeat)))] + [
+        {'name': 'Collect text-only report (no APK, no keys)', 'conclusion': 'success', 'number': 13}]
+
+
 def job(jid, rid, attempt, api, conclusion='success', status='completed', started=True):
+    """Gerätephasen passend zum Jobergebnis: success = alle grün; failure = Hauptlauf rot (z. B. SIZE auf API 29), die
+    Wiederholungen laufen trotzdem; abgebrochen = Hauptlauf abgebrochen, Wiederholungen übersprungen."""
+    if not started:
+        steps = dev_steps(api, 'skipped', 'skipped', 'skipped', 'skipped')
+    elif conclusion == 'success':
+        steps = dev_steps(api, 'success', 'success', 'success')
+    elif conclusion == 'failure':
+        steps = dev_steps(api, 'success', 'failure', 'success')
+    else:
+        steps = dev_steps(api, 'success', conclusion, 'skipped')
     return {'id': jid, 'run_id': rid, 'run_attempt': attempt, 'name': 'Test package de.evp.helfer.channeltest on a disposable API %d emulator' % api,
-            'status': status, 'conclusion': conclusion, 'started_at': '2026-11-17T10:00:00Z' if started else None,
-            'steps': [{'name': 'Test APKs with a throwaway signer', 'conclusion': 'success' if started else 'skipped'},
-                      {'name': 'Instrumentation on a disposable API %d x86_64 emulator' % api, 'conclusion': (conclusion or None) if started else 'skipped'}]}
+            'status': status, 'conclusion': conclusion, 'started_at': '2026-11-17T10:00:00Z' if started else None, 'steps': steps}
 
 
 CORE = 'Core, JVM channel checks, mutation probes, WASM unchanged'
@@ -277,12 +299,47 @@ case('NO-GO3: push run whose checkout is another commit', lambda r, j, l: (r[3].
 
 case('device step missing in an emulator job', lambda r, j, l: j[(10, 1)][1].update(steps=[{'name': 'x', 'conclusion': 'success'}]))
 case('build failed before the device step, no other evidence for API 26', lambda r, j, l: j[(10, 1)][1].update(
-    conclusion='failure', steps=[{'name': 'Test APKs with a throwaway signer', 'conclusion': 'failure'},
-                                 {'name': 'Instrumentation on a disposable API 26 x86_64 emulator', 'conclusion': 'skipped'}]))
+    conclusion='failure', steps=dev_steps(26, 'skipped', 'skipped', 'skipped', 'failure')))
 case('device step ran and failed (log says REJECT) although an earlier step failed too', lambda r, j, l: (j[(10, 1)][3].update(
-    conclusion='failure', steps=[{'name': 'Test APKs with a throwaway signer', 'conclusion': 'failure'},
-                                 {'name': 'Instrumentation on a disposable API 34 x86_64 emulator', 'conclusion': 'failure'}]),
+    conclusion='failure', steps=dev_steps(34, 'failure', None, None, 'failure')),
     l.update({134: merge_log('REJECT')})))
+
+# ---- Runde 5 (Testisolation): genau drei benannte Geräteschritte, Bedingungslogik, Schrittergebnisse --------------------
+
+
+def steps_of(jidx, steps):
+    return lambda r, j, l: j[(10, 1)][jidx].update(steps=steps)
+
+
+def without(api, phase):
+    return [x for x in dev_steps(api, 'success', 'success', 'success') if x['name'] != E.DEVICE_STEPS[phase] % api]
+
+
+case('R5: device phase repeat missing (API 34 job)', steps_of(3, without(34, 'repeat')))
+case('R5: device phase mutant missing (API 26 job)', steps_of(1, without(26, 'mutant')))
+case('R5: device phase main duplicated', steps_of(3, dev_steps(34, 'success', 'success', 'success')[:3] + dev_steps(34, 'success', 'success', 'success')[2:]))
+case('R5: device phases in swapped order (by step number)', steps_of(3, [dict(x, number={11: 12, 12: 11}.get(x['number'], x['number']))
+                                                                          for x in dev_steps(34, 'success', 'success', 'success')]))
+case('R5: device step renamed (other API in the name)', steps_of(1, [dict(x, name=x['name'].replace('API 26', 'API 34')) for x in dev_steps(26, 'success', 'success', 'success')]))
+case('R5: legacy single device step (all phases on one emulator)', steps_of(3, [{'name': 'Test APKs with a throwaway signer', 'conclusion': 'success'},
+                                                                                 {'name': 'Instrumentation on a disposable API 34 x86_64 emulator', 'conclusion': 'success'}]))
+case('R5: legacy single step next to the three phases', steps_of(3, dev_steps(34, 'success', 'success', 'success') + [
+    {'name': 'Instrumentation on a disposable API 34 x86_64 emulator', 'conclusion': 'success', 'number': 14}]))
+case('R5: job success although the repeat phase was skipped', steps_of(3, dev_steps(34, 'success', 'success', 'skipped')))
+case('R5: job success although the main phase failed', steps_of(3, dev_steps(34, 'success', 'failure', 'success')))
+case('R5: job success although the mutant phase failed (main and repeats green)', steps_of(1, dev_steps(26, 'failure', 'success', 'success')))
+case('R5: main failed, repeats green, job failure (gate rejects the main failure)', lambda r, j, l: (
+    j[(10, 1)][3].update(conclusion='failure', steps=dev_steps(34, 'success', 'failure', 'success')), l.update({134: merge_log('REJECT')})))
+case('R5: main green, repeats failed, job failure (gate rejects the repeat failure)', lambda r, j, l: (
+    j[(10, 1)][3].update(conclusion='failure', steps=dev_steps(34, 'success', 'success', 'failure')), l.update({134: merge_log('REJECT')})))
+case('R5: main ran although the mutant phase failed', lambda r, j, l: j[(10, 1)][3].update(conclusion='failure', steps=dev_steps(34, 'failure', 'success', 'success')))
+case('R5: repeats ran although the main phase was skipped', lambda r, j, l: j[(10, 1)][3].update(conclusion='failure', steps=dev_steps(34, 'success', 'skipped', 'success')))
+case('R5: main skipped after a successful mutant phase (not cancelled)', lambda r, j, l: j[(10, 1)][3].update(conclusion='failure', steps=dev_steps(34, 'success', 'skipped', 'skipped')))
+case('R5: repeats skipped after a main run (not cancelled)', lambda r, j, l: j[(10, 1)][3].update(conclusion='failure', steps=dev_steps(34, 'success', 'failure', 'skipped')))
+case('R5: device step failed but job conclusion success', lambda r, j, l: j[(10, 1)][2].update(steps=dev_steps(29, 'success', 'failure', 'success'), conclusion='success'))
+case('R5: mutant failed, later phases skipped, job failure (gate rejects)', lambda r, j, l: (
+    j[(10, 1)][3].update(conclusion='failure', steps=dev_steps(34, 'failure', 'skipped', 'skipped')), l.update({134: merge_log('REJECT')})))
+case('R5: step results differ from what the gate saw in the log', lambda r, j, l: l.update({126: merge_log('PASS') + 'FAKE-STEPS=mutant=success,main=failure,repeat=success\n'}))
 
 for name, runs, jobs, logs, git, fp, to, cm in CASES:
     ok, why = verdict(runs, jobs, logs, git, fp, to, cm)
@@ -301,8 +358,7 @@ check(ok, 'runs of a commit with different application code are not used as evid
 # die Abdeckung muss aus anderen Läufen kommen.
 runs, jobs, logs = world()
 runs.append(run(21, SRC))
-jobs[(21, 1)] = [other(2100, 21, 1), other(2101, 21, 1, MAC), dict(job(1126, 21, 1, 26, 'failure'), steps=[{'name': 'Test APKs with a throwaway signer', 'conclusion': 'failure'},
-                 {'name': 'Instrumentation on a disposable API 26 x86_64 emulator', 'conclusion': 'skipped'}]),
+jobs[(21, 1)] = [other(2100, 21, 1), other(2101, 21, 1, MAC), dict(job(1126, 21, 1, 26, 'failure'), steps=dev_steps(26, 'skipped', 'skipped', 'skipped', 'failure')),
                  job(1129, 21, 1, 29, 'failure'), job(1134, 21, 1, 34)]
 logs.update({1129: merge_log('ACCEPTED_SIZE_ONLY'), 1134: merge_log('PASS')})
 out = []
@@ -334,8 +390,7 @@ neutral('NO-GO3: required job failed by Maven 429 in an additional run', lambda 
 neutral('NO-GO3: runner lost during the device step without failure evidence', lambda r, j, l: (
     r.append(run(43, SRC)), j.update({(43, 1): [other(4300, 43, 1), other(4301, 43, 1, MAC), job(436, 43, 1, 26),
                                                job(439, 43, 1, 29, 'failure'),
-                                               dict(job(434, 43, 1, 34, 'failure'), steps=[{'name': 'Test APKs with a throwaway signer', 'conclusion': 'success'},
-                                                    {'name': 'Instrumentation on a disposable API 34 x86_64 emulator', 'conclusion': 'cancelled'}])]}),
+                                               dict(job(434, 43, 1, 34, 'failure'), steps=dev_steps(34, 'success', 'cancelled', 'skipped'))]}),
     l.update({436: merge_log('PASS'), 439: merge_log('ACCEPTED_SIZE_ONLY'), 434: merge_log('PASS') + 'DEVICE_READY after 9 s\n'})), 'without failure evidence')
 neutral('NO-GO3: required job cancelled (no failed step) although its self-tests print SURVIVED/FAIL words', lambda r, j, l: (
     r.append(run(44, SRC)), j.update({(44, 1): [other(4400, 44, 1, CORE, 'cancelled'), other(4401, 44, 1, MAC), job(446, 44, 1, 26),
@@ -348,5 +403,25 @@ logs.update({k: merge_log(v, sha=SRC).replace('Merge %s into %s' % (SRC, BASE), 
 ok, why = verdict(runs, jobs, logs)
 check(ok, 'push run whose single checkout is exactly the run commit is positive evidence %s' % (why[:1] or ''))
 
-print('CI_EVIDENCE_SELFTEST %s %d cases, %d failed' % ('FAIL' if fails else 'PASS', len(CASES) + 4 + len(NEUTRAL), len(fails)))
+# Runde 5: Übergabe der Schrittergebnisse an das ECHTE Geräte-Gate (Format --step-conclusions) an echten Fixture-Logs
+REAL_GATE = os.path.join(ROOT, 'tools', 'device_gate.py')
+FXD = os.path.join(ROOT, 'tests', 'gate', 'fixtures')
+for fx, api, concl, dc, want in [
+        ('pass_api34', 34, 'success', {'mutant': 'success', 'main': 'success', 'repeat': 'success'}, 'PASS'),
+        ('size_only_api29', 29, 'failure', {'mutant': 'success', 'main': 'failure', 'repeat': 'success'}, 'ACCEPTED_SIZE_ONLY'),
+        ('size_only_api29', 29, 'failure', {'mutant': 'success', 'main': 'success', 'repeat': 'failure'}, 'REJECT'),
+        ('pass_api34', 34, 'success', {'mutant': 'success', 'main': 'success', 'repeat': None}, 'REJECT'),
+        ('pass_api34', 34, 'success', {'mutant': 'success', 'main': 'success', 'repeat': 'skipped'}, 'REJECT'),
+        ('main_failed_repeats_green_api34', 34, 'failure', {'mutant': 'success', 'main': 'failure', 'repeat': 'success'}, 'REJECT')]:
+    got, detail = E.gate_verdict(REAL_GATE, open(os.path.join(FXD, fx + '.log'), encoding='utf-8').read(), api, concl, TMP, 7, dc)
+    check(got == want, 'real gate with step conclusions: %s %s -> %s (got %s %s)' % (fx, dc, want, got, detail[:80]))
+
+# Runde 5: die Schrittnamen in helper-channel.yml sind genau die erwarteten (Matrix-Ausdruck statt API-Nummer)
+import re  # noqa: E402
+wf = open(os.path.join(ROOT, '.github', 'workflows', 'helper-channel.yml'), encoding='utf-8').read()
+names = re.findall(r'^      - name: (Device phase .*|Instrumentation on a disposable API.*)$', wf, re.M)
+check(names == [E.DEVICE_STEPS[p].replace('%d', '${{ matrix.api }}') for p in E.DEVICE_PHASES],
+      'helper-channel.yml device step names are exactly ci_evidence.DEVICE_STEPS in order %s' % names)
+
+print('CI_EVIDENCE_SELFTEST %s %d cases, %d failed' % ('FAIL' if fails else 'PASS', len(CASES) + 11 + len(NEUTRAL), len(fails)))
 sys.exit(1 if fails else 0)

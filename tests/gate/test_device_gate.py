@@ -26,10 +26,12 @@ for name, api, want in cases:
         print('FAIL %s rejected without a reason' % name)
 
 # Exit-Codes und Auftragsergebnis (Kommandozeile)
-def cli(name, api, conclusion=None):
+def cli(name, api, conclusion=None, steps=None):
     cmd = [sys.executable, '-I', os.path.join(ROOT, 'tools', 'device_gate.py'), os.path.join(FX, name + '.log'), '--api', str(api)]
     if conclusion:
         cmd += ['--job-conclusion', conclusion]
+    if steps is not None:
+        cmd += ['--step-conclusions', steps]
     return subprocess.run(cmd, capture_output=True, text=True).returncode
 
 for name, api, conclusion, want in [('pass_api34', 34, 'success', 0), ('size_only_api29', 29, 'failure', 3),
@@ -41,6 +43,32 @@ for name, api, conclusion, want in [('pass_api34', 34, 'success', 0), ('size_onl
     ok = rc == want
     fails += 0 if ok else 1
     print('%s cli %-20s api=%d conclusion=%s exit=%d (want %d)' % ('PASS' if ok else 'FAIL', name, api, conclusion, rc, want))
+
+# Runde 5: Schrittergebnisse der drei Geräteschritte (GitHub-API) gegen die Belege; übersprungen/abgebrochen nie grün
+OK3 = 'mutant=success,main=success,repeat=success'
+for name, api, conclusion, steps, want in [
+        ('pass_api34', 34, 'success', OK3, 0),
+        ('pass_api34', 34, 'success', 'mutant=success,main=failure,repeat=success', 1),       # Schritt rot, Belege grün
+        ('pass_api34', 34, 'failure', 'mutant=success,main=success,repeat=failure', 1),       # Wiederholungen rot, Belege grün
+        ('pass_api34', 34, 'success', 'mutant=success,main=success,repeat=skipped', 1),       # übersprungen zählt nie
+        ('pass_api34', 34, 'success', 'mutant=cancelled,main=success,repeat=success', 1),     # abgebrochen zählt nie
+        ('pass_api34', 34, 'failure', OK3, 1),                                                # Job rot, alle Schritte grün
+        ('pass_api34', 34, None, 'mutant=success,main=success', 1),                           # Schritt fehlt
+        ('pass_api34', 34, None, OK3 + ',main=success', 1),                                   # Schritt doppelt
+        ('pass_api34', 34, None, 'main=success,mutant=success,repeat=success,extra=success', 1),
+        ('size_only_api29', 29, 'failure', 'mutant=success,main=failure,repeat=success', 3),
+        ('size_only_api29', 29, 'failure', 'mutant=success,main=success,repeat=failure', 1),
+        ('size_only_api29', 29, 'success', OK3, 1),
+        ('size_only_with_class_repeats_api29', 29, 'failure', 'mutant=success,main=failure,repeat=failure', 3),
+        ('size_only_with_class_repeats_api29', 29, 'failure', 'mutant=success,main=failure,repeat=success', 1),
+        ('main_failed_repeats_green_api34', 34, 'failure', 'mutant=success,main=failure,repeat=success', 1),
+        ('main_failed_repeats_green_api34', 34, 'success', OK3, 1),
+        ('main_green_repeats_failed_api34', 34, 'failure', 'mutant=success,main=success,repeat=failure', 1),
+        ('main_green_repeats_failed_api34', 34, 'success', OK3, 1)]:
+    rc = cli(name, api, conclusion, steps)
+    ok = rc == want
+    fails += 0 if ok else 1
+    print('%s cli %-36s api=%d job=%s steps=%s exit=%d (want %d)' % ('PASS' if ok else 'FAIL', name, api, conclusion, steps, rc, want))
 
 # Parser-/Programmfehler im Gate führen immer zur Ablehnung (fail closed)
 for bad_input in [None, 12345, b'GATE-API 34']:
@@ -86,6 +114,11 @@ ok = ('adb logcat -d -b crash > "$REPORT/repeat-crash.txt"' in rep and 'echo "GA
       and rep.index('repeat-crash.txt') > rep.index('run "class-$i"'))
 fails += 0 if ok else 1
 print('%s run-flaky-repeat.sh reads the crash buffer again after all repeat runs' % ('PASS' if ok else 'FAIL'))
+main_sh = open(os.path.join(ROOT, 'tools', 'run-channel-instrumentation.sh'), encoding='utf-8').read()
+ok = ('adb logcat -d -b crash > "$REPORT/crash-after-uninstall.txt"' in main_sh and 'gate_section %s "$REPORT/crash-after-uninstall.txt"' % device_gate.CRASH_AFTER_UNINSTALL in main_sh
+      and main_sh.index('crash-after-uninstall.txt') > main_sh.index('adb uninstall "$PKG" > /dev/null'))
+fails += 0 if ok else 1
+print('%s run-channel-instrumentation.sh reads the crash buffer again after the uninstall (Runde 5)' % ('PASS' if ok else 'FAIL'))
 mut = open(os.path.join(ROOT, 'tools', 'run-channel-publication-regression.sh'), encoding='utf-8').read()
 ok = ("echo '%s'" % device_gate.MUTANT_PASS in mut and 'Cannot remove pending download ownership; last abort: ; store: ;' in mut
       and 'publish rows=|publish threw=|IOException: publish' in mut and mut.index('publish rows=|') < mut.index(device_gate.MUTANT_PASS))
@@ -98,9 +131,28 @@ ok = ([x.split('#')[1] for x in three.split(',')] == device_gate.REPEAT_THREE an
 fails += 0 if ok else 1
 print('%s run-flaky-repeat.sh: three-test runs and class runs match the gate' % ('PASS' if ok else 'FAIL'))
 wf = open(os.path.join(ROOT, '.github', 'workflows', 'helper-channel.yml'), encoding='utf-8').read()
-ok = device_gate.DEVICE_COMMAND[len('[command]/usr/bin/sh -c '):] in wf
+# Runde 5: genau drei Geräteschritte (je ein frischer Emulator) mit genau den gegateten Befehlen, in dieser Reihenfolge
+emu = wf[wf.index('\n  emulator:\n'):]
+steps = re.split(r'\n      - ', emu)
+dev = [st for st in steps if 'android-emulator-runner@' in st]
+want_ids = ['dev_' + p for p in device_gate.PHASES]
+got_ids = [re.search(r'\n        id: (\S+)', st).group(1) if re.search(r'\n        id: (\S+)', st) else None for st in dev]
+scripts = [re.findall(r'\n          script: (.*)', st) for st in dev]
+want_scripts = [[device_gate.DEVICE_COMMANDS[p][len('[command]/usr/bin/sh -c '):]] for p in device_gate.PHASES]
+ok = got_ids == want_ids and scripts == want_scripts
 fails += 0 if ok else 1
-print('%s helper-channel.yml runs exactly the gated device command' % ('PASS' if ok else 'FAIL'))
+print('%s helper-channel.yml: exactly three emulator steps %s running exactly the gated commands' % ('PASS' if ok else 'FAIL', got_ids))
+ok = all(st.count('-wipe-data') == 1 and '-no-snapshot' in st for st in dev) and len(dev) == 3
+fails += 0 if ok else 1
+print('%s helper-channel.yml: every device phase starts a fresh emulator (-wipe-data, -no-snapshot)' % ('PASS' if ok else 'FAIL'))
+conds = [re.findall(r'\n        if: (.*)', st) for st in dev]
+ok = conds == [[], ["steps.dev_mutant.outcome == 'success'"],
+               ["${{ !cancelled() && steps.dev_mutant.outcome == 'success' && (steps.dev_main.outcome == 'success' || steps.dev_main.outcome == 'failure') }}"]]
+fails += 0 if ok else 1
+print('%s helper-channel.yml: main only after a proven mutant, repeats also after a red main, never after cancel/red mutant %s' % ('PASS' if ok else 'FAIL', conds))
+ok = not re.search(r'^\s*continue-on-error:', emu, re.M) and device_gate.LEGACY_DEVICE_COMMAND[len('[command]/usr/bin/sh -c '):] not in wf
+fails += 0 if ok else 1
+print('%s helper-channel.yml: no continue-on-error in the emulator job, legacy single-emulator command gone' % ('PASS' if ok else 'FAIL'))
 
 # Optional: echte, vollständige Job-Logs (Verzeichnis mit <name>-api<N>.log und EXPECTED-Zeilen "<datei> <api> <urteil>")
 if len(sys.argv) > 1:

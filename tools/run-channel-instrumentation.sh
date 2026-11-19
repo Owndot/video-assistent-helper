@@ -3,15 +3,22 @@
 # Kanal-Instrumentierungstests aus, sammelt einen geheimnisfreien Bericht und deinstalliert beide APKs wieder.
 # Ein echtes Gerät wird abgelehnt. Das Produktionspaket de.evp.helfer wird weder installiert noch berührt.
 # Aufruf: tools/run-channel-instrumentation.sh OUT   (OUT/apk aus tools/build-channel-apk.sh)
+# Runde 5 (Testisolation): eigene Gerätephase "main" auf einem frischen Emulator (helper-channel.yml); vorher lief hier
+# auf demselben Gerät die Mutantenprobe samt Deinstallation. Frischenachweis vor der ersten Installation und Besitzbelege
+# des MediaProviders über tools/run-channel-isolation.sh (ein Isolationsbruch macht den Lauf rot).
 set -uo pipefail
 OUT="$(cd "${1:?usage: run-channel-instrumentation.sh OUT}" && pwd)"
 REPORT="$OUT/report"; mkdir -p "$REPORT"
 PKG=de.evp.helfer.channeltest
+# shellcheck source=tools/run-channel-isolation.sh
+. "$(cd "$(dirname "$0")" && pwd)/run-channel-isolation.sh"
 adb wait-for-device
 if [ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" != "1" ] && [ "$(adb shell getprop ro.boot.qemu | tr -d '\r')" != "1" ]; then
   echo "refusing: the connected device is not an emulator" >&2
   exit 2
 fi
+iso_begin main "$REPORT"
+trap iso_stop EXIT
 adb shell getprop ro.build.version.release > "$REPORT/device.txt"
 adb shell getprop ro.build.version.sdk >> "$REPORT/device.txt"
 adb shell getprop ro.product.cpu.abi >> "$REPORT/device.txt"
@@ -22,6 +29,7 @@ for prop in dalvik.vm.heapsize dalvik.vm.heapgrowthlimit qemu.dalvik.vm.heapsize
 done | tee -a "$REPORT/device.txt"
 adb shell pm list packages de.evp.helfer > "$REPORT/packages-before.txt"
 adb logcat -c
+iso_mark install
 adb install -r -t "$OUT/apk/helper-channeltest.apk" > /dev/null
 adb install -r -t "$OUT/apk/helper-channeltest-androidTest.apk" > /dev/null
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS 2>/dev/null || true
@@ -78,6 +86,7 @@ adb logcat -d -b crash > "$REPORT/crash.txt" 2>&1 || true
 adb shell 'cat /proc/net/tcp /proc/net/tcp6 2>/dev/null' | awk '$4=="0A"{print $2}' > "$REPORT/listeners.txt"
 if grep -qi ':BA43$' "$REPORT/listeners.txt"; then echo "LISTENER ON 47811" >> "$REPORT/summary.txt"; status=1; fi
 adb shell pm list packages de.evp.helfer > "$REPORT/packages-during.txt"
+iso_mark uninstall
 adb uninstall "$PKG.test" > /dev/null || true
 adb uninstall "$PKG" > /dev/null || true
 adb shell pm list packages de.evp.helfer > "$REPORT/packages-after.txt"
@@ -89,6 +98,11 @@ if [ -n "$persist" ]; then
 else
   echo "PERSIST_AFTER_UNINSTALL missing" >> "$REPORT/summary.txt"; status=1
 fi
+# Runde 5: Isolationsbeleg dieser Phase (nur ins Job-Log, nie in summary.txt: das Gate bildet dessen Kopie exakt nach)
+iso_end || status=1
+# Runde 5: Crash-Puffer nach Deinstallation und Persistenzprüfung erneut auslesen. Bis Runde 4 deckte diesen Teil der
+# Abschnitt repeat-crash desselben Emulators ab; die Wiederholungen laufen jetzt auf einem eigenen Emulator.
+adb logcat -d -b crash > "$REPORT/crash-after-uninstall.txt" 2>&1 || status=1
 diff -q "$REPORT/packages-before.txt" "$REPORT/packages-after.txt" > /dev/null || { echo "package list changed" >> "$REPORT/summary.txt"; status=1; }
 tail -5 "$REPORT/summary.txt"
 grep -h 'PERSIST_AFTER_UNINSTALL' "$REPORT/summary.txt" || true
@@ -111,5 +125,6 @@ if [ "$PROBE_STATUS" != skipped ]; then gate_section probe "$REPORT/publish-prob
 for mode in force-stop process-replaced; do for ph in A B; do gate_section "restart-$mode-$ph" "$REPORT/restart-$mode-$ph.txt"; done; done
 gate_section restart-summary "$REPORT/restart-summary.txt"
 gate_section crash "$REPORT/crash.txt"
+gate_section crash-after-uninstall "$REPORT/crash-after-uninstall.txt"
 echo "GATE-SCRIPT-STATUS $status"
 exit $status

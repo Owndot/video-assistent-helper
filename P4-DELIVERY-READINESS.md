@@ -4,6 +4,110 @@ Stand 2026-11-17. Codex-Urteil: **CONDITIONAL GO** für eine isolierte Samsung-A
 Diese Vorbereitung behebt die Lieferketten- und Gate-Blocker. **Keine Lieferung gestartet**, beide Freigaben
 geschlossen (`DELIVERY_APPROVAL: 'none'`), Produktion **UNAPPROVED**.
 
+## Runde 5 – Testisolation der Gerätephasen (2026-11-19, maßgeblich vor allem Folgenden)
+
+Lokal umgesetzt, **nicht gepusht, kein CI-Lauf**. Beide Lieferworkflows bleiben `LOCKED`, Freigabe `none`. Unverändert:
+`app/src/main`, Gradle, Signierung, Produktprotokolle, `p4-test-package.yml` und die Diagnose-Branches samt
+Originalbelegen.
+
+**Ursache.** Bis `0f989ca` liefen alle drei Gerätephasen in **einem** Emulator-Schritt hintereinander:
+1. die Mutantenprobe (Installation und Deinstallation von `de.evp.helfer.channeltest` samt `.test`);
+2. der Hauptlauf (Neuinstallation desselben Pakets kurz nach dem Boot, Deinstallation am Ende);
+3. die 22 Wiederholungen (dritte Installation).
+
+Der A/B-Lauf 44405696921 zeigt den Mechanismus. Eine Deinstallation während der `REASON_MOUNTED`-Boot-Scans wird erst
+nach dem Scan verarbeitet. Der MediaProvider verwaist dann die Zeilen der **neu** installierten Variante (im
+Deinstallationsarm „Orphaned 22 items belonging to de.evp.helfer.channeltest“ direkt nach dem Scanende, 3 + 19 Zeilen).
+Die Kontrolle mit `install -r` blieb ohne diese Meldung. Damit sind die API-34-Fehlschläge von `0f989ca` und `be74008`
+(`owner_package_changed` unmittelbar nach Scanende, `publish rows=0`) mit hoher Wahrscheinlichkeit testbedingt. Die
+übrigen API-34-Fehler „IOException: publish“ sind plausibel testbedingt, aber nicht belegt, weil ihre Joblogs keine
+MediaProvider-Zeilen enthalten. Unabhängig offen bleiben die API-29-Befunde (`OutOfMemoryError` in `system_server`,
+16-MiB-Heap) und die drei API-34-Wackelkandidaten bis zu einem isolierten Lauf.
+
+**Regel.** Auf einem Emulator wird kein Testpaket nach einer Deinstallation erneut installiert. Jede Phase läuft auf
+einem eigenen, frisch erzeugten Emulator (neue AVD, `-wipe-data`, `-no-snapshot`). Das ist deterministisch: keine
+Wartezeiten, keine MediaProvider-Synchronisierung, keine Produktänderung.
+
+| Datei | Änderung |
+|---|---|
+| `helper-channel.yml` | Drei Schritte `Device phase 1/3 - publication mutant …`, `2/3 - main instrumentation …` und `3/3 - repeat runs …` (ids `dev_mutant`, `dev_main`, `dev_repeat`). Der Hauptlauf startet nur nach erfolgreicher Mutante. Die Wiederholungen laufen auch nach rotem Hauptlauf, nie nach Abbruch, roter Mutante oder übersprungenem Hauptlauf. Kein `continue-on-error`: Jeder rote Schritt macht den Job rot. Job-Zeitlimit 90 statt 75 min (drei Starts). Der Mutantenbericht kommt in das Textartefakt. |
+| `tools/run-channel-isolation.sh` (neu) | Wird von allen drei Phasenskripten eingebunden; die Belege sind unten beschrieben. |
+| drei Phasenskripte | `iso_begin` vor der ersten Installation, Markierungen für Installation und Deinstallation, `iso_end` nach der Deinstallation. Ein Isolationsbruch macht die Phase rot. Die Wiederholungsphase leert die Puffer vor der Installation, wie bisher der Hauptlauf. Der Crash-Puffer `repeat-crash` umfasst damit die 22 Wiederholungen; Hauptlauf, Sonden und Neustarts deckt weiterhin der Abschnitt `crash` ab. Der Teil nach der Deinstallation des Hauptlaufs lag bisher in `repeat-crash` desselben Emulators und ist jetzt der neue Pflichtabschnitt `crash-after-uninstall` (leer). |
+| `tools/device_gate.py` | Gate je Phase, siehe unten. |
+| `tools/delivery/ci_evidence.py` | Prüfung der drei Geräteschritte, siehe unten. |
+
+**Belege von `tools/run-channel-isolation.sh`:**
+- **`ISOLATION-FRESH`** vor der ersten Installation:
+  - genau ein Gerät im Zustand `device`;
+  - eigene Boot-ID (`/proc/sys/kernel/random/boot_id`);
+  - Paketliste lesbar (`pm list packages -u` mit `package:android`);
+  - beide Testpakete fehlen, auch als „deinstalliert mit Daten“.
+  - Sonst `ISOLATION-FAILED`, Exit 2, keine Installation.
+- **`ISOLATION-OWNER`**: Ein eigener, gefilterter Protokollstrom (`logcat -v epoch -s MediaProvider:V ISOLATION:V`) wird
+  über eigene Markierungen synchronisiert, höchstens 30 s, sonst `stream=incomplete`. Jede Meldung „Orphaned N items
+  belonging to …“ und `owner_package_changed` wird mit Gerätezeit, Phase und Zeitfenster belegt
+  (`before-install`/`measurement`/`after-uninstall`).
+- **`ISOLATION-SUMMARY`**: Zeitfenster, Vollständigkeit des Stroms und Zähler je Fenster.
+  - Eine Verwaisung eines **Testpakets** vor der Installation oder während der Messung ist ein Isolationsbruch.
+  - Nach der eigenen Deinstallation ist sie erwartbar und nur dokumentiert. Es gibt bewusst keine pauschale
+    Null-Bedingung.
+  - Fremde Pakete und `owner_package_changed` werden dokumentiert, aber nicht bewertet.
+
+**Gate je Phase (`tools/device_gate.py`).** Jede Phase ist der Logbereich ab ihrem Gerätebefehl.
+- Genau die drei Befehle in der Reihenfolge mutant, main, repeat. Der frühere Sammelbefehl und jeder weitere
+  `bash tools/`-Gerätebefehl sind REJECT.
+- Je Phase gilt:
+  - genau ein `DEVICE_READY`;
+  - genau ein Frischenachweis vor jeder Testausgabe;
+  - genau eine vollständige Zusammenfassung. Deren Zähler und Fenster werden aus den Besitzbelegen nachgerechnet;
+    API, Boot-ID und monotone Zeiten müssen stimmen.
+- Drei verschiedene Boot-IDs.
+- Alle Ausgaben müssen in ihrer Phase stehen: Mutanten-PASS in mutant; Sondenstatus, `GATE-API`, Abschnitte und
+  Skriptstatus in main; Wiederholungsberichte und `REPEAT` in repeat.
+- Die Fehlerzeilen des Jobs werden je Phase geprüft. Erlaubt ist nur der Exit-Fehler bei P4B-A10-SIZE (API 29) in main
+  bzw. repeat.
+- Neu ist `--step-conclusions`. Damit werden die Schrittergebnisse der API gegen die Belege geprüft:
+  - Übersprungene, abgebrochene oder fehlende Schritte sind nie grün.
+  - Ein roter Hauptlauf wird nie durch grüne Wiederholungen grün.
+  - Ein grüner Job verlangt drei grüne Schritte.
+
+**CI-Evidenz (`tools/delivery/ci_evidence.py`).**
+- Jeder Emulator-Job braucht genau die drei benannten Geräteschritte in Schrittreihenfolge. Fehlend, doppelt,
+  umbenannt, vertauscht oder der alte Sammelschritt sperrt.
+- Die Schrittergebnisse müssen zur Bedingungslogik passen, sonst Sperre:
+  - main nur nach grüner Mutante;
+  - repeat nur nach gelaufenem main;
+  - kein Überspringen ohne Abbruch;
+  - ein grüner Job nur mit drei grünen Schritten;
+  - ein roter Schritt nie in einem grünen Job.
+- Abgebrochene Phasen werden wie bisher klassifiziert und sind nie ein Positivbeleg. Das Gate erhält die
+  Schrittergebnisse.
+- Ersetzt wurden „device step missing or ambiguous“ und „device step … in a successful job“. Die strengeren Nachfolger
+  sind „device steps missing, duplicated, renamed or out of order“ und „device step results contradictory“.
+
+**Regressionen.**
+
+| Prüfung | Stand |
+|---|---|
+| Gate-Fixtures | 148 (bisher 102, alle mit unverändertem Urteil) |
+| neue Gate-CLI-Fälle mit Schrittergebnissen | 18 |
+| `test_isolation_script.py` (neu) | Fake-adb-Test der Bibliothek, auch unter `set -e` |
+| CI-Evidenz | 85 Fälle (alle 50 bisherigen Fälle erhalten) |
+
+**Folgen für eine Lieferung.**
+- `run-channel-instrumentation.sh` und die neue Bibliothek stehen nicht in der Liste der Lieferwerkzeuge (`ALLOWED`
+  bzw. die gleiche Liste in `p4-test-package.yml`). Eine künftige `SOURCE_SHA` muss deshalb diesen Stand oder einen
+  späteren enthalten.
+- Läufe im alten Ein-Emulator-Format sind nie ein Positivbeleg.
+
+**Restrisiken.**
+- Der Protokollstrom beginnt mit dem noch gepufferten Teil seit dem Boot. Ältere, bereits verdrängte Bootmeldungen
+  sind nicht belegbar.
+- Der Wortlaut „Orphaned … belonging to …“ ist am A/B-Lauf (API 34) belegt; auf API 26 gibt es diese Verwaisung nicht.
+- Mehrfacher Start des Emulator-Runners im selben Job auf Port 5554: Ein noch nicht beendeter Vorgänger führt zu
+  `device-count`/Bootfehler (rot, nie grün).
+- Erst ein freigegebener Helper-CI-Lauf zeigt die realen Belege.
+
 ## Runde 4 – Codex NO-GO 3: False-PASS-Lücken geschlossen (2026-11-17, maßgeblich vor allem Folgenden)
 
 Beide Lieferworkflows bleiben `LOCKED` (`DELIVERY_APPROVAL: 'none'`, zusätzlich `LOCK_REVIEWERS: ''`). Keine APK,

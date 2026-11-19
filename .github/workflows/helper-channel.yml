@@ -88,6 +88,7 @@ jobs:
           python3 -I tests/gate/make_fixtures.py
           git diff --exit-code tests/gate/fixtures   # committed fixtures equal the generator
           python3 -I tests/gate/test_device_gate.py
+          python3 -I tests/gate/test_isolation_script.py
       - name: Delivery lock self-test (P4 package workflow stays closed; negative decisions; nothing built or signed)
         run: |
           set -euo pipefail
@@ -131,7 +132,8 @@ jobs:
   emulator:
     name: Test package de.evp.helfer.channeltest on a disposable API ${{ matrix.api }} emulator
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    # Runde 5: drei Emulatorstarts statt einem (Testisolation); ein Zeitablauf ist nie ein Positivbeleg
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -210,7 +212,16 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Instrumentation on a disposable API ${{ matrix.api }} x86_64 emulator
+      # Runde 5 (Testisolation, P4-DELIVERY-READINESS.md): Mutantenprobe, Hauptlauf und Wiederholungen laufen je auf einem
+      # EIGENEN, frisch erzeugten Emulator (neue AVD, -wipe-data). Grund: Eine Deinstallation der Testvariante während der
+      # Boot-Scans kann ein verspätetes PACKAGE_FULLY_REMOVED auslösen, das Zeilen einer danach neu installierten Testvariante
+      # gleichen Namens verwaist (A/B-Lauf 44405696921); bisher liefen alle drei Phasen mit Deinstallation und
+      # Neuinstallation auf einem Gerät. Die Belege (Frische, Besitzänderungen) prüft tools/device_gate.py je Phase.
+      # Kein Schritt hat continue-on-error: jeder rote Schritt macht den Job rot, spätere grüne Schritte ändern daran nichts.
+      # Der Hauptlauf startet nur nach belegter Mutante; die Wiederholungen laufen auch nach einem roten Hauptlauf (Beleg für
+      # das Gate), aber nie nach Abbruch, roter Mutante oder übersprungenem Hauptlauf. Keine Wartezeiten zwischen den Phasen.
+      - name: Device phase 1/3 - publication mutant on a fresh API ${{ matrix.api }} x86_64 emulator
+        id: dev_mutant
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: ${{ matrix.api }}
@@ -225,15 +236,54 @@ jobs:
           disable-animations: true
           # API 37: surfaceflinger stürzte mit swiftshader_indirect ab (Assertion hasReadColorBufferDma der Host-GPU-
           # Emulation, riss system_server mit) – dort Rendering im Gast
-          emulator-options: -no-window -gpu ${{ matrix.api == '37.0' && 'guest' || 'swiftshader_indirect' }} -no-snapshot -noaudio -no-boot-anim -camera-back none
-          # Review P4: Wiederholungen laufen auch nach einem roten Hauptlauf (Beleg für das Gate); Exit bleibt rot, wenn einer scheitert
-          script: bash tools/wait-device-ready.sh && bash tools/run-channel-publication-regression.sh "$RUNNER_TEMP/publication-mutant" && { bash tools/run-channel-instrumentation.sh "$RUNNER_TEMP/a"; s=$?; bash tools/run-flaky-repeat.sh "$RUNNER_TEMP/a" 20 && exit $s; }
+          emulator-options: -no-window -gpu ${{ matrix.api == '37.0' && 'guest' || 'swiftshader_indirect' }} -no-snapshot -wipe-data -noaudio -no-boot-anim -camera-back none
+          script: bash tools/wait-device-ready.sh && bash tools/run-channel-publication-regression.sh "$RUNNER_TEMP/publication-mutant"
+      - name: Device phase 2/3 - main instrumentation on a fresh API ${{ matrix.api }} x86_64 emulator
+        id: dev_main
+        if: steps.dev_mutant.outcome == 'success'
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          # API 37 bootete im Standardlimit (600 s) nicht fertig: mehr Zeit und Arbeitsspeicher (4 Kerne meldeten Boot vor
+          # den Systemdiensten settings/input und wurden wieder entfernt)
+          emulator-boot-timeout: 1200
+          ram-size: ${{ matrix.api == '37.0' && '4096M' || '' }}
+          # API 37: Standard-Datenpartition zu klein für Test-APKs + 64-MiB-Downloads ("not enough space")
+          disk-size: ${{ matrix.api == '37.0' && '8G' || '' }}
+          disable-animations: true
+          # API 37: surfaceflinger stürzte mit swiftshader_indirect ab (Assertion hasReadColorBufferDma der Host-GPU-
+          # Emulation, riss system_server mit) – dort Rendering im Gast
+          emulator-options: -no-window -gpu ${{ matrix.api == '37.0' && 'guest' || 'swiftshader_indirect' }} -no-snapshot -wipe-data -noaudio -no-boot-anim -camera-back none
+          script: bash tools/wait-device-ready.sh && bash tools/run-channel-instrumentation.sh "$RUNNER_TEMP/a"
+      - name: Device phase 3/3 - repeat runs on a fresh API ${{ matrix.api }} x86_64 emulator
+        id: dev_repeat
+        if: ${{ !cancelled() && steps.dev_mutant.outcome == 'success' && (steps.dev_main.outcome == 'success' || steps.dev_main.outcome == 'failure') }}
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          # API 37 bootete im Standardlimit (600 s) nicht fertig: mehr Zeit und Arbeitsspeicher (4 Kerne meldeten Boot vor
+          # den Systemdiensten settings/input und wurden wieder entfernt)
+          emulator-boot-timeout: 1200
+          ram-size: ${{ matrix.api == '37.0' && '4096M' || '' }}
+          # API 37: Standard-Datenpartition zu klein für Test-APKs + 64-MiB-Downloads ("not enough space")
+          disk-size: ${{ matrix.api == '37.0' && '8G' || '' }}
+          disable-animations: true
+          # API 37: surfaceflinger stürzte mit swiftshader_indirect ab (Assertion hasReadColorBufferDma der Host-GPU-
+          # Emulation, riss system_server mit) – dort Rendering im Gast
+          emulator-options: -no-window -gpu ${{ matrix.api == '37.0' && 'guest' || 'swiftshader_indirect' }} -no-snapshot -wipe-data -noaudio -no-boot-anim -camera-back none
+          script: bash tools/wait-device-ready.sh && bash tools/run-flaky-repeat.sh "$RUNNER_TEMP/a" 20
       - name: Collect text-only report (no APK, no keys)
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/out"
           cp "$RUNNER_TEMP"/native.txt "$RUNNER_TEMP"/apk.txt "$RUNNER_TEMP/out/" 2>/dev/null || true
           cp -r "$RUNNER_TEMP/a/report" "$RUNNER_TEMP/out/" 2>/dev/null || true
+          # Runde 5: Bericht der eigenen Mutantenphase (Mutantenbericht, Isolationsrohdaten isolation-mutant/)
+          cp -r "$RUNNER_TEMP/publication-mutant/report" "$RUNNER_TEMP/out/mutant-report" 2>/dev/null || true
           find "$RUNNER_TEMP/out" \( -name '*.apk' -o -name '*.so' -o -name '*.p12' -o -name '*.jks' \) -delete
           ls -R "$RUNNER_TEMP/out"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

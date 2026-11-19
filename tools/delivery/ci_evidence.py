@@ -29,6 +29,12 @@ Regeln (alle müssen gelten, sonst Exit 1):
      der Merge-Commit (Checkout-SHA, per GitHub-API) hat den Lauf-Commit als Elternteil UND exakt dessen Dateibaum.
      Nicht nachweisbar → kein Positivbeleg (fail closed; Fehlschläge zählen trotzdem).
   4. Abdeckung: für API 26, 29 und 34 je mindestens ein Positivbeleg auf gleichem Anwendungscode.
+  5. Runde 5 (Testisolation): Jeder Emulator-Job hat GENAU die drei benannten Geräteschritte (DEVICE_STEPS: mutant, main,
+     repeat, je ein frischer Emulator) in dieser Reihenfolge; fehlend, doppelt, umbenannt, vertauscht oder der frühere
+     Sammelschritt -> Sperre. Die Schrittergebnisse müssen zur Bedingungslogik von helper-channel.yml passen (Hauptlauf nur
+     nach erfolgreicher Mutante, Wiederholungen nur nach gelaufenem Hauptlauf, ein grüner Job nur mit drei grünen
+     Schritten), sonst Sperre; übersprungene/abgebrochene Schritte sind nie ein Positivbeleg. Das Geräte-Gate erhält die
+     Schrittergebnisse (--step-conclusions) und prüft sie gegen die Belege jeder Phase.
 """
 import argparse
 import json
@@ -48,7 +54,14 @@ KNOWN_OTHER = {'Core, JVM channel checks, mutation probes, WASM unchanged',
                'P4 signing path on macOS (stock tools, throwaway key, nothing published)'}
 PLAIN_WORKFLOWS = ['.github/workflows/build.yml', '.github/workflows/browser-tests.yml', '.github/workflows/hls-download.yml']
 CHANNEL = '.github/workflows/helper-channel.yml'
-DEVICE_STEP = 'Instrumentation on a disposable API'
+# Runde 5: drei Geräteschritte je Emulator-Job (Reihenfolge = Phasen des Geräte-Gates). Jeder Schritt, der wie ein
+# Geräteschritt aussieht (auch der frühere Sammelschritt), wird erfasst und muss genau einem erwarteten Namen entsprechen.
+DEVICE_PHASES = ('mutant', 'main', 'repeat')
+DEVICE_STEPS = {'mutant': 'Device phase 1/3 - publication mutant on a fresh API %d x86_64 emulator',
+                'main': 'Device phase 2/3 - main instrumentation on a fresh API %d x86_64 emulator',
+                'repeat': 'Device phase 3/3 - repeat runs on a fresh API %d x86_64 emulator'}
+DEVICE_STEP_LIKE = re.compile(r'^(Device phase|Instrumentation on a disposable API)', re.I)
+NOT_RUN = (None, 'skipped')
 APIS = (26, 29, 34)
 # Codex NO-GO 3 (P1): Pflichtjobs außer den Emulatoren (Core/JVM/Sicherheits-/Mutationsprüfungen, Signierpfad). Ein
 # Positivbeleg eines Laufversuchs zählt nur, wenn ALLE Pflichtjobs dieses Versuchs erfolgreich waren.
@@ -131,11 +144,47 @@ def paged(gh, path, key):
     return items
 
 
-def gate_verdict(gate, log, api, conclusion, tmpdir, job_id):
+def device_steps(steps, api):
+    """Runde 5: -> ({Phase: Schritt}, '') bei genau den drei erwarteten Geräteschritten in dieser Reihenfolge, sonst
+    (None, Grund). Reihenfolge nach Schrittnummer (falls angegeben), sonst nach Listenposition."""
+    steps = list(steps or [])
+    if all(isinstance(x.get('number'), int) for x in steps):
+        steps.sort(key=lambda x: x['number'])
+    like = [x for x in steps if DEVICE_STEP_LIKE.match(x.get('name') or '')]
+    want = [DEVICE_STEPS[p] % api for p in DEVICE_PHASES]
+    got = [x.get('name') for x in like]
+    if got != want:
+        return None, 'found %s, expected %s' % (got, want)
+    return dict(zip(DEVICE_PHASES, like)), ''
+
+
+def step_contradiction(dc, concl):
+    """Runde 5: Schrittergebnisse eines abgeschlossenen (success/failure) Jobs gegen die Bedingungslogik von
+    helper-channel.yml. -> Grund oder ''. Jeder Widerspruch sperrt (fail closed)."""
+    ran = {p: dc[p] in ('success', 'failure') for p in DEVICE_PHASES}
+    if ran['main'] and dc['mutant'] != 'success':
+        return 'main instrumentation ran without a successful mutant phase'
+    if ran['repeat'] and not (dc['mutant'] == 'success' and ran['main']):
+        return 'repeat runs ran without a mutant phase and a main run'
+    if dc['mutant'] == 'success' and not ran['main']:
+        return 'main instrumentation skipped after a successful mutant phase'
+    if ran['main'] and not ran['repeat']:
+        return 'repeat runs skipped after a main run'
+    if concl == 'success' and any(dc[p] != 'success' for p in DEVICE_PHASES):
+        return 'job success although a device step did not succeed'
+    if any(dc[p] == 'failure' for p in DEVICE_PHASES) and concl != 'failure':
+        return 'device step failed but job conclusion %s' % concl
+    return ''
+
+
+def gate_verdict(gate, log, api, conclusion, tmpdir, job_id, step_conclusions=None):
     path = os.path.join(tmpdir, 'gate-job-%d.log' % job_id)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(log)
-    g = subprocess.run([sys.executable, '-I', gate, path, '--api', str(api), '--job-conclusion', conclusion], capture_output=True, text=True)
+    cmd = [sys.executable, '-I', gate, path, '--api', str(api), '--job-conclusion', conclusion]
+    if step_conclusions is not None:
+        cmd += ['--step-conclusions', ','.join('%s=%s' % (p, step_conclusions[p] or 'none') for p in DEVICE_PHASES)]
+    g = subprocess.run(cmd, capture_output=True, text=True)
     m = re.search(r'verdict=(\S+)', g.stdout)
     verdict = m.group(1) if m else 'GATE-ERROR'
     want = {'PASS': 0, 'ACCEPTED_SIZE_ONLY': 3, 'INSUFFICIENT_EVIDENCE': 4, 'REJECT': 1}.get(verdict)
@@ -306,19 +355,22 @@ def evaluate(gh, git, source, workflow_sha, gate, tmpdir, out=print, classifier=
                         if concl == 'skipped' or not started:
                             ignored.append('%s: %s, never started' % (where, concl))
                             continue
-                        dev = [s for s in j.get('steps') or [] if (s.get('name') or '').startswith(DEVICE_STEP)]
-                        if len(dev) != 1:
-                            fails.append('device step missing or ambiguous in %s' % where)
+                        dev, why = device_steps(j.get('steps'), api)
+                        if dev is None:
+                            fails.append('device steps missing, duplicated, renamed or out of order in %s: %s' % (where, why))
                             continue
-                        dstep = dev[0].get('conclusion')
-                        if dstep in (None, 'skipped') and concl != 'success':
+                        dc = {p: dev[p].get('conclusion') for p in DEVICE_PHASES}
+                        if all(dc[p] in NOT_RUN for p in DEVICE_PHASES) and concl != 'success':
                             # Bau/Vorbereitung scheiterte, kein Gerätetest lief: kein Beleg über die App (ausgewiesen)
                             failed = [s.get('name') for s in j.get('steps') or [] if s.get('conclusion') == 'failure']
                             ignored.append('%s: %s before the device step ran (failed step %s) - no device evidence' % (where, concl, failed))
                             continue
-                        if dstep in (None, 'skipped'):
-                            fails.append('device step %s in a successful job (contradictory): %s' % (dstep, where))
-                            continue
+                        aborted = concl not in ('success', 'failure') or any(dc[p] not in NOT_RUN + ('success', 'failure') for p in DEVICE_PHASES)
+                        if not aborted:
+                            bad = step_contradiction(dc, concl)
+                            if bad:
+                                fails.append('device step results contradictory in %s: %s %s' % (where, bad, dc))
+                                continue
                         try:
                             log = gh.log(j['id'])
                         except Exception as e:  # fail closed
@@ -330,7 +382,7 @@ def evaluate(gh, git, source, workflow_sha, gate, tmpdir, out=print, classifier=
                             fails.append('failure classification error for %s: %s' % (where, e))
                             continue
                         block = [e for e in ev if e[0] in blocking]
-                        if concl not in ('success', 'failure') or dstep not in ('success', 'failure'):
+                        if aborted:
                             # abgebrochen/Zeitüberschreitung/Runner-Verlust im Geräteschritt: nie ein Positivbeleg; vorhandene
                             # Fehlerbelege (gleiche Klassifikation wie das Gate) sperren
                             if block:
@@ -340,7 +392,7 @@ def evaluate(gh, git, source, workflow_sha, gate, tmpdir, out=print, classifier=
                             else:
                                 ignored.append('%s: %s without failure evidence (expected mutant run only or nothing) - no evidence' % (where, concl))
                             continue
-                        verdict, detail = gate_verdict(gate, log, api, concl, tmpdir, j['id'])
+                        verdict, detail = gate_verdict(gate, log, api, concl, tmpdir, j['id'], dc)
                         if block and verdict != 'REJECT':
                             fails.append('failure evidence contradicts gate verdict %s in %s: %s' % (verdict, where, block[0][2][:100]))
                             continue
