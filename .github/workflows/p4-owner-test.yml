@@ -24,11 +24,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Geprüfte Quellstände (Endprüfung PR #27)
-  HELPER_SHA: 1fc0063d29de4a88f7a3500ca4894ddaffdcf7ac
-  KADRI_SHA: 7978a41232c3b1582289c53461da4fe63ad28ff9
+  # Diagnose-Testlauf: Helper p4-diag-helper (Fehlerort hlsstart), Kadri p4-diag-kadri (Auswahl, Browser-Vergleich A/B/C)
+  HELPER_SHA: 940b1d4f584821e553ad8aed818494837b2c95db
+  KADRI_SHA: c226cf924a397357cc40362e981cb8cddfcb60e4
   # Inhalts-Prüfsumme der Kadri-P4-Testerweiterung aus KADRI_SHA (sha256 über die sortierten Zeilen "sha256  name")
-  KADRI_CONTENT_SHA256: e87a16fb6e3687d9b4024977db145d4f62052bad66906503a4524a53c1ac030d
+  KADRI_CONTENT_SHA256: 7394342a6a13508a2d49494c487adcee3edd44fca69383a6c9b44c607c4af98c
   KADRI_P4_ID: pcccpjllneffccpenbepmfbkjedllkkf
   NDK_VERSION: 27.2.12479018
 
