@@ -25,10 +25,10 @@ concurrency:
 
 env:
   # Diagnose-Testlauf: Helper p4-diag-helper (Fehlerort hlsstart), Kadri p4-diag-kadri (Auswahl, Browser-Vergleich A/B/C)
-  HELPER_SHA: 940b1d4f584821e553ad8aed818494837b2c95db
-  KADRI_SHA: c226cf924a397357cc40362e981cb8cddfcb60e4
+  HELPER_SHA: e7481808eda7721f4e0fdb242f14ecd546c01cbd
+  KADRI_SHA: c302244db42d87ef66abb5d7547e2d8770950dda
   # Inhalts-Prüfsumme der Kadri-P4-Testerweiterung aus KADRI_SHA (sha256 über die sortierten Zeilen "sha256  name")
-  KADRI_CONTENT_SHA256: 7394342a6a13508a2d49494c487adcee3edd44fca69383a6c9b44c607c4af98c
+  KADRI_CONTENT_SHA256: b6e00416f3ac104ad7126de4458fc9084f93629d2e38eec96fdbd2d18e7acb70
   KADRI_P4_ID: pcccpjllneffccpenbepmfbkjedllkkf
   NDK_VERSION: 27.2.12479018
 
