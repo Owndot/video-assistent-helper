@@ -208,6 +208,13 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         return "{\"ok\":false,\"reason\":\"" + code(reason) + "\"}";
     }
 
+    /** Ersten HTTP-Fehler eines Laufs festhalten (spätere Abbrüche der übrigen Abrufe überschreiben ihn nicht). */
+    private static void failedAt(Job job, HlsException e, String at, int index) {
+        String m = e.getMessage();
+        if (m == null || !m.startsWith("http_")) return;
+        synchronized (job) { if (job.failAt == null) { job.failAt = at; job.failIndex = index; } }
+    }
+
     // Per invocation, memory only. No URL, redirect address, headers, body or identifiers.
     // The entry URL is not necessarily a master: its type is unknown until parsing succeeds.
     private enum PlanPhase { SOURCE_FETCH, SOURCE_PARSE, SOURCE_OPTIONS,
@@ -293,6 +300,12 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         // unterbrochener Auftrag aus der Benachrichtigung fortgesetzt werden kann, solange der Prozess lebt.
         volatile PlanEntry source;
         volatile String sourceOption;
+        // Fehlerort des ersten HTTP-Fehlers im letzten Lauf – nur feste Codes und Positionsnummern (nie Adressen), nur im
+        // Arbeitsspeicher. at: master | video_list | audio_list | video_init | audio_init | video_segment | audio_segment.
+        // Nummern wie in den Listen der Seite: Variante (EXT-X-STREAM-INF), Audiospur (EXT-X-MEDIA TYPE=AUDIO), Segment.
+        String failAt;                 // unter synchronized(job)
+        int failIndex = -1, failVariant = -1, failAudio = -1;
+        volatile boolean initV, initA; // gewählte Listen mit Init-Ressource (EXT-X-MAP) – Ressource 0 ist dann die Init
         Job(String id, File dir, HlsJournal journal) { this.id = id; this.dir = dir; this.journal = journal; }
         boolean userCancelled() { synchronized (this) { return journal.cancelRequested; } }
     }
@@ -672,7 +685,10 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         DownloadStore.Target target = null;
         try {
             if (!store.writable()) throw new Stop(HlsJournal.State.FAILED, "storage_permission");
+            synchronized (job) { job.failAt = null; job.failIndex = -1; job.failVariant = -1; job.failAudio = -1; }
             Chosen c = recheck(job, planEntry, optionId);
+            job.initV = c.video.mapUri != null;
+            job.initA = c.audio != null && c.audio.mapUri != null;
             remember(job, planEntry, optionId, c);   // P2: verschlüsselt, höchstens 6 h, nur die Hauptadresse
             List<String> vRes = c.plan.videoResources, aRes = c.plan.audioResources;
             String shape = shape(job.journal.salt, c);
@@ -795,16 +811,25 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
     /** Listen erneut laden (Master unverändert, gewählte Medienlisten wie im Plan, falls dort vorab geladen). */
     private Chosen recheck(Job job, PlanEntry p, String optionId) throws IOException, HlsException, Stop {
         long deadline = clock.nowMs() + PLAN_DEADLINE_MS;
-        Source src = loadSource(p.sourceUrl, job.cancel, deadline);
-        if (!src.sha.equals(p.masterSha)) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
         int idx = -1;
         for (int i = 0; i < p.options.size(); i++) if (p.options.get(i).id.equals(optionId)) idx = i;
-        // Gleiche Liste (gleicher Hash) → gleiche Optionen in gleicher Reihenfolge; IDs sind je Plan gesalzen.
-        HlsPlan.Option o = src.options.get(idx);
         HlsPlan.Option planned = p.options.get(idx);
-        if (o.variant.index != planned.variant.index || (o.audio == null) != (planned.audio == null)
-            || (o.audio != null && o.audio.index != planned.audio.index)) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
-        Chosen c = choose(src, o, job.cancel, deadline);
+        synchronized (job) { job.failVariant = planned.variant.index; job.failAudio = planned.audio == null ? -1 : planned.audio.index; }
+        PlanTrace trace = new PlanTrace();   // nur für den Fehlerort (welcher Listenabruf), keine Planungsdiagnose
+        Source src;
+        Chosen c;
+        try {
+            src = loadSource(p.sourceUrl, job.cancel, deadline, trace);
+            if (!src.sha.equals(p.masterSha)) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
+            // Gleiche Liste (gleicher Hash) → gleiche Optionen in gleicher Reihenfolge; IDs sind je Plan gesalzen.
+            HlsPlan.Option o = src.options.get(idx);
+            if (o.variant.index != planned.variant.index || (o.audio == null) != (planned.audio == null)
+                || (o.audio != null && o.audio.index != planned.audio.index)) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
+            c = choose(src, o, job.cancel, deadline, trace);
+        } catch (HlsException e) {
+            failedAt(job, e, trace.phase == PlanPhase.VIDEO_FETCH ? "video_list" : trace.phase == PlanPhase.AUDIO_FETCH ? "audio_list" : "master", -1);
+            throw e;
+        }
         String fp = p.fingerprints.get(optionId);
         if (fp != null && !fp.equals(c.plan.fingerprint)) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
         return c;
@@ -873,6 +898,8 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
             got = fetch.resourceVerified(url, part, HlsPlan.MAX_SEGMENT_BYTES);
         } catch (HlsException e) {
             part.delete();
+            boolean withInit = track == 'v' ? job.initV : job.initA, init = withInit && index == 0;
+            failedAt(job, e, (track == 'v' ? "video_" : "audio_") + (init ? "init" : "segment"), init ? -1 : index - (withInit ? 1 : 0));
             if ("cancelled".equals(e.getMessage()) || job.cancel.isCancelled()) checkStop(job);
             throw e;
         } catch (IOException e) {
@@ -1143,9 +1170,12 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         String reason;
         int of;
         int done;
+        String at;
+        int atIndex, atVariant, atAudio;
         synchronized (j) {
             s = j.journal.state; reason = j.journal.reason; of = parts(j.journal);
             done = j.active ? j.done.get() : j.journal.resources.size();
+            at = j.failAt; atIndex = j.failIndex; atVariant = j.failVariant; atAudio = j.failAudio;
         }
         // Ein Endzustand gilt erst, wenn der Arbeiter aufgeräumt hat (wie bei MP4: "beendet" heißt, nichts Unfertiges bleibt).
         String state = j.active || s == HlsJournal.State.PUBLISHING ? "running" : s.name().toLowerCase(Locale.ROOT);
@@ -1156,7 +1186,11 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         return "{\"ok\":true,\"id\":\"" + j.id + "\",\"kind\":\"hls\",\"state\":\"" + state + "\",\"bytes\":" + bytes + ",\"total\":"
             + (fin ? j.journal.total : -1) + ",\"done\":" + done + ",\"of\":" + of
             + ",\"phase\":\"" + (j.active ? j.phase.name().toLowerCase(Locale.ROOT) : "") + "\",\"reason\":\"" + code(reason) + "\""
-            + (j.active && j.wait != de.evp.helfer.dl.Retry.Wait.NONE ? ",\"wait\":\"" + (j.wait == de.evp.helfer.dl.Retry.Wait.OFFLINE ? "offline" : "retry") + "\"" : "") + "}";
+            + (j.active && j.wait != de.evp.helfer.dl.Retry.Wait.NONE ? ",\"wait\":\"" + (j.wait == de.evp.helfer.dl.Retry.Wait.OFFLINE ? "offline" : "retry") + "\"" : "")
+            // Fehlerort nur bei unterbrochenem/fehlgeschlagenem Auftrag mit HTTP-Grund: feste Codes und Positionsnummern
+            + (!j.active && at != null && code(reason).startsWith("http_") && (s == HlsJournal.State.INTERRUPTED || s == HlsJournal.State.FAILED)
+                ? ",\"at\":\"" + at + "\",\"at_index\":" + atIndex + ",\"at_variant\":" + atVariant + ",\"at_audio\":" + atAudio : "")
+            + "}";
     }
 
     private static String busy(String id) { return "{\"ok\":false,\"id\":\"" + id + "\",\"state\":\"busy\"}"; }

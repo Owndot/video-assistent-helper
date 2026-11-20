@@ -431,6 +431,7 @@ public final class TestHlsEngine {
             progressDisplay(s);
             vault(s);
             plans(s);
+            startFailLocation(s);
             resume(s);
             autoResume(s);
             crashes(s);
@@ -752,6 +753,47 @@ public final class TestHlsEngine {
         String bad = r.engine.plan(PEER, BIND, "http://127.0.0.1:" + s.port + "/dyn/ts_sep/missing.m3u8?t=T1");
         check("Plan: fehlende Liste → neutraler Grund ohne Adresse", "false".equals(field(bad, "ok")) && !bad.contains("127.0.0.1"), bad);
         planDiagnostics(s);
+    }
+
+    /** hlsstart: Ort des ersten HTTP-Fehlers – Hauptliste, Medienliste, Init oder Segment – nur als feste Codes/Nummern. */
+    static void startFailLocation(Server s) throws Exception {
+        Rig r = new Rig("start-fail-location", s);
+        String[][] cases = {
+            {"ts_sep", "master.m3u8", "master", "-1"}, {"ts_sep", "v0.m3u8", "video_list", "-1"}, {"ts_sep", "v1.m3u8", "audio_list", "-1"},
+            {"ts_sep", "s0_002.ts", "video_segment", "2"}, {"ts_sep", "s1_001.ts", "audio_segment", "1"},
+            {"fmp4_sep", "init_0.mp4", "video_init", "-1"}, {"fmp4_sep", "init_1.mp4", "audio_init", "-1"},
+            {"fmp4_sep", "s0_001.m4s", "video_segment", "1"}, {"fmp4_sep", "s1_000.m4s", "audio_segment", "0"},
+        };
+        for (String[] c : cases) {
+            s.reset();
+            String p = r.engine.plan(PEER, BIND, s.url(c[0], "master.m3u8"));
+            check("Fehlerort " + c[1] + ": Plan ok", "true".equals(field(p, "ok")), p);
+            s.failPath = c[0] + "/" + c[1]; s.failStatus = 403;
+            String id = newId();
+            r.engine.start(PEER, BIND, id, field(p, "planId"), firstOption(p), "x");
+            String st = await(r.engine, id, "done", "failed", "interrupted", "cancelled");
+            check("Fehlerort " + c[0] + "/" + c[1] + ": unterbrochen, http_403, Ort " + c[2] + " Nummer " + c[3],
+                "interrupted".equals(field(st, "state")) && "http_403".equals(field(st, "reason")) && c[2].equals(field(st, "at"))
+                && c[3].equals(field(st, "at_index")) && "0".equals(field(st, "at_variant")) && "0".equals(field(st, "at_audio")), st);
+            String bare = st.replace("\"reason\":\"http_403\"", "");
+            check("Fehlerort " + c[1] + ": Status ohne Adresse, Token oder Dateiname",
+                !bare.contains("127.0.0.1") && !bare.contains("http") && !bare.contains("t=T") && !bare.contains("dyn") && !bare.contains(c[1])
+                && !bare.contains(".m3u8") && !bare.contains(".ts") && !bare.contains(".m4s") && !bare.contains(".mp4"), st);
+            check("Fehlerort " + c[1] + ": nichts veröffentlicht", r.store.files().length == 0, st);
+            r.engine.cancel(id);
+            await(r.engine, id, "cancelled", "done", "failed");
+            String after = r.engine.status(id);
+            check("Fehlerort " + c[1] + ": nach Abbruch kein Fehlerort mehr", field(after, "at") == null, after);
+        }
+        s.reset();
+        String ok = r.engine.status(newId());
+        check("Unbekannter Auftrag: kein Fehlerort", field(ok, "at") == null, ok);
+        String p = r.engine.plan(PEER, BIND, s.url("ts_sep", "master.m3u8"));
+        String id = newId();
+        r.engine.start(PEER, BIND, id, field(p, "planId"), firstOption(p), "x");
+        String st = await(r.engine, id, "done", "failed", "interrupted", "cancelled");
+        check("Erfolg nach Plan: done ohne Fehlerort", "done".equals(field(st, "state")) && field(st, "at") == null, st);
+        check("Fehlerort-Tests: keine Credentials gesendet", s.leaks.isEmpty(), s.leaks);
     }
 
     static void planDiagnostics(Server s) throws Exception {
