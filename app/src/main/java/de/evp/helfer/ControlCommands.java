@@ -5,6 +5,8 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 
+import de.evp.helfer.net.RequestContext;
+
 /**
  * Steuerbefehle des sicheren Kanals (nur Steuerung, keine URLs, Cookies oder Medien).
  *
@@ -25,6 +27,11 @@ import java.nio.charset.StandardCharsets;
  * RFC-3986-Zeichen (keine Leerzeichen, Anführungszeichen, Backslashes, Steuerzeichen), der Name ohne
  * Anführungszeichen, Backslashes und Steuerzeichen. Die Antworten nennen nie die URL.
  *
+ * Anfragekontext (nur bei dlstart und hlsplan, je optional): "ref" = Herkunft der Seite als Referer
+ * ({@code http(s)://host[:port]/}, ohne Pfad, Query oder Zugangsdaten) und "ua" = User-Agent des Browsers
+ * ({@code Mozilla/5.0 (…}, druckbares ASCII). Streng geprüft ({@link RequestContext}), sonst wird die Anfrage abgelehnt.
+ * Gilt nur für diesen Auftrag; Cookies und Authorization gibt es weiterhin nicht.
+ *
  * Ohne Android-Typen, damit dieselbe Prüfung auch auf dem Desktop-JVM getestet wird.
  */
 public final class ControlCommands {
@@ -40,6 +47,8 @@ public final class ControlCommands {
     /** Direkte Downloads (HelferService: Mp4Downloads). Antworten sind JSON ohne URL. */
     public interface DownloadControl {
         String start(String id, String url, String name);
+        /** Mit Anfragekontext des Auftrags (Referer der Seitenherkunft, Browser-User-Agent); ohne Unterstützung wie oben. */
+        default String start(String id, String url, String name, RequestContext context) { return start(id, url, name); }
         String status(String id);
         String cancel(String id);
     }
@@ -50,6 +59,8 @@ public final class ControlCommands {
      */
     public interface HlsControl {
         String plan(byte[] peer, String bind, String url);
+        /** Mit Anfragekontext für alle Abrufe dieses Plans und seiner Aufträge; ohne Unterstützung wie oben. */
+        default String plan(byte[] peer, String bind, String url, RequestContext context) { return plan(peer, bind, url); }
         String start(byte[] peer, String bind, String id, String planId, String option, String name);
         boolean knows(String id);
         String status(String id);
@@ -81,7 +92,7 @@ public final class ControlCommands {
         catch (IllegalArgumentException invalid) { return REJECTED; }
         if (r.op.startsWith("hls")) {
             if (hls == null || downloads == null || peer == null) return REJECTED;
-            if (r.op.equals("hlsplan")) return hls.plan(peer, r.bind, r.url);
+            if (r.op.equals("hlsplan")) return hls.plan(peer, r.bind, r.url, r.context);
             if (hls.knows(r.id)) return hls.start(peer, r.bind, r.id, r.planId, r.option, r.name);
             if (!downloads.status(r.id).contains("\"state\":\"unknown\"")) return "{\"ok\":false,\"id\":\"" + r.id + "\",\"state\":\"rejected\",\"reason\":\"id_in_use\"}";
             return hls.start(peer, r.bind, r.id, r.planId, r.option, r.name);
@@ -90,7 +101,7 @@ public final class ControlCommands {
             if (downloads == null) return REJECTED;
             boolean isHls = hls != null && hls.knows(r.id);
             switch (r.op) {
-                case "dlstart": return isHls ? hls.status(r.id) : downloads.start(r.id, r.url, r.name);
+                case "dlstart": return isHls ? hls.status(r.id) : downloads.start(r.id, r.url, r.name, r.context);
                 case "dlstatus": return isHls ? hls.status(r.id) : downloads.status(r.id);
                 case "dlcancel": return isHls ? hls.cancel(r.id) : downloads.cancel(r.id);
                 default: return REJECTED;   // unerreichbar
@@ -116,12 +127,13 @@ public final class ControlCommands {
 
     /**
      * Wie oben; {@code hlsOpus} nicht null: der Helfer kann HLS-VOD speichern (P4b) – dann zusätzlich
-     * {@code "hls":{"v":1,"profiles":["ts-avc-aac","fmp4-avc-aac"],"opus":<bool>}}. Alte Helfer melden nichts.
+     * {@code "hls":{"v":1,"profiles":["ts-avc-aac","fmp4-avc-aac"],"opus":<bool>,"ctx":1}}. Alte Helfer melden nichts.
+     * {@code "ctx":1}: dlstart und hlsplan nehmen den Anfragekontext ("ref", "ua") an; ohne das Feld sendet Kadri ihn nicht.
      */
     public static String statusJson(String appVersion, boolean overlay, boolean write, int volStep, int volMax, float bright, Boolean hlsOpus) {
         String base = statusJsonBase(appVersion, overlay, write, volStep, volMax, bright);
         if (hlsOpus == null) return base;
-        return base.substring(0, base.length() - 1) + ",\"hls\":{\"v\":1,\"profiles\":[\"ts-avc-aac\",\"fmp4-avc-aac\"],\"opus\":" + hlsOpus + "}}";
+        return base.substring(0, base.length() - 1) + ",\"hls\":{\"v\":1,\"profiles\":[\"ts-avc-aac\",\"fmp4-avc-aac\"],\"opus\":" + hlsOpus + ",\"ctx\":1}}";
     }
 
     private static String statusJsonBase(String appVersion, boolean overlay, boolean write, int volStep, int volMax, float bright) {
@@ -138,6 +150,7 @@ public final class ControlCommands {
         final String op; final boolean hasValue; final double value;
         final String id, url, name;   // nur Download-Befehle
         String planId, option, bind;  // nur HLS
+        RequestContext context = RequestContext.NONE;   // nur dlstart/hlsplan
         Request(String op, boolean hasValue, double value) { this(op, hasValue, value, null, null, null); }
         Request(String op, boolean hasValue, double value, String id, String url, String name) {
             this.op = op; this.hasValue = hasValue; this.value = value; this.id = id; this.url = url; this.name = name;
@@ -154,7 +167,7 @@ public final class ControlCommands {
         } catch (CharacterCodingException e) { throw new IllegalArgumentException("utf-8"); }
         Parser p = new Parser(s);
         String op = null; boolean hasValue = false; double value = 0;
-        String id = null, url = null, name = null, planId = null, option = null, bind = null;
+        String id = null, url = null, name = null, planId = null, option = null, bind = null, ref = null, ua = null;
         p.expect('{');
         boolean first = true;
         while (true) {
@@ -184,6 +197,12 @@ public final class ControlCommands {
             } else if ("option".equals(key)) {
                 if (option != null) throw new IllegalArgumentException("duplicate option");
                 option = p.hex(24);
+            } else if ("ref".equals(key)) {
+                if (ref != null) throw new IllegalArgumentException("duplicate ref");
+                ref = p.printable(300);
+            } else if ("ua".equals(key)) {
+                if (ua != null) throw new IllegalArgumentException("duplicate ua");
+                ua = p.printable(512);
             } else if ("bind".equals(key)) {
                 if (bind != null) throw new IllegalArgumentException("duplicate bind");
                 bind = p.bind();
@@ -193,6 +212,12 @@ public final class ControlCommands {
         p.ws();
         if (p.pos != s.length()) throw new IllegalArgumentException("trailing");
         if (op == null) throw new IllegalArgumentException("op missing");
+        // Referer/User-Agent nur beim Anlegen eines Auftrags (dlstart, hlsplan); streng geprüft, sonst abgelehnt
+        RequestContext context = RequestContext.NONE;
+        if (ref != null || ua != null) {
+            if (!"dlstart".equals(op) && !"hlsplan".equals(op)) throw new IllegalArgumentException("context field");
+            context = RequestContext.of(ref, ua);
+        }
         if (op.equals("hlsplan") || op.equals("hlsstart")) {
             // Versioniert: genau v:1. hlsplan {op,v,url,bind}; hlsstart {op,v,id,planId,option,bind[,name]}
             if (!hasValue || value != 1.0 || bind == null) throw new IllegalArgumentException("hls fields");
@@ -200,6 +225,7 @@ public final class ControlCommands {
             if (op.equals("hlsplan")) {
                 if (url == null || id != null || name != null || planId != null || option != null) throw new IllegalArgumentException("hls fields");
                 r = new Request(op, true, 1, null, url, null);
+                r.context = context;
             } else {
                 if (url != null || id == null || planId == null || option == null) throw new IllegalArgumentException("hls fields");
                 if (raw.length > 1024) throw new IllegalArgumentException("size");
@@ -215,7 +241,9 @@ public final class ControlCommands {
             if (hasValue || id == null) throw new IllegalArgumentException("download fields");
             if (op.equals("dlstart") ? url == null : (url != null || name != null)) throw new IllegalArgumentException("download fields");
             if (!op.equals("dlstart") && raw.length > MAX_REQUEST) throw new IllegalArgumentException("size");
-            return new Request(op, false, 0, id, url, name);
+            Request d = new Request(op, false, 0, id, url, name);
+            d.context = context;
+            return d;
         }
         if (raw.length > MAX_REQUEST) throw new IllegalArgumentException("size");
         switch (op) {
@@ -333,6 +361,20 @@ public final class ControlCommands {
                 pos++;
             }
             if (pos - start != 32) throw new IllegalArgumentException("id length");
+            pos++;
+            return s.substring(start, pos - 1);
+        }
+        /** Druckbares ASCII ohne Anführungszeichen und Backslash (keine Escapes), 1…max Zeichen; Inhalt prüft der Aufrufer. */
+        String printable(int max) {
+            expect('"');
+            int start = pos;
+            while (peek() != '"') {
+                char c = s.charAt(pos);
+                if (c < 0x20 || c > 0x7e || c == '\\') throw new IllegalArgumentException("printable");
+                if (pos - start >= max) throw new IllegalArgumentException("printable length");
+                pos++;
+            }
+            if (pos == start) throw new IllegalArgumentException("printable empty");
             pos++;
             return s.substring(start, pos - 1);
         }

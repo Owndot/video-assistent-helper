@@ -1,6 +1,7 @@
 package de.evp.helfer.hls;
 
 import de.evp.helfer.net.NetBlockedException;
+import de.evp.helfer.net.RequestContext;
 import de.evp.helfer.net.SafeHttpClient;
 import de.evp.helfer.net.SafeResponse;
 
@@ -27,10 +28,14 @@ public final class HlsFetch {
 
     private final SafeHttpClient http;
     private final SafeHttpClient.Cancellation cancel;
+    private final RequestContext context;   // Referer/User-Agent des Auftrags für Listen, Init und Segmente
 
-    public HlsFetch(SafeHttpClient http, SafeHttpClient.Cancellation cancel) {
+    public HlsFetch(SafeHttpClient http, SafeHttpClient.Cancellation cancel) { this(http, cancel, RequestContext.NONE); }
+
+    public HlsFetch(SafeHttpClient http, SafeHttpClient.Cancellation cancel, RequestContext context) {
         this.http = http;
         this.cancel = cancel;
+        this.context = context == null ? RequestContext.NONE : context;
     }
 
     /** Playlisttext und tatsächliche finale Adresse (nach geprüften Weiterleitungen). */
@@ -42,7 +47,7 @@ public final class HlsFetch {
 
     public Text manifest(String url) throws IOException, HlsException {
         HlsUri.check(url, "manifest");
-        try (SafeResponse r = http.get(url, -1, -1, HlsPlaylist.MAX_MANIFEST_BYTES + 1L, MANIFEST_TIMEOUT_MS, cancel)) {
+        try (SafeResponse r = http.get(url, -1, -1, null, HlsPlaylist.MAX_MANIFEST_BYTES + 1L, MANIFEST_TIMEOUT_MS, cancel, context)) {
             if (r.code() != 200) throw new HlsException("http_" + r.code());
             if (r.contentEncoding() != null && !"identity".equalsIgnoreCase(r.contentEncoding())) throw new HlsException("encoding");
             if (r.contentLength() > HlsPlaylist.MAX_MANIFEST_BYTES) throw new HlsException("manifest-size");
@@ -84,7 +89,7 @@ public final class HlsFetch {
         if (maxBytes <= 0 || maxBytes > HlsPlan.MAX_SEGMENT_BYTES) throw new HlsException("limits");
         SafeResponse resp;
         try {
-            resp = http.get(url, -1, -1, maxBytes + 1, SEGMENT_TIMEOUT_MS, cancel);
+            resp = http.get(url, -1, -1, null, maxBytes + 1, SEGMENT_TIMEOUT_MS, cancel, context);
         } catch (NetBlockedException e) {
             if (e.reason == NetBlockedException.Reason.BODY_TOO_LARGE) throw new HlsException("segment-size");
             throw e;
@@ -131,7 +136,7 @@ public final class HlsFetch {
     public boolean unchanged(String url, long length, String strongEtag) throws IOException, HlsException {
         HlsUri.check(url, "resource");
         if (!SafeHttpClient.isStrongEtag(strongEtag) || length <= 0) return false;
-        try (SafeResponse r = http.get(url, 0, 0, strongEtag, 1, MANIFEST_TIMEOUT_MS, cancel)) {
+        try (SafeResponse r = http.get(url, 0, 0, strongEtag, 1, MANIFEST_TIMEOUT_MS, cancel, context)) {
             if (r.code() != 206) return false;
             if (r.contentEncoding() != null && !"identity".equalsIgnoreCase(r.contentEncoding())) return false;
             String cr = r.contentRange();

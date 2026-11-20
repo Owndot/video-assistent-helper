@@ -24,6 +24,7 @@ javac -Xlint:all -Werror --release 17 -d "$OUT/classes" \
   "$APP/poc/Core.java" \
   "$APP/de/evp/helfer/ChannelServer.java" \
   "$APP/de/evp/helfer/ControlCommands.java" \
+  "$APP/de/evp/helfer/net/RequestContext.java" \
   "$APP/de/evp/helfer/HttpRequestReader.java" \
   "$APP/de/evp/helfer/SnapshotWriter.java" \
   "$ROOT/app/src/androidTestChanneltest/java/poc/TestInitiator.java"

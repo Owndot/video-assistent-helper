@@ -20,6 +20,7 @@ import java.util.regex.Pattern;
 
 import de.evp.helfer.ControlCommands;
 import de.evp.helfer.net.NetBlockedException;
+import de.evp.helfer.net.RequestContext;
 import de.evp.helfer.net.SafeHttpClient;
 import de.evp.helfer.net.SafeResponse;
 
@@ -82,6 +83,8 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         volatile String expectEtag;
         volatile long expectTotal = -1;
         final SafeHttpClient.Cancellation cancel = new SafeHttpClient.Cancellation();
+        // Anfragekontext dieses Auftrags (Referer der Seitenherkunft, Browser-User-Agent) – nie Cookies/Authorization
+        volatile RequestContext context = RequestContext.NONE;
         Job(String id, String title) { this.id = id; this.title = title; }
     }
 
@@ -160,7 +163,9 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
 
     // ------------------------------------------------------------------ Befehle (DownloadControl)
 
-    @Override public String start(String id, String url, String name) {
+    @Override public String start(String id, String url, String name) { return start(id, url, name, RequestContext.NONE); }
+
+    @Override public String start(String id, String url, String name, RequestContext context) {
         Job job;
         synchronized (this) {
             Job known = jobs.get(id);
@@ -168,6 +173,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             if (stopped) return busy(id);
             if (running.get() >= MAX_PARALLEL || !slots.tryAcquireWithConnection()) return busy(id);
             job = new Job(id, displayTitle(name));
+            job.context = context == null ? RequestContext.NONE : context;
             jobs.put(id, job);
             running.incrementAndGet();
             try {
@@ -225,6 +231,12 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         }
     }
 
+    /** Gleicher Host (Kleinschreibung, ohne Port) – nur dann darf der Referer bei der Fortsetzung mit. */
+    static boolean sameHost(String a, String b) {
+        try { return new java.net.URI(a).getHost().equalsIgnoreCase(new java.net.URI(b).getHost()); }
+        catch (java.net.URISyntaxException | RuntimeException e) { return false; }
+    }
+
     private static String b64(String s) { return Base64.getUrlEncoder().withoutPadding().encodeToString(s.getBytes(StandardCharsets.UTF_8)); }
     private static String unb64(String s) { return new String(Base64.getUrlDecoder().decode(s), StandardCharsets.UTF_8); }
 
@@ -233,7 +245,9 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         SourceVault v = vault;
         if (v == null || job.cancel.isCancelled()) return;
         if (etag == null) { v.delete(job.id); return; }
-        v.put(job.id, "mp4", url, b64(etag) + "|" + total + "|" + b64(job.title));
+        RequestContext c = job.context;
+        v.put(job.id, "mp4", url, b64(etag) + "|" + total + "|" + b64(job.title) + "|" + b64(c.referer == null ? "" : c.referer)
+            + "|" + b64(c.userAgent == null ? "" : c.userAgent));
     }
 
     private void forget(String id) {
@@ -268,8 +282,12 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
             String[] b = e.binding.split("\\|", -1);
             Job job;
             try {
-                if (b.length != 3) throw new IllegalArgumentException("binding");
+                if (b.length != 3 && b.length != 5) throw new IllegalArgumentException("binding");
                 job = new Job(id, displayTitle(unb64(b[2])));
+                if (b.length == 5) {
+                    String r = unb64(b[3]), a = unb64(b[4]);
+                    job.context = RequestContext.of(r.isEmpty() ? null : r, a.isEmpty() ? null : a);
+                }
                 job.expectEtag = unb64(b[0]);
                 job.expectTotal = Long.parseLong(b[1]);
             } catch (IllegalArgumentException bad) { v.delete(id); continue; }
@@ -388,7 +406,8 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
                         // If-Range: der Server liefert 206 nur für dieselbe Darstellung, sonst 200 (dann Fehler, nie Mischen).
                         // Grenze = Gesamtlänge: eine falsche Antwort (200 statt 206) wird so von checkResume benannt.
                         try {
-                            response = http.get(finalUrl, job.bytes, total - 1, etag, total, callTimeoutMs, job.cancel);
+                            response = http.get(finalUrl, job.bytes, total - 1, etag, total, callTimeoutMs, job.cancel,
+                                sameHost(finalUrl, url) ? job.context : job.context.withoutReferer());
                         } catch (NetBlockedException blocked) {
                             throw blocked;
                         } catch (IOException again) {
@@ -487,7 +506,7 @@ public final class DirectDownloads implements ControlCommands.DownloadControl {
         for (int attempt = 0; ; attempt++) {
             SafeResponse r;
             try {
-                r = http.get(url, -1, -1, MAX_FILE_BYTES, callTimeoutMs, job.cancel);
+                r = http.get(url, -1, -1, null, MAX_FILE_BYTES, callTimeoutMs, job.cancel, job.context);
             } catch (NetBlockedException blocked) {
                 throw blocked;
             } catch (IOException e) {

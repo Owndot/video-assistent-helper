@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import de.evp.helfer.net.LocalTestClients;
+import de.evp.helfer.net.RequestContext;
 import de.evp.helfer.net.SafeHttpClient;
 
 /**
@@ -393,6 +394,7 @@ public final class TestDirectDownloads {
         check("P4c-3: failure classes are distinguishable (storage commit, progress listener, real network cut)", TestDirectDownloads::failureClasses);
         check("P1: every job ends and frees its slot despite failing cleanup (response/output close, abort, journal, wake lock, listener, after publish, Error)", TestDirectDownloads::cleanupFailures);
         check("P4c-3 P2: encrypted source – resume after process end, changed file, cancel, no strong ETag, expiry", TestDirectDownloads::vault);
+        check("Referer: server 404 without, 200 with page origin; resume and stored resume keep it; cross-host redirect drops it; public files unchanged", TestDirectDownloads::refererRequired);
         System.out.println("dl tests: " + passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
     }
@@ -1772,5 +1774,121 @@ public final class TestDirectDownloads {
             expect(store.created.get() == 1 && store.aborted.get() == 1 && store.committed.get() == 0, "aborted");
             store.expectEmpty();
         }
+    }
+
+    // ------------------------------------------------------------------ Referer der Seitenherkunft (Server verlangt ihn)
+
+    static final String PAGE = "http://site.example/";
+    static final String BROWSER_UA = "Mozilla/5.0 (Linux; Android 15; SM-S931B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36";
+
+    /** Wie ein CDN mit Hotlink-Schutz: ohne den Referer der Seitenherkunft 404, sonst die Datei (mit Abbruch-Option). */
+    static void guarded(Req r, OutputStream out, long total, String etag, long cutAt) throws IOException {
+        if (!PAGE.equals(r.header("referer"))) { head(out, "404 Not Found", "Content-Length: 0"); return; }
+        serveFile(r, out, total, etag, cutAt);
+    }
+
+    static void refererRequired() throws Exception {
+        long total = 3L << 20;
+        RequestContext ctx = RequestContext.of(PAGE, BROWSER_UA);
+        // 1) ohne Kontext (bisheriger Weg): 404, genau ein Abruf, nichts gespeichert, Helfer-UA, kein Referer
+        try (Server srv = new Server((r, out, i) -> guarded(r, out, total, "\"g\"", -1))) {
+            DirStore store = new DirStore("referer-none");
+            expect(run(srv, store, "/v.mp4").equals("failed:http_404"), "without referer must be 404");
+            expect(srv.requests.get() == 1 && srv.seen.get(0).header("referer") == null, "no referer without context");
+            expect(srv.seen.get(0).header("user-agent").startsWith("Helper/"), "helper UA without context");
+            store.expectEmpty();
+        }
+        // 2) mit Kontext: 200, Datei exakt; Unterbrechung -> Fortsetzung mit Range/If-Range UND Referer; nie Cookie/Authorization
+        try (Server srv = new Server((r, out, i) -> guarded(r, out, total, "\"g\"", i == 0 ? 1 << 20 : -1))) {
+            DirStore store = new DirStore("referer-ok");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            String id = newId();
+            d.start(id, srv.url("/v.mp4?sig=x"), "Clip", ctx);
+            expect(ev.await(id, 60_000).equals("done"), "with referer: " + ev.finished.get(id));
+            d.stopAll();
+            expect(srv.requests.get() == 2 && srv.seen.get(1).header("range") != null, "resumed once: " + srv.requests.get());
+            for (Req r : srv.seen) {
+                expect(PAGE.equals(r.header("referer")), "referer on every request: " + r.header("referer"));
+                expect(BROWSER_UA.equals(r.header("user-agent")), "browser UA on every request");
+                expect(r.header("cookie") == null && r.header("authorization") == null, "no credentials");
+            }
+            expect(java.util.Arrays.equals(fileSha(store.only()), expectedSha(total)), "sha-256");
+        }
+        // 3) Weiterleitung auf einen anderen Host: dort ohne Referer (UA bleibt); Fortsetzung am Ziel ebenfalls ohne Referer
+        try (Server srv = new Server((r, out, i) -> {
+            String host = r.header("host");
+            if (r.line.contains("/hop")) { guardedRedirect(r, out, "http://cdn.example:" + host.substring(host.indexOf(':') + 1) + "/v.mp4"); return; }
+            serveFile(r, out, total, "\"x\"", r.rangeStart() < 0 ? 1 << 20 : -1);   // anderer Host verlangt keinen Referer
+        })) {
+            DirStore store = new DirStore("referer-cross");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            String id = newId();
+            d.start(id, srv.url("/hop"), "Clip", ctx);
+            expect(ev.await(id, 60_000).equals("done"), "cross-host: " + ev.finished.get(id));
+            d.stopAll();
+            expect(srv.requests.get() == 3, "hop, target, resume: " + srv.requests.get());
+            expect(PAGE.equals(srv.seen.get(0).header("referer")), "first host gets the referer");
+            expect(srv.seen.get(1).header("referer") == null && srv.seen.get(2).header("referer") == null, "never forwarded to another host");
+            expect(srv.seen.get(1).header("host").startsWith("cdn.example") && srv.seen.get(2).header("host").startsWith("cdn.example"), "target host");
+            expect(srv.seen.stream().allMatch(r -> BROWSER_UA.equals(r.header("user-agent"))), "browser UA on all hops");
+        }
+        // 4) Weiterleitung auf demselben Host: Referer bleibt; HTTPS-Seite -> HTTP-Ziel: kein Referer (Herabstufung)
+        try (Server srv = new Server((r, out, i) -> {
+            if (r.line.contains("/same")) { head(out, "302 Found", "Location: /v.mp4", "Content-Length: 0"); return; }
+            guarded(r, out, 4096, null, -1);
+        })) {
+            DirStore store = new DirStore("referer-same");
+            Events ev = new Events();
+            DirectDownloads d = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            String a = newId(), b = newId();
+            d.start(a, srv.url("/same"), "Same", ctx);
+            expect(ev.await(a, 30_000).equals("done"), "same-host redirect keeps referer: " + ev.finished.get(a));
+            d.start(b, srv.url("/v.mp4"), "Down", RequestContext.of("https://site.example/", null));
+            expect(ev.await(b, 30_000).equals("failed:http_404"), "https referer must not go to http: " + ev.finished.get(b));
+            d.stopAll();
+            expect(srv.seen.get(2).header("referer") == null && srv.seen.get(2).header("user-agent").startsWith("Helper/"), "no referer on downgrade, helper UA without ua");
+        }
+        // 5) Fortsetzung nach Prozessende aus dem verschlüsselten Tresor: Kontext kommt mit (Datensatz ohne Klartext)
+        java.util.concurrent.atomic.AtomicBoolean stall = new java.util.concurrent.atomic.AtomicBoolean(true);
+        try (Server srv = new Server((r, out, i) -> {
+            if (!PAGE.equals(r.header("referer"))) { head(out, "404 Not Found", "Content-Length: 0"); return; }
+            if (stall.get()) { head(out, "200 OK", "Content-Type: video/mp4", "Content-Length: 65536", "ETag: \"t\""); content(out, 0, 8); out.flush(); Thread.sleep(60_000); }
+            else serveFile(r, out, 65536, "\"t\"", -1);
+        })) {
+            SoftSealer key = new SoftSealer();
+            File vdir = new File(root, "vault-referer");
+            DirStore store = new DirStore("vault-referer-store");
+            Events ev = new Events();
+            DirectDownloads d1 = engine(LocalTestClients.loopback(srv.port()), store, ev);
+            d1.setVault(new SourceVault(vdir, key, () -> 1_000_000L));
+            String id = newId();
+            d1.start(id, srv.url("/s.mp4"), "Tresor", ctx);
+            long until = System.currentTimeMillis() + 5_000;
+            File rec = new File(vdir, id + ".src");
+            while (!rec.isFile() && System.currentTimeMillis() < until) Thread.sleep(10);
+            expect(rec.isFile(), "stored");
+            String raw = new String(Files.readAllBytes(rec.toPath()), StandardCharsets.ISO_8859_1);
+            expect(!raw.contains("site.example") && !raw.contains("Mozilla"), "record has no plaintext context");
+            DirStore crashed = new DirStore("vault-referer-crashed");
+            crashed.journal = store.loadJournal();
+            Events ev2 = new Events();
+            DirectDownloads d2 = engine(LocalTestClients.loopback(srv.port()), crashed, ev2);
+            d2.setVault(new SourceVault(vdir, key, () -> 1_000_000L));
+            stall.set(false);
+            int before = srv.requests.get();
+            expect(d2.resumeStored() == 1, "resume started");
+            expect(ev2.await(id, 20_000).equals("done"), "stored resume with referer: " + ev2.finished.get(id));
+            for (int k = before; k < srv.seen.size(); k++) {
+                expect(PAGE.equals(srv.seen.get(k).header("referer")) && BROWSER_UA.equals(srv.seen.get(k).header("user-agent")), "stored context used");
+            }
+            d1.stopAll(); d2.stopAll();
+        }
+    }
+
+    static void guardedRedirect(Req r, OutputStream out, String location) throws IOException {
+        if (!PAGE.equals(r.header("referer"))) { head(out, "404 Not Found", "Content-Length: 0"); return; }
+        head(out, "302 Found", "Location: " + location, "Content-Length: 0");
     }
 }

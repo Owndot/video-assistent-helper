@@ -217,6 +217,17 @@ public final class SafeHttpClient {
      * dieselbe Darstellung, sonst 200 mit der ganzen Ressource.
      */
     public SafeResponse get(String url, long rangeStart, long rangeEnd, String ifRange, long maxBodyBytes, long timeoutMs, Cancellation cancellation) throws IOException {
+        return get(url, rangeStart, rangeEnd, ifRange, maxBodyBytes, timeoutMs, cancellation, RequestContext.NONE);
+    }
+
+    /**
+     * Wie oben, mit dem Anfragekontext des Auftrags: Browser-User-Agent bei jedem Schritt; Referer an das angefragte Ziel
+     * und bei Weiterleitungen nur, solange sie auf demselben Host bleiben (sonst ohne Referer). Alle Prüfungen (URL,
+     * Adressen, Weiterleitungen, Grenzen) unverändert.
+     */
+    public SafeResponse get(String url, long rangeStart, long rangeEnd, String ifRange, long maxBodyBytes, long timeoutMs, Cancellation cancellation,
+                            RequestContext context) throws IOException {
+        RequestContext ctx = context == null ? RequestContext.NONE : context;
         if (maxBodyBytes <= 0 || timeoutMs <= 0 || timeoutMs > MAX_CALL_TIMEOUT_MS || (rangeStart < 0 && rangeEnd >= 0)
             || (rangeStart >= 0 && rangeEnd >= 0 && rangeEnd < rangeStart)
             || (ifRange != null && (rangeStart < 0 || !isStrongEtag(ifRange)))) {
@@ -225,12 +236,15 @@ public final class SafeHttpClient {
         HttpUrl current = url == null ? null : HttpUrl.parse(url);
         if (current == null) throw new NetBlockedException(NetBlockedException.Reason.BAD_URL, "unparseable");
         rules.checkUrl(current);
+        final String firstHost = current.host();
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
         for (int hop = 0; ; hop++) {
             Request.Builder rb = new Request.Builder().url(current).get()
-                .header("User-Agent", USER_AGENT)
+                .header("User-Agent", ctx.userAgent != null ? ctx.userAgent : USER_AGENT)
                 .header("Accept-Encoding", "identity")
                 .tag(Attempts.class, new Attempts());
+            String referer = current.host().equals(firstHost) ? ctx.refererFor(current.isHttps()) : null;
+            if (referer != null) rb.header("Referer", referer);
             if (rangeStart >= 0) rb.header("Range", "bytes=" + rangeStart + "-" + (rangeEnd >= 0 ? String.valueOf(rangeEnd) : ""));
             if (ifRange != null) rb.header("If-Range", ifRange);
             Call call = client.newCall(rb.build());

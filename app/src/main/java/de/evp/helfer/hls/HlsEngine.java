@@ -30,6 +30,7 @@ import de.evp.helfer.dl.JobSlots;
 import de.evp.helfer.dl.Progress;
 import de.evp.helfer.dl.SourceVault;
 import de.evp.helfer.net.NetBlockedException;
+import de.evp.helfer.net.RequestContext;
 import de.evp.helfer.net.SafeHttpClient;
 
 /**
@@ -129,9 +130,12 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         final List<HlsPlan.Option> options;
         final Map<String, String> fingerprints = new LinkedHashMap<>();   // Option → Plan-Fingerabdruck (vorab geladen)
         final double duration;
-        PlanEntry(String planId, byte[] peer, String bind, long expires, String sourceUrl, String masterSha, List<HlsPlan.Option> options, double duration) {
+        final RequestContext context;   // Referer/User-Agent für alle Abrufe dieses Plans und seiner Aufträge
+        PlanEntry(String planId, byte[] peer, String bind, long expires, String sourceUrl, String masterSha, List<HlsPlan.Option> options, double duration,
+                  RequestContext context) {
             this.planId = planId; this.peer = peer; this.bind = bind; this.expires = expires; this.sourceUrl = sourceUrl;
             this.masterSha = masterSha; this.options = options; this.duration = duration;
+            this.context = context == null ? RequestContext.NONE : context;
         }
     }
 
@@ -161,18 +165,22 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
      * der authentifizierten Kanal-Sitzung; {@code bind}: Kadris Bindung (Player, Generation, Revision).
      */
     @Override
-    public String plan(byte[] peer, String bind, String url) {
+    public String plan(byte[] peer, String bind, String url) { return plan(peer, bind, url, RequestContext.NONE); }
+
+    @Override
+    public String plan(byte[] peer, String bind, String url, RequestContext context) {
+        RequestContext ctx = context == null ? RequestContext.NONE : context;
         SafeHttpClient.Cancellation cancel = new SafeHttpClient.Cancellation();
         PlanTrace trace = new PlanTrace();
         try {
             if (stoppedNow()) return planFail("stopped");
             long deadline = clock.nowMs() + PLAN_DEADLINE_MS;
-            Source src = loadSource(url, cancel, deadline, trace);
+            Source src = loadSource(url, cancel, deadline, trace, ctx);
             HlsPlan.Option first = src.options.get(0);
-            Chosen c = choose(src, first, cancel, deadline, trace);
+            Chosen c = choose(src, first, cancel, deadline, trace, ctx);
             String planId = hex(randomBytes(16));
             PlanEntry e = new PlanEntry(planId, peer.clone(), bind, clock.nowMs() + PLAN_TTL_MS, url, src.sha, src.options,
-                Math.max(c.plan.videoSeconds, c.plan.audioSeconds));
+                Math.max(c.plan.videoSeconds, c.plan.audioSeconds), ctx);
             e.fingerprints.put(first.id, c.plan.fingerprint);
             synchronized (this) { putPlan(e); }
             StringBuilder b = new StringBuilder("{\"ok\":true,\"planId\":\"").append(planId).append("\",\"expiresSec\":")
@@ -229,12 +237,9 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
     }
 
     /** Master oder Medienliste laden, streng prüfen, Optionen bilden. */
-    private Source loadSource(String url, SafeHttpClient.Cancellation cancel, long deadline) throws IOException, HlsException {
-        return loadSource(url, cancel, deadline, null);
-    }
-    private Source loadSource(String url, SafeHttpClient.Cancellation cancel, long deadline, PlanTrace trace) throws IOException, HlsException {
+    private Source loadSource(String url, SafeHttpClient.Cancellation cancel, long deadline, PlanTrace trace, RequestContext ctx) throws IOException, HlsException {
         if (trace != null) trace.phase = PlanPhase.SOURCE_FETCH;
-        HlsFetch.Text t = manifest(url, cancel, deadline);
+        HlsFetch.Text t = manifest(url, cancel, deadline, ctx);
         if (trace != null) trace.phase = PlanPhase.SOURCE_PARSE;
         HlsPlaylist.Parsed p = HlsPlaylist.parse(t.body, t.finalUrl);
         if (trace != null) { trace.playlists++; trace.phase = PlanPhase.SOURCE_OPTIONS; }
@@ -247,19 +252,16 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         return new Source(null, p.media, sha, one);
     }
 
-    private Chosen choose(Source src, HlsPlan.Option o, SafeHttpClient.Cancellation cancel, long deadline) throws IOException, HlsException {
-        return choose(src, o, cancel, deadline, null);
-    }
-    private Chosen choose(Source src, HlsPlan.Option o, SafeHttpClient.Cancellation cancel, long deadline, PlanTrace trace) throws IOException, HlsException {
-        HlsPlaylist.Media video = src.media != null ? src.media : media(o.variant.uri, cancel, deadline, trace, false);
-        HlsPlaylist.Media audio = o.audio == null ? null : media(o.audio.uri, cancel, deadline, trace, true);
+    private Chosen choose(Source src, HlsPlan.Option o, SafeHttpClient.Cancellation cancel, long deadline, PlanTrace trace, RequestContext ctx) throws IOException, HlsException {
+        HlsPlaylist.Media video = src.media != null ? src.media : media(o.variant.uri, cancel, deadline, trace, false, ctx);
+        HlsPlaylist.Media audio = o.audio == null ? null : media(o.audio.uri, cancel, deadline, trace, true, ctx);
         if (trace != null) trace.phase = PlanPhase.PLAN_BUILD;
         return new Chosen(o, video, audio, HlsPlan.build(video, audio, o.variant.bandwidth));
     }
 
-    private HlsPlaylist.Media media(String url, SafeHttpClient.Cancellation cancel, long deadline, PlanTrace trace, boolean audio) throws IOException, HlsException {
+    private HlsPlaylist.Media media(String url, SafeHttpClient.Cancellation cancel, long deadline, PlanTrace trace, boolean audio, RequestContext ctx) throws IOException, HlsException {
         if (trace != null) trace.phase = audio ? PlanPhase.AUDIO_FETCH : PlanPhase.VIDEO_FETCH;
-        HlsFetch.Text t = manifest(url, cancel, deadline);
+        HlsFetch.Text t = manifest(url, cancel, deadline, ctx);
         if (trace != null) trace.phase = audio ? PlanPhase.AUDIO_PARSE : PlanPhase.VIDEO_PARSE;
         HlsPlaylist.Parsed p = HlsPlaylist.parse(t.body, t.finalUrl);
         if (p.media == null) throw new HlsException("nested-master");
@@ -268,14 +270,14 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
     }
 
     /** Ein Listenabruf über die gemeinsame Verbindungsgrenze; Frist für den ganzen Plan. */
-    private HlsFetch.Text manifest(String url, SafeHttpClient.Cancellation cancel, long deadline) throws IOException, HlsException {
+    private HlsFetch.Text manifest(String url, SafeHttpClient.Cancellation cancel, long deadline, RequestContext ctx) throws IOException, HlsException {
         long wait = deadline - clock.nowMs();
         if (wait <= 0) throw new HlsException("timeout");
         boolean got;
         try { got = slots.acquireHttp(wait, cancel::isCancelled); }
         catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new HlsException("cancelled"); }
         if (!got) throw new HlsException(cancel.isCancelled() ? "cancelled" : "busy");
-        try { return new HlsFetch(http, cancel).manifest(url); }
+        try { return new HlsFetch(http, cancel, ctx).manifest(url); }
         finally { slots.releaseHttp(); }
     }
 
@@ -306,6 +308,7 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         String failAt;                 // unter synchronized(job)
         int failIndex = -1, failVariant = -1, failAudio = -1;
         volatile boolean initV, initA; // gewählte Listen mit Init-Ressource (EXT-X-MAP) – Ressource 0 ist dann die Init
+        volatile RequestContext context = RequestContext.NONE;   // aus dem Plan des laufenden Versuchs
         Job(String id, File dir, HlsJournal journal) { this.id = id; this.dir = dir; this.journal = journal; }
         boolean userCancelled() { synchronized (this) { return journal.cancelRequested; } }
     }
@@ -418,6 +421,9 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         }
     }
 
+    private static String b64(String s) { return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(s.getBytes(StandardCharsets.UTF_8)); }
+    private static String unb64(String s) { return new String(java.util.Base64.getUrlDecoder().decode(s), StandardCharsets.UTF_8); }
+
     /** Bindung einer gespeicherten Quelle: Hash der Liste, gewählte Variante/Tonspur (Index) und Plan-Fingerabdruck. */
     private static String binding(String masterSha, HlsPlan.Option o, String fingerprint) {
         return masterSha + "|" + o.variant.index + "|" + (o.audio == null ? -1 : o.audio.index) + "|" + (fingerprint == null ? "-" : fingerprint);
@@ -426,7 +432,8 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
     private void remember(Job job, PlanEntry p, String optionId, Chosen c) {
         SourceVault v = vault;
         HlsPlan.Option o = option(p, optionId);
-        if (v != null && o != null && !job.userCancelled()) v.put(job.id, "hls", p.sourceUrl, binding(p.masterSha, o, c.plan.fingerprint));
+        if (v != null && o != null && !job.userCancelled()) v.put(job.id, "hls", p.sourceUrl, binding(p.masterSha, o, c.plan.fingerprint)
+            + "|" + b64(p.context.referer == null ? "" : p.context.referer) + "|" + b64(p.context.userAgent == null ? "" : p.context.userAgent));
     }
 
     private void forget(String id) {
@@ -495,15 +502,21 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
     private void resumeFrom(Job job, SourceVault.Entry e) {
         String[] b = e.binding.split("\\|", -1);
         try {
-            if (b.length != 4) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
+            if (b.length != 4 && b.length != 6) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
+            RequestContext ctx = RequestContext.NONE;
+            if (b.length == 6) {
+                String r = unb64(b[4]), a = unb64(b[5]);
+                try { ctx = RequestContext.of(r.isEmpty() ? null : r, a.isEmpty() ? null : a); }
+                catch (IllegalArgumentException bad) { throw new Stop(HlsJournal.State.FAILED, "plan_changed"); }
+            }
             long deadline = clock.nowMs() + PLAN_DEADLINE_MS;
-            Source src = loadSource(e.url, job.cancel, deadline);
+            Source src = loadSource(e.url, job.cancel, deadline, null, ctx);
             if (!src.sha.equals(b[0])) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
             int vi = Integer.parseInt(b[1]), ai = Integer.parseInt(b[2]);
             HlsPlan.Option chosen = null;
             for (HlsPlan.Option o : src.options) if (o.variant.index == vi && (o.audio == null ? -1 : o.audio.index) == ai) chosen = o;
             if (chosen == null) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
-            PlanEntry p = new PlanEntry(hex(randomBytes(16)), new byte[0], "vault", clock.nowMs() + PLAN_TTL_MS, e.url, src.sha, src.options, 0);
+            PlanEntry p = new PlanEntry(hex(randomBytes(16)), new byte[0], "vault", clock.nowMs() + PLAN_TTL_MS, e.url, src.sha, src.options, 0, ctx);
             if (!"-".equals(b[3])) p.fingerprints.put(chosen.id, b[3]);
             job.source = p;
             job.sourceOption = chosen.id;
@@ -686,6 +699,7 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         try {
             if (!store.writable()) throw new Stop(HlsJournal.State.FAILED, "storage_permission");
             synchronized (job) { job.failAt = null; job.failIndex = -1; job.failVariant = -1; job.failAudio = -1; }
+            job.context = planEntry.context;
             Chosen c = recheck(job, planEntry, optionId);
             job.initV = c.video.mapUri != null;
             job.initA = c.audio != null && c.audio.mapUri != null;
@@ -819,13 +833,13 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         Source src;
         Chosen c;
         try {
-            src = loadSource(p.sourceUrl, job.cancel, deadline, trace);
+            src = loadSource(p.sourceUrl, job.cancel, deadline, trace, p.context);
             if (!src.sha.equals(p.masterSha)) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
             // Gleiche Liste (gleicher Hash) → gleiche Optionen in gleicher Reihenfolge; IDs sind je Plan gesalzen.
             HlsPlan.Option o = src.options.get(idx);
             if (o.variant.index != planned.variant.index || (o.audio == null) != (planned.audio == null)
                 || (o.audio != null && o.audio.index != planned.audio.index)) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
-            c = choose(src, o, job.cancel, deadline, trace);
+            c = choose(src, o, job.cancel, deadline, trace, p.context);
         } catch (HlsException e) {
             failedAt(job, e, trace.phase == PlanPhase.VIDEO_FETCH ? "video_list" : trace.phase == PlanPhase.AUDIO_FETCH ? "audio_list" : "master", -1);
             throw e;
@@ -875,7 +889,7 @@ public final class HlsEngine implements de.evp.helfer.ControlCommands.HlsControl
         File seg = new File(job.dir, key + ".seg"), part = new File(job.dir, key + ".part");
         HlsJournal.Res known;
         synchronized (job) { known = job.journal.resources.get(key); }
-        HlsFetch fetch = new HlsFetch(http, job.cancel);
+        HlsFetch fetch = new HlsFetch(http, job.cancel, job.context);
         if (known != null) {
             boolean ok = known.etag != null && seg.isFile() && seg.length() == known.length && known.sha256.equals(fileSha(seg));
             if (ok) {

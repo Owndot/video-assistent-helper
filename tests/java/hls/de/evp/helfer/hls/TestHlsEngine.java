@@ -31,6 +31,7 @@ import de.evp.helfer.dl.DirectDownloads;
 import de.evp.helfer.dl.DownloadStore;
 import de.evp.helfer.dl.JobSlots;
 import de.evp.helfer.net.LocalTestClients;
+import de.evp.helfer.net.RequestContext;
 import de.evp.helfer.net.SafeHttpClient;
 
 /**
@@ -73,6 +74,10 @@ public final class TestHlsEngine {
         final Map<String, AtomicInteger> fullGets = new ConcurrentHashMap<>(), rangeGets = new ConcurrentHashMap<>(), rangeMisses = new ConcurrentHashMap<>(),
             rangeBroken = new ConcurrentHashMap<>();
         final List<String> leaks = new CopyOnWriteArrayList<>();
+        // Hotlink-Schutz wie beim Gerätetest: ohne diesen Referer 404 (nur am Seiten-Host 127.0.0.1); optional nur Segmente/Init
+        volatile String requireReferer;
+        volatile boolean refererResourcesOnly, crossHostResources;   // Ressourcen per 302 auf einen anderen Host (cdn.example)
+        final List<String> seen = new CopyOnWriteArrayList<>();      // "host|datei|referer|user-agent" je Anfrage
 
         Server() throws IOException {
             srv = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -86,7 +91,8 @@ public final class TestHlsEngine {
 
         void reset() { fullGets.clear(); rangeGets.clear(); rangeMisses.clear(); rangeBroken.clear(); maxInFlight.set(0); delayMs = 0; chunked = false; changedPath = null; masterExtra = ""; bandwidth = null; etagMode = "strong"; token = "T1";
             fail503.set(0); answered503.set(0); answered403.set(0); on503 = null;
-            failPath = invalidListPath = redirectPath = null; failStatus = 0; }
+            failPath = invalidListPath = redirectPath = null; failStatus = 0;
+            requireReferer = null; refererResourcesOnly = crossHostResources = false; seen.clear(); }
 
         int full(String suffix) { int n = 0; for (Map.Entry<String, AtomicInteger> e : fullGets.entrySet()) if (e.getKey().endsWith(suffix)) n += e.getValue().get(); return n; }
         int fullSegments() { int n = 0; for (Map.Entry<String, AtomicInteger> e : fullGets.entrySet()) if (!e.getKey().endsWith(".m3u8")) n += e.getValue().get(); return n; }
@@ -97,13 +103,22 @@ public final class TestHlsEngine {
             maxInFlight.accumulateAndGet(now, Math::max);
             requests.incrementAndGet();
             try {
+                String need = requireReferer;
                 for (String h : new String[] {"Cookie", "Authorization", "Referer", "Origin"})
-                    if (x.getRequestHeaders().containsKey(h)) leaks.add(h);
+                    if (x.getRequestHeaders().containsKey(h) && !(need != null && h.equals("Referer"))) leaks.add(h);
                 String path = x.getRequestURI().getRawPath(), q = x.getRequestURI().getRawQuery();
                 if (!path.startsWith("/dyn/")) { x.sendResponseHeaders(404, -1); return; }
                 String rel = path.substring(5);
                 File f = new File(fx, rel);
                 if (!f.isFile() || !f.getCanonicalPath().startsWith(fx.getCanonicalPath())) { x.sendResponseHeaders(404, -1); return; }
+                String host = String.valueOf(x.getRequestHeaders().getFirst("Host")), referer = x.getRequestHeaders().getFirst("Referer");
+                seen.add(host.replaceAll(":.*", "") + "|" + rel + "|" + referer + "|" + x.getRequestHeaders().getFirst("User-Agent"));
+                boolean site = host.startsWith("127.0.0.1"), resource = !rel.endsWith(".m3u8");
+                if (need != null && site && (resource || !refererResourcesOnly) && !need.equals(referer)) { x.sendResponseHeaders(404, -1); return; }
+                if (crossHostResources && site && resource) {
+                    x.getResponseHeaders().set("Location", "http://cdn.example:" + port + path + "?" + q);
+                    x.sendResponseHeaders(302, -1); return;
+                }
                 if (q == null || !q.equals("t=" + token)) { answered403.incrementAndGet(); x.sendResponseHeaders(403, -1); return; }
                 if (rel.equals(failPath)) { x.sendResponseHeaders(failStatus, -1); return; }
                 if (rel.equals(redirectPath)) {
@@ -432,6 +447,7 @@ public final class TestHlsEngine {
             vault(s);
             plans(s);
             startFailLocation(s);
+            refererRequired(s);
             resume(s);
             autoResume(s);
             crashes(s);
@@ -1351,5 +1367,89 @@ public final class TestHlsEngine {
             try { HlsJournal.load(dd); } catch (IOException e) { logRejected++; }
         }
         check("Journal: ungültige Logeinträge (Index, Spur, Länge, SHA, Verwerfen ohne Eintrag, schwacher ETag) abgelehnt", logRejected == badLog.length, logRejected);
+    }
+
+    // ------------------------------------------------------------------ Referer der Seitenherkunft (Server verlangt ihn)
+
+    static final String PAGE = "http://site.example/";
+    static final String BROWSER_UA = "Mozilla/5.0 (Linux; Android 15; SM-S931B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36";
+
+    static boolean allWith(Server s, String host, String referer, String ua) {
+        boolean any = false;
+        for (String e : s.seen) {
+            String[] p = e.split("\\|", -1);
+            if (!p[0].equals(host)) continue;
+            any = true;
+            if (!String.valueOf(referer).equals(p[2]) || !p[3].startsWith(ua)) return false;
+        }
+        return any;
+    }
+
+    static boolean saw(Server s, String fileSuffix) { for (String e : s.seen) if (e.split("\\|")[1].endsWith(fileSuffix)) return true; return false; }
+
+    static void refererRequired(Server s) throws Exception {
+        Rig r = new Rig("referer", s);
+        RequestContext ctx = RequestContext.of(PAGE, BROWSER_UA);
+        // 1) ohne Kontext, alles geschützt: schon die Hauptliste scheitert (404); nur Helfer-UA, kein Referer
+        s.reset(); s.requireReferer = PAGE;
+        String p0 = r.engine.plan(PEER, BIND, s.url("fmp4_sep", "master.m3u8"));
+        check("Referer: ohne Kontext Hauptliste 404, kein Plan", !"true".equals(field(p0, "ok")) && allWith(s, "127.0.0.1", null, "Helper/"), p0 + " " + s.seen);
+        // 2) ohne Kontext, nur Ressourcen geschützt (wie am Gerät): Plan ok, Abbruch am ersten Video-Segment mit http_404
+        s.reset(); s.requireReferer = PAGE; s.refererResourcesOnly = true;
+        String p1 = r.engine.plan(PEER, BIND, s.url("ts_sep", "master.m3u8"));
+        String id1 = newId();
+        r.engine.start(PEER, BIND, id1, field(p1, "planId"), firstOption(p1), "x");
+        String st1 = await(r.engine, id1, "done", "failed", "interrupted", "cancelled");
+        check("Referer: ohne Kontext Segment 404 (Gerätefall nachgestellt)", !"done".equals(field(st1, "state")) && "http_404".equals(field(st1, "reason"))
+            && "video_segment".equals(field(st1, "at")), st1);
+        r.engine.cancel(id1); await(r.engine, id1, "cancelled", "done", "failed");
+        // 3) mit Kontext, alles geschützt (fMP4 mit Init, getrennter Ton): Hauptliste, Medienlisten, Init, Segmente – alle 200
+        s.reset(); s.requireReferer = PAGE;
+        String p2 = r.engine.plan(PEER, BIND, s.url("fmp4_sep", "master.m3u8"), ctx);
+        String id2 = newId();
+        String st2 = "true".equals(field(p2, "ok")) ? r.engine.start(PEER, BIND, id2, field(p2, "planId"), firstOption(p2), "Ref") : p2;
+        st2 = await(r.engine, id2, "done", "failed", "interrupted", "cancelled");
+        String[] out = r.store.files();
+        boolean exact = out.length == 1 && sha(Files.readAllBytes(new File(r.out, out[0]).toPath())).equals(sha(expected("fmp4_sep", "v0.m3u8", "v1.m3u8")));
+        check("Referer: mit Kontext fertig, Inhalt exakt", "done".equals(field(st2, "state")) && exact, st2);
+        check("Referer: Hauptliste, beide Medienlisten, beide Init, Segmente abgerufen",
+            saw(s, "master.m3u8") && saw(s, "v0.m3u8") && saw(s, "v1.m3u8") && saw(s, "init_0.mp4") && saw(s, "init_1.mp4") && saw(s, ".m4s"), s.seen);
+        check("Referer: jede Anfrage mit genau der Seitenherkunft und dem Browser-UA", allWith(s, "127.0.0.1", PAGE, BROWSER_UA), s.seen);
+        check("Referer: weder Cookie noch Authorization noch Origin", s.leaks.isEmpty(), s.leaks);
+        for (String n : out) new File(r.out, n).delete();
+        // 4) Ressourcen per Weiterleitung auf anderen Host: dort ohne Referer (UA bleibt), am Seiten-Host mit
+        s.reset(); s.requireReferer = PAGE; s.crossHostResources = true;
+        String p3 = r.engine.plan(PEER, BIND, s.url("ts_sep", "master.m3u8"), ctx);
+        String id3 = newId();
+        r.engine.start(PEER, BIND, id3, field(p3, "planId"), firstOption(p3), "Cdn");
+        String st3 = await(r.engine, id3, "done", "failed", "interrupted", "cancelled");
+        check("Referer: Weiterleitung auf anderen Host fertig", "done".equals(field(st3, "state")) && sameOutput(r), st3);
+        check("Referer: am anderen Host nie ein Referer, aber Browser-UA", allWith(s, "cdn.example", null, BROWSER_UA)
+            && allWith(s, "127.0.0.1", PAGE, BROWSER_UA), s.seen);
+        for (String n : r.store.files()) new File(r.out, n).delete();
+        // 5) Unterbrechung + Prozessende: Fortsetzung aus dem Tresor behält den Kontext (Datensatz ohne Klartext)
+        s.reset(); s.requireReferer = PAGE;
+        SoftSealer key = new SoftSealer();
+        File vdir = new File(base, "referer/src");
+        de.evp.helfer.dl.SourceVault v = new de.evp.helfer.dl.SourceVault(vdir, key, r.now::get);
+        r.engine.setVault(v);
+        String id4 = newId();
+        s.delayMs = 40;
+        String p4 = r.engine.plan(PEER, BIND, s.url("ts_sep", "master.m3u8"), ctx);
+        r.engine.start(PEER, BIND, id4, field(p4, "planId"), firstOption(p4), "Tresor");
+        long end = System.nanoTime() + 10_000_000_000L;
+        while (s.fullSegments() < 4 && System.nanoTime() < end) Thread.sleep(5);
+        r.engine.stopAll();
+        await(r.engine, id4, "interrupted", "done", "failed", "cancelled");
+        r.restart(); r.engine.setVault(v); s.delayMs = 0;
+        File rec = new File(vdir, id4 + ".src");
+        String raw = rec.isFile() ? new String(Files.readAllBytes(rec.toPath()), StandardCharsets.ISO_8859_1) : "";
+        check("Referer: Tresor-Eintrag ohne Klartext-Kontext", rec.isFile() && !raw.contains("site.example") && !raw.contains("Mozilla"), raw);
+        s.seen.clear();
+        check("Referer: Tresor-Fortsetzung gestartet", r.engine.resumeStored() == 1, "");
+        String st4 = await(r.engine, id4, "done", "failed", "interrupted", "cancelled");
+        check("Referer: Tresor-Fortsetzung fertig, jede Anfrage mit Kontext", "done".equals(field(st4, "state")) && sameOutput(r)
+            && allWith(s, "127.0.0.1", PAGE, BROWSER_UA), st4 + " " + s.seen);
+        s.reset();
     }
 }

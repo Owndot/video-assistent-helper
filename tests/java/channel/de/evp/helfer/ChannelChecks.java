@@ -163,6 +163,70 @@ public final class ChannelChecks {
         passed++;
     }
 
+    // ------------------------------------------------------------ Anfragekontext (Referer der Seitenherkunft, Browser-User-Agent)
+
+    static final String UA = "Mozilla/5.0 (Linux; Android 15; SM-S931B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36";
+
+    /** Zeichnet den übergebenen Kontext auf (dlstart und hlsplan). */
+    static final class ContextRecorder extends FakeHls implements ControlCommands.DownloadControl {
+        final java.util.List<String> seen = new java.util.ArrayList<>();
+        static String show(de.evp.helfer.net.RequestContext c) { return c == null ? "null" : c.referer + " | " + c.userAgent; }
+        @Override public synchronized String start(String id, String url, String name) { throw new AssertionError("context overload not used"); }
+        @Override public synchronized String start(String id, String url, String name, de.evp.helfer.net.RequestContext c) { seen.add("dl " + show(c)); return "{\"ok\":true,\"id\":\"" + id + "\",\"state\":\"running\"}"; }
+        @Override public synchronized String plan(byte[] peer, String bind, String url) { throw new AssertionError("context overload not used"); }
+        @Override public synchronized String plan(byte[] peer, String bind, String url, de.evp.helfer.net.RequestContext c) { seen.add("hls " + show(c)); return "{\"ok\":true,\"planId\":\"" + PLAN + "\"}"; }
+        @Override public synchronized String status(String id) { return "{\"ok\":true,\"id\":\"" + id + "\",\"state\":\"unknown\"}"; }
+    }
+
+    static void contextCommands() {
+        String dl = "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://cdn.example/v.mp4\"";
+        String hp = "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://cdn.example/m.m3u8\",\"bind\":" + BIND;
+        ContextRecorder r = new ContextRecorder();
+        FakeDevice d = new FakeDevice();
+        // gültig: nur Herkunft, optional Port; UA nur als Browser-Kennung; ohne Kontext wie bisher (NONE)
+        check(!ControlCommands.REJECTED.equals(hl(dl + ",\"ref\":\"https://www.site.example/\",\"ua\":\"" + UA + "\"}", d, r, r, PEER)), "dlstart with context rejected");
+        check(!ControlCommands.REJECTED.equals(hl(hp + ",\"ref\":\"http://site.example:8080/\"}", d, r, r, PEER)), "hlsplan with ref rejected");
+        check(!ControlCommands.REJECTED.equals(hl(dl + "}", d, r, r, PEER)), "dlstart without context rejected");
+        check(!ControlCommands.REJECTED.equals(hl(hp + ",\"ua\":\"" + UA + "\"}", d, r, r, PEER)), "hlsplan with ua rejected");
+        check(r.seen.equals(java.util.List.of("dl https://www.site.example/ | " + UA, "hls http://site.example:8080/ | null", "dl null | null", "hls null | " + UA)), "context: " + r.seen);
+        // abgelehnt: Pfad, Query, Fragment, Zugangsdaten, Großbuchstaben, IP-Literal mit Klammern, Port 0/über 65535, andere Schemata,
+        // Escapes, Steuerzeichen, fremde UA-Formen, Kontext bei anderen Befehlen, doppelte Felder, Cookie/Authorization als Feld
+        String[] bad = {
+            dl + ",\"ref\":\"https://site.example/path\"}", dl + ",\"ref\":\"https://site.example/?q=1\"}", dl + ",\"ref\":\"https://site.example/#f\"}",
+            dl + ",\"ref\":\"https://user:pw@site.example/\"}", dl + ",\"ref\":\"https://Site.example/\"}", dl + ",\"ref\":\"https://site.example\"}",
+            dl + ",\"ref\":\"https://[::1]/\"}", dl + ",\"ref\":\"https://site.example:0/\"}", dl + ",\"ref\":\"https://site.example:65536/\"}",
+            dl + ",\"ref\":\"ftp://site.example/\"}", dl + ",\"ref\":\"https://-site.example/\"}", dl + ",\"ref\":\"https://site..example/\"}",
+            dl + ",\"ref\":\"https://site.example/\\u0000\"}", dl + ",\"ref\":\"\"}", dl + ",\"ref\":\"https://" + "a".repeat(64) + ".example/\"}",
+            dl + ",\"ref\":\"https://" + ("a".repeat(60) + ".").repeat(5) + "example/\"}",
+            dl + ",\"ua\":\"Helper/2\"}", dl + ",\"ua\":\"Mozilla/5.0\"}", dl + ",\"ua\":\"Mozilla/5.0 (X\r\nCookie: a=b)\"}",
+            dl + ",\"ua\":\"Mozilla/5.0 (\u00e4)\"}", dl + ",\"ua\":\"Mozilla/5.0 (" + "x".repeat(507) + "\"}",
+            dl + ",\"ref\":\"https://a.example/\",\"ref\":\"https://a.example/\"}", dl + ",\"ua\":\"" + UA + "\",\"ua\":\"" + UA + "\"}",
+            dl + ",\"ref\":1}", dl + ",\"cookie\":\"a=b\"}", dl + ",\"authorization\":\"Bearer x\"}",
+            "{\"op\":\"dlstatus\",\"id\":\"" + ID + "\",\"ref\":\"https://a.example/\"}",
+            "{\"op\":\"dlcancel\",\"id\":\"" + ID + "\",\"ua\":\"" + UA + "\"}",
+            "{\"op\":\"hlsstart\",\"v\":1,\"id\":\"" + ID + "\",\"planId\":\"" + PLAN + "\",\"option\":\"" + OPT + "\",\"bind\":" + BIND + ",\"ref\":\"https://a.example/\"}",
+            "{\"op\":\"status\",\"ref\":\"https://a.example/\"}",
+            hp + ",\"ref\":\"https://site.example/x\"}",
+        };
+        int before = r.seen.size();
+        for (String s : bad) check(ControlCommands.REJECTED.equals(hl(s, d, r, r, PEER)), "accepted: " + s);
+        check(r.seen.size() == before && d.touches() == 0, "invalid context reached a handler");
+        // Grenzfälle, die gelten: Port 65535, 253-Zeichen-Name, UA mit 512 Zeichen insgesamt
+        check(!ControlCommands.REJECTED.equals(hl(dl + ",\"ref\":\"https://site.example:65535/\"}", d, r, r, PEER)), "port 65535 rejected");
+        String ua512 = "Mozilla/5.0 (" + "x".repeat(499);
+        check(ua512.length() == 512 && !ControlCommands.REJECTED.equals(hl(dl + ",\"ua\":\"" + ua512 + "\"}", d, r, r, PEER)), "512-char UA rejected");
+        // größter zulässiger dlstart (URL 2048, Name 120, ref 300, ua 512) passt in MAX_DOWNLOAD_REQUEST
+        String host = ("a".repeat(62) + ".").repeat(4) + "example";   // 259 Zeichen → ref mit Port knapp unter 300
+        String ref = "https://" + host + ":65535/";
+        String big = "{\"op\":\"dlstart\",\"id\":\"" + ID + "\",\"url\":\"https://a.example/" + "x".repeat(2048 - 18) + "\",\"name\":\"" + "n".repeat(120)
+            + "\",\"ref\":\"" + ref + "\",\"ua\":\"" + ua512 + "\"}";
+        check(ref.length() <= 300 && big.length() <= ControlCommands.MAX_DOWNLOAD_REQUEST && !ControlCommands.REJECTED.equals(hl(big, d, r, r, PEER)), "max dlstart with context rejected");
+        // Alte Steuerung ohne Kontext-Überladung: Befehl gilt weiter, Kontext entfällt (Standardmethode)
+        FakeDownloads plain = new FakeDownloads();
+        check(!ControlCommands.REJECTED.equals(hl(dl + ",\"ref\":\"https://site.example/\"}", d, plain, null, PEER)) && plain.calls.size() == 1, "plain handler");
+        passed++;
+    }
+
     // ------------------------------------------------------------ HLS-Befehle (P4b)
 
     static final String PLAN = "fedcba9876543210fedcba9876543210", OPT = "00112233445566778899aabb";
@@ -280,7 +344,7 @@ public final class ChannelChecks {
         String plain = ControlCommands.statusJson("1.0", true, true, 3, 15, 0.5f);
         String caps = ControlCommands.statusJson("1.0", true, true, 3, 15, 0.5f, Boolean.FALSE);
         check(!plain.contains("\"hls\""), "old status reports hls");
-        check(caps.equals(plain.substring(0, plain.length() - 1) + ",\"hls\":{\"v\":1,\"profiles\":[\"ts-avc-aac\",\"fmp4-avc-aac\"],\"opus\":false}}"), caps);
+        check(caps.equals(plain.substring(0, plain.length() - 1) + ",\"hls\":{\"v\":1,\"profiles\":[\"ts-avc-aac\",\"fmp4-avc-aac\"],\"opus\":false,\"ctx\":1}}"), caps);
         passed++;
     }
 
@@ -674,6 +738,7 @@ public final class ChannelChecks {
         strictParser();
         downloadCommands();
         hlsCommands();
+        contextCommands();
         commandsReachTheDevice();
         statusJsonIsFixedAndSanitised();
         pairingAndControlCommands();
