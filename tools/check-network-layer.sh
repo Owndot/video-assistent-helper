@@ -48,6 +48,12 @@ if [ "${1:-}" = "--self-test" ]; then
   probe "Media3 data source in hls" de/evp/helfer/hls/HlsPlan.java '// androidx.media3.datasource.DefaultHttpDataSource d;'
   probe "android types in hls" de/evp/helfer/hls/HlsPlaylist.java '// android.util.Log.i("x", "y");'
   probe "network in remuxer" de/evp/helfer/hlsmux/Probe.java 'final class Probe { de.evp.helfer.net.SafeHttpClient c; }'
+  probe "network in DASH core" de/evp/helfer/dash/DashUrl.java '// de.evp.helfer.net.SafeHttpClient c;'
+  probe "file access in DASH core" de/evp/helfer/dash/DashXml.java '// java.io.FileInputStream f;'
+  probe "HttpURLConnection in dashdl" de/evp/helfer/dashdl/DashFetch.java '// java.net.HttpURLConnection c;'
+  probe "old DASH path in dashdl" de/evp/helfer/dashdl/DashEngine.java '// de.evp.helfer.DashCore.start();'
+  probe "Media3 data source in dashdl" de/evp/helfer/dashdl/Fmp4Inspect.java '// androidx.media3.datasource.DefaultHttpDataSource d;'
+  probe "android types in dashdl" de/evp/helfer/dashdl/DashEngine.java '// android.util.Log.i("x", "y");'
   [ "$fails" = 0 ] && echo "RESULT network-layer-guard self-test PASS" || { echo "RESULT network-layer-guard self-test FAIL"; exit 1; }
   exit 0
 fi
@@ -84,6 +90,18 @@ done
 for f in "$MAIN"/de/evp/helfer/hlsmux/*.java; do
   [ -f "$f" ] || continue
   if grep -qE 'SafeHttp|okhttp3|java\.net\.|HttpURLConnection|URLConnection|HlsFetch|DataSource|Socket' "$f"; then add "network access in remuxer ${f#$MAIN/}"; fi
+done
+# S3a/S3b (DASH): der Kern de.evp.helfer.dash hat weder Netz- noch Dateizugang (liest nur übergebene Bytes); die Downloads
+# de.evp.helfer.dashdl laden nur über SafeHttpClient (DashFetch, HlsFetch), ohne Android-Typen, ohne den alten DASH-Weg.
+for f in "$MAIN"/de/evp/helfer/dash/*.java; do
+  [ -f "$f" ] || continue
+  if grep -qE 'SafeHttp|okhttp3|java\.net\.|HttpURLConnection|URLConnection|HlsFetch|DataSource|Socket|java\.io\.File' "$f"; then add "network or file access in DASH core ${f#$MAIN/}"; fi
+  if grep -qE '(^|[^A-Za-z0-9_])(android|androidx)\.' "$f"; then add "Android types in de.evp.helfer.dash: ${f#$MAIN/}"; fi
+done
+for f in "$MAIN"/de/evp/helfer/dashdl/*.java; do
+  [ -f "$f" ] || continue
+  if grep -qE "$HLS_FORBIDDEN" "$f"; then add "unprotected network path in ${f#$MAIN/}: $(grep -noE "$HLS_FORBIDDEN" "$f" | head -1)"; fi
+  if grep -qE '(^|[^A-Za-z0-9_])(android|androidx)\.' "$f"; then add "Android types in de.evp.helfer.dashdl: ${f#$MAIN/}"; fi
 done
 while IFS= read -r f; do add "Mp4Downloads constructed outside Mp4Downloads.get: ${f#$MAIN/}"; done < <(grep -rl 'new Mp4Downloads(' "$MAIN" --include=*.java | grep -v '/de/evp/helfer/Mp4Downloads\.java$' || true)
 [ "$(grep -c 'new Mp4Downloads(' "$MAIN/de/evp/helfer/Mp4Downloads.java")" = 1 ] && grep -qF 'new Mp4Downloads(app, "mp4-jobs-v1", SafeHttp.client(app), () -> legacyWritePermitted(app))' "$MAIN/de/evp/helfer/Mp4Downloads.java" \

@@ -48,6 +48,7 @@ public final class ChannelServer {
     private final ControlCommands.Device device;
     private final ControlCommands.DownloadControl downloads;   // null: Download-Befehle werden abgelehnt
     private final ControlCommands.HlsControl hls;               // null: HLS-Befehle werden abgelehnt (wie ein alter Helfer)
+    private final ControlCommands.DashControl dash;             // S3b; null: DASH-Befehle werden abgelehnt
     private final ThreadPoolExecutor pool = new ThreadPoolExecutor(4, 4, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(16));
     private ServerSocket server;
     private Thread acceptThread;
@@ -62,10 +63,17 @@ public final class ChannelServer {
      * Sitzungskennung kommt aus dem Rust-Kern (hostOpen), nie aus der Anfrage.
      */
     public ChannelServer(Host host, ControlCommands.Device device, ControlCommands.DownloadControl downloads, ControlCommands.HlsControl hls) {
+        this(host, device, downloads, hls, null);
+    }
+
+    /** S3b: zusätzlich DASH (dashplan/dashstart) – dieselbe Sitzungsbindung wie bei HLS. */
+    public ChannelServer(Host host, ControlCommands.Device device, ControlCommands.DownloadControl downloads, ControlCommands.HlsControl hls,
+                         ControlCommands.DashControl dash) {
         this.host = host;
         this.device = device;
         this.downloads = downloads;
         this.hls = hls;
+        this.dash = dash;
     }
 
     /** Bindet vor der Bereitschaftsmeldung; ein belegter Port meldet false (kein Ausweichen). */
@@ -188,7 +196,7 @@ public final class ChannelServer {
                 byte[] sid = Arrays.copyOfRange(opened, 0, 16);
                 // Nur Steuer-Records (Art 1); Medien- oder Ende-Records gibt es in diesem Kanal nicht.
                 String answer = opened.length > 17 && opened[16] == 1
-                    ? ControlCommands.handle(Arrays.copyOfRange(opened, 17, opened.length), device, downloads, hls, sid)
+                    ? ControlCommands.handle(Arrays.copyOfRange(opened, 17, opened.length), device, downloads, hls, dash, sid)
                     : ControlCommands.REJECTED;
                 host.event(ControlCommands.REJECTED.equals(answer) ? "REC_REJECTED" : "REC");
                 synchronized (CORE) {

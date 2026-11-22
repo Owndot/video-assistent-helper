@@ -51,6 +51,7 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
     private ChannelServer server;
     private Mp4Downloads mp4;   // null: direkte Downloads nicht verfügbar (Kanal lehnt dl-Befehle ab)
     private HlsDownloads hls;   // null: HLS nicht verfügbar (Kanal lehnt hlsplan/hlsstart ab, Status ohne "hls")
+    private DashDownloads dash; // S3b; null: DASH nicht verfügbar (Kanal lehnt dashplan/dashstart ab, Status ohne "dashdl")
     private IdentityStore identityStore;
     private RegistryStore registryStore;
     private SnapshotWriter writer;
@@ -90,6 +91,9 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
                 try { hls.attachVault(this); }
                 catch (Exception | LinkageError e) { /* kein Fortsetzen nach Prozessende, sonst unverändert */ }
             }
+            // S3b: DASH-VOD → MP4 (gleiche Ablage, gemeinsame Grenzen). Unlesbarer Auftragsordner → kein DASH.
+            try { dash = DashDownloads.get(this, mp4); dash.engine.serviceStarted(); }
+            catch (Exception | LinkageError e) { dash = null; }
         }
         String problem = startChannel();
         if (problem != null) {
@@ -123,12 +127,14 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
             // "Abbrechen" in der Benachrichtigung eines direkten MP4-Downloads
             String job = intent.getStringExtra(Mp4Downloads.EXTRA_JOB);
             if (hls != null && Mp4Downloads.validJobId(job) && hls.engine.knows(job)) hls.engine.cancel(job);
+            else if (dash != null && Mp4Downloads.validJobId(job) && dash.engine.knows(job)) dash.engine.cancel(job);
             else if (mp4 != null && Mp4Downloads.validJobId(job)) mp4.engine.cancel(job);
             return START_STICKY;
         }
         if (intent != null && Mp4Downloads.ACTION_RESUME.equals(intent.getAction())) {
             // P4c: "Fortsetzen" in der Benachrichtigung eines unterbrochenen Streams (nur mit Quelle im Arbeitsspeicher)
             String job = intent.getStringExtra(Mp4Downloads.EXTRA_JOB);
+            if (dash != null && Mp4Downloads.validJobId(job) && dash.engine.knows(job)) { dash.engine.resumeLocal(job); return START_STICKY; }   // S3b
             if (hls != null && Mp4Downloads.validJobId(job) && !hls.engine.resumeLocal(job)) resumeStoredAsync();   // P2: sonst aus dem Tresor
             return START_STICKY;
         }
@@ -153,6 +159,7 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
         Downloads.stopAll();
         if (mp4 != null) mp4.engine.stopAll();
         if (hls != null) hls.engine.stopAll();
+        if (dash != null) dash.engine.stopAll();
         clearBright();
         super.onDestroy();
     }
@@ -211,7 +218,7 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
             IdentityStore.Result id = identityStore.load(!registryStore.exists());
             if (id.identity == null) return Tr.t("Kanal-Identität nicht lesbar (" + id.state + ") – in der App „Identität zurücksetzen“ und neu koppeln.",
                 "Channel identity unreadable (" + id.state + ") – use “Reset identity” in the app and pair again.");
-            ChannelServer s = new ChannelServer(this, this, mp4 == null ? null : mp4.engine, hls == null ? null : hls.engine);
+            ChannelServer s = new ChannelServer(this, this, mp4 == null ? null : mp4.engine, hls == null ? null : hls.engine, dash == null ? null : dash.engine);
             try {
                 RegistryStore.Loaded regs = registryStore.load();
                 synchronized (ChannelServer.CORE) {
@@ -324,7 +331,7 @@ public class HelferService extends Service implements ChannelServer.Host, Contro
         boolean overlayOk = Settings.canDrawOverlays(this);
         boolean writeOk = Settings.System.canWrite(this);
         float b = curBright >= 0 ? curBright : systemBright();
-        return ControlCommands.statusJson(appVersion(), overlayOk, writeOk, cur, max, b, hls == null ? null : hls.opus);
+        return ControlCommands.statusJson(appVersion(), overlayOk, writeOk, cur, max, b, hls == null ? null : hls.opus, dash != null);
     }
 
     private String appVersion() {

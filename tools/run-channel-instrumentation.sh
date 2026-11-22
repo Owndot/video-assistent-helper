@@ -62,6 +62,17 @@ if [ "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" -ge 29 ]; then
   fi
 fi
 echo "PUBLISH_PROBE_STATUS $PROBE_STATUS"
+# S3b: echte DASH-Kette (DashDownloadsInstrumentedTest: DashEngine + Media3 + Mp4Downloads, Dekodierung auf dem Gerät).
+# Eigener Lauf, eigene Datei; im Job-Log nur eindeutig markierte Zeilen. Ein Fehlschlag macht den Job rot. Bewusst noch
+# nicht Teil der festen Testmenge von tools/device_gate.py (das erzeugt alle synthetischen Gate-Fixtures neu).
+adb shell am instrument -w -r -e class de.evp.helfer.DashDownloadsInstrumentedTest "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > "$REPORT/dash.txt" 2>&1
+adb logcat -d -s DASH_TEST:I | grep -E 'DASH_DEVICE' | sed -E 's/^.*(DASH_DEVICE)/\1/' | tee "$REPORT/dash-lines.txt"
+if grep -q '^OK (5 tests)' "$REPORT/dash.txt"; then DASH_STATUS=ok
+else
+  DASH_STATUS=failed; status=1
+  awk '/^INSTRUMENTATION_STATUS: test=/{t=$0} /^INSTRUMENTATION_STATUS: stack=/{print "DASH_FAILED " t; n=10} n>0{print; n--}' "$REPORT/dash.txt" | head -60
+fi
+echo "DASH_DEVICE_STATUS $DASH_STATUS"
 # P4c-3: ECHTER Prozess-Neustart (ProcessRestartInstrumentedTest). Phase A lässt Dienst + Download laufen; dann endet
 # der Prozess: (1) „am force-stop“, (2) der Start der nächsten Instrumentierung beendet den alten Prozess. Phase B läuft
 # in einem neuen Prozess (prüft die Prozesskennung selbst).

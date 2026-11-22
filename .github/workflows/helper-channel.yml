@@ -179,6 +179,8 @@ jobs:
           timeout 120 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
           timeout 300 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends ffmpeg
           bash poc/p4a-hls/tools/make-fixtures.sh "$RUNNER_TEMP/hlsfx"
+          # S3b: DASH-Fixture (ffmpeg-DASH, fMP4 H.264 + AAC) als weitere Test-Assets unter dash/avc (DashDownloadsInstrumentedTest)
+          bash tests/java/dashdl/make-dash-fixtures.sh "$RUNNER_TEMP/hlsfx/dash"
           echo "HLS_FIXTURES=$RUNNER_TEMP/hlsfx" >> "$GITHUB_ENV"
       - name: Test APKs with a throwaway signer (deleted after the build)
         # pipefail: ein Fehler im Skript darf nicht hinter tee verschwinden.

@@ -20,6 +20,12 @@ import de.evp.helfer.net.RequestContext;
  *   {"op":"hlsplan","v":1,"url":"…","bind":{"player":"…","gen":N,"rev":N}}
  *   {"op":"hlsstart","v":1,"id":"<32 hex>","planId":"<32 hex>","option":"<24 hex>","bind":{…}[,"name":"…"]}
  *
+ * DASH (S3b, nur mit {@link DashControl}; ohne lehnt der Helfer ab wie ein alter Helfer):
+ *   {"op":"dashplan","v":1,"url":"…","fp":"<64 hex>","bind":{…}[,"played":"0,3"][,"ref":"…"][,"ua":"…"]}
+ *   {"op":"dashstart","v":1,"id":"<32 hex>","planId":"<32 hex>","option":"<24 hex>","bind":{…}[,"name":"…"]}
+ * v:1 heißt Strukturfingerabdruck {@code kadri-dash-fp/1}; "played" (Hinweis, keine Evidenz): bis zu 8 Indizes der
+ * Darstellungen mit beobachteten Stücken, durch Komma getrennt.
+ *
  * Download-Befehle (Phase C2, nur wenn ein {@link DownloadControl} angebunden ist, sonst abgelehnt):
  *   {"op":"dlstart","id":"<32 hex>","url":"http(s)://…"[,"name":"…"]}  {"op":"dlstatus","id":"…"}  {"op":"dlcancel","id":"…"}
  * dlstart darf bis {@link #MAX_DOWNLOAD_REQUEST} Byte groß sein (die URL); alle anderen Befehle bleiben bei
@@ -67,6 +73,19 @@ public final class ControlCommands {
         String cancel(String id);
     }
 
+    /**
+     * S3b: DASH-Downloads (nur wenn angebunden, sonst abgelehnt). {@code fp}: Kadris Strukturfingerabdruck
+     * ({@code kadri-dash-fp/1}, 64 Hex) des gebundenen MPD; {@code played}: Hinweis auf die gespielten Darstellungen
+     * (nie Sicherheitsevidenz). Antworten ohne URL.
+     */
+    public interface DashControl {
+        String plan(byte[] peer, String bind, String url, String fp, int[] played, RequestContext context);
+        String start(byte[] peer, String bind, String id, String planId, String option, String name);
+        boolean knows(String id);
+        String status(String id);
+        String cancel(String id);
+    }
+
     public static final int MAX_REQUEST = 256;
     public static final int MAX_DOWNLOAD_REQUEST = 4096;
     public static final int MAX_URL = 2048;
@@ -87,23 +106,41 @@ public final class ControlCommands {
      * und umgekehrt).
      */
     public static String handle(byte[] request, Device device, DownloadControl downloads, HlsControl hls, byte[] peer) {
+        return handle(request, device, downloads, hls, null, peer);
+    }
+
+    /**
+     * S3b: zusätzlich DASH ({@code dash} null: dashplan/dashstart abgelehnt). Eine Kennung gehört genau einer Art (MP4,
+     * HLS oder DASH); dlstatus/dlcancel gehen an die Art, die die Kennung kennt.
+     */
+    public static String handle(byte[] request, Device device, DownloadControl downloads, HlsControl hls, DashControl dash, byte[] peer) {
         Request r;
         try { r = parse(request); }
         catch (IllegalArgumentException invalid) { return REJECTED; }
+        if (r.op.startsWith("dash")) {
+            if (dash == null || downloads == null || peer == null) return REJECTED;
+            if (r.op.equals("dashplan")) return dash.plan(peer, r.bind, r.url, r.fp, r.played, r.context);
+            if (dash.knows(r.id)) return dash.start(peer, r.bind, r.id, r.planId, r.option, r.name);
+            if (!downloads.status(r.id).contains("\"state\":\"unknown\"") || (hls != null && hls.knows(r.id)))
+                return "{\"ok\":false,\"id\":\"" + r.id + "\",\"state\":\"rejected\",\"reason\":\"id_in_use\"}";
+            return dash.start(peer, r.bind, r.id, r.planId, r.option, r.name);
+        }
         if (r.op.startsWith("hls")) {
             if (hls == null || downloads == null || peer == null) return REJECTED;
             if (r.op.equals("hlsplan")) return hls.plan(peer, r.bind, r.url, r.context);
             if (hls.knows(r.id)) return hls.start(peer, r.bind, r.id, r.planId, r.option, r.name);
+            if (dash != null && dash.knows(r.id)) return "{\"ok\":false,\"id\":\"" + r.id + "\",\"state\":\"rejected\",\"reason\":\"id_in_use\"}";
             if (!downloads.status(r.id).contains("\"state\":\"unknown\"")) return "{\"ok\":false,\"id\":\"" + r.id + "\",\"state\":\"rejected\",\"reason\":\"id_in_use\"}";
             return hls.start(peer, r.bind, r.id, r.planId, r.option, r.name);
         }
         if (r.op.startsWith("dl")) {
             if (downloads == null) return REJECTED;
             boolean isHls = hls != null && hls.knows(r.id);
+            boolean isDash = !isHls && dash != null && dash.knows(r.id);
             switch (r.op) {
-                case "dlstart": return isHls ? hls.status(r.id) : downloads.start(r.id, r.url, r.name, r.context);
-                case "dlstatus": return isHls ? hls.status(r.id) : downloads.status(r.id);
-                case "dlcancel": return isHls ? hls.cancel(r.id) : downloads.cancel(r.id);
+                case "dlstart": return isHls ? hls.status(r.id) : isDash ? dash.status(r.id) : downloads.start(r.id, r.url, r.name, r.context);
+                case "dlstatus": return isHls ? hls.status(r.id) : isDash ? dash.status(r.id) : downloads.status(r.id);
+                case "dlcancel": return isHls ? hls.cancel(r.id) : isDash ? dash.cancel(r.id) : downloads.cancel(r.id);
                 default: return REJECTED;   // unerreichbar
             }
         }
@@ -136,6 +173,17 @@ public final class ControlCommands {
         return base.substring(0, base.length() - 1) + ",\"hls\":{\"v\":1,\"profiles\":[\"ts-avc-aac\",\"fmp4-avc-aac\"],\"opus\":" + hlsOpus + ",\"ctx\":1}}";
     }
 
+    /**
+     * S3b: wie oben; {@code dash} true: der Helfer kann DASH-VOD speichern – dann zusätzlich
+     * {@code "dashdl":{"v":1,"profiles":["fmp4-avc-aac"],"fp":"kadri-dash-fp/1","ctx":1}}. Das alte Feld "dash":false
+     * (früherer, nicht angebundener Weg) bleibt unverändert.
+     */
+    public static String statusJson(String appVersion, boolean overlay, boolean write, int volStep, int volMax, float bright, Boolean hlsOpus, boolean dash) {
+        String s = statusJson(appVersion, overlay, write, volStep, volMax, bright, hlsOpus);
+        if (!dash) return s;
+        return s.substring(0, s.length() - 1) + ",\"dashdl\":{\"v\":1,\"profiles\":[\"fmp4-avc-aac\"],\"fp\":\"kadri-dash-fp/1\",\"ctx\":1}}";
+    }
+
     private static String statusJsonBase(String appVersion, boolean overlay, boolean write, int volStep, int volMax, float bright) {
         String app = appVersion == null ? "?" : appVersion.replaceAll("[^0-9A-Za-z.+-]", "");
         if (app.length() > 32) app = app.substring(0, 32);
@@ -149,7 +197,9 @@ public final class ControlCommands {
     static final class Request {
         final String op; final boolean hasValue; final double value;
         final String id, url, name;   // nur Download-Befehle
-        String planId, option, bind;  // nur HLS
+        String planId, option, bind;  // nur HLS/DASH
+        String fp;                    // nur dashplan
+        int[] played;                 // nur dashplan (Hinweis)
         RequestContext context = RequestContext.NONE;   // nur dlstart/hlsplan
         Request(String op, boolean hasValue, double value) { this(op, hasValue, value, null, null, null); }
         Request(String op, boolean hasValue, double value, String id, String url, String name) {
@@ -167,7 +217,8 @@ public final class ControlCommands {
         } catch (CharacterCodingException e) { throw new IllegalArgumentException("utf-8"); }
         Parser p = new Parser(s);
         String op = null; boolean hasValue = false; double value = 0;
-        String id = null, url = null, name = null, planId = null, option = null, bind = null, ref = null, ua = null;
+        String id = null, url = null, name = null, planId = null, option = null, bind = null, ref = null, ua = null, fp = null;
+        int[] played = null;
         p.expect('{');
         boolean first = true;
         while (true) {
@@ -203,6 +254,12 @@ public final class ControlCommands {
             } else if ("ua".equals(key)) {
                 if (ua != null) throw new IllegalArgumentException("duplicate ua");
                 ua = p.printable(512);
+            } else if ("fp".equals(key)) {
+                if (fp != null) throw new IllegalArgumentException("duplicate fp");
+                fp = p.hex(64);
+            } else if ("played".equals(key)) {
+                if (played != null) throw new IllegalArgumentException("duplicate played");
+                played = p.indices(8);
             } else if ("bind".equals(key)) {
                 if (bind != null) throw new IllegalArgumentException("duplicate bind");
                 bind = p.bind();
@@ -215,8 +272,28 @@ public final class ControlCommands {
         // Referer/User-Agent nur beim Anlegen eines Auftrags (dlstart, hlsplan); streng geprüft, sonst abgelehnt
         RequestContext context = RequestContext.NONE;
         if (ref != null || ua != null) {
-            if (!"dlstart".equals(op) && !"hlsplan".equals(op)) throw new IllegalArgumentException("context field");
+            if (!"dlstart".equals(op) && !"hlsplan".equals(op) && !"dashplan".equals(op)) throw new IllegalArgumentException("context field");
             context = RequestContext.of(ref, ua);
+        }
+        if ((fp != null || played != null) && !"dashplan".equals(op)) throw new IllegalArgumentException("dash field");
+        if (op.equals("dashplan") || op.equals("dashstart")) {
+            // Versioniert: genau v:1 (Fingerabdruck kadri-dash-fp/1). dashplan {op,v,url,fp,bind[,played][,ref][,ua]};
+            // dashstart {op,v,id,planId,option,bind[,name]}
+            if (!hasValue || value != 1.0 || bind == null) throw new IllegalArgumentException("dash fields");
+            Request r;
+            if (op.equals("dashplan")) {
+                if (url == null || fp == null || id != null || name != null || planId != null || option != null) throw new IllegalArgumentException("dash fields");
+                r = new Request(op, true, 1, null, url, null);
+                r.context = context;
+                r.fp = fp;
+                r.played = played;
+            } else {
+                if (url != null || id == null || planId == null || option == null) throw new IllegalArgumentException("dash fields");
+                if (raw.length > 1024) throw new IllegalArgumentException("size");
+                r = new Request(op, true, 1, id, null, name);
+            }
+            r.planId = planId; r.option = option; r.bind = bind;
+            return r;
         }
         if (op.equals("hlsplan") || op.equals("hlsstart")) {
             // Versioniert: genau v:1. hlsplan {op,v,url,bind}; hlsstart {op,v,id,planId,option,bind[,name]}
@@ -294,6 +371,31 @@ public final class ControlCommands {
             pos++;
             return s.substring(start, pos - 1);
         }
+        /** S3b: "0,3,7" – 1…max ganze Zahlen 0…4095, durch Komma getrennt, ohne Leerzeichen, ohne Wiederholung. */
+        int[] indices(int max) {
+            expect('"');
+            int start = pos;
+            while (peek() != '"') {
+                char c = s.charAt(pos);
+                if (!((c >= '0' && c <= '9') || c == ',')) throw new IllegalArgumentException("indices");
+                if (pos - start >= max * 5) throw new IllegalArgumentException("indices length");
+                pos++;
+            }
+            String v = s.substring(start, pos);
+            pos++;
+            String[] parts = v.split(",", -1);
+            if (v.isEmpty() || parts.length > max) throw new IllegalArgumentException("indices");
+            int[] out = new int[parts.length];
+            for (int i = 0; i < parts.length; i++) {
+                String x = parts[i];
+                if (x.isEmpty() || x.length() > 4 || (x.length() > 1 && x.charAt(0) == '0')) throw new IllegalArgumentException("indices");
+                out[i] = Integer.parseInt(x);
+                if (out[i] > 4095) throw new IllegalArgumentException("indices");
+                for (int k = 0; k < i; k++) if (out[k] == out[i]) throw new IllegalArgumentException("indices");
+            }
+            return out;
+        }
+
         /** Genau {@code n} Kleinbuchstaben-Hexziffern (Plan- und Optionskennung des Helfers). */
         String hex(int n) {
             expect('"');

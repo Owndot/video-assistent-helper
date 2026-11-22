@@ -1,12 +1,14 @@
-name: DASH core (S3a) – JVM, mutations
+name: DASH core (S3a) and downloads (S3b) – JVM, mutations, Media3 remux
 
 # S3a: DASH-MPD-Parser, S3-Profil, vollständiger Plan und Strukturfingerabdruck v1 (de.evp.helfer.dash) – nur JVM.
 # Keine Engine, kein Download, kein Netz, keine Abhängigkeit außer dem JDK. Nichts wird veröffentlicht.
 on:
   push:
-    branches: [dash-s3a]
-    paths: ['app/src/main/java/de/evp/helfer/dash/**', 'app/src/main/java/de/evp/helfer/hls/HlsUri.java', 'tests/java/dash/**',
-            'tests/java/mutation_verdict.py', '.github/workflows/dash-core.yml']
+    branches: [dash-s3a, dash-s3b]
+    paths: ['app/src/main/java/de/evp/helfer/dash/**', 'app/src/main/java/de/evp/helfer/dashdl/**', 'app/src/main/java/de/evp/helfer/hls/**',
+            'app/src/main/java/de/evp/helfer/hlsmux/**', 'app/src/main/java/de/evp/helfer/net/**', 'app/src/main/java/de/evp/helfer/dl/**',
+            'app/src/main/java/de/evp/helfer/ControlCommands.java', 'tests/java/dash/**', 'tests/java/dashdl/**', 'tests/java/hlsmux/shim/**',
+            'tests/java/mutation_verdict.py', 'poc/p4a-hls/tools/analyze.py', 'tools/check-network-layer.sh', '.github/workflows/dash-core.yml']
   workflow_dispatch:
 
 permissions:
@@ -33,3 +35,60 @@ jobs:
           set -euo pipefail
           bash tests/java/dash/run.sh
           python3 -I tests/java/dash/mutation.py
+
+  dash-engine-jvm:
+    # S3b: Koordinator gegen den echten SafeHttpClient und einen lokalen Server (Remux als Nachbildung), Fmp4Inspect,
+    # Kanalbefehle; danach Mutationsproben und die Netzschicht-Sperre.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: ffmpeg (synthetic DASH fixture)
+        run: |
+          set -euo pipefail
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then sudo sed -Ei -e 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+              -e 's#https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"; fi
+          done
+          timeout 120 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          timeout 300 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends ffmpeg
+          bash tests/java/dashdl/make-dash-fixtures.sh "$RUNNER_TEMP/dfx"
+      - name: DASH engine JVM tests and mutation probes
+        run: |
+          set -euo pipefail
+          bash tests/java/dashdl/run.sh "$RUNNER_TEMP/dfx" "$RUNNER_TEMP/deps"
+          python3 -I tests/java/dashdl/mutation.py "$RUNNER_TEMP/dfx" "$RUNNER_TEMP/deps"
+      - name: Network layer guard (DASH core without network, DASH downloads only via SafeHttpClient)
+        run: bash tools/check-network-layer.sh && bash tools/check-network-layer.sh --self-test
+
+  dash-remux-jvm:
+    # S3b: echter Zusammenbau mit dem unveränderten App-Remuxer (Media3 1.11.1, gepinnt) und Ende-zu-Ende
+    # (DashEngine + SafeHttpClient + lokaler Server + Media3), Ausgabe mit analyze.py gegen die DASH-Quelle geprüft.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: ffmpeg (synthetic DASH fixture)
+        run: |
+          set -euo pipefail
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then sudo sed -Ei -e 's#https?://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+              -e 's#https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"; fi
+          done
+          timeout 120 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          timeout 300 sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends ffmpeg
+          bash tests/java/dashdl/make-dash-fixtures.sh "$RUNNER_TEMP/dfx"
+      - name: Media3 remux + end-to-end (JVM, 192 MiB heap)
+        run: bash tests/java/dashdl/run_remux.sh "$RUNNER_TEMP/dfx" "$RUNNER_TEMP/deps"
