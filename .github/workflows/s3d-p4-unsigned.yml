@@ -115,7 +115,9 @@ jobs:
           grep -q "^package: name='de.evp.helfer.p4test' versionCode='3'" reference/badging.txt && ok "reference package de.evp.helfer.p4test, versionCode 3" || bad "reference package"
           cmp -s candidate-a/permissions.txt reference/permissions.txt && ok "permissions identical to the installed reference ($(wc -l < reference/permissions.txt))" || { diff reference/permissions.txt candidate-a/permissions.txt; bad "permission diff"; }
           [ ! -s candidate-a/own-permissions.txt ] && ok "no own permission declared" || bad "own permission"
-          diff <(sed -E "s/(versionCode[^=]*=)[0-9]+/\1N/; s/(versionName[^=]*=\")[^\"]*/\1V/" reference/manifest.txt) <(sed -E "s/(versionCode[^=]*=)[0-9]+/\1N/; s/(versionName[^=]*=\")[^\"]*/\1V/" candidate-a/manifest.txt) > manifest.diff && ok "manifest identical to the reference apart from versionCode/versionName" || { cat manifest.diff; bad "manifest differs"; }
+          norm() { grep -vE 'android:version(Code|Name)\(' "$1"; }
+          diff <(norm reference/manifest.txt) <(norm candidate-a/manifest.txt) > manifest.diff && ok "manifest identical to the reference apart from versionCode/versionName (versionName 1.0.3-p4test -> 1.0.4-p4test)" || { cat manifest.diff; bad "manifest differs"; }
+          [ "$(grep -c 'android:version\(Code\|Name\)(' candidate-a/manifest.txt)" = 2 ] && [ "$(grep -c 'android:version\(Code\|Name\)(' reference/manifest.txt)" = 2 ] || bad "version attributes not found exactly once each"
           for f in "application-label:" "targetSdkVersion:" "sdkVersion:" "native-code:"; do
             [ "$(grep "^$f" reference/badging.txt)" = "$(grep "^$f" candidate-a/badging.txt)" ] && ok "$f $(grep "^$f" candidate-a/badging.txt | cut -d: -f2-)" || bad "$f differs"
           done
