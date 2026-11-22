@@ -1,0 +1,241 @@
+name: S3d INTERNAL Samsung test build (temporary signer, NOT a beta, NOT a release, NOT a P4 delivery)
+
+# Interne Samsung-Testversion der DASH-Stände: Helfer ee54864 (unsigniert bitgleich 2667665f…), Kadri 520c0bf (1.12.17).
+# Vorlage: p4-owner-test.yml (unverändert). Temporärer Testsignierer: entsteht in diesem Lauf (RSA-3072, 2 Tage), signiert
+# einmal über sign.sh und wird gelöscht – keine Secrets, kein Schlüssel in Artefakt, Log oder Repository.
+# FOLGE: anderer Signierer als die installierte helper-p4test-3.apk (1772361b…) → kein Update möglich (Signaturkonflikt).
+# Gesperrte Lieferworkflows und ihre Pins bleiben unverändert. Startet nur durch einen Push auf test/s3d-internal.
+on:
+  push:
+    branches: [test/s3d-internal]
+    paths: [.github/workflows/s3d-internal-test.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: s3d-internal-test
+  cancel-in-progress: false
+
+env:
+  HELPER_SHA: ee5486442266f2730893353ac71611809dfd21b1
+  KADRI_SHA: 520c0bf11092060f44723b5320117e31b8258fb8
+  VERSION_CODE: '4'
+  UNSIGNED_SHA256: 2667665f3bd5e6753a9ab2d0cedc9c9cf088d0bf0013fcad36979964419445b3
+  KADRI_CONTENT_SHA256: 42252ba42e7fba6c2f5821849be765ea289d4c0fec0b10b04677ad7e2d9cacc1
+  KADRI_ZIP_SHA256: bf685a122610c7f7c926ba9016629238e67e0659b6a90f15301c83ba11b706fa
+  KADRI_VERSION: '1.12.17'
+  KADRI_P4_ID: pcccpjllneffccpenbepmfbkjedllkkf
+  INSTALLED_SIGNER: 1772361b7962daab660c8abfa0e8977b99f2d1f0984bcc056979994f46ca0465
+  NDK_VERSION: 27.2.12479018
+
+jobs:
+  owner-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Owner, branch, first attempt
+        env:
+          ACTOR: ${{ github.actor }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/test/s3d-internal ] || { echo "only push to test/s3d-internal" >&2; exit 1; }
+          [ "$ACTOR" = "$OWNER" ] || { echo "only the repository owner" >&2; exit 1; }
+          [ "$GITHUB_RUN_ATTEMPT" = 1 ] || { echo "no re-runs; push a new commit" >&2; exit 1; }
+          echo "INTERNAL SAMSUNG TEST (not a beta, not a release, not a P4 delivery): helper=$HELPER_SHA kadri=$KADRI_SHA version_code=$VERSION_CODE"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: wf
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.HELPER_SHA }}
+          path: src
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Owndot/Kadri
+          ref: ${{ env.KADRI_SHA }}
+          path: kadri
+          persist-credentials: false
+      - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pin as in Kadri p4-test-extension.yml
+        with:
+          node-version: '22'
+      - name: Exact sources, no production approval, pinned toolchains (Rust, NDK r27c, SDK 37.0, build-tools 36.0.0 + 34.0.0)
+        run: |
+          set -euo pipefail
+          test "$(git -C src rev-parse HEAD)" = "$HELPER_SHA"
+          test "$(git -C kadri rev-parse HEAD)" = "$KADRI_SHA"
+          grep -q '"status": "UNAPPROVED"' src/release/production-policy.json
+          grep -qx '  "certificate_sha256": null,' src/release/p4test-signer.json
+          (cd src/poc/pake-channel/core && rustup toolchain install && rustc -V)
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "platforms;android-37.0" "build-tools;36.0.0" "build-tools;34.0.0" < <(yes 2>/dev/null) > /dev/null
+          test -f "$ANDROID_HOME/ndk/$NDK_VERSION/source.properties"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Unsigned de.evp.helfer.p4test (no production, debug or channeltest output)
+        working-directory: src
+        run: |
+          set -euo pipefail
+          bash tools/build-channel-native.sh "$RUNNER_TEMP/a"
+          GITHUB_RUN_NUMBER="$VERSION_CODE" bash tools/p4test/build-unsigned.sh "$RUNNER_TEMP/a" "$VERSION_CODE"   # versionName 1.0.4-p4test
+          test "$(sha256sum < "$RUNNER_TEMP/a/p4/helper-p4test-unsigned.apk" | cut -d' ' -f1)" = "$UNSIGNED_SHA256" || { echo "unsigned APK differs from the approved 2667665f…" >&2; exit 1; }
+          test ! -e app/build/outputs/apk/release && test ! -e app/build/outputs/apk/debug && test ! -e app/build/outputs/apk/channeltest
+          test -z "$(git status --porcelain)"
+      - name: Temporary test signing - throwaway key created, used once via sign.sh, deleted (as in p4-test-package.yml)
+        working-directory: src
+        run: |
+          set -euo pipefail
+          umask 077
+          . tools/p4test/lib.sh
+          K="$(mktemp -d "$RUNNER_TEMP/p4-throwaway.XXXXXX")"
+          wipe() { find "$K" -type f -exec shred -u -z {} + 2>/dev/null || true; rm -rf "$K"; }
+          trap 'unset P4_KS_PASS; wipe' EXIT
+          P4_KS_PASS="$(openssl rand -hex 32)"; export P4_KS_PASS
+          keytool -genkeypair -storetype PKCS12 -keystore "$K/throwaway.p12" -alias "$P4_ALIAS" -keyalg RSA -keysize 3072 \
+            -validity 2 -dname 'CN=Helper P4 TEST ONLY - throwaway' -storepass:env P4_KS_PASS -keypass:env P4_KS_PASS >/dev/null 2>&1
+          fp="$(keystore_cert_sha256 "$K/throwaway.p12")"
+          [[ "$fp" =~ ^[0-9a-f]{64}$ ]]
+          sed -E 's/^  "certificate_sha256": null,$/  "certificate_sha256": "'"$fp"'",/' release/p4test-signer.json > "$K/throwaway-pin.json"
+          grep -qx "  \"certificate_sha256\": \"$fp\"," "$K/throwaway-pin.json"
+          mkdir -p "$RUNNER_TEMP/signed"
+          bash tools/p4test/sign.sh "$RUNNER_TEMP/a/p4/helper-p4test-unsigned.apk" "$K/throwaway.p12" "$RUNNER_TEMP/signed/helper-p4test-$VERSION_CODE.apk" "$K/throwaway-pin.json"
+          unset P4_KS_PASS
+          wipe; trap - EXIT
+          test ! -e "$K"
+          left="$(find "$RUNNER_TEMP" "$GITHUB_WORKSPACE" "$HOME/.android" -xdev \( -iname '*.p12' -o -iname '*.jks' -o -iname '*.keystore' -o -iname '*.pk8' -o -iname '*.bks' \) -print 2>/dev/null || true)"
+          [ -z "$left" ] || { echo "key material left: $left" >&2; exit 1; }
+          git diff --exit-code -- release/ tools/p4test/
+          echo "$fp" > "$RUNNER_TEMP/cert.sha256"
+      - name: Verify the signed APK (package, permissions, signature, SHA-256, source, native libraries, 16 KB)
+        run: |
+          set -euo pipefail
+          APK="$RUNNER_TEMP/signed/helper-p4test-$VERSION_CODE.apk"; chmod a-w "$APK"
+          WANT_CERT="$(cat "$RUNNER_TEMP/cert.sha256")"
+          BT="$ANDROID_HOME/build-tools/34.0.0"; TC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
+          die() { echo "REFUSED: $*" >&2; exit 1; }
+          badging="$("$BT/aapt2" dump badging "$APK")"
+          grep -q "^package: name='de.evp.helfer.p4test' versionCode='$VERSION_CODE' versionName='1.0.4-p4test'" <<<"$badging" || die "wrong package, version code or name"
+          grep -q "application-label:'P4 TEST Helfer'" <<<"$badging" || die "unexpected label"
+          grep -q "native-code: 'arm64-v8a' 'x86_64'" <<<"$badging" || die "unexpected ABIs"
+          grep -q "^targetSdkVersion:'34'" <<<"$badging" || die "targetSdk is not 34"
+          if grep -q "application-debuggable" <<<"$badging"; then die "debuggable"; fi
+          manifest="$("$BT/aapt2" dump xmltree --file AndroidManifest.xml "$APK")"
+          if grep -q "testOnly" <<<"$manifest"; then die "testOnly"; fi
+          perms="$(grep '^uses-permission:' <<<"$badging" | sort)"
+          want="$(sort <<'P'
+          uses-permission: name='android.permission.INTERNET'
+          uses-permission: name='android.permission.ACCESS_NETWORK_STATE'
+          uses-permission: name='android.permission.FOREGROUND_SERVICE'
+          uses-permission: name='android.permission.FOREGROUND_SERVICE_SPECIAL_USE'
+          uses-permission: name='android.permission.POST_NOTIFICATIONS'
+          uses-permission: name='android.permission.WAKE_LOCK'
+          uses-permission: name='android.permission.RECEIVE_BOOT_COMPLETED'
+          uses-permission: name='android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'
+          uses-permission: name='android.permission.SYSTEM_ALERT_WINDOW'
+          uses-permission: name='android.permission.WRITE_SETTINGS'
+          uses-permission: name='android.permission.READ_EXTERNAL_STORAGE' maxSdkVersion='28'
+          uses-permission: name='android.permission.WRITE_EXTERNAL_STORAGE' maxSdkVersion='28'
+          P
+          )"
+          [ "$perms" = "$(sed 's/^ *//' <<<"$want")" ] || { diff <(sed 's/^ *//' <<<"$want") <(echo "$perms") >&2 || true; die "permissions differ from the manifest list"; }
+          if grep -q '^permission:' <<<"$badging"; then die "declares its own permission"; fi
+          grep -q 'allowBackup.*=false' <<<"$manifest" || die "allowBackup not false"
+          grep -q 'dataExtractionRules' <<<"$manifest" || die "dataExtractionRules missing"
+          if grep -q 'InitializationProvider' <<<"$manifest"; then die "androidx startup provider present"; fi
+          vci="$(unzip -p "$APK" META-INF/version-control-info.textproto)" || die "cannot read version-control-info"
+          grep -Fq "$HELPER_SHA" <<<"$vci" || die "not built from $HELPER_SHA"
+          certs="$("$BT/apksigner" verify --verbose --print-certs "$APK")" || die "signature does not verify"
+          grep -qx 'Verified using v2 scheme (APK Signature Scheme v2): true' <<<"$certs" || die "no v2 signature"
+          grep -qx 'Verified using v3 scheme (APK Signature Scheme v3): true' <<<"$certs" || die "no v3 signature"
+          [ "$(grep -c '^Signer #[0-9]* certificate DN' <<<"$certs")" = 1 ] || die "not exactly one signer"
+          grep -qx 'Signer #1 certificate DN: CN=Helper P4 TEST ONLY - throwaway' <<<"$certs" || die "not the throwaway signer"
+          got="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$certs")"
+          [ "$got" = "$WANT_CERT" ] || die "signer $got is not this run's throwaway certificate"
+          [ "$got" != ec17fab1a92079911ea50e6d308f8c70ad79efc3bb48e0231f2559b26b7e42e5 ] || die "compromised old signer"
+          [ "$got" != "$INSTALLED_SIGNER" ] || die "unexpected: installed signer reproduced"
+          echo "SIGNATURE CONFLICT (documented): new temporary signer $got != installed helper-p4test-3 signer $INSTALLED_SIGNER - no in-place update; installing would require uninstalling the old app (not approved)"
+          "$BT/apksigner" verify --print-certs-pem "$APK" | sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' > "$W/cert.pem"
+          start="$(openssl x509 -in "$W/cert.pem" -noout -startdate | cut -d= -f2)"; end="$(openssl x509 -in "$W/cert.pem" -noout -enddate | cut -d= -f2)"
+          days=$(( ( $(date -d "$end" +%s) - $(date -d "$start" +%s) ) / 86400 ))
+          [ "$days" -le 3 ] || die "certificate valid $days days: not a throwaway certificate"
+          libs="$(unzip -Z1 "$APK" | grep '^lib/' | sort)"
+          [ "$libs" = "$(printf 'lib/arm64-v8a/libkadri_pairing_poc.so\nlib/x86_64/libkadri_pairing_poc.so')" ] || die "unexpected native libraries: $libs"
+          entries="$(unzip -Z1 "$APK")" || die "cannot list APK entries"
+          if grep -qi 'testinit' <<<"$entries"; then die "test library inside"; fi
+          for abi in arm64-v8a x86_64; do
+            unzip -p "$APK" "lib/$abi/libkadri_pairing_poc.so" > "$W/$abi.so"
+            machine="$("$TC/llvm-readelf" -h "$W/$abi.so" | sed -n 's/^ *Machine: *//p')"
+            case "$abi:$machine" in arm64-v8a:AArch64|x86_64:*X86-64*) ;; *) die "architecture mismatch $abi:$machine" ;; esac
+            syms="$("$TC/llvm-nm" -D --defined-only "$W/$abi.so")" || die "cannot read symbols ($abi)"
+            if grep -q Java_poc_TestInitiator_ <<<"$syms"; then die "test initiator in app library"; fi
+            grep -q ' Java_poc_Core_hostInit$' <<<"$syms" || die "channel JNI entry points missing ($abi)"
+          done
+          H="$(sha256sum < "$APK" | cut -d' ' -f1)"
+          APKSIGNER="$BT/apksigner" ZIPALIGN="$ANDROID_HOME/build-tools/36.0.0/zipalign" READELF="$TC/llvm-readelf" \
+            bash wf/tools/p4owner/p4-native-preflight.sh "$APK" "$H" | tee "$RUNNER_TEMP/preflight.txt"
+          {
+            echo "INTERNAL SAMSUNG TEST BUILD - not a beta, not a release, not a P4 delivery"
+            echo "helper_source=$HELPER_SHA kadri_source=$KADRI_SHA workflow_commit=$GITHUB_SHA run=$GITHUB_RUN_ID"
+            echo "package=de.evp.helfer.p4test version_code=$VERSION_CODE version_name=1.0.4-p4test unsigned_sha256=$UNSIGNED_SHA256 apk_sha256=$H"
+            echo "signature_conflict=yes installed_signer=$INSTALLED_SIGNER (update impossible; uninstall needed, not approved)"
+            echo "throwaway_cert_sha256=$got cert_not_before=$start cert_not_after=$end (key deleted; next build = new signer = reinstall)"
+            cat "$RUNNER_TEMP/preflight.txt"
+          } > "$RUNNER_TEMP/evidence.txt"
+      - name: Kadri P4 TEST extension (same checks as Kadri p4-test-extension.yml, plus content checksum)
+        working-directory: kadri
+        run: |
+          set -euo pipefail
+          node tools/build.js
+          test -f dist/chrome/channel/kadri_pairing_poc_bg.wasm
+          test ! -e dist/firefox/channel
+          if grep -rnE "'X-EVP-Key' *:|['\"]http://127\\.0\\.0\\.1:47811|KADRI_HELPER_KEY" dist/chrome --include=*.js | grep -vE '^[^:]+:[0-9]+: *//'; then echo 'legacy helper client in the build'; exit 1; fi
+          node tests/channel/p4_identity_check.js
+          mkdir -p "$RUNNER_TEMP/out"
+          python3 -I tools/p4test/pack-extension.py dist/chrome "$RUNNER_TEMP/out/kadri-p4test.zip"
+          python3 -I - "$RUNNER_TEMP/out/kadri-p4test.zip" <<'PY'
+          import hashlib, json, os, sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1]); m = json.loads(z.read('manifest.json'))
+          assert m['name'] == 'Kadri P4 TEST' and 'UNAPPROVED' in m['description'], m['name']
+          assert m['permissions'] == ['storage', 'declarativeNetRequestWithHostAccess', 'scripting'], m['permissions']
+          assert not any(k in m for k in ['update_url', 'externally_connectable']), 'unexpected manifest key'
+          assert 'channel/kadri_pairing_poc_bg.wasm' in z.namelist()
+          assert not [n for n in z.namelist() if n.startswith('/') or '..' in n.split('/') or n.lower().endswith(('.pem', '.p12', '.key', '.crx'))]
+          s = ''.join(hashlib.sha256(z.read(n)).hexdigest() + '  ' + n + '\n' for n in sorted(z.namelist()))
+          d = hashlib.sha256(s.encode()).hexdigest()
+          assert d == os.environ['KADRI_CONTENT_SHA256'], 'Kadri content differs: ' + d
+          assert m['version'] == os.environ['KADRI_VERSION'], m['version']
+          assert m.get('host_permissions') == ['<all_urls>'], m.get('host_permissions')
+          print('PASS: Kadri P4 TEST,', len(z.namelist()), 'files, content', d)
+          PY
+          test -z "$(git status --porcelain)"
+          z="$(sha256sum < "$RUNNER_TEMP/out/kadri-p4test.zip" | cut -d' ' -f1)"
+          [ "$z" = "$KADRI_ZIP_SHA256" ] || { echo "Kadri ZIP $z != $KADRI_ZIP_SHA256" >&2; exit 1; }
+          mv "$RUNNER_TEMP/out/kadri-p4test.zip" "$RUNNER_TEMP/out/kadri-p4test-$KADRI_VERSION.zip"
+          echo "kadri_p4_extension_id=$KADRI_P4_ID kadri_version=$KADRI_VERSION kadri_content_sha256=$KADRI_CONTENT_SHA256 kadri_zip_sha256=$z" >> "$RUNNER_TEMP/evidence.txt"
+      - name: Test artifacts (APK, Kadri ZIP, SHA256SUMS, evidence)
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/signed/helper-p4test-$VERSION_CODE.apk" "$RUNNER_TEMP/evidence.txt" "$RUNNER_TEMP/out/"
+          (cd "$RUNNER_TEMP/out" && sha256sum "helper-p4test-$VERSION_CODE.apk" "kadri-p4test-$KADRI_VERSION.zip" evidence.txt > SHA256SUMS && cat SHA256SUMS)
+          [ "$(ls "$RUNNER_TEMP/out" | sort | tr '\n' ' ')" = "SHA256SUMS evidence.txt helper-p4test-$VERSION_CODE.apk kadri-p4test-$KADRI_VERSION.zip " ]
+          cat "$RUNNER_TEMP/out/evidence.txt"
+          # Übergabe der beiden fertigen Testpakete (kein Schlüssel) zusätzlich als nummerierte Base64-Zeilen
+          for f in "helper-p4test-$VERSION_CODE.apk" "kadri-p4test-$KADRI_VERSION.zip"; do
+            p="$RUNNER_TEMP/out/$f"; h="$(sha256sum < "$p" | cut -d' ' -f1)"
+            echo "B64-BEGIN name=$f size=$(stat -c %s "$p") sha256=$h"
+            base64 -w 0 < "$p" | fold -w 3000 | awk -v n="$f" '{ printf "B64 %s %05d %s\n", n, NR, $0 }'
+            echo "B64-END name=$f sha256=$h"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: s3d-internal-samsung-test-${{ github.run_number }}
+          path: ${{ runner.temp }}/out/
+          retention-days: 7
+          if-no-files-found: error
