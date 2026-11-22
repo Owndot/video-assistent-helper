@@ -23,6 +23,12 @@ public final class DashLimits {
     public static final int MAX_TIMELINE_ENTRIES = 100_000;
     /** SegmentURL-Einträge aller SegmentLists zusammen. */
     public static final int MAX_LIST_ENTRIES = 100_000;
+    /**
+     * Über alle Darstellungen eines MPD: neu aufzulösende SegmentURL-Einträge (eine geerbte Liste je (Element, Basis)
+     * nur einmal) und auszuwertende Stücke (gleiche Stückfolge nur einmal). Darüber "limits" statt Speichererschöpfung.
+     */
+    public static final int MAX_RESOLVED_LIST_ENTRIES = 200_000;
+    public static final long MAX_EXPANDED_SEGMENTS = 1_000_000;
     /** Stücke je Spur (wie HlsPlaylist.MAX_SEGMENTS). Begrenzt auch jede Expansion (r, r=-1, @duration). */
     public static final int MAX_SEGMENTS_PER_TRACK = 20_000;
     public static final double MAX_SEGMENT_SECONDS = 3600;

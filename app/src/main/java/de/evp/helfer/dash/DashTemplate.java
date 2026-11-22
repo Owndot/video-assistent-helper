@@ -12,11 +12,11 @@ import java.util.regex.Pattern;
  * Ergebnis der Auflösung: kanonischer Präfix + Zahl (mit Breite) + Suffix – aufgelöst mit einer Marke an der Stelle
  * des Platzhalters (Kadri, src/038, nutzt dafür eine eigene Marke). Marke und Zahl bestehen nur aus Ziffern und können
  * keine Punktsegmente bilden; die Auflösung einer konkreten Adresse ist daher identisch mit Präfix + Zahl + Suffix.
- * Eine Vorlage, die die Marke wörtlich enthält, wird abgelehnt; die Marke kann so höchstens einmal vorkommen.
+ * Die Marke wird je Vorlage so gewählt, dass sie mit nichts anderem verwechselt werden kann (siehe media()).
  */
 final class DashTemplate {
-    /** Marke für den Zahlenplatzhalter: nur Ziffern, damit sie Kleinschreibung und Hostprüfung unverändert übersteht. */
-    static final String MARK = "9173917391739173";
+    /** Platzhalter im eingesetzten Text vor der Auflösung (Steuerzeichen: in Adressen nie erlaubt, siehe DashUrl). */
+    private static final char SLOT = '\u0001';
     private static final Pattern FMT = Pattern.compile("%0([1-9][0-9]?)d");
     /** Zeichen, die $RepresentationID$ einsetzen darf (unreserviert und unschädliche Sub-Delims, kein / ? # %). */
     private static final Pattern ID_OK = Pattern.compile("[A-Za-z0-9._~=,;!*()+&:@-]{1,256}");
@@ -55,7 +55,6 @@ final class DashTemplate {
      * Setzt $$, $RepresentationID$ und $Bandwidth$ ein; $Number$/$Time$ werden zur Marke. Liefert [Text, Art, Breite].
      */
     private static Object[] expand(String tpl, String id, long bandwidth, boolean media) throws DashException {
-        if (tpl.contains(MARK)) throw new DashException("template");
         StringBuilder out = new StringBuilder();
         Kind kind = Kind.NONE;
         int width = 0, i = 0;
@@ -94,7 +93,7 @@ final class DashTemplate {
                     if (!media || kind != Kind.NONE) throw new DashException("template");
                     kind = name.equals("Number") ? Kind.NUMBER : Kind.TIME;
                     width = w;
-                    out.append(MARK);
+                    out.append(SLOT);
                     break;
                 default:
                     throw new DashException("template");
@@ -106,11 +105,27 @@ final class DashTemplate {
 
     static Media media(String tpl, String id, long bandwidth, String base) throws DashException {
         Object[] e = expand(tpl, id, bandwidth, true);
-        String resolved = DashUrl.resolve(base, (String) e[0]);
-        int at = resolved.indexOf(MARK);
-        if (at < 0) throw new DashException("template");
+        // S3a-Fix P1: Die Marke wird so gewählt, dass sie nirgends sonst vorkommen kann – weder in der Vorlage noch in
+        // eingesetzten Werten ($RepresentationID$, $Bandwidth$) noch in der Basis: "8" + (längste 9er-Folge + 1) × "9" + "8".
+        // Die Auflösung verbindet Basis und Referenz nur an "/" oder "?" und ändert keine Ziffern; eine 9er-Folge dieser
+        // Länge kann daher nur aus der Marke stammen. Gefunden wird sie über genau diese Folge (eindeutig).
+        String text = (String) e[0];
+        int run = Math.max(longestNines(text), longestNines(base)) + 1;
+        StringBuilder nines = new StringBuilder(run);
+        for (int i = 0; i < run; i++) nines.append('9');
+        String mark = "8" + nines + "8";
+        String resolved = DashUrl.resolve(base, text.replace(String.valueOf(SLOT), mark));
+        int n9 = resolved.indexOf(nines.toString());
+        if (n9 < 1 || !resolved.startsWith(mark, n9 - 1)) throw new DashException("template");   // Invariante (nie verletzt)
+        int at = n9 - 1;
         if (at < resolved.indexOf("://") + 3 || at < DashUrl.origin(resolved).length()) throw new DashException("template");   // Marke im Host
-        return new Media((Kind) e[1], (Integer) e[2], resolved.substring(0, at), resolved.substring(at + MARK.length()));
+        return new Media((Kind) e[1], (Integer) e[2], resolved.substring(0, at), resolved.substring(at + mark.length()));
+    }
+
+    private static int longestNines(String s) {
+        int best = 0, cur = 0;
+        for (int i = 0; i < s.length(); i++) { cur = s.charAt(i) == '9' ? cur + 1 : 0; if (cur > best) best = cur; }
+        return best;
     }
 
     static String init(String tpl, String id, long bandwidth, String base) throws DashException {

@@ -96,6 +96,7 @@ public final class TestDash {
         plans(fx);
         fingerprint(fx);
         crossCheck(fx);
+        review1();
         isolation();
         System.out.println("ERGEBNIS: " + passed + " von " + (passed + failed));
         System.exit(failed == 0 ? 0 : 1);
@@ -265,7 +266,7 @@ public final class TestDash {
         };
         for (String[] t : ok) check("Vorlage „" + t[0] + "“ → " + t[1], media(t[0]).equals(t[1]), media(t[0]));
         String[] bad = {"$Number%5d$", "$Number%d$", "$Number%00d$", "$Number%021d$", "$Number%05x$", "$RepresentationID%05d$/$Number$", "$SubNumber$",
-            "$Unknown$/$Number$", "$Number", "$Number$/$Number$", "$Number$/$Time$", "seg.m4s", "$Number$9173917391739173", "https://cdn$Number$.example/x"};
+            "$Unknown$/$Number$", "$Number", "$Number$/$Number$", "$Number$/$Time$", "seg.m4s", "https://cdn$Number$.example/x", "https://cdn.example:$Number$/x"};
         for (String t : bad) check("Vorlage „" + t + "“ abgelehnt (template)", media(t).equals("fatal:template"), media(t));
         check("Init-Vorlage mit $Number$ abgelehnt",
             reason(mpd(VSET + TPL.replace("initialization=\"$RepresentationID$/init.mp4\"", "initialization=\"$Number$/init.mp4\"") + VREP + "</AdaptationSet>")).equals("template"), "");
@@ -726,6 +727,100 @@ public final class TestDash {
         }
         check("Dokumentierte Abweichung (Kadri, für S3c): $Bandwidth%08d$ ohne Auffüllen – Kadri-Init „init-96000“, Plan „init-00096000“",
             kadriPlainBw && !kadriPaddedBw, kadriPlainBw + "/" + kadriPaddedBw);
+    }
+
+    // ---------------------------------------------------------------- S3a-Review 1: Gegenbeispiele
+    interface CondT { boolean get() throws Throwable; }
+
+    /** Wie ok(), fängt aber auch OutOfMemoryError (sonst endete der Lauf ohne FAIL-Zeile). */
+    static boolean okT(CondT c) {
+        try { return c.get(); } catch (Throwable e) { System.out.println("     (" + e.getClass().getSimpleName() + ")"); return false; }
+    }
+
+    /** 160 Darstellungen, die eine SegmentList mit n Einträgen vom Set erben (Gegenprobe des Reviews: ≈ 700 KB). */
+    static String inheritedList(int reps, int n, boolean ownBase) {
+        StringBuilder sb = new StringBuilder(VSET + "<SegmentList timescale=\"1\" duration=\"4\"><Initialization sourceURL=\"i.mp4\"/>");
+        for (int i = 0; i < n; i++) sb.append("<SegmentURL media=\"s/").append(String.format("%06d", i)).append(".m4s\"/>");
+        sb.append("</SegmentList>");
+        for (int i = 0; i < reps; i++) {
+            sb.append("<Representation id=\"r").append(i).append("\" bandwidth=\"").append(1000 + i).append("\">");
+            if (ownBase) sb.append("<BaseURL>b").append(i).append("/</BaseURL>");
+            sb.append("</Representation>");
+        }
+        return mpdDur("PT" + (4L * n) + "S", sb.append("</AdaptationSet>").toString());
+    }
+
+    static void review1() throws Exception {
+        // P0: geerbte SegmentList – je (Element, Basis) einmal aufgelöst und geteilt; Gesamtgrenze statt OOM
+        String big = inheritedList(160, 20000, false);
+        check("P0 Gegenprobe: MPD " + big.length() + " Bytes, 160 Darstellungen erben 20000 SegmentURL – gelesen ohne OOM (64 MB Heap), Liste geteilt",
+            big.length() > 680_000 && okT(() -> {
+                DashManifest m = parse(big);
+                return m.reps.size() == 160 && m.reps.get(0).count == 20000 && m.reps.get(0).list == m.reps.get(159).list
+                    && m.reps.get(159).segment(19999).url.equals("https://cdn.example/v/s/019999.m4s");
+            }), "");
+        check("P0: Fingerabdruck dieses MPD wird fortlaufend gehasht (3,2 Mio. Zeilen, kein Text im Speicher)",
+            okT(() -> DashFingerprint.hex(parse(big)).matches("[0-9a-f]{64}")), "");
+        check("P0: Plan für 160 Spuren mit derselben geerbten Liste → track-collision (ohne Aufzählung, kein OOM)",
+            okT(() -> { try { DashPlan.build(parse(big)); return false; } catch (DashException e) { return e.reason.equals("track-collision"); } }), "");
+        check("P0: dieselbe Liste mit eigener BaseURL je Darstellung (160 × 20000 neu aufzulösen) → kontrolliert limits",
+            okT(() -> reason(inheritedList(160, 20000, true)).equals("limits")), "");
+        check("P0: zehn eigene Basen × 20000 (200000 Auflösungen) sind gerade noch erlaubt",
+            okT(() -> reason(inheritedList(10, 20000, true)).equals("accepted")), "");
+        // geerbte Zeitleiste: gleiche Eingabe geteilt, verschiedene PTO je Darstellung → Gesamtgrenze der Auswertung
+        StringBuilder tl = new StringBuilder();
+        for (int i = 0; i < 20000; i++) tl.append("<S d=\"4\"/>");
+        String tlSet = VSET + "<SegmentTemplate timescale=\"1\" media=\"$RepresentationID$/$Time$.m4s\" initialization=\"$RepresentationID$/i.mp4\"><SegmentTimeline>" + tl + "</SegmentTimeline></SegmentTemplate>";
+        StringBuilder same = new StringBuilder(tlSet), diff = new StringBuilder(tlSet);
+        for (int i = 0; i < 160; i++) {
+            same.append("<Representation id=\"r").append(i).append("\" bandwidth=\"1000\"/>");
+            diff.append("<Representation id=\"r").append(i).append("\" bandwidth=\"1000\"><SegmentTemplate presentationTimeOffset=\"").append(i).append("\"/></Representation>");
+        }
+        check("P0: geerbte Zeitleiste (20000 S) für 160 Darstellungen – geteilt, ohne Kopie je Darstellung",
+            okT(() -> { DashManifest m = parse(mpdDur("PT80000S", same + "</AdaptationSet>")); return m.reps.get(159).count == 20000 && m.reps.get(0).runT == m.reps.get(159).runT; }), "");
+        check("P0: 160 verschiedene PTO über dieselbe Zeitleiste (3,2 Mio. Stücke auszuwerten) → kontrolliert limits",
+            okT(() -> reason(mpdDur("PT80000S", diff + "</AdaptationSet>")).equals("limits")), "");
+
+        // P1: Marke des Zahlenplatzhalters darf mit nichts kollidieren
+        String[][] mk = {
+            {"9173917391739173", "$RepresentationID$/$Number$.m4s", "", "https://cdn.example/v/9173917391739173/1.m4s"},
+            {"99999", "$RepresentationID$-$Bandwidth$-9$Number$9.m4s", "", "https://cdn.example/v/99999-999999-919.m4s"},
+            {"v", "$Number$.m4s", "<BaseURL>9173917391739173/8998/899999998/</BaseURL>", "https://cdn.example/v/9173917391739173/8998/899999998/1.m4s"},
+            {"v", "8$Number$8.m4s?x=999", "", "https://cdn.example/v/818.m4s?x=999"},
+            {"999999999", "$RepresentationID$/$Number%05d$/$RepresentationID$.m4s", "<BaseURL>9999999999/</BaseURL>", "https://cdn.example/v/9999999999/999999999/00001/999999999.m4s"},
+        };
+        for (String[] t : mk) {
+            String x = mpd(VSET + "<SegmentTemplate timescale=\"1000\" duration=\"4000\" initialization=\"i.mp4\" media=\"" + t[1] + "\"/><Representation id=\""
+                + t[0] + "\" bandwidth=\"999999\">" + t[2] + "</Representation></AdaptationSet>");
+            String got;
+            try { got = parse(x).reps.get(0).segment(0).url; } catch (DashException e) { got = "fatal:" + e.reason; }
+            check("P1 Marke: id „" + t[0] + "“, Vorlage „" + t[1] + "“" + (t[2].isEmpty() ? "" : " mit BaseURL aus Ziffern") + " → " + t[3], got.equals(t[3]), got);
+        }
+        check("P1 Marke: Fingerabdruck einer Vorlage mit {Number} unverändert", ok(() -> DashFingerprint.canonical(parse(GOOD)).contains("r.media=https://cdn.example/v/v/{Number}.m4s\n")), "");
+
+        // P1: ContentProtection an jeder Platzierung zählt (fail-closed)
+        String[][] cp = {
+            {"direkt unter Period", GOOD.replace("<Period>", "<Period><ContentProtection schemeIdUri=\"urn:mpeg:dash:mp4protection:2011\" value=\"cenc\"/>")},
+            {"in einer SegmentTemplate", GOOD.replaceFirst("initialization=\"\\$RepresentationID\\$/init.mp4\" media=\"\\$RepresentationID\\$/\\$Number\\$.m4s\"/>",
+                "initialization=\"\\$RepresentationID\\$/init.mp4\" media=\"\\$RepresentationID\\$/\\$Number\\$.m4s\"><ContentProtection schemeIdUri=\"urn:x\"/></SegmentTemplate>")},
+            {"in einer SubRepresentation", GOOD.replace(VREP, VREP.replace("/>", "><SubRepresentation level=\"0\"><ContentProtection schemeIdUri=\"urn:x\"/></SubRepresentation></Representation>"))},
+            {"in einem Text-Set unter Role", GOOD.replace("</Period>", "<AdaptationSet mimeType=\"text/vtt\"><Role schemeIdUri=\"urn:x\"><ContentProtection schemeIdUri=\"urn:x\"/></Role></AdaptationSet></Period>")},
+        };
+        for (String[] c : cp) {
+            String pr = profile(c[1]), pl = plan(c[1]);
+            boolean diffFp = !fp(c[1]).equals(fp(GOOD));
+            check("P1 ContentProtection " + c[0] + " → Profil und Plan dash-protected, Fingerabdruck verschieden", pr.equals("dash-protected") && pl.equals("dash-protected") && diffFp, pr + "/" + pl + "/" + diffFp);
+        }
+        check("P1: ohne ContentProtection bleibt der Fingerabdruck ohne Zusatzzeile (bestehende Vektoren unverändert)",
+            ok(() -> !DashFingerprint.canonical(parse(GOOD)).contains("contentProtectionNested")), "");
+
+        // P2: Init == eigenes Stück derselben Spur
+        String sl = mpd(VSET + "<SegmentList timescale=\"1\" duration=\"30\"><Initialization sourceURL=\"s/a.m4s\"/><SegmentURL media=\"s/a.m4s\"/><SegmentURL media=\"s/b.m4s\"/></SegmentList>"
+            + VREP + "</AdaptationSet>");
+        check("P2: SegmentList mit Initialization@sourceURL == SegmentURL@media derselben Spur → track-collision", plan(sl).equals("track-collision"), plan(sl));
+        check("P2: Gegenprobe – getrenntes Init ist erlaubt", plan(sl.replace("sourceURL=\"s/a.m4s\"", "sourceURL=\"s/init.mp4\"")).equals("ok"), "");
+        check("P2: Vorlage, deren eigenes Init auf das eigene Muster passt (v/0.m4s zu v/$Number$.m4s) → track-collision",
+            plan(mpd(VSET + "<SegmentTemplate timescale=\"1000\" duration=\"4000\" initialization=\"v/0.m4s\" media=\"v/$Number$.m4s\"/>" + VREP + "</AdaptationSet>")).equals("track-collision"), "");
     }
 
     // ---------------------------------------------------------------- Isolation

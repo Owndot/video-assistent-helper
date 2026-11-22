@@ -20,7 +20,7 @@ Aus dem HLS-Kern werden nur `HlsUri` (RFC-3986-Auflösung) und `HlsException` un
 | `DashFingerprint` | Strukturfingerabdruck v1 |
 | `DashLimits`, `DashException` | Grenzen und feste Gründe |
 
-Tests: `tests/java/dash/run.sh` (272 Prüfungen, Heap 64 MB) und `tests/java/dash/mutation.py` (48 Proben, alle KILLED). CI: `.github/workflows/dash-core.yml`.
+Tests: `tests/java/dash/run.sh` (293 Prüfungen, Heap 64 MB) und `tests/java/dash/mutation.py` (58 Proben, alle KILLED). CI: `.github/workflows/dash-core.yml`.
 
 ## 1. Erkennungsindex ≠ Downloadplan
 
@@ -45,12 +45,12 @@ Tests: `tests/java/dash/run.sh` (272 Prüfungen, Heap 64 MB) und `tests/java/das
 | Bereich | Gründe |
 |---|---|
 | XML | `empty`, `too-large` (> 4 000 000 Bytes), `encoding` (kein UTF-8, UTF-16-BOM, NUL, andere deklarierte Kodierung), `doctype` (jedes `<!` außer Kommentar/CDATA, also DOCTYPE, ENTITY, ELEMENT, ATTLIST – vor dem Parser geprüft), `xml`, `not-mpd`, `xinclude`, `xlink` (jedes Attribut im XLink-Namensraum), `namespace` (DASH-Elementname in fremdem Namensraum oder DASH-Element in fremdem Element – Kadri ordnet nach dem lokalen Namen zu), `structure` |
-| Grenzen | `limits` (Elemente 200 000 inkl. fremder, Perioden 64, Sets 1024, Darstellungen 4096, S 100 000, SegmentURL 100 000), `depth` (32), `attrs` (64), `attr-length` (8192), `text-length` (4096) |
+| Grenzen | `limits` (Elemente 200 000 inkl. fremder, Perioden 64, Sets 1024, Darstellungen 4096, S 100 000, SegmentURL 100 000; über alle Darstellungen zusammen: 200 000 neu aufgelöste SegmentURL-Einträge und 1 000 000 ausgewertete Stücke), `depth` (32), `attrs` (64), `attr-length` (8192), `text-length` (4096) |
 | Zahlen | `number` (nur Ziffern; XML-Leerraum am Rand erlaubt; kein Vorzeichen, Exponent oder Hex; `S@r` zusätzlich −1), `number-range` (> 2^53−1; timescale 0 oder > 2^32−1; bandwidth > 10^9), `duration` (xs:duration nur mit D/H/M/S, Bruchteile nur bei Sekunden; Jahre, Monate, Wochen abgelehnt) |
 | Adressen | `uri-char`, `uri-ambiguous`, `uri-empty`, `uri-length`, `uri-host`, `uri-port`, sowie aus `HlsUri`: `uri-scheme`, `uri-userinfo`, `uri-path`, `uri-fragment` |
 | BaseURL | `baseurl-multiple` (mehr als eine BaseURL auf einer Ebene, ganz ohne Auswahl), `baseurl-attr` (erlaubt nur `serviceLocation`, `availabilityTimeOffset`, `availabilityTimeComplete` und fremde Namensräume; `byteRange` wird abgelehnt), `baseurl-empty` |
 | Adressierung | `addressing-mixed` (verschiedene Arten entlang der Kette), `addressing-multiple` (zwei auf einer Ebene, zwei Initialization/SegmentTimeline), `addressing-ambiguous` (@duration und SegmentTimeline zugleich; @initialization und Initialization zugleich; SegmentURL auf zwei Ebenen), `addressing-attr` (unbekanntes Attribut an Vorlage/Liste/Zeitleiste/S/SegmentURL/Initialization, z. B. `S@n`, `S@k`) |
-| Vorlagen | `template` (unbekannter Bezeichner, `$SubNumber$`, Format nicht `%0[1-20]d`, Format an `$RepresentationID$`, offenes `$`, Medienvorlage ohne oder mit zwei Zahlenplatzhaltern, Init mit Zahlenplatzhalter, Platzhalter im Host, Marke wörtlich), `rep-id` (`$RepresentationID$` nur aus `[A-Za-z0-9._~=,;!*()+&:@-]`, 1–256 Zeichen) |
+| Vorlagen | `template` (unbekannter Bezeichner, `$SubNumber$`, Format nicht `%0[1-20]d`, Format an `$RepresentationID$`, offenes `$`, Medienvorlage ohne oder mit zwei Zahlenplatzhaltern, Init mit Zahlenplatzhalter, Platzhalter im Host oder Port), `rep-id` (`$RepresentationID$` nur aus `[A-Za-z0-9._~=,;!*()+&:@-]`, 1–256 Zeichen) |
 
 **Mehrdeutige Adressen.** Wo RFC 3986 (Helper) und WHATWG (Kadri) verschieden kodieren oder auflösen würden, wird abgelehnt (`uri-ambiguous`), statt eine der beiden Deutungen zu wählen:
 
@@ -90,7 +90,7 @@ Das Profil ist „statisches VOD, eine Periode, unverschlüsselt, fMP4, H.264 + 
 | `dash-live` | `type="dynamic"` |
 | `dash-type` | anderer Typ |
 | `dash-multiperiod` | ≠ 1 Periode |
-| `dash-protected` | ContentProtection auf **irgendeiner** Ebene, auch MPD, ContentComponent, SubRepresentation und Text-/Bild-Sets |
+| `dash-protected` | ContentProtection **irgendwo** im MPD: jede Ebene und jede Platzierung, auch nicht standardkonforme (z. B. direkt unter Period, in einer Vorlage, unter Role), ContentComponent, SubRepresentation und Text-/Bild-Sets. Gezählt wird über den ganzen Elementbaum, nicht nur an bekannten Stellen |
 | `dash-duration-unknown` | Periodendauer unbekannt |
 | `dash-duration-limit` | länger als 48 h |
 | `dash-no-video` | kein Video-Set |
@@ -111,12 +111,17 @@ Das Profil ist „statisches VOD, eine Periode, unverschlüsselt, fMP4, H.264 + 
 
 | Grund | Bedeutung |
 |---|---|
-| `track-collision` | zwei angebotene Spuren könnten dieselbe Stück- oder Init-Adresse anfordern – Ressourcenidentität mehrdeutig. Geprüft wird ohne Aufzählung der Stücke: zwei Vorlagen kollidieren (fail-closed), wenn ein Präfix Präfix des anderen und ein Suffix Suffix des anderen ist; Listen- und Init-Adressen werden gegen alle Vorlagen und gegeneinander geprüft |
+| `track-collision` | zwei angebotene Adressen könnten dieselbe Ressource anfordern – Ressourcenidentität mehrdeutig. Das gilt zwischen Spuren **und innerhalb einer Spur** (Init == eigenes Stück; Init passt auf die eigene Vorlage). Geprüft wird ohne Aufzählung der Vorlagen-Stücke: zwei Vorlagen kollidieren (fail-closed), wenn ein Präfix Präfix des anderen und ein Suffix Suffix des anderen ist; Listen- und Init-Adressen werden gegen alle Vorlagen und gegeneinander geprüft; eine von mehreren Spuren geteilte Liste fällt beim ersten Eintrag auf |
 | `options-limit` | mehr als 256 Optionen (Video × Ton) |
 | `size-limit` | jede Option über 16 GiB (Bandbreite × Dauer / 8) |
 | `segments-limit` | Spur mit 0 oder mehr als 20 000 Stücken |
 
-**Speicher:** Stückfolgen bleiben als Läufe `(t, d, Anzahl)` bzw. als die gelesene Liste gespeichert. Adressen entstehen erst mit `segment(i)`. Der Bedarf ist durch die Größe des MPD begrenzt; geprüft wird mit 100 000 S-Einträgen bei 64 MB Heap.
+**Speicher:**
+- Stückfolgen bleiben als Läufe `(t, d, Anzahl)` bzw. als die gelesene Liste gespeichert. Adressen entstehen erst mit `segment(i)`.
+- Geerbte SegmentLists werden je (Element, aufgelöste Basis) nur einmal aufgelöst und von allen Darstellungen geteilt; geerbte Zeitleisten werden nicht je Darstellung kopiert, und gleiche Stückfolgen (gleiche Zeitleiste/Liste, Dauer, Timescale, PTO, startNumber, Periode) nur einmal ausgewertet.
+- Was trotzdem neu aufgelöst oder ausgewertet werden muss, ist über das ganze MPD begrenzt (Abschnitt 4); darüber `limits`, nie Speichererschöpfung.
+- Der Fingerabdruck wird fortlaufend gehasht, ohne den kanonischen Text aufzubauen.
+- Geprüft bei 64 MB Heap: 100 000 S-Einträge; 160 Darstellungen, die 20 000 SegmentURL erben (≈ 690 KB); dieselbe Zeitleiste mit 20 000 S für 160 Darstellungen.
 
 ## 3. Strukturfingerabdruck v1 (`kadri-dash-fp/1`)
 
@@ -149,6 +154,8 @@ Das Profil ist „statisches VOD, eine Periode, unverschlüsselt, fMP4, H.264 + 
 ```
 fp=kadri-dash-fp/1
 mpd.type  mpd.mediaPresentationDuration  mpd.base  mpd.contentProtection(Anzahl auf MPD-Ebene)
+[mpd.contentProtectionNested=<Anzahl>]   (nur wenn > 0: ContentProtection, die nicht direktes Kind von MPD, AdaptationSet oder
+                                          Representation ist – Period, Vorlage, ContentComponent, SubRepresentation …)
 je Periode:  period  p.id  p.start  p.duration  p.base
   je Set:    set  s.id  s.group  s.contentType  s.mimeType  s.codecs  s.lang  s.label  s.base
              s.contentProtection*  s.contentComponents  s.essential*  s.supplemental*  s.role*  s.accessibility*  s.audioChannels*
@@ -195,6 +202,8 @@ je Periode:  period  p.id  p.start  p.duration  p.base
 | Textlänge | 4096 Zeichen |
 | Perioden / Sets / Darstellungen | 64 / 1024 / 4096 |
 | S-Einträge / SegmentURL | je 100 000 |
+| Neu aufgelöste SegmentURL-Einträge (alle Darstellungen) | 200 000 |
+| Ausgewertete Stücke (alle Darstellungen, Gleiches einmal) | 1 000 000 |
 | Stücke je Spur | 20 000 |
 | Stückdauer | ≤ 3600 s |
 | Gesamtdauer | ≤ 48 h |
@@ -243,8 +252,8 @@ Alle Abweichungen 3–10 führen zu **weniger** Angeboten, nie zu einer weiteren
 ## 6. Ausführen
 
 ```
-bash tests/java/dash/run.sh                          # 272 Prüfungen, nur JDK (javac -Werror), Heap 64 MB
-python3 -I tests/java/dash/mutation.py               # 48 Mutationsproben, alle müssen KILLED sein
+bash tests/java/dash/run.sh                          # 293 Prüfungen, nur JDK (javac -Werror), Heap 64 MB
+python3 -I tests/java/dash/mutation.py               # 58 Mutationsproben, alle müssen KILLED sein
 # nur bei bewusster Änderung (Fixture/Format):
 bash tests/java/dash/run.sh --dump-keys KEYS.tsv
 KADRI_CHROMIUM=<chromium> python3 -I tests/java/dash/kadri_index.py <Kadri-Checkout> tests/java/dash/fixtures KEYS.tsv tests/java/dash/fixtures/kadri-index.tsv
@@ -260,5 +269,6 @@ bash tests/java/dash/run.sh --write-fp               # Golden-Text/Testvektoren 
 - **S3c:**
   - Kadri implementiert Fingerabdruck v1 nach Abschnitt 3 und muss `fp-v1-vectors.tsv` reproduzieren.
   - Korrektur von Abweichung 2 (`$Bandwidth%0Nd$`).
+  - Prüfen, ob Kadris feste Marke `KADRIIDXTOKEN9Q` (src/038) mit einer gleichlautenden `$RepresentationID$` oder BaseURL kollidieren kann (im Helper in S3a-Fix 1 behoben: die Marke wird je Vorlage eindeutig gewählt).
   - Auswahl-Gate und Oberfläche.
 - **Gemeinsamer Init über mehrere Spuren:** wird derzeit fail-closed abgelehnt (`track-collision`); bei Bedarf mit Prüfung des Init-Inhalts in S3b neu bewerten.

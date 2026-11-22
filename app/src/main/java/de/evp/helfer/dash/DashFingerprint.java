@@ -20,11 +20,25 @@ public final class DashFingerprint {
 
     private DashFingerprint() {}
 
+    /**
+     * Ziel des kanonischen Textes: als Zeichenkette (Tests, Golden-Datei) oder direkt in den Hash. Der Hash wird
+     * fortlaufend berechnet, ohne den Text im Speicher aufzubauen – geerbte Listen/Zeitleisten erscheinen je
+     * Darstellung erneut, der Text kann daher ein Vielfaches des MPD sein (S3a-Fix P0).
+     */
+    private static final class Out {
+        final StringBuilder sb;
+        final MessageDigest md;
+        Out(StringBuilder sb, MessageDigest md) { this.sb = sb; this.md = md; }
+        Out append(String v) { if (sb != null) sb.append(v); else md.update(v.getBytes(StandardCharsets.UTF_8)); return this; }
+        Out append(char c) { if (sb != null) sb.append(c); else if (c < 0x80) md.update((byte) c); else append(String.valueOf(c)); return this; }
+    }
+
     public static String hex(DashManifest m) {
         try {
-            byte[] h = MessageDigest.getInstance("SHA-256").digest(canonical(m).getBytes(StandardCharsets.UTF_8));
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            write(m, new Out(null, md));
             StringBuilder sb = new StringBuilder();
-            for (byte b : h) sb.append(String.format("%02x", b & 0xff));
+            for (byte b : md.digest()) sb.append(String.format("%02x", b & 0xff));
             return sb.toString();
         } catch (java.security.NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
@@ -32,12 +46,20 @@ public final class DashFingerprint {
     }
 
     public static String canonical(DashManifest m) {
-        StringBuilder sb = new StringBuilder();
+        StringBuilder text = new StringBuilder();
+        write(m, new Out(text, null));
+        return text.toString();
+    }
+
+    private static void write(DashManifest m, Out sb) {
         line(sb, "fp", VERSION);
         line(sb, "mpd.type", m.typeRaw);
         line(sb, "mpd.mediaPresentationDuration", dur(m.mediaPresentationDuration));
         line(sb, "mpd.base", m.base);
         line(sb, "mpd.contentProtection", Integer.toString(m.root.all("ContentProtection").size()));
+        // S3a-Fix: ContentProtection außerhalb von MPD/AdaptationSet/Representation (Period, ContentComponent,
+        // SubRepresentation, Vorlagen …) – nur wenn vorhanden, damit bestehende Abdrücke gleich bleiben
+        if (m.contentProtectionNested > 0) line(sb, "mpd.contentProtectionNested", Integer.toString(m.contentProtectionNested));
         for (DashManifest.Period p : m.periods) {
             line(sb, "period", Integer.toString(p.index));
             line(sb, "p.id", p.id);
@@ -103,7 +125,6 @@ public final class DashFingerprint {
                 }
             }
         }
-        return sb.toString();
     }
 
     private static String dur(java.math.BigDecimal v) { return v == null ? null : DashNum.canon(v); }
@@ -111,11 +132,11 @@ public final class DashFingerprint {
     private static String num(Long v) { return v == null ? null : Long.toString(v); }
 
     /** Eigenschaften (ContentProtection, Essential-/SupplementalProperty, Role …): schemeIdUri|value|default_KID. */
-    private static void props(StringBuilder sb, String key, List<DashManifest.Prop> ps) {
+    private static void props(Out sb, String key, List<DashManifest.Prop> ps) {
         for (DashManifest.Prop p : ps) sb.append(key).append('=').append(esc(p.scheme)).append('|').append(esc(p.value)).append('|').append(esc(p.extra)).append('\n');
     }
 
-    private static void line(StringBuilder sb, String k, String v) { sb.append(k).append('=').append(esc(v)).append('\n'); }
+    private static void line(Out sb, String k, String v) { sb.append(k).append('=').append(esc(v)).append('\n'); }
 
     /** fehlend → "-"; wörtliches "-" → "\-"; Backslash, "|", LF, CR maskiert. */
     static String esc(String v) {

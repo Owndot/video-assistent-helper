@@ -32,8 +32,10 @@ public final class DashManifest {
     public final List<Period> periods;
     public final List<AdaptationSet> sets;
     public final List<Representation> reps;
-    /** ContentProtection auf irgendeiner Ebene (auch MPD-Ebene und in Text-/Bild-Sets). */
+    /** ContentProtection irgendwo im MPD (jede Ebene und Platzierung, auch Text-/Bild-Sets) – S3-Profil: dash-protected. */
     public final int contentProtectionCount;
+    /** Davon außerhalb der direkten Kinder von MPD, AdaptationSet und Representation (nicht standardkonform oder geschachtelt). */
+    public final int contentProtectionNested;
     final DashXml.El root;
 
     public static final class Prop {
@@ -140,11 +142,16 @@ public final class DashManifest {
     }
 
     private DashManifest(DashXml.El root, String documentUrl, String base, String typeRaw, BigDecimal mpd, List<Period> periods,
-                         List<AdaptationSet> sets, List<Representation> reps, int cp) {
+                         List<AdaptationSet> sets, List<Representation> reps) {
         this.root = root; this.documentUrl = documentUrl; this.base = base; this.typeRaw = typeRaw;
         this.type = typeRaw == null ? "static" : typeRaw; this.mediaPresentationDuration = mpd;
         this.periods = Collections.unmodifiableList(periods); this.sets = Collections.unmodifiableList(sets);
-        this.reps = Collections.unmodifiableList(reps); this.contentProtectionCount = cp;
+        this.reps = Collections.unmodifiableList(reps);
+        // S3a-Fix P1: jede ContentProtection im ganzen Baum zählt – auch an Stellen, die das Schema nicht vorsieht
+        // (z. B. direkt unter Period oder in einer Vorlage). Fail-closed statt nur bekannte Ebenen abzufragen.
+        int all = countAll(root, "ContentProtection");
+        this.contentProtectionCount = all;
+        this.contentProtectionNested = all - direct(root);
     }
 
     // ------------------------------------------------------------------------------------------------------------
@@ -165,9 +172,9 @@ public final class DashManifest {
     public static DashManifest parse(byte[] body, String documentUrl) throws DashException {
         String doc = DashUrl.canonical(stripFragment(documentUrl));
         DashXml.El root = DashXml.parse(body);
+        Ctx ctx = new Ctx();
         String typeRaw = root.attr("type");
         BigDecimal mpdDur = DashNum.optDuration(root, "mediaPresentationDuration");
-        int cp = root.all("ContentProtection").size();
         String mpdBase = baseOf(root, doc);
         List<DashXml.El> pEls = root.all("Period");
         if (pEls.size() > DashLimits.MAX_PERIODS) throw new DashException("limits");
@@ -181,8 +188,6 @@ public final class DashManifest {
             for (DashXml.El ae : pe.all("AdaptationSet")) {
                 if (sets.size() >= DashLimits.MAX_SETS) throw new DashException("limits");
                 List<Prop> acp = props(ae, "ContentProtection");
-                cp += acp.size();
-                for (DashXml.El cc : ae.all("ContentComponent")) cp += cc.all("ContentProtection").size();
                 String label = null;
                 List<DashXml.El> labels = ae.all("Label");
                 if (!labels.isEmpty()) label = labels.get(0).trimmedText();
@@ -193,8 +198,6 @@ public final class DashManifest {
                 for (DashXml.El re : ae.all("Representation")) {
                     if (reps.size() >= DashLimits.MAX_REPS) throw new DashException("limits");
                     List<Prop> rcp = props(re, "ContentProtection");
-                    cp += rcp.size();
-                    for (DashXml.El sr : re.all("SubRepresentation")) cp += sr.all("ContentProtection").size();
                     String id = re.attr("id");
                     String bwRaw = re.attr("bandwidth");
                     long bw = bwRaw == null ? 0 : DashNum.parseU(bwRaw);
@@ -205,13 +208,13 @@ public final class DashManifest {
                         props(re, "EssentialProperty"), props(re, "SupplementalProperty"), props(re, "AudioChannelConfiguration"));
                     reps.add(r);
                     segKinds(re);
-                    addressing(r, new DashXml.El[] {re, ae, pe});
+                    addressing(r, new DashXml.El[] {re, ae, pe}, ctx);
                 }
             }
         }
-        DashManifest m = new DashManifest(root, doc, mpdBase, typeRaw, mpdDur, periods, sets, reps, cp);
+        DashManifest m = new DashManifest(root, doc, mpdBase, typeRaw, mpdDur, periods, sets, reps);
         periodTiming(m);
-        for (Representation r : reps) if (r.excluded == null) expand(m, r);
+        for (Representation r : reps) if (r.excluded == null) expand(m, r, ctx);
         return m;
     }
 
@@ -219,6 +222,22 @@ public final class DashManifest {
         if (u == null) throw new DashException("uri-empty");
         int h = u.indexOf('#');
         return h >= 0 ? u.substring(0, h) : u;
+    }
+
+    static int countAll(DashXml.El e, String name) {
+        int n = e.name.equals(name) ? 1 : 0;
+        for (DashXml.El k : e.kids) n += countAll(k, name);
+        return n;
+    }
+
+    /** ContentProtection als direkte Kinder von MPD, AdaptationSet und Representation (im Fingerabdruck einzeln geführt). */
+    private static int direct(DashXml.El root) {
+        int n = root.all("ContentProtection").size();
+        for (DashXml.El p : root.all("Period")) for (DashXml.El a : p.all("AdaptationSet")) {
+            n += a.all("ContentProtection").size();
+            for (DashXml.El r : a.all("Representation")) n += r.all("ContentProtection").size();
+        }
+        return n;
     }
 
     private static List<Prop> props(DashXml.El e, String name) {
@@ -259,7 +278,7 @@ public final class DashManifest {
         return null;
     }
 
-    private static void addressing(Representation r, DashXml.El[] chain) throws DashException {
+    private static void addressing(Representation r, DashXml.El[] chain, Ctx ctx) throws DashException {
         DashXml.El[] segs = new DashXml.El[chain.length];
         Set<String> kinds = new HashSet<>();
         for (int i = 0; i < chain.length; i++) { segs[i] = seg(chain[i]); if (segs[i] != null) kinds.add(segs[i].name); }
@@ -302,7 +321,7 @@ public final class DashManifest {
         if (tl != null) {
             for (String k : tl.attrs.keySet()) if (!k.startsWith("{")) throw new DashException("addressing-attr");
             if (tl.entryExtra) throw new DashException("addressing-attr");   // S@n, S@k und Unbekanntes
-            r.tlRaw = tl.s == null ? new long[0] : Arrays.copyOf(tl.s, tl.sCount * 3);
+            r.tlRaw = tl.s == null ? new long[0] : tl.s;   // geteilt, nur gelesen (nicht je Darstellung kopieren)
             r.tlCount = tl.sCount;
         }
         if (kinds.isEmpty()) { r.addressing = Addressing.SINGLE; r.excluded = "addressing-single"; return; }
@@ -332,17 +351,32 @@ public final class DashManifest {
             if (initSrc != null) r.initUrl = DashUrl.resolve(r.base, initSrc);
             else if (initTpl != null) throw new DashException("addressing-attr");   // @initialization gibt es nur an SegmentTemplate
             if (holder == null) { r.addressing = Addressing.SINGLE; r.excluded = "addressing-single"; return; }
-            r.list = new ArrayList<>(holder.listMedia.size());
-            r.listRange = new ArrayList<>(holder.listRange);
-            Set<String> seen = new HashSet<>();
-            boolean dup = false;
-            for (int i = 0; i < holder.listMedia.size(); i++) {
-                String m = holder.listMedia.get(i);
-                if (holder.listRange.get(i) != null || m == null) { r.listRanges = true; r.list.add(m == null ? r.base : DashUrl.resolve(r.base, m)); continue; }
-                String u = DashUrl.resolve(r.base, m);
-                if (!seen.add(u)) dup = true;
-                r.list.add(u);
+            // Eine geerbte Liste wird je (Element, Basis) nur einmal aufgelöst und dann von allen Darstellungen geteilt
+            // (unveränderlich); neu Aufzulösendes ist über das ganze MPD begrenzt (S3a-Fix P0).
+            String lk = ctx.id(holder) + "|" + r.base;
+            Object[] cached = ctx.lists.get(lk);
+            if (cached == null) {
+                ctx.listResolved += holder.listMedia.size();
+                if (ctx.listResolved > DashLimits.MAX_RESOLVED_LIST_ENTRIES) throw new DashException("limits");
+                List<String> list = new ArrayList<>(holder.listMedia.size());
+                Set<String> seen = new HashSet<>();
+                boolean dup = false, ranges = false;
+                for (int i = 0; i < holder.listMedia.size(); i++) {
+                    String m = holder.listMedia.get(i);
+                    if (holder.listRange.get(i) != null || m == null) { ranges = true; list.add(m == null ? r.base : DashUrl.resolve(r.base, m)); continue; }
+                    String u = DashUrl.resolve(r.base, m);
+                    if (!seen.add(u)) dup = true;
+                    list.add(u);
+                }
+                cached = new Object[] {Collections.unmodifiableList(list), Collections.unmodifiableList(holder.listRange), ranges, dup};
+                ctx.lists.put(lk, cached);
             }
+            @SuppressWarnings("unchecked") List<String> cl = (List<String>) cached[0];
+            @SuppressWarnings("unchecked") List<String> cr = (List<String>) cached[1];
+            r.list = cl;
+            r.listRange = cr;
+            r.listRanges = (Boolean) cached[2];
+            boolean dup = (Boolean) cached[3];
             r.addressing = tl != null ? Addressing.LIST_TIMELINE : r.duration != null ? Addressing.LIST_DURATION : Addressing.LIST_SINGLE;
             if (r.listRanges) { r.excluded = "byte-range"; return; }
             if (dup) { r.excluded = "list-duplicate"; return; }
@@ -369,10 +403,59 @@ public final class DashManifest {
         }
     }
 
-    /** Stückfolge einer Darstellung: Läufe, Fenster der Periode, Abdeckung, Grenzen. */
-    private static void expand(DashManifest m, Representation r) throws DashException {
+    /**
+     * Speicher- und Rechengrenze über ALLE Darstellungen eines MPD (S3a-Fix P0): geerbte SegmentLists und
+     * SegmentTimelines werden je (Element, Basis) bzw. je Stückfolge nur einmal ausgewertet und dann geteilt; was
+     * dennoch neu aufgelöst oder ausgerechnet werden muss, ist insgesamt begrenzt (DashLimits.MAX_RESOLVED_LIST_ENTRIES,
+     * DashLimits.MAX_EXPANDED_SEGMENTS) – darüber kontrolliert "limits", nie OutOfMemoryError.
+     */
+    static final class Ctx {
+        private final java.util.IdentityHashMap<Object, Integer> ids = new java.util.IdentityHashMap<>();
+        final java.util.Map<String, Object[]> lists = new java.util.HashMap<>();
+        final java.util.Map<String, Exp> exps = new java.util.HashMap<>();
+        long listResolved, expanded;
+
+        String id(Object o) {
+            if (o == null) return "-";
+            Integer v = ids.get(o);
+            if (v == null) { v = ids.size(); ids.put(o, v); }
+            return Integer.toString(v);
+        }
+    }
+
+    /** Ergebnis einer Stückfolge (geteilt zwischen Darstellungen mit gleicher Eingabe). */
+    static final class Exp {
+        String excluded;
+        long[] runT, runD;
+        int[] runOrd, runCnt;
+        int first, count;
+        BigDecimal covered = BigDecimal.ZERO;
+        long maxD;
+        static Exp excl(String why) { Exp e = new Exp(); e.excluded = why; return e; }
+    }
+
+    /** Stückfolge einer Darstellung: Läufe, Fenster der Periode, Abdeckung, Grenzen (gleiche Eingabe → geteiltes Ergebnis). */
+    private static void expand(DashManifest m, Representation r, Ctx ctx) throws DashException {
+        String key = ctx.id(r.tlRaw) + "|" + r.tlCount + "|" + ctx.id(r.list) + "|" + r.addressing + "|" + r.duration + "|" + r.timescale + "|"
+            + r.pto + "|" + r.startNumber + "|" + r.period;
+        Exp e = ctx.exps.get(key);
+        if (e == null) {
+            e = compute(m, r, ctx);
+            ctx.exps.put(key, e);
+        }
+        r.excluded = e.excluded;
+        if (e.excluded != null) return;
+        r.runT = e.runT; r.runD = e.runD; r.runOrd = e.runOrd; r.runCnt = e.runCnt;
+        r.first = e.first; r.count = e.count; r.covered = e.covered; r.maxSegmentTicks = e.maxD;
+        if (r.media != null) {
+            int maxLen = r.media.prefix.length() + r.media.suffix.length() + Math.max(r.media.width, 16);
+            if (maxLen > de.evp.helfer.hls.HlsUri.MAX_URI_CHARS) r.excluded = "uri-length";
+        }
+    }
+
+    private static Exp compute(DashManifest m, Representation r, Ctx ctx) throws DashException {
         Period p = m.periods.get(r.period);
-        if (p.effectiveDuration == null) { r.excluded = "duration-unknown"; return; }
+        if (p.effectiveDuration == null) return Exp.excl("duration-unknown");
         long ts = r.timescale == null ? 1 : r.timescale;
         long pto = r.pto == null ? 0 : r.pto;
         BigDecimal pdTicks = p.effectiveDuration.multiply(BigDecimal.valueOf(ts));
@@ -382,89 +465,92 @@ public final class DashManifest {
             long end = -1;
             for (int k = 0; k < r.tlCount; k++) {
                 long t = r.tlRaw[k * 3], d = r.tlRaw[k * 3 + 1], rr = r.tlRaw[k * 3 + 2];
-                if (d <= 0) { r.excluded = "zero-duration"; return; }
+                if (d <= 0) return Exp.excl("zero-duration");
                 if (t == DashXml.NO_T) t = k == 0 ? 0 : end;
-                else if (k > 0 && t != end) { r.excluded = t > end ? "timeline-gap" : "timeline-overlap"; return; }
+                else if (k > 0 && t != end) return Exp.excl(t > end ? "timeline-gap" : "timeline-overlap");
                 long cnt;
                 if (rr >= 0) {
                     cnt = rr + 1;
                 } else if (k + 1 < r.tlCount) {
                     long nt = r.tlRaw[(k + 1) * 3];
-                    if (nt == DashXml.NO_T || nt <= t || (nt - t) % d != 0) { r.excluded = "timeline-repeat"; return; }
+                    if (nt == DashXml.NO_T || nt <= t || (nt - t) % d != 0) return Exp.excl("timeline-repeat");
                     cnt = (nt - t) / d;
                 } else {
                     // offene Wiederholung bis zum Ende der Periode (in Medienzeit: pto + Dauer)
                     BigDecimal left = pdTicks.add(BigDecimal.valueOf(pto)).subtract(BigDecimal.valueOf(t));
-                    if (left.signum() <= 0) { r.excluded = "timeline-repeat"; return; }
+                    if (left.signum() <= 0) return Exp.excl("timeline-repeat");
                     BigDecimal c = left.divide(BigDecimal.valueOf(d), 0, RoundingMode.CEILING);
-                    if (c.compareTo(BigDecimal.valueOf(DashLimits.MAX_SEGMENTS_PER_TRACK)) > 0) { r.excluded = "segments"; return; }
+                    if (c.compareTo(BigDecimal.valueOf(DashLimits.MAX_SEGMENTS_PER_TRACK)) > 0) return Exp.excl("segments");
                     cnt = c.longValue();
                 }
-                if (cnt > DashLimits.MAX_SEGMENTS_PER_TRACK || total + cnt > DashLimits.MAX_SEGMENTS_PER_TRACK) { r.excluded = "segments"; return; }
-                try { end = DashNum.addExact(t, DashNum.mulExact(d, cnt)); } catch (DashException e) { r.excluded = "number-range"; return; }
+                if (cnt > DashLimits.MAX_SEGMENTS_PER_TRACK || total + cnt > DashLimits.MAX_SEGMENTS_PER_TRACK) return Exp.excl("segments");
+                try { end = DashNum.addExact(t, DashNum.mulExact(d, cnt)); } catch (DashException x) { return Exp.excl("number-range"); }
                 runs.add(new long[] {t, d, cnt});
                 total += (int) cnt;
             }
-            if (total == 0) { r.excluded = "timeline-empty"; return; }
-            if (r.list != null && r.list.size() != total) { r.excluded = "list-timeline"; return; }
+            if (total == 0) return Exp.excl("timeline-empty");
+            if (r.list != null && r.list.size() != total) return Exp.excl("list-timeline");
         } else if (r.list != null && r.addressing == Addressing.LIST_SINGLE) {
             // ein einziges Stück über die ganze Periode
             BigDecimal d = pdTicks.setScale(0, RoundingMode.CEILING);
-            if (d.compareTo(BigDecimal.valueOf(DashLimits.MAX_SAFE)) > 0) { r.excluded = "number-range"; return; }
+            if (d.compareTo(BigDecimal.valueOf(DashLimits.MAX_SAFE)) > 0) return Exp.excl("number-range");
             runs.add(new long[] {pto, Math.max(1, d.longValue()), 1});
             total = 1;
         } else {
             long d = r.duration == null ? 0 : r.duration;
-            if (d <= 0) { r.excluded = "zero-duration"; return; }
+            if (d <= 0) return Exp.excl("zero-duration");
             BigDecimal c = pdTicks.divide(BigDecimal.valueOf(d), 0, RoundingMode.CEILING);
-            if (c.signum() <= 0) { r.excluded = "segments"; return; }
-            if (c.compareTo(BigDecimal.valueOf(DashLimits.MAX_SEGMENTS_PER_TRACK)) > 0) { r.excluded = "segments"; return; }
+            if (c.signum() <= 0) return Exp.excl("segments");
+            if (c.compareTo(BigDecimal.valueOf(DashLimits.MAX_SEGMENTS_PER_TRACK)) > 0) return Exp.excl("segments");
             int cnt = c.intValue();
-            if (r.list != null) {
-                if (r.list.size() != cnt) { r.excluded = "coverage-mismatch"; return; }
-            }
-            try { DashNum.addExact(pto, DashNum.mulExact(d, cnt)); } catch (DashException e) { r.excluded = "number-range"; return; }
+            if (r.list != null && r.list.size() != cnt) return Exp.excl("coverage-mismatch");
+            try { DashNum.addExact(pto, DashNum.mulExact(d, cnt)); } catch (DashException x) { return Exp.excl("number-range"); }
             runs.add(new long[] {pto, d, cnt});
             total = cnt;
         }
+        // Gesamtgrenze der Auswertung über alle Darstellungen (geteilte Ergebnisse zählen einmal)
+        ctx.expanded += total;
+        if (ctx.expanded > DashLimits.MAX_EXPANDED_SEGMENTS) throw new DashException("limits");
         // Stückzahlen und -werte innerhalb der Grenzen? ($Number$: startNumber + Ordinalzahl; $Time$: bereits geprüft)
         long start = r.startNumber == null ? 1 : r.startNumber;
-        try { DashNum.addExact(start, total); } catch (DashException e) { r.excluded = "number-range"; return; }
-        r.runT = new long[runs.size()]; r.runD = new long[runs.size()]; r.runOrd = new int[runs.size()]; r.runCnt = new int[runs.size()];
+        try { DashNum.addExact(start, total); } catch (DashException x) { return Exp.excl("number-range"); }
+        Exp e = new Exp();
+        e.runT = new long[runs.size()]; e.runD = new long[runs.size()]; e.runOrd = new int[runs.size()]; e.runCnt = new int[runs.size()];
         int ord = 0;
         long maxD = 0;
         for (int i = 0; i < runs.size(); i++) {
-            r.runT[i] = runs.get(i)[0]; r.runD[i] = runs.get(i)[1]; r.runCnt[i] = (int) runs.get(i)[2]; r.runOrd[i] = ord;
-            ord += r.runCnt[i];
-            maxD = Math.max(maxD, r.runD[i]);
+            e.runT[i] = runs.get(i)[0]; e.runD[i] = runs.get(i)[1]; e.runCnt[i] = (int) runs.get(i)[2]; e.runOrd[i] = ord;
+            ord += e.runCnt[i];
+            maxD = Math.max(maxD, e.runD[i]);
         }
-        r.maxSegmentTicks = maxD;
-        // Fenster der Periode: Stück k mit Präsentationsintervall [t−pto, t−pto+d) überlappt [0, Dauer)
+        e.maxD = maxD;
+        // Fenster der Periode: Stück k mit Präsentationsintervall [t−pto, t−pto+d) überlappt [0, Dauer).
+        // Für ganze Zahlen s gilt s < Dauer ⇔ s < ⌈Dauer⌉ und e ≤ Dauer ⇔ e ≤ ⌊Dauer⌋ – so genügt long-Arithmetik.
+        long ceil = pdTicks.setScale(0, RoundingMode.CEILING).min(BigDecimal.valueOf(Long.MAX_VALUE)).longValue();
+        long floor = pdTicks.setScale(0, RoundingMode.FLOOR).min(BigDecimal.valueOf(Long.MAX_VALUE)).longValue();
         int first = -1, last = -1;
-        BigDecimal covered = BigDecimal.ZERO;
+        long full = 0;
+        BigDecimal part = BigDecimal.ZERO;
         for (int i = 0; i < runs.size(); i++) {
-            for (int j = 0; j < r.runCnt[i]; j++) {
-                long t = r.runT[i] + (long) j * r.runD[i];
-                BigDecimal s = BigDecimal.valueOf(t - pto), e = s.add(BigDecimal.valueOf(r.runD[i]));
-                if (e.signum() <= 0 || s.compareTo(pdTicks) >= 0) continue;
-                int o = r.runOrd[i] + j;
+            for (int j = 0; j < e.runCnt[i]; j++) {
+                long s0 = e.runT[i] + (long) j * e.runD[i] - pto, e0 = s0 + e.runD[i];
+                if (e0 <= 0 || s0 >= ceil) continue;
+                int o = e.runOrd[i] + j;
                 if (first < 0) first = o;
                 last = o;
-                covered = covered.add(e.min(pdTicks).subtract(s.max(BigDecimal.ZERO)));
+                long from = Math.max(s0, 0);
+                if (e0 <= floor) {
+                    try { full = Math.addExact(full, e0 - from); } catch (ArithmeticException x) { return Exp.excl("number-range"); }
+                } else part = part.add(pdTicks.subtract(BigDecimal.valueOf(from)));
             }
         }
-        if (first < 0) { r.excluded = "timeline-empty"; return; }
-        r.first = first;
-        r.count = last - first + 1;
-        r.covered = covered.divide(BigDecimal.valueOf(ts), 9, RoundingMode.HALF_EVEN);
-        BigDecimal miss = p.effectiveDuration.subtract(r.covered).abs();
-        if (miss.compareTo(BigDecimal.valueOf(DashLimits.COVERAGE_TOLERANCE_SECONDS)) > 0) { r.excluded = "coverage-mismatch"; return; }
-        if (BigDecimal.valueOf(maxD).compareTo(BigDecimal.valueOf(DashLimits.MAX_SEGMENT_SECONDS).multiply(BigDecimal.valueOf(ts))) > 0) {
-            r.excluded = "segment-duration"; return;
-        }
-        if (r.media != null) {
-            int maxLen = r.media.prefix.length() + r.media.suffix.length() + Math.max(r.media.width, 16);
-            if (maxLen > de.evp.helfer.hls.HlsUri.MAX_URI_CHARS) { r.excluded = "uri-length"; return; }
-        }
+        if (first < 0) return Exp.excl("timeline-empty");
+        e.first = first;
+        e.count = last - first + 1;
+        e.covered = BigDecimal.valueOf(full).add(part).divide(BigDecimal.valueOf(ts), 9, RoundingMode.HALF_EVEN);
+        BigDecimal miss = p.effectiveDuration.subtract(e.covered).abs();
+        if (miss.compareTo(BigDecimal.valueOf(DashLimits.COVERAGE_TOLERANCE_SECONDS)) > 0) return Exp.excl("coverage-mismatch");
+        if (BigDecimal.valueOf(maxD).compareTo(BigDecimal.valueOf(DashLimits.MAX_SEGMENT_SECONDS).multiply(BigDecimal.valueOf(ts))) > 0) return Exp.excl("segment-duration");
+        return e;
     }
 }

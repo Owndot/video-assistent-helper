@@ -93,11 +93,16 @@ public final class DashPlan {
      * (Optionsgrenze), Listeneinträge ≤ DashLimits.MAX_LIST_ENTRIES.
      */
     static boolean collides(List<Track> tracks) {
-        java.util.Map<String, Integer> fixed = new java.util.HashMap<>();   // Init- und Listen-Adressen → Spur
-        for (int k = 0; k < tracks.size(); k++) {
-            DashManifest.Representation r = tracks.get(k).rep;
-            if (fixed.put(r.initUrl, k) != null) return true;
-            if (r.list != null) for (int i = 0; i < r.count; i++) { Integer o = fixed.put(r.segment(i).url, k); if (o != null && o != k) return true; }
+        // Init-Adressen und Listen-Stücke aller Spuren; jede Adresse darf genau einmal vorkommen – auch innerhalb
+        // derselben Spur (Init == eigenes Stück, S3a-Fix P2). Eine von mehreren Spuren geteilte Liste fällt schon beim
+        // ersten Eintrag der zweiten Spur auf; die Menge bleibt so durch die verschieden aufgelösten Listen begrenzt
+        // (DashLimits.MAX_RESOLVED_LIST_ENTRIES).
+        java.util.Set<String> fixed = new java.util.HashSet<>();
+        for (Track t : tracks) if (!fixed.add(t.rep.initUrl)) return true;
+        for (Track t : tracks) {
+            DashManifest.Representation r = t.rep;
+            if (r.list == null) continue;
+            for (int i = 0; i < r.count; i++) if (!fixed.add(r.segment(i).url)) return true;
         }
         for (int a = 0; a < tracks.size(); a++) {
             DashTemplate.Media ma = tracks.get(a).rep.media;
@@ -109,7 +114,7 @@ public final class DashPlan {
                 boolean suf = ma.suffix.endsWith(mb.suffix) || mb.suffix.endsWith(ma.suffix);
                 if (pre && suf) return true;
             }
-            for (String u : fixed.keySet()) {   // auch das eigene Init: passt es auf die eigene Vorlage, ist es mehrdeutig
+            for (String u : fixed) {   // auch das eigene Init: passt es auf die eigene Vorlage, ist es mehrdeutig
                 if (u.length() > ma.prefix.length() + ma.suffix.length() && u.startsWith(ma.prefix) && u.endsWith(ma.suffix)
                     && u.substring(ma.prefix.length(), u.length() - ma.suffix.length()).matches("[0-9]{1,20}")) return true;
             }
