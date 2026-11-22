@@ -79,7 +79,7 @@ jobs:
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'   # Robolectric android-all 16 ist für Java 21 übersetzt (wie hls-download.yml, job hlsmux)
       - name: ffmpeg (synthetic DASH fixture)
         run: |
           set -euo pipefail

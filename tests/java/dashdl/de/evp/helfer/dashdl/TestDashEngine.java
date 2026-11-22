@@ -874,7 +874,13 @@ public final class TestDashEngine {
         check("Codec im MPD ≠ Init (avcC): failed codec_mismatch vor dem ersten Stück", "failed".equals(field(st, "state")) && "codec_mismatch".equals(field(st, "reason")) && s.fullChunks() == 0, st);
         s.reset();
         String p = plan(r, s, m);
-        s.mpdText = m.replace("bandwidth=\"322838\"", "bandwidth=\"322839\"");
+        // Höchste Bitrate (die größere Videospur) um 1 erhöhen – unabhängig davon, welche Werte die ffmpeg-Version erzeugt
+        java.util.regex.Matcher bw = java.util.regex.Pattern.compile("bandwidth=\"(\\d+)\"").matcher(m);
+        int bwStart = -1, bwEnd = -1; long bwMax = -1;
+        while (bw.find()) { long v = Long.parseLong(bw.group(1)); if (v > bwMax) { bwMax = v; bwStart = bw.start(1); bwEnd = bw.end(1); } }
+        String changedMpd = bwStart < 0 ? m : m.substring(0, bwStart) + (bwMax + 1) + m.substring(bwEnd);
+        check("Testvoraussetzung: geändertes MPD unterscheidet sich vom geplanten (bandwidth " + bwMax + " → " + (bwMax + 1) + ")", !changedMpd.equals(m), bwMax);
+        s.mpdText = changedMpd;
         id = newId();
         r.engine.start(PEER, BIND, id, field(p, "planId"), optionIds(p).get(1), "x");
         st = await(r, id);
