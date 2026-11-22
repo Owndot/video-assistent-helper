@@ -64,7 +64,9 @@ jobs:
         run: |
           set -euo pipefail
           bash tools/build-channel-native.sh "$RUNNER_TEMP/a"
-          bash tools/p4test/build-unsigned.sh "$RUNNER_TEMP/a" "${{ matrix.code }}"
+          # versionName = "1.0." + GITHUB_RUN_NUMBER (app/build.gradle): fest an den versionCode gebunden, damit der Build
+          # über Läufe hinweg bitgleich ist (Owner-Test Nr. 3 hieß ebenso 1.0.3-p4test)
+          GITHUB_RUN_NUMBER="${{ matrix.code }}" bash tools/p4test/build-unsigned.sh "$RUNNER_TEMP/a" "${{ matrix.code }}"
           test -z "$(git status --porcelain)"
       - name: Text evidence only (badging, manifest, checksums) - the APK itself is not uploaded
         run: |
@@ -109,7 +111,7 @@ jobs:
           cmp -s candidate-a1/entries.sha256 candidate-b/entries.sha256 && ok "c485bb5 = ee54864 in all $(wc -l < candidate-b/entries.sha256) entries outside META-INF (only test/CI code differs)" || { diff candidate-a1/entries.sha256 candidate-b/entries.sha256 | head -20; bad "c485bb5 differs from ee54864 outside META-INF"; }
           cp -r candidate-a1 candidate-a
           for c in candidate-a reference; do grep -o "^package: name='[^']*' versionCode='[^']*' versionName='[^']*'" $c/badging.txt; done
-          grep -q "^package: name='de.evp.helfer.p4test' versionCode='4' versionName='[^']*-p4test'" candidate-a/badging.txt && ok "package de.evp.helfer.p4test, versionCode 4" || bad "package/version"
+          grep -q "^package: name='de.evp.helfer.p4test' versionCode='4' versionName='1.0.4-p4test'" candidate-a/badging.txt && ok "package de.evp.helfer.p4test, versionCode 4" || bad "package/version"
           grep -q "^package: name='de.evp.helfer.p4test' versionCode='3'" reference/badging.txt && ok "reference package de.evp.helfer.p4test, versionCode 3" || bad "reference package"
           cmp -s candidate-a/permissions.txt reference/permissions.txt && ok "permissions identical to the installed reference ($(wc -l < reference/permissions.txt))" || { diff reference/permissions.txt candidate-a/permissions.txt; bad "permission diff"; }
           [ ! -s candidate-a/own-permissions.txt ] && ok "no own permission declared" || bad "own permission"
