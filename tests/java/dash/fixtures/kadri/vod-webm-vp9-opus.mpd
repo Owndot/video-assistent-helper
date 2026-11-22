@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT213.68S" minBufferTime="PT1.5S" profiles="urn:webm:dash:profile:webm-on-demand:2012">
+  <Period id="0" start="PT0S" duration="PT213.68S">
+    <AdaptationSet id="0" mimeType="video/webm" codecs="vp9" lang="eng" bitstreamSwitching="true" subsegmentAlignment="true" subsegmentStartsWithSAP="1">
+      <Representation id="0" bandwidth="1210000" width="1280" height="720">
+        <BaseURL>video_720.webm</BaseURL>
+        <SegmentBase indexRange="4213-4952"><Initialization range="0-4212"/></SegmentBase>
+      </Representation>
+      <Representation id="1" bandwidth="2650000" width="1920" height="1080">
+        <BaseURL>video_1080.webm</BaseURL>
+        <SegmentBase indexRange="4221-4960"><Initialization range="0-4220"/></SegmentBase>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet id="1" mimeType="audio/webm" codecs="opus" lang="eng" audioSamplingRate="48000" subsegmentAlignment="true" subsegmentStartsWithSAP="1">
+      <Representation id="2" bandwidth="96000">
+        <BaseURL>audio.webm</BaseURL>
+        <SegmentBase indexRange="270-1009"><Initialization range="0-269"/></SegmentBase>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

@@ -1,0 +1,25 @@
+# kadri-dash-fp/1: fixture	documentUrl	sha256 – Testvektoren für Helper (S3a) und Kadri (S3c)
+kadri/vod-number-ffmpeg.mpd	https://cdn.example/v/manifest.mpd	bb858da67757f9c4eab9542232bd6c97f552fd99ff925820c5003edb44861096
+kadri/vod-number-ffmpeg.mpd	https://cdn.example/v/manifest.mpd?tok=SECRET	2353ff05eae2859dfa642f030816dc17694bd95be305e373def87bee0b362061
+kadri/vod-timeline-avc-aac.mpd	https://cdn.example/v/manifest.mpd	11531cc3ef2b11daa1fb259ba83c54aad5ce31495128d64bb59b987bf95566f9
+kadri/vod-timeline-avc-aac.mpd	https://cdn.example/v/manifest.mpd?tok=SECRET	5b1f46b8ac7e00d4794f0d69f8ee587fd474a99226e0302d8a02f1ad7b3375cc
+kadri/vod-segmentlist.mpd	https://cdn.example/v/manifest.mpd	43f33ff02efec9ef5196ed45b5cd7ca58c6ce4cea23e409bb9dc02d8950eadc6
+kadri/vod-segmentlist.mpd	https://cdn.example/v/manifest.mpd?tok=SECRET	43f33ff02efec9ef5196ed45b5cd7ca58c6ce4cea23e409bb9dc02d8950eadc6
+kadri/vod-baseurl-chain.mpd	https://cdn.example/v/manifest.mpd	100e1d5448a017bd2c4b784f13c111face078e1adc590f3e6c75ed015919d9b8
+kadri/vod-baseurl-chain.mpd	https://cdn.example/v/manifest.mpd?tok=SECRET	100e1d5448a017bd2c4b784f13c111face078e1adc590f3e6c75ed015919d9b8
+kadri/vod-av1-hevc-inherit.mpd	https://cdn.example/v/manifest.mpd	84ef681cc45f67ae3b3601e7f886e0dde998b6d24c2b2224caeb9e75162ad8e8
+kadri/vod-av1-hevc-inherit.mpd	https://cdn.example/v/manifest.mpd?tok=SECRET	d76c86cdb7601c7903907d79dcab78a937f4324b8e7b93761a857fd54cefcc06
+kadri/live-dynamic.mpd	https://cdn.example/v/manifest.mpd	770ecfd06f5d8f6b4392ebe686d670ec0226202a91d4dce10a98ec55e7d16990
+kadri/live-dynamic.mpd	https://cdn.example/v/manifest.mpd?tok=SECRET	d6d81c761243a0af4aefa8cd9a04dc4cf1e16c61b01906fbf8d8882c51a989dd
+kadri/vod-multi-period.mpd	https://cdn.example/v/manifest.mpd	da440f95b5c990fc7848819dd6ad92efeebcbbe75dce4aa759b460f715805218
+kadri/vod-multi-period.mpd	https://cdn.example/v/manifest.mpd?tok=SECRET	98c84ed284f13942b4fb58304475d8779cdda5140f1238a2172fcb32047f9576
+kadri/vod-thumbnails-muxed.mpd	https://cdn.example/v/manifest.mpd	547ed5ca34312a7b9269bbd18c942b91bcd1c4052395dc1e3bfb64294564c22f
+kadri/vod-thumbnails-muxed.mpd	https://cdn.example/v/manifest.mpd?tok=SECRET	2b0bb2af3338f478d363121172b2456541e4e6651d99cce6c53b6e873b5ad1eb
+kadri/vod-prefixed-ns.mpd	https://cdn.example/v/manifest.mpd	1fa6e4e8680974cf5f82ccbd3eeca4eecba44596efe48551ea54199d7490a0c2
+kadri/vod-prefixed-ns.mpd	https://cdn.example/v/manifest.mpd?tok=SECRET	340c3bd4437498e86f5e5be165779395dc947b42363f59ee59f75fb05fbafcec
+kadri/vod-drm-cenc.mpd	https://cdn.example/v/manifest.mpd	4a53d99ba764e6ac7954795fd4ded9da973d22b0addcf35ec3471a7dbec47b76
+kadri/vod-drm-cenc.mpd	https://cdn.example/v/manifest.mpd?tok=SECRET	4fda3b35963c42a798aac291c6c13e01ec3f30f54ca305dc6f9c66dbb3a81c14
+s3a/s3a-timeline-pto.mpd	https://cdn.example/v/manifest.mpd	c786bcb99face663095eafe92ffbef5be8b5ef29f63ce974bc9d28bc4aca6127
+s3a/s3a-timeline-pto.mpd	https://cdn.example/v/manifest.mpd?tok=SECRET	0cbafe89a631d8e41a678ac6f5721b7d73a5996bd8762bfb2cf28a2cc06e2c36
+s3a/s3a-inherit-query.mpd	https://cdn.example/v/manifest.mpd	61823dcbc3d261217544b25ec3756d3544b0ca6e31c80984a2e00432681d76fa
+s3a/s3a-inherit-query.mpd	https://cdn.example/v/manifest.mpd?tok=SECRET	61823dcbc3d261217544b25ec3756d3544b0ca6e31c80984a2e00432681d76fa

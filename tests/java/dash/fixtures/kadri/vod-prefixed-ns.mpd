@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dash:MPD xmlns:dash="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT10S" minBufferTime="PT1S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+  <dash:Period>
+    <dash:AdaptationSet mimeType="video/mp4" codecs="avc1.42e01e">
+      <dash:SegmentTemplate timescale="1" duration="2" initialization="i.mp4" media="$Number$.m4s"/>
+      <dash:Representation id="v" bandwidth="400000" width="426" height="240"/>
+    </dash:AdaptationSet>
+  </dash:Period>
+</dash:MPD>

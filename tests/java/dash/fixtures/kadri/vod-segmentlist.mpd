@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT0H0M30.0S" minBufferTime="PT1.5S" profiles="urn:mpeg:dash:profile:full:2011">
+  <BaseURL>media/</BaseURL>
+  <Period>
+    <AdaptationSet mimeType="video/mp4" codecs="avc1.42c01e">
+      <Representation id="v360" bandwidth="600000" width="640" height="360">
+        <SegmentList timescale="1000" duration="10000">
+          <Initialization sourceURL="v360/init.mp4"/>
+          <SegmentURL media="v360/seg-1.m4s"/>
+          <SegmentURL media="v360/seg-2.m4s"/>
+          <SegmentURL media="v360/seg-3.m4s"/>
+        </SegmentList>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet mimeType="audio/mp4" codecs="mp4a.40.5" lang="fr">
+      <Representation id="a" bandwidth="64000">
+        <SegmentList timescale="1000" duration="10000">
+          <Initialization sourceURL="a/init.mp4"/>
+          <SegmentURL media="a/seg-1.m4s"/><SegmentURL media="a/seg-2.m4s"/><SegmentURL media="a/seg-3.m4s"/>
+        </SegmentList>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

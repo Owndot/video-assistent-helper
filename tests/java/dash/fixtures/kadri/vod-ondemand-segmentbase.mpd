@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" minBufferTime="PT1.500S" type="static" mediaPresentationDuration="PT0H9M56.46S" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011">
+ <Period duration="PT0H9M56.46S">
+  <AdaptationSet segmentAlignment="true" subsegmentAlignment="true" subsegmentStartsWithSAP="1">
+   <Representation id="1" mimeType="video/mp4" codecs="avc1.640028" width="1920" height="1080" frameRate="24" sar="1:1" startWithSAP="1" bandwidth="4952892">
+    <BaseURL>video_1080.mp4</BaseURL>
+    <SegmentBase indexRangeExact="true" indexRange="839-2386">
+      <Initialization range="0-838"/>
+    </SegmentBase>
+   </Representation>
+  </AdaptationSet>
+  <AdaptationSet segmentAlignment="true" subsegmentAlignment="true" subsegmentStartsWithSAP="1" lang="en">
+   <Representation id="2" mimeType="audio/mp4" codecs="mp4a.40.2" audioSamplingRate="48000" startWithSAP="1" bandwidth="128007">
+    <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="2"/>
+    <BaseURL>audio_en.mp4</BaseURL>
+    <SegmentBase indexRangeExact="true" indexRange="592-2163"><Initialization range="0-591"/></SegmentBase>
+   </Representation>
+  </AdaptationSet>
+ </Period>
+</MPD>

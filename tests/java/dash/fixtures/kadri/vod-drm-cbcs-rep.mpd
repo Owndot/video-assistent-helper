@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT60S" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+  <Period>
+    <AdaptationSet contentType="video" mimeType="video/mp4">
+      <SegmentTemplate timescale="1000" duration="6000" initialization="$RepresentationID$/i.mp4" media="$RepresentationID$/$Number$.m4s"/>
+      <Representation id="clear-sd" codecs="avc1.4d401e" bandwidth="700000" width="640" height="360"/>
+      <Representation id="hd" codecs="avc1.640028" bandwidth="5000000" width="1920" height="1080">
+        <ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cbcs"/>
+        <ContentProtection schemeIdUri="urn:uuid:94ce86fb-07ff-4f43-adb8-93d2fa968ca2"/>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

@@ -1,0 +1,35 @@
+name: DASH core (S3a) – JVM, mutations
+
+# S3a: DASH-MPD-Parser, S3-Profil, vollständiger Plan und Strukturfingerabdruck v1 (de.evp.helfer.dash) – nur JVM.
+# Keine Engine, kein Download, kein Netz, keine Abhängigkeit außer dem JDK. Nichts wird veröffentlicht.
+on:
+  push:
+    branches: [dash-s3a]
+    paths: ['app/src/main/java/de/evp/helfer/dash/**', 'app/src/main/java/de/evp/helfer/hls/HlsUri.java', 'tests/java/dash/**',
+            'tests/java/mutation_verdict.py', '.github/workflows/dash-core.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dash-core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dash-core-jvm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: DASH core JVM tests (heap 64 MB) and mutation probes
+        run: |
+          set -euo pipefail
+          bash tests/java/dash/run.sh
+          python3 -I tests/java/dash/mutation.py

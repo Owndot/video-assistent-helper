@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT5M" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+  <Period>
+    <AdaptationSet mimeType="video/mp4">
+      <SegmentTemplate timescale="1000" duration="4000" initialization="m/init.mp4" media="m/$Number$.m4s"/>
+      <Representation id="muxed" codecs="avc1.4d401f,mp4a.40.2" bandwidth="1500000" width="1024" height="576"/>
+    </AdaptationSet>
+    <AdaptationSet contentType="image" mimeType="image/jpeg">
+      <SegmentTemplate media="thumbs/$Number$.jpg" duration="60" startNumber="1"/>
+      <Representation id="thumbs" bandwidth="10000" width="1280" height="720">
+        <EssentialProperty schemeIdUri="http://dashif.org/thumbnail_tile" value="10x10"/>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet mimeType="text/vtt" lang="de">
+      <Representation id="sub-de" bandwidth="256"><BaseURL>subs/de.vtt</BaseURL></Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

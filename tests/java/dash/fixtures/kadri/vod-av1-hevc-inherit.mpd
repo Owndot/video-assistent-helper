@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT2M" minBufferTime="PT2S" profiles="urn:mpeg:dash:profile:isoff-live:2011">
+  <Period>
+    <AdaptationSet mimeType="video/mp4" contentType="video" segmentAlignment="true">
+      <SegmentTemplate timescale="1000" initialization="$RepresentationID$/init.mp4" media="$RepresentationID$/$Time$.m4s">
+        <SegmentTimeline><S t="0" d="4000" r="29"/></SegmentTimeline>
+      </SegmentTemplate>
+      <Representation id="av1-1080" codecs="av01.0.08M.08" bandwidth="3000000" width="1920" height="1080"/>
+      <Representation id="hevc-2160" codecs="hvc1.2.4.L150.90" bandwidth="12000000" width="3840" height="2160">
+        <SegmentTemplate initialization="hevc/init.mp4" media="hevc/$Time$.m4s"/>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet mimeType="audio/mp4" contentType="audio" lang="ja">
+      <SegmentTemplate timescale="48000" duration="192000" initialization="a/init.mp4" media="a/$Number$.m4s"/>
+      <Representation id="ec3" codecs="ec-3" bandwidth="384000"/>
+      <Representation id="aac" codecs="mp4a.40.2" bandwidth="128000"/>
+    </AdaptationSet>
+  </Period>
+</MPD>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- S3a: Vererbung Periode -> AdaptationSet -> Darstellung einzelner SegmentTemplate-Attribute, BaseURL-Kette mit
+     Query (wird bei relativen Referenzen nicht geerbt), Query in der Vorlage, $$-Escape, ../ und absolute Referenz. -->
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT20S" minBufferTime="PT2S">
+  <BaseURL>https://CDN.Example:443/root/?session=1</BaseURL>
+  <Period>
+    <BaseURL>p/</BaseURL>
+    <SegmentTemplate timescale="1000" startNumber="0"/>
+    <AdaptationSet mimeType="video/mp4" codecs="avc1.4d401e" contentType="video">
+      <BaseURL>../vid/</BaseURL>
+      <SegmentTemplate duration="4000" initialization="$RepresentationID$/init.mp4?v=$RepresentationID$" media="$RepresentationID$/s$$x-$Number$.m4s?v=$RepresentationID$&amp;q=1"/>
+      <Representation id="lo" bandwidth="500000" width="640" height="360"/>
+      <Representation id="hi" bandwidth="1500000" width="1280" height="720">
+        <BaseURL>//other.example/hi-base/</BaseURL>
+        <SegmentTemplate duration="5000"/>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet mimeType="audio/mp4" codecs="mp4a.40.2" contentType="audio" lang="en">
+      <SegmentTemplate duration="2000" initialization="a/init-$Bandwidth%08d$.mp4" media="a/$Bandwidth$/$Number%03d$.m4s"/>
+      <Representation id="a" bandwidth="96000"/>
+    </AdaptationSet>
+  </Period>
+</MPD>
