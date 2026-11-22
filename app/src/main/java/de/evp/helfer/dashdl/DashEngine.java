@@ -578,7 +578,6 @@ public final class DashEngine implements ControlCommands.DashControl {
             List<File> vFiles = files(job, 'v', vRes.size()), aFiles = files(job, 'a', aRes.size());
             // 3. Vollständigkeit: tatsächliche Dauer je Spur aus den Stücken gegen den Plan (vor dem Zusammenbau)
             double vActual = mediaSeconds(vFiles, vInfo), aActual = mediaSeconds(aFiles, aInfo);
-            double slack = Math.max(outsidePeriod(c.video), outsidePeriod(c.audio));
             checkDuration(job, 'v', vActual, c.video);
             checkDuration(job, 'a', aActual, c.audio);
             long media = 0;
@@ -595,9 +594,10 @@ public final class DashEngine implements ControlCommands.DashControl {
                     r = remux.remux(new HlsRemux.Input(vFiles, aFiles, true, maxSamples), out, () -> stopWanted(job));
                     checkStop(job);
                     phase(job, Phase.VERIFY);
-                    // Ausgabe ≈ tatsächliche Stückdauer (± 1 s); Spielraum nur für Medien, die das MPD ausdrücklich vor
-                    // bzw. hinter die Periode legt (angeschnittene erste/letzte Stücke), nie die volle Stückdauer
-                    remux.verify(out, r, vActual, aActual, DURATION_TOLERANCE_SECONDS + slack, () -> stopWanted(job));
+                    // Ausgabe = tatsächliche Stückdauer ± 1 s, ohne Spielraum für Medien außerhalb der Periode: der Remuxer
+                    // kennt keine Periode und schneidet nichts ab (er schreibt jede Probe der übergebenen Stücke, verify
+                    // verlangt dieselbe Probenzahl) – angeschnittene Stücke erscheinen vollständig in der Ausgabe
+                    remux.verify(out, r, vActual, aActual, DURATION_TOLERANCE_SECONDS, () -> stopWanted(job));
                 } catch (IOException e) {
                     job.cause = e.toString();
                     checkStop(job);

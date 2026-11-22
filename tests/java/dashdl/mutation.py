@@ -56,8 +56,9 @@ M = [
     (E, "            checkDuration(job, 'a', aActual, c.audio);\n", ''),
     (E, 'if (actual < planned - DURATION_TOLERANCE_SECONDS || ', 'if ('),
     (E, ' || actual > planned + outsidePeriod(t) + DURATION_TOLERANCE_SECONDS) {', ') {'),
-    (E, 'remux.verify(out, r, vActual, aActual, DURATION_TOLERANCE_SECONDS + slack, ', 'remux.verify(out, r, vActual, aActual, Math.max(1.0, 4.0 + slack), '),
-    (E, 'double slack = Math.max(outsidePeriod(c.video), outsidePeriod(c.audio));', 'double slack = 0;'),
+    (E, 'remux.verify(out, r, vActual, aActual, DURATION_TOLERANCE_SECONDS, ', 'remux.verify(out, r, vActual, aActual, Math.max(1.0, 4.0), '),
+    # Fix 2: kein Periodenanteil als Ausgabetoleranz
+    (E, 'remux.verify(out, r, vActual, aActual, DURATION_TOLERANCE_SECONDS, ', 'remux.verify(out, r, vActual, aActual, DURATION_TOLERANCE_SECONDS + Math.max(outsidePeriod(c.video), outsidePeriod(c.audio)), '),
     (I, 'if (count > 0 && def == 0) throw new DashException("segment_timing");', ''),
     (I, 'long def = (flags & 0x08) != 0 ? f.readInt() & 0xffffffffL : init.defaultDuration;', 'long def = init.defaultDuration;'),
     # Kanalbefehle

@@ -840,8 +840,8 @@ public final class TestDashEngine {
         String clipped = m.replace("PT20.0S", "PT18.5S");
         s.mpdText = clipped;
         id = run(r, s, clipped, 1); st = await(r, id);
-        check("Dauer: Periode 18,5 s schneidet das letzte Stück an (Fragmente 20 s) → done; Spielraum genau die 1,5 s hinter der Periode",
-            "done".equals(field(st, "state")) && Math.abs(r.remux.lastTol - 2.5) < 1e-6 && Math.abs(r.remux.lastV - 20.0) < 1e-9, st + " tol=" + r.remux.lastTol);
+        check("Dauer: Periode 18,5 s schneidet das letzte Stück an (Fragmente 20 s) → done; Ausgabeprüfung gegen 20 s ± 1 s (kein Periodenanteil)",
+            "done".equals(field(st, "state")) && r.remux.lastTol == 1.0 && Math.abs(r.remux.lastV - 20.0) < 1e-9, st + " tol=" + r.remux.lastTol);
         s.reset();
         // Nur HE-AAC im MPD → keine Option (fail-closed), eigener Grund
         String heaac = m.replace("codecs=\"mp4a.40.2\"", "codecs=\"mp4a.40.5\"");

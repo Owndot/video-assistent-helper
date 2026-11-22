@@ -1,6 +1,6 @@
 # DASH S3b – Download-Koordinator im Helfer (DASH-VOD fMP4 H.264 + AAC → MP4)
 
-**Stand:** S3b (`54398dd`) mit S3b-Fix 1 (Prüfbefunde P1 AAC-Konsistenz und P1 Dauerprüfung, Abschnitt 8) auf S3a-Fix 1 (`4a3bc42`). Nur Helfer; Kadri-Produktcode ist unverändert (Anbindung folgt in S3c).
+**Stand:** S3b (`54398dd`) mit S3b-Fix 1 (Prüfbefunde P1 AAC-Konsistenz und P1 Dauerprüfung) und S3b-Fix 2 (Ausgabetoleranz ohne Periodenanteil), Abschnitt 8, auf S3a-Fix 1 (`4a3bc42`). Nur Helfer; Kadri-Produktcode ist unverändert (Anbindung folgt in S3c).
 
 - Kein DRM-Bypass: verschlüsselte oder geschützte Inhalte werden vor dem ersten Medienstück abgelehnt.
 - Keine Cookies, kein Authorization-Header, keine ungeprüften Abrufpfade: jeder Abruf läuft über den bestehenden `SafeHttpClient`.
@@ -29,7 +29,7 @@
 4. Zuerst beide Init-Ressourcen laden und mit `Fmp4Inspect.init` prüfen. Erst danach werden Medienstücke geladen.
 5. Jedes Stück: Laden über `HlsFetch.resourceVerified` (Längengrenze, SHA-256, fsync), dann `Fmp4Inspect.segment`, erst dann Aufnahme ins Journal.
 6. **Vollständigkeit (Fix 1):** Vor dem Zusammenbau wird je Spur die tatsächliche Dauer bestimmt (Summe der Probendauern aller Stücke, `Fmp4Inspect.duration`) und gegen den Plan geprüft (Abschnitt 8). Abweichung → FAILED `media_duration`.
-7. Remux (global genau einer) über `HlsRemux`/`Media3HlsRemuxer` mit den unveränderten Prüfungen der Ausgabe (Spuren, Samples, Zeitstempel, Dauer, A/V-Versatz). Die Dauer der Ausgabe wird gegen die tatsächliche Stückdauer geprüft (± 1 s, Spielraum nur für ausdrücklich außerhalb der Periode liegende Medien), danach atomare Veröffentlichung über `DownloadStore`.
+7. Remux (global genau einer) über `HlsRemux`/`Media3HlsRemuxer` mit den unveränderten Prüfungen der Ausgabe (Spuren, Samples, Zeitstempel, Dauer, A/V-Versatz). Die Dauer der Ausgabe wird strikt gegen die tatsächliche Stückdauer geprüft (± 1 s), danach atomare Veröffentlichung über `DownloadStore`.
 
 ## 2. Fmp4Inspect (fail-closed)
 
@@ -80,7 +80,7 @@
 | Mediendaten je Auftrag | ≤ 16 GiB, Speicherreserve 256 MiB |
 | Pläne | 10 min, 4 je Sitzung, 16 gesamt |
 | Parallelität | 2 Abrufe je Auftrag, Slots mit MP4/HLS geteilt, genau ein Remux |
-| Dauer je Spur | tatsächlich ∈ [Plan − 1 s, volle Stückdauern + 1 s]; Ausgabe = tatsächlich ± (1 s + Anteil außerhalb der Periode) |
+| Dauer je Spur | tatsächlich ∈ [Plan − 1 s, volle Stückdauern + 1 s]; Ausgabe = tatsächlich ± 1 s |
 
 ## 6. Begründung der Änderungen außerhalb der neuen Dateien (alle additiv)
 
@@ -93,7 +93,7 @@
 ## 7. Tests
 
 - `tests/java/dashdl/run.sh FX [CACHE]` – `TestDashEngine` (112 Prüfungen) (Fixtures aus `make-dash-fixtures.sh`, ffmpeg): Fmp4Inspect mit echten und gezielt veränderten Dateien, Kanalbefehle, Planung, Bindung, Gutfall, Negativfälle, Wiederaufnahme, Abstürze an 9 Haltepunkten, Abbruch.
-- `tests/java/dashdl/run_remux.sh FX [CACHE]` – `TestDashRemux` (4) und `TestDashEndToEnd` (11: Zeitleiste, `$Number$`/`@duration`, angeschnittene Periode – jeweils `analyze.py` – und das Gegenbeispiel mit zu kurzen Fragmenten) mit echtem Media3-Remuxer (JVM).
+- `tests/java/dashdl/run_remux.sh FX [CACHE]` – `TestDashRemux` (4) und `TestDashEndToEnd` (18: Zeitleiste, `$Number$`/`@duration`, angeschnittene Periode, Periode 10 s mit deklarierten 3600-s-Stücken – jeweils `analyze.py` –, das Gegenbeispiel mit zu kurzen Fragmenten und eine deutlich verkürzte Remux-Ausgabe) mit echtem Media3-Remuxer (JVM).
 - `tests/java/dashdl/mutation.py FX [CACHE]` – 53 Mutationsproben über `DashEngine`, `Fmp4Inspect` und die DASH-Kanalbefehle.
 - `DashDownloadsInstrumentedTest` (Emulator API 26/29/34): eigener Lauf in `run-channel-instrumentation.sh`, **nicht** Teil der festen Gerätetor-Liste (`tools/device_gate.py` unverändert). Lokal ohne KVM/SDK **nicht ausgeführt**.
 
@@ -108,7 +108,13 @@
    - Die Plandauer ist auf die Periode beschnitten; S3a hält sie schon bis auf 1 s an der MPD-Dauer.
    - Die obere Grenze lässt genau die Medien zu, die das MPD ausdrücklich vor bzw. hinter die Periode legt (angeschnittenes erstes/letztes Stück).
    - `$Number$`/`@duration` mit kürzerem Schlussstück liegt damit innerhalb der Grenzen.
-2. Die Ausgabe des Remuxers muss der tatsächlichen Dauer entsprechen (± 1 s + Anteil außerhalb der Periode). Zusammen mit den unveränderten Sample-Zahlen erkennt das auch Lücken und Überlappungen.
+2. Die Ausgabe des Remuxers muss der tatsächlichen Dauer entsprechen (± 1 s, **Fix 2:** ohne Anteil außerhalb der Periode). Zusammen mit den unveränderten Sample-Zahlen erkennt das auch Lücken und Überlappungen.
+
+**Fix 2 – Begründung.** Der unveränderte Remuxer bekommt nur die Stückdateien (`HlsRemux.Input`: Video, Ton, fMP4, Probengrenze). Weder MPD noch Periode erreichen ihn. Er schreibt jede Probe, und `Fmp4Edits` verschiebt Zeitstempel nur um die Editlisten-Korrektur, ohne Proben zu verwerfen. `verify` verlangt außerdem genau die gemeldete Probenzahl.
+
+Angeschnittene Stücke erscheinen also vollständig in der Ausgabe. Ihr Maß ist die schon ermittelte tatsächliche Dauer (`vActual`/`aActual`), nicht die Periode. Die frühere Zusatztoleranz „Anteil außerhalb der Periode“ entfällt.
+
+Sie hätte bei einer Periode von 10 s und deklarierten 3600-s-Stücken (S3a nimmt das an) 1 s + 3590 s ergeben. Auf `5657b0e` wurde mit dieser Toleranz eine echte, auf 4 s verkürzte Remux-Ausgabe veröffentlicht (reproduziert). Die Vorprüfung `checkDuration` behält den Periodenanteil als obere Grenze für legitime, angeschnittene erste/letzte Stücke.
 
 Die Sekunde ist dieselbe Grenze wie in S3a (`COVERAGE_TOLERANCE_SECONDS`) und wie die Untergrenze im HLS-Koordinator.
 

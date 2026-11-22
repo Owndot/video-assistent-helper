@@ -20,6 +20,7 @@ import de.evp.helfer.dash.DashManifest;
 import de.evp.helfer.dl.DirectDownloads;
 import de.evp.helfer.dl.DownloadStore;
 import de.evp.helfer.dl.JobSlots;
+import de.evp.helfer.hls.HlsRemux;
 import de.evp.helfer.hlsmux.Media3HlsRemuxer;
 import de.evp.helfer.net.LocalTestClients;
 import de.evp.helfer.net.RequestContext;
@@ -78,12 +79,43 @@ public final class TestDashEndToEnd {
             .replace("<S t=\"0\" d=\"51200\" r=\"4\" />", "<S t=\"0\" d=\"51200\" r=\"3\" /><S d=\"7680000\" />")
             .replace("<S d=\"2560\" />", "<S d=\"" + (616L * 48000 - 957440) + "\" />");
         scenario("short-fragments", avc, inflated, port, work, "failed", "media_duration");
+        // 5. Fix 2: Periode 10 s, deklarierte Stückdauer 3600 s (timescale 1000, duration 3600000) wie im Prüfbefund;
+        //    die echten Fragmente sind 10 s lang (je Spur genau ein Stück). Legitim → done.
+        File lng = new File(root, "long");
+        String l = new String(Files.readAllBytes(new File(lng, "manifest.mpd").toPath()), StandardCharsets.UTF_8)
+            .replace("timescale=\"1000000\" duration=\"2000000000\"", "timescale=\"1000\" duration=\"3600000\"");
+        check("period10-seg3600: MPD deklariert 3600 s je Stück bei 10 s Periode", l.contains("duration=\"3600000\"") && l.contains("PT10.0S"), "");
+        mp4 = scenario("period10-seg3600", lng, l, port, work, "done", null);
+        analyze("period10-seg3600", args[2], new File(lng, "manifest.mpd"), mp4, null);
+        // 6. Fix 2: dieselbe Quelle, aber die Ausgabe des (echten) Remuxers ist deutlich kürzer (4 s statt 10 s): ein
+        //    Remuxer, der statt der übergebenen Stücke nur Init + erstes Stück der $Number$-Quelle zusammenbaut. Die
+        //    unveränderte Media3-Prüfung muss das ablehnen – vorher hätte die Toleranz 1 s + 3590 s betragen.
+        Media3HlsRemuxer real = new Media3HlsRemuxer(false);
+        HlsRemux shortening = new HlsRemux() {
+            public Result remux(Input in, File out, java.util.function.BooleanSupplier c) throws IOException, de.evp.helfer.hls.HlsException {
+                List<File> v = Arrays.asList(new File(num, "init-0.m4s"), new File(num, "chunk-0-00001.m4s"));
+                List<File> a = Arrays.asList(new File(num, "init-1.m4s"), new File(num, "chunk-1-00001.m4s"));
+                return real.remux(new Input(v, a, true, in.maxSamples), out, c);
+            }
+            public void verify(File out, Result r, double vs, double as, double tol, java.util.function.BooleanSupplier c) throws IOException, de.evp.helfer.hls.HlsException {
+                lastTolerance = tol;
+                real.verify(out, r, vs, as, tol, c);
+            }
+        };
+        scenario("period10-seg3600-short-output", lng, l, port, work, "failed", "verify_duration", shortening);
+        check("period10-seg3600-short-output: Ausgabeprüfung mit genau 1 s Toleranz (ohne Anteil außerhalb der Periode)", lastTolerance == 1.0, lastTolerance);
         srv.stop(0);
         System.out.println("RESULT passed=" + passed + " failed=" + failed);
         System.exit(failed == 0 ? 0 : 1);
     }
 
+    static volatile double lastTolerance = -1;
+
     static File scenario(String name, File fx, String mpd, int port, File work, String wantState, String wantReason) throws Exception {
+        return scenario(name, fx, mpd, port, work, wantState, wantReason, new Media3HlsRemuxer(false));
+    }
+
+    static File scenario(String name, File fx, String mpd, int port, File work, String wantState, String wantReason, HlsRemux remux) throws Exception {
         served = fx;
         mpdOverride = mpd == null ? null : mpd.getBytes(StandardCharsets.UTF_8);
         File out = new File(work, name + "/out"), jobs = new File(work, name + "/jobs");
@@ -109,7 +141,7 @@ public final class TestDashEndToEnd {
             public void progress(String id, String t, long b, long total) { }
             public void finished(String id, String t, String state, String reason, Object saved) { }
         };
-        DashEngine engine = new DashEngine(LocalTestClients.loopback(port), store, events, jobs, new Media3HlsRemuxer(false), new JobSlots(2, 4), 1_000_000);
+        DashEngine engine = new DashEngine(LocalTestClients.loopback(port), store, events, jobs, remux, new JobSlots(2, 4), 1_000_000);
         String url = "http://127.0.0.1:" + port + "/v/manifest.mpd?t=SECRET";
         byte[] mpdBytes = mpdOverride != null ? mpdOverride : Files.readAllBytes(new File(fx, "manifest.mpd").toPath());
         String fp = DashFingerprint.hex(DashManifest.parse(mpdBytes, url));

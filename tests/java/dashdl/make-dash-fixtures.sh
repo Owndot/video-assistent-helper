@@ -23,4 +23,13 @@ mkdir -p "$OUT/num"
     -c:a aac -b:a 48k -ac 2 -ar 48000 -flags:a +bitexact -fflags +bitexact -map_metadata -1 \
     -f dash -seg_duration 4 -use_template 1 -use_timeline 0 -adaptation_sets "id=0,streams=v id=1,streams=a" \
     -init_seg_name 'init-$RepresentationID$.m4s' -media_seg_name 'chunk-$RepresentationID$-$Number%05d$.m4s' manifest.mpd )
-( cd "$OUT" && ls avc > FILES.txt && ls num | sed 's|^|num/|' >> FILES.txt )
+# Fix 2 (Ausgabeprüfung): 10 s Medien in genau einem Stück je Spur (FFmpeg erlaubt höchstens ~2147 s; die Tests
+# deklarieren im MPD wie im Prüfbefund timescale=1000, duration=3600000 bei einer Periode von 10 s)
+mkdir -p "$OUT/long"
+( cd "$OUT/long" && ffmpeg -hide_banner -v error -y -f lavfi -i "$V" -f lavfi -i "$A" -t 10 \
+    -map 0:v -map 1:a \
+    -c:v libx264 -profile:v main -preset veryfast -crf 30 -g 50 -keyint_min 50 -sc_threshold 0 -bf 2 -threads 1 -flags:v +bitexact \
+    -c:a aac -b:a 48k -ac 2 -ar 48000 -flags:a +bitexact -fflags +bitexact -map_metadata -1 \
+    -f dash -seg_duration 2000 -use_template 1 -use_timeline 0 -adaptation_sets "id=0,streams=v id=1,streams=a" \
+    -init_seg_name 'init-$RepresentationID$.m4s' -media_seg_name 'chunk-$RepresentationID$-$Number%05d$.m4s' manifest.mpd )
+( cd "$OUT" && ls avc > FILES.txt && ls num | sed 's|^|num/|' >> FILES.txt && ls long | sed 's|^|long/|' >> FILES.txt )
