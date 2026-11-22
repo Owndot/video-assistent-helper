@@ -1,0 +1,116 @@
+name: S3d P4 test app - unsigned reproducibility and manifest comparison (no key, no APK published)
+
+# S3d Teil 2, Vorbereitung. NUR unsignierte Builds von de.evp.helfer.p4test (nicht installierbar), kein Schlüssel,
+# keine Signatur, kein APK-Artefakt – hochgeladen werden ausschließlich Textbelege (badging, Manifest, Prüfsummen).
+#  * candidate-a1, candidate-a2: freigegebener S3b-Produktstand ee54864, versionCode 4, zwei getrennte Runner
+#  * candidate-b: isolierter CI-Testcommit c485bb5 (ee54864 + nur Test-/Workflow-Code), versionCode 4
+#  * reference:   e748180 = Quelle der installierten helper-p4test-3.apk (Owner-Test-Lauf 44748191232), versionCode 3
+# Erwartung: a1 und a2 bitgleich; b gleich a in allen Einträgen außer META-INF (dort steht der Quell-Commit); Paket,
+# Bezeichnung, Berechtigungen und Manifest wie die Referenz (bis auf versionCode/versionName).
+# Startet nur per Push auf test/s3d-p4-unsigned.
+on:
+  push:
+    branches: ['test/s3d-p4-unsigned']
+    paths: ['.github/workflows/s3d-p4-unsigned.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: s3d-p4-unsigned
+  cancel-in-progress: false
+
+env:
+  NDK_VERSION: 27.2.12479018
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: candidate-a1, sha: ee5486442266f2730893353ac71611809dfd21b1, code: 4 }
+          - { name: candidate-a2, sha: ee5486442266f2730893353ac71611809dfd21b1, code: 4 }
+          - { name: candidate-b, sha: c485bb5a0eb8e387c80cd3303e3eb8192ec37eef, code: 4 }
+          - { name: reference, sha: e7481808eda7721f4e0fdb242f14ecd546c01cbd, code: 3 }
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ matrix.sha }}
+          path: src
+          persist-credentials: false
+      - uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Exact source, pinned toolchains (Rust, NDK r27c, SDK 37.0, build-tools 36.0.0 + 34.0.0)
+        run: |
+          set -euo pipefail
+          test "$(git -C src rev-parse HEAD)" = "${{ matrix.sha }}"
+          grep -q '"status": "UNAPPROVED"' src/release/production-policy.json
+          grep -qx '  "certificate_sha256": null,' src/release/p4test-signer.json
+          (cd src/poc/pake-channel/core && rustup toolchain install && rustc -V)
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "platforms;android-37.0" "build-tools;36.0.0" "build-tools;34.0.0" < <(yes 2>/dev/null) > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Unsigned de.evp.helfer.p4test (not installable)
+        working-directory: src
+        run: |
+          set -euo pipefail
+          bash tools/build-channel-native.sh "$RUNNER_TEMP/a"
+          bash tools/p4test/build-unsigned.sh "$RUNNER_TEMP/a" "${{ matrix.code }}"
+          test -z "$(git status --porcelain)"
+      - name: Text evidence only (badging, manifest, checksums) - the APK itself is not uploaded
+        run: |
+          set -euo pipefail
+          APK="$RUNNER_TEMP/a/p4/helper-p4test-unsigned.apk"; BT="$ANDROID_HOME/build-tools/34.0.0"
+          E="$RUNNER_TEMP/evidence/${{ matrix.name }}"; mkdir -p "$E"
+          "$BT/aapt2" dump badging "$APK" > "$E/badging.txt"
+          "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$APK" > "$E/manifest.txt"
+          grep '^uses-permission:' "$E/badging.txt" | sort > "$E/permissions.txt"
+          grep '^permission:' "$E/badging.txt" > "$E/own-permissions.txt" || true
+          if "$BT/apksigner" verify "$APK" >/dev/null 2>&1; then echo "signed?" >&2; exit 1; fi
+          sha256sum < "$APK" | cut -d' ' -f1 > "$E/apk.sha256"
+          mkdir -p "$RUNNER_TEMP/u"
+          (cd "$RUNNER_TEMP/u" && unzip -q "$APK" && find . -type f ! -path './META-INF/*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > "$E/entries.sha256"
+          unzip -p "$APK" META-INF/version-control-info.textproto > "$E/version-control-info.txt"
+          echo "source=${{ matrix.sha }} version_code=${{ matrix.code }} apk_sha256=$(cat "$E/apk.sha256") entries=$(wc -l < "$E/entries.sha256")" | tee "$E/summary.txt"
+          rm -rf "$RUNNER_TEMP/u" "$RUNNER_TEMP/a/p4"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: s3d-p4-evidence-${{ matrix.name }}
+          path: ${{ runner.temp }}/evidence
+          retention-days: 7
+
+  compare:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: s3d-p4-evidence-*
+          path: ev
+          merge-multiple: true
+      - name: Compare (reproducibility, identity, permissions, manifest)
+        run: |
+          set -euo pipefail
+          cd ev; ls
+          fail=0; ok() { echo "PASS $*"; }; bad() { echo "FAIL $*"; fail=1; }
+          a1="$(cat candidate-a1/apk.sha256)"; a2="$(cat candidate-a2/apk.sha256)"
+          [ "$a1" = "$a2" ] && ok "reproducible: two independent builds of ee54864 bit-identical, unsigned apk_sha256=$a1" || bad "unsigned APKs of ee54864 differ: $a1 vs $a2"
+          cmp -s candidate-a1/entries.sha256 candidate-b/entries.sha256 && ok "c485bb5 = ee54864 in all $(wc -l < candidate-b/entries.sha256) entries outside META-INF (only test/CI code differs)" || { diff candidate-a1/entries.sha256 candidate-b/entries.sha256 | head -20; bad "c485bb5 differs from ee54864 outside META-INF"; }
+          cp -r candidate-a1 candidate-a
+          for c in candidate-a reference; do grep -o "^package: name='[^']*' versionCode='[^']*' versionName='[^']*'" $c/badging.txt; done
+          grep -q "^package: name='de.evp.helfer.p4test' versionCode='4' versionName='[^']*-p4test'" candidate-a/badging.txt && ok "package de.evp.helfer.p4test, versionCode 4" || bad "package/version"
+          grep -q "^package: name='de.evp.helfer.p4test' versionCode='3'" reference/badging.txt && ok "reference package de.evp.helfer.p4test, versionCode 3" || bad "reference package"
+          cmp -s candidate-a/permissions.txt reference/permissions.txt && ok "permissions identical to the installed reference ($(wc -l < reference/permissions.txt))" || { diff reference/permissions.txt candidate-a/permissions.txt; bad "permission diff"; }
+          [ ! -s candidate-a/own-permissions.txt ] && ok "no own permission declared" || bad "own permission"
+          diff <(sed -E "s/(versionCode[^=]*=)[0-9]+/\1N/; s/(versionName[^=]*=\")[^\"]*/\1V/" reference/manifest.txt) <(sed -E "s/(versionCode[^=]*=)[0-9]+/\1N/; s/(versionName[^=]*=\")[^\"]*/\1V/" candidate-a/manifest.txt) > manifest.diff && ok "manifest identical to the reference apart from versionCode/versionName" || { cat manifest.diff; bad "manifest differs"; }
+          for f in "application-label:" "targetSdkVersion:" "sdkVersion:" "native-code:"; do
+            [ "$(grep "^$f" reference/badging.txt)" = "$(grep "^$f" candidate-a/badging.txt)" ] && ok "$f $(grep "^$f" candidate-a/badging.txt | cut -d: -f2-)" || bad "$f differs"
+          done
+          grep -q ee5486442266f2730893353ac71611809dfd21b1 candidate-a/version-control-info.txt && ok "candidate-a built from ee54864" || bad "version-control-info"
+          cat candidate-a/permissions.txt
+          exit $fail
