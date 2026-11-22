@@ -38,6 +38,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          path: wf
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
           ref: ${{ matrix.sha }}
           path: src
           persist-credentials: false
@@ -77,6 +81,8 @@ jobs:
           (cd "$RUNNER_TEMP/u" && unzip -q "$APK" && find . -type f ! -path './META-INF/*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > "$E/entries.sha256"
           unzip -p "$APK" META-INF/version-control-info.textproto > "$E/version-control-info.txt"
           echo "source=${{ matrix.sha }} version_code=${{ matrix.code }} apk_sha256=$(cat "$E/apk.sha256") entries=$(wc -l < "$E/entries.sha256")" | tee "$E/summary.txt"
+          python3 -I "$GITHUB_WORKSPACE/wf/tools/p4test/termux-verify.py" --selftest | tee "$E/termux-verify-selftest.txt"
+          python3 -I "$GITHUB_WORKSPACE/wf/tools/p4test/termux-verify.py" --native-only "$APK" | tee "$E/termux-verify-native.txt"
           rm -rf "$RUNNER_TEMP/u" "$RUNNER_TEMP/a/p4"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
