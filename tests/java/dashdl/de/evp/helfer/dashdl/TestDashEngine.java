@@ -206,9 +206,12 @@ public final class TestDashEngine {
             }
             return new Result(in.video.size(), in.audio.size(), 0, 0);
         }
+        volatile double lastV, lastA, lastTol = -1;
         @Override public void verify(File out, Result expected, double v, double a, double tol, BooleanSupplier cancelled) throws HlsException {
+            lastV = v; lastA = a; lastTol = tol;
             if (!out.isFile() || out.length() == 0) throw new HlsException("verify-missing");
-            if (Math.abs(v - 20.0) > 0.01 || Math.abs(a - 20.0) > 0.01 || tol < 1.0) throw new HlsException("verify-duration");
+            // Fix 1: erwartet wird die tatsächliche Stückdauer (Fixture: 20 s Video, ≈ 20 s Ton), nicht die Plandauer
+            if (Math.abs(v - 20.0) > 0.1 || Math.abs(a - 20.0) > 0.1 || tol < 1.0) throw new HlsException("verify-duration");
         }
     }
 
@@ -390,6 +393,46 @@ public final class TestDashEngine {
         throw new IllegalStateException("no DecoderConfigDescriptor");
     }
 
+    /** Ersetzt die 5 Bytes der AudioSpecificConfig der FFmpeg-Init (DecoderSpecificInfo 05 80 80 80 05). */
+    static byte[] patchAsc(byte[] file, String hex) {
+        hex = hex.replace(" ", "");
+        byte[] r = file.clone();
+        for (int i = 0; i + 10 <= r.length; i++) {
+            if (r[i] == 0x05 && (r[i + 1] & 0xff) == 0x80 && (r[i + 2] & 0xff) == 0x80 && (r[i + 3] & 0xff) == 0x80 && r[i + 4] == 0x05) {
+                for (int k = 0; k < 5; k++) r[i + 5 + k] = (byte) Integer.parseInt(hex.substring(2 * k, 2 * k + 2), 16);
+                return r;
+            }
+        }
+        throw new IllegalStateException("no DecoderSpecificInfo");
+    }
+
+    static int indexOf(byte[] b, String type) {
+        byte[] t = type.getBytes(StandardCharsets.US_ASCII);
+        for (int i = 0; i + 4 <= b.length; i++) if (b[i] == t[0] && b[i + 1] == t[1] && b[i + 2] == t[2] && b[i + 3] == t[3]) return i;
+        throw new IllegalStateException("no " + type);
+    }
+
+    static Fmp4Inspect.Info initInfo(byte[] b, String kind, String codecs) throws Exception {
+        File f = File.createTempFile("init", ".m4s", base);
+        Files.write(f.toPath(), b);
+        try { return Fmp4Inspect.init(f, kind, codecs); } finally { f.delete(); }
+    }
+
+    static long segDuration(byte[] b, Fmp4Inspect.Info info) throws Exception {
+        File f = File.createTempFile("seg", ".m4s", base);
+        Files.write(f.toPath(), b);
+        try { return Fmp4Inspect.duration(f, info); } finally { f.delete(); }
+    }
+
+    /** Wie segDuration, ein Ablehnungsgrund ergibt −1 (lässt die Prüfung scheitern statt den Lauf abzubrechen). */
+    static long safeDuration(byte[] b, Fmp4Inspect.Info info) throws Exception {
+        try { return segDuration(b, info); } catch (DashException e) { return -1; }
+    }
+
+    static String segDurationReason(byte[] b, Fmp4Inspect.Info info) throws Exception {
+        try { return "ok " + segDuration(b, info); } catch (DashException e) { return e.reason; }
+    }
+
     static byte[] read(String name) throws IOException { return Files.readAllBytes(new File(fx, "avc/" + name).toPath()); }
 
     static String inspectInit(byte[] b, String kind, String codecs) throws IOException {
@@ -418,6 +461,7 @@ public final class TestDashEngine {
             binding(s);
             happy(s);
             negatives(s);
+            durations(s);
             resume(s);
             crashes(s);
             cancel(s);
@@ -451,9 +495,39 @@ public final class TestDashEngine {
             {"abgeschnittene Datei", inspectInit(Arrays.copyOf(v0, v0.length - 10), "video", "avc1.4d400c"), "mp4_structure"},
             {"zu groß (> 1 MiB)", inspectInit(concat(v0, box("free", new byte[1 << 20])), "video", "avc1.4d400c"), "init_size"},
             {"esds: objectTypeIndication 0x6B (MP3) statt 0x40 (AAC)", inspectInit(patchOti(a, 0x6B), "audio", "mp4a.40.2"), "codec_mismatch"},
+            // Fix 1 (P1 AAC): echte AAC-LC-Init (FFmpeg, ASC 11 90 56 e5 00) gegen HE-AAC/HE-AACv2 im MPD
+            {"AAC-LC-Init, MPD mp4a.40.5 (HE-AAC)", inspectInit(a, "audio", "mp4a.40.5"), "codec_mismatch"},
+            {"AAC-LC-Init, MPD mp4a.40.29 (HE-AACv2)", inspectInit(a, "audio", "mp4a.40.29"), "codec_mismatch"},
+            {"AAC-LC-Init, MPD mp4a.40.3 (kein LC)", inspectInit(a, "audio", "mp4a.40.3"), "codec_mismatch"},
+            {"ASC audioObjectType 5 (explizites SBR), MPD mp4a.40.2", inspectInit(patchAsc(a, "2990 56e5 00"), "audio", "mp4a.40.2"), "codec_mismatch"},
+            {"ASC audioObjectType 29 (explizites PS), MPD mp4a.40.2", inspectInit(patchAsc(a, "e990 56e5 00"), "audio", "mp4a.40.2"), "codec_mismatch"},
+            {"ASC rückwärtskompatibles SBR (0x2b7, AOT 5, sbrPresentFlag 1)", inspectInit(patchAsc(a, "1190 56e5 80"), "audio", "mp4a.40.2"), "codec_mismatch"},
+            {"ASC Synchronisationserweiterung mit anderem Typ (22)", inspectInit(patchAsc(a, "1190 56f6 00"), "audio", "mp4a.40.2"), "codec_mismatch"},
+            {"ASC Kanalkonfiguration 0 (PCE, nicht geprüft)", inspectInit(patchAsc(a, "1180 56e5 00"), "audio", "mp4a.40.2"), "codec_mismatch"},
+            {"ASC Füllbits ≠ 0", inspectInit(patchAsc(a, "1190 56e5 01"), "audio", "mp4a.40.2"), "codec_mismatch"},
+            {"ASC AAC-LC ohne Erweiterung (nur Füllbits 0) wird angenommen", inspectInit(patchAsc(a, "1190 0000 00"), "audio", "mp4a.40.2"), "ok"},
             {"ohne mvex (nicht fragmentiert)", inspectInit(replace4(v0, "mvex", "free"), "video", "avc1.4d400c"), "mp4_structure"},
         };
         for (String[] t : init) check("Fmp4Inspect Init: " + t[0] + " → " + t[2], t[1].equals(t[2]), t[1]);
+        // Fix 1: Zeitangaben (mdhd, trex) und Probendauern je Stück (tfhd-Standard bzw. Dauer je Probe in trun)
+        Fmp4Inspect.Info vi = initInfo(v1, "video", "avc1.4d401e"), ai = initInfo(a, "audio", "mp4a.40.2");
+        long vTicks = 0, aTicks = 0;
+        for (int i = 1; i <= 5; i++) vTicks += safeDuration(read("chunk-1-0000" + i + ".m4s"), vi);
+        for (int i = 1; i <= 6; i++) aTicks += safeDuration(read("chunk-2-0000" + i + ".m4s"), ai);
+        check("Fmp4Inspect Dauer: Video 12800/s, 5 × 51200 (tfhd-Standard) = 20 s; Ton 48000/s, Summe inkl. letztem Stück (Dauer je Probe in trun) ≈ 20 s",
+            vi.timescale == 12800 && safeDuration(read("chunk-1-00001.m4s"), vi) == 51200 && vTicks == 256000 && ai.timescale == 48000 && Math.abs(aTicks - 960000) <= 1024,
+            vi.timescale + " " + vTicks + " " + ai.timescale + " " + aTicks);
+        byte[] noDefault = read("chunk-1-00001.m4s").clone();
+        int tf = indexOf(noDefault, "tfhd");
+        noDefault[tf + 7] = (byte) (noDefault[tf + 7] & ~0x08);   // tfhd ohne default-sample-duration
+        byte[] trexInit = v1.clone();
+        int tx = indexOf(trexInit, "trex");
+        ByteBuffer.wrap(trexInit, tx + 16, 4).putInt(512);          // trex default_sample_duration = 512
+        Fmp4Inspect.Info ti = initInfo(trexInit, "video", "avc1.4d401e");
+        check("Fmp4Inspect Dauer: ohne tfhd-/trun-Dauer gilt der trex-Standard aus dem Init (100 × 512 = 51200)",
+            ti.defaultDuration == 512 && safeDuration(noDefault, ti) == 51200, ti.defaultDuration + " " + safeDuration(noDefault, ti));
+        check("Fmp4Inspect Dauer: weder trun- noch tfhd- noch trex-Dauer → segment_timing",
+            "segment_timing".equals(segDurationReason(noDefault, new Fmp4Inspect.Info(12800, 0))), segDurationReason(noDefault, new Fmp4Inspect.Info(12800, 0)));
         String[][] segs = {
             {"senc in traf", inspectSeg(insertBox(seg, "moof/traf", "senc", new byte[8])), "encrypted"},
             {"saiz in traf", inspectSeg(insertBox(seg, "moof/traf", "saiz", new byte[9])), "encrypted"},
@@ -698,6 +772,9 @@ public final class TestDashEngine {
         check("Ablauf: Status und Rückmeldungen ohne Adresse/Token; kind=dash", clean(fin, s) && "dash".equals(field(fin, "kind")) && clean(String.join("\n", r.events.all), s), r.events.all);
         check("Ablauf: keine Cookies/Authorization/Origin, kein Referer ohne Kontext", s.leaks.isEmpty() && s.referers.isEmpty(), s.leaks + " " + s.referers);
         check("Ablauf: dlstatus einer erledigten Kennung bleibt done", "done".equals(field(r.engine.status(id), "state")), "");
+        check("Ablauf (Fix 1): Ausgabeprüfung gegen die tatsächliche Stückdauer (Video 20 s), Toleranz genau 1 s statt der Stückdauer (4 s)",
+            Math.abs(r.remux.lastV - 20.0) < 1e-9 && Math.abs(r.remux.lastA - 20.0) < 0.1 && r.remux.lastTol == 1.0,
+            r.remux.lastV + " " + r.remux.lastA + " " + r.remux.lastTol);
     }
 
     static byte[] cat(String prefix, int from, int to) throws IOException {
@@ -710,6 +787,71 @@ public final class TestDashEngine {
         String p = plan(r, s, mpdText), id = newId();
         r.engine.start(PEER, BIND, id, field(p, "planId"), optionIds(p).get(opt), "x");
         return id;
+    }
+
+    /** Fix 1 (P1 Dauer): formal gültige MPDs, deren Dauern nicht zu den echten Fragmenten passen, und legitime Abweichungen. */
+    static void durations(Server s) throws Exception {
+        String m = mpd();
+        s.reset();
+        Rig r = new Rig("dur", s);
+        // Gegenbeispiel aus der Prüfung: letztes Stück im MPD 600 s (S3a erlaubt bis 3600 s), Periode 616 s; die echten
+        // Fragmente sind 20 s lang. Vorher: Toleranz = größte Stückdauer (600 s) → |20 − 616| = 596 < 600 → veröffentlicht.
+        String inflated = m.replace("mediaPresentationDuration=\"PT20.0S\"", "mediaPresentationDuration=\"PT616.0S\"")
+            .replace("<S t=\"0\" d=\"51200\" r=\"4\" />", "<S t=\"0\" d=\"51200\" r=\"3\" /><S d=\"7680000\" />")
+            .replace("<S d=\"2560\" />", "<S d=\"" + (616L * 48000 - 957440) + "\" />");
+        s.mpdText = inflated;
+        String p = plan(r, s, inflated);
+        check("Dauer: MPD mit 600-s-Schlussstück (616 s) ist formal gültig (dashplan ok, 2 Optionen)", p.contains("\"ok\":true") && optionIds(p).size() == 2, p);
+        int runs = r.remux.runs.get();
+        String id = run(r, s, inflated, 1), st = await(r, id);
+        check("Dauer: echte Fragmente (20 s) viel kürzer als das MPD (616 s) → failed media_duration vor dem Zusammenbau, nichts veröffentlicht",
+            "failed".equals(field(st, "state")) && "media_duration".equals(field(st, "reason")) && r.remux.runs.get() == runs && r.store.committed.get() == 0
+                && r.dir(id).list().length == 1, st + " " + r.engine.diagnostics(id));
+        check("Dauer: Status und Diagnose ohne Adresse/Token", clean(st, s) && clean(r.engine.diagnostics(id), s), st);
+        s.reset();
+        String doubled = m.replace("PT20.0S", "PT40.0S").replace("d=\"51200\"", "d=\"102400\"").replace("d=\"188416\"", "d=\"376832\"")
+            .replace("d=\"192512\"", "d=\"385024\"").replace("d=\"191488\"", "d=\"382976\"").replace("d=\"2560\"", "d=\"5120\"");
+        s.mpdText = doubled;
+        id = run(r, s, doubled, 1); st = await(r, id);
+        check("Dauer: alle Stücke im MPD doppelt so lang (40 s) wie die Fragmente → failed media_duration",
+            "failed".equals(field(st, "state")) && "media_duration".equals(field(st, "reason")) && r.store.committed.get() == 0, st);
+        s.reset();
+        String halved = m.replace("PT20.0S", "PT10.0S").replace("d=\"51200\"", "d=\"25600\"").replace("d=\"188416\"", "d=\"94208\"")
+            .replace("d=\"192512\"", "d=\"96256\"").replace("d=\"191488\"", "d=\"95744\"").replace("d=\"2560\"", "d=\"1280\"");
+        s.mpdText = halved;
+        id = run(r, s, halved, 1); st = await(r, id);
+        check("Dauer: Fragmente doppelt so lang wie das MPD (20 s statt 10 s) → failed media_duration (obere Grenze)",
+            "failed".equals(field(st, "state")) && "media_duration".equals(field(st, "reason")) && r.store.committed.get() == 0, st);
+        s.reset();
+        // Lücke nur im Video: ein 4-s-Videostück durch das echte 2-s-Schlussstück der $Number$-Quelle (gleiches Profil)
+        s.override.put("chunk-1-00003.m4s", Files.readAllBytes(new File(fx, "num/chunk-0-00005.m4s").toPath()));
+        id = run(r, s, m, 1); st = await(r, id);
+        check("Dauer: Videostück durch ein echtes 2-s-Stück ersetzt (2 s Video fehlen) → failed media_duration",
+            "failed".equals(field(st, "state")) && "media_duration".equals(field(st, "reason")) && r.store.committed.get() == 0, st);
+        s.reset();
+        // Lücke nur im Ton: ein echtes 4-s-Tonstück durch das echte Schlussstück (≈ 0,06 s) ersetzt – gültiges fMP4,
+        // gültiges MPD, aber ≈ 4 s Ton fehlen
+        s.override.put("chunk-2-00002.m4s", read("chunk-2-00006.m4s"));
+        id = run(r, s, m, 1); st = await(r, id);
+        check("Dauer: Tonstück durch ein echtes, viel kürzeres Stück ersetzt (≈ 4 s Ton fehlen) → failed media_duration",
+            "failed".equals(field(st, "state")) && "media_duration".equals(field(st, "reason")) && r.store.committed.get() == 0, st);
+        s.reset();
+        // Legitim: die Periode (18,5 s) schneidet das letzte Stück an; die Fragmente enthalten 1,5 s hinter dem Periodenende
+        String clipped = m.replace("PT20.0S", "PT18.5S");
+        s.mpdText = clipped;
+        id = run(r, s, clipped, 1); st = await(r, id);
+        check("Dauer: Periode 18,5 s schneidet das letzte Stück an (Fragmente 20 s) → done; Spielraum genau die 1,5 s hinter der Periode",
+            "done".equals(field(st, "state")) && Math.abs(r.remux.lastTol - 2.5) < 1e-6 && Math.abs(r.remux.lastV - 20.0) < 1e-9, st + " tol=" + r.remux.lastTol);
+        s.reset();
+        // Nur HE-AAC im MPD → keine Option (fail-closed), eigener Grund
+        String heaac = m.replace("codecs=\"mp4a.40.2\"", "codecs=\"mp4a.40.5\"");
+        s.mpdText = heaac;
+        p = plan(r, s, heaac);
+        check("AAC: MPD nur mit HE-AAC (mp4a.40.5) → dashplan ok:false audio_codec (Phase options)", "audio_codec".equals(field(p, "reason")) && "options".equals(field(p, "phase")), p);
+        s.mpdText = m.replace("codecs=\"mp4a.40.2\"", "codecs=\"mp4a.40.29\"");
+        p = plan(r, s, s.mpdText);
+        s.reset();
+        check("AAC: MPD nur mit HE-AACv2 (mp4a.40.29) → dashplan ok:false audio_codec", "audio_codec".equals(field(p, "reason")), p);
     }
 
     static void negatives(Server s) throws Exception {

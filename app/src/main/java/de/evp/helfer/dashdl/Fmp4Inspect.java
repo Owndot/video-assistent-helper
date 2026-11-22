@@ -20,8 +20,14 @@ import de.evp.helfer.dash.DashException;
  * <ul>
  *   <li>Init: oben nur ftyp, moov, free, skip; in moov genau ein trak und mvex (fragmentiert); hdlr passt zur Spur
  *       (vide/soun); stsd mit genau einem Eintrag avc1/avc3 (Video) bzw. mp4a (Ton). Der Codec muss zum MPD passen:
- *       avcC (Profil, Kompatibilität, Level) = die sechs Hexziffern aus {@code avc1.PPCCLL}; esds mit
- *       objectTypeIndication 0x40 (AAC).</li>
+ *       avcC (Profil, Kompatibilität, Level) = die sechs Hexziffern aus {@code avc1.PPCCLL}. Ton nur AAC-LC: MPD
+ *       genau {@code mp4a.40.2}, esds mit objectTypeIndication 0x40 und einer AudioSpecificConfig mit
+ *       audioObjectType 2, Kanalkonfiguration 1…7 und ohne jede SBR-/PS-Signalisierung (weder explizit als
+ *       audioObjectType 5/29 noch rückwärtskompatibel über die Synchronisationserweiterung 0x2b7). HE-AAC und
+ *       HE-AACv2 ({@code mp4a.40.5}/{@code .29}) sind damit fail-closed ausgeschlossen: implizit signalisiertes SBR
+ *       steckt nur im Bitstrom und lässt sich ohne Decoder nicht gegen das MPD prüfen.</li>
+ *   <li>Zeit (für die Vollständigkeitsprüfung des Koordinators): Zeitmaßstab aus mdhd, Standard-Probendauer aus
+ *       trex; je Medienstück die Summe der Probendauern aus trun (bzw. tfhd/trex-Standard), {@link #duration}.</li>
  *   <li>Verschlüsselung ("encrypted"): encv/enca, sinf, frma, schm, schi, tenc, pssh, senc, saiz, saio, sgpd/sbgp mit
  *       Gruppe "seig", PIFF-uuid für Probenverschlüsselung – an jeder Stelle, an der sie vorkommen können.</li>
  *   <li>Segment: oben nur styp, sidx, ssix, prft, emsg, moof, mdat, free, skip; mindestens ein moof und ein mdat; in moof
@@ -110,11 +116,18 @@ public final class Fmp4Inspect {
 
     private static Set<String> set(String... s) { return new HashSet<>(Arrays.asList(s)); }
 
+    /** Zeitangaben einer geprüften Init-Ressource. */
+    public static final class Info {
+        public final long timescale;            // mdhd
+        public final long defaultDuration;      // trex default_sample_duration (0: keine)
+        Info(long timescale, long defaultDuration) { this.timescale = timescale; this.defaultDuration = defaultDuration; }
+    }
+
     /**
      * Init-Ressource einer Spur prüfen. {@code kind}: "video" oder "audio"; {@code codecs}: @codecs aus dem MPD
      * (z. B. "avc1.4d400c", "mp4a.40.2").
      */
-    public static void init(File file, String kind, String codecs) throws IOException, DashException {
+    public static Info init(File file, String kind, String codecs) throws IOException, DashException {
         if (file.length() <= 0 || file.length() > MAX_INIT_BYTES) throw new DashException("init_size");
         int[] budget = {MAX_BOXES};
         try (RandomAccessFile f = new RandomAccessFile(file, "r")) {
@@ -126,7 +139,7 @@ public final class Fmp4Inspect {
             List<Box> mk = boxes(f, moov.body(), moov.end(), budget);
             only(mk, set("mvhd", "trak", "mvex", "udta", "meta", "iods", "free", "skip"), "init_box");
             one(mk, "mvhd");
-            one(mk, "mvex");
+            Box mvex = one(mk, "mvex");
             Box trak = one(mk, "trak");
             deepScan(f, moov, budget, 0);
             List<Box> tk = boxes(f, trak.body(), trak.end(), budget);
@@ -138,6 +151,7 @@ public final class Fmp4Inspect {
             f.readFully(h);
             String handler = fourcc(h);
             if (!handler.equals(kind.equals("video") ? "vide" : "soun")) throw new DashException("init_track");
+            Info info = new Info(timescale(f, one(md, "mdhd")), trexDuration(f, one(boxes(f, mvex.body(), mvex.end(), budget), "trex")));
             Box minf = one(md, "minf");
             Box stbl = one(boxes(f, minf.body(), minf.end(), budget), "stbl");
             Box stsd = one(boxes(f, stbl.body(), stbl.end(), budget), "stsd");
@@ -165,7 +179,7 @@ public final class Fmp4Inspect {
                 if (!got.equals(c.substring(5).toLowerCase(Locale.ROOT))) throw new DashException("codec_mismatch");
             } else {
                 if (!e.type.equals("mp4a")) throw new DashException("codec_mismatch");
-                if (!c.startsWith("mp4a.40.")) throw new DashException("codec_mismatch");
+                if (!c.equals("mp4a.40.2")) throw new DashException("codec_mismatch");   // nur AAC-LC
                 long kidsFrom = e.body() + 28;   // AudioSampleEntry (Version 0)
                 if (kidsFrom > e.end()) throw new DashException("mp4_structure");
                 f.seek(e.body() + 8);
@@ -175,7 +189,78 @@ public final class Fmp4Inspect {
                 for (Box b : ak) if (ENCRYPTION.contains(b.type)) throw new DashException("encrypted");
                 Box esds = one(ak, "esds");
                 if (oti(f, esds) != 0x40) throw new DashException("codec_mismatch");
+                aacLc(f, esds);
             }
+            return info;
+        }
+    }
+
+    private static long timescale(RandomAccessFile f, Box mdhd) throws IOException, DashException {
+        if (mdhd.size - mdhd.header < 24) throw new DashException("mp4_structure");
+        f.seek(mdhd.body());
+        int version = f.readUnsignedByte();
+        if (version > 1 || (version == 1 && mdhd.size - mdhd.header < 36)) throw new DashException("mp4_structure");
+        f.seek(mdhd.body() + (version == 1 ? 20 : 12));
+        long ts = f.readInt() & 0xffffffffL;
+        if (ts == 0) throw new DashException("mp4_structure");
+        return ts;
+    }
+
+    private static long trexDuration(RandomAccessFile f, Box trex) throws IOException, DashException {
+        if (trex.size - trex.header < 24) throw new DashException("mp4_structure");
+        f.seek(trex.body() + 12);   // version/flags, track_ID, default_sample_description_index
+        return f.readInt() & 0xffffffffL;
+    }
+
+    /**
+     * Nach objectTypeIndication: Rest des DecoderConfigDescriptor, dann DecoderSpecificInfo (Tag 0x05) mit der
+     * AudioSpecificConfig (ISO/IEC 14496-3 1.6.2.1). Angenommen wird nur AAC-LC ohne SBR/PS-Signalisierung.
+     */
+    private static void aacLc(RandomAccessFile f, Box esds) throws IOException, DashException {
+        long end = esds.end();
+        if (f.getFilePointer() + 12 >= end) throw new DashException("codec_mismatch");
+        f.skipBytes(12);                               // streamType/upStream (1), bufferSizeDB (3), maxBitrate, avgBitrate
+        if (f.readUnsignedByte() != 0x05) throw new DashException("codec_mismatch");
+        long n = 0;
+        for (int i = 0; ; i++) {
+            if (i == 4 || f.getFilePointer() >= end) throw new DashException("mp4_structure");
+            int b = f.readUnsignedByte();
+            n = (n << 7) | (b & 0x7f);
+            if ((b & 0x80) == 0) break;
+        }
+        if (n < 2 || n > 64 || f.getFilePointer() + n > end) throw new DashException("codec_mismatch");
+        byte[] asc = new byte[(int) n];
+        f.readFully(asc);
+        Bits r = new Bits(asc);
+        int aot = r.read(5);
+        if (aot == 31) aot = 32 + r.read(6);
+        if (aot != 2) throw new DashException("codec_mismatch");       // 5 = SBR (HE-AAC), 29 = PS (HE-AACv2), sonst kein LC
+        if (r.read(4) == 15) r.read(24);                               // samplingFrequencyIndex / explizite Frequenz
+        int ch = r.read(4);
+        if (ch < 1 || ch > 7) throw new DashException("codec_mismatch"); // 0 = program_config_element: nicht geprüft
+        r.read(1);                                                      // frameLengthFlag
+        if (r.read(1) == 1) r.read(14);                                 // dependsOnCoreCoder → coreCoderDelay
+        if (r.read(1) == 1) throw new DashException("codec_mismatch");  // extensionFlag: nicht für AOT 2 (nur ER-Typen)
+        // Rückwärtskompatible Signalisierung (14496-3 1.6.5.2): syncExtensionType 0x2b7 + extensionAudioObjectType 5 +
+        // sbrPresentFlag. Angenommen nur „ausdrücklich ohne SBR“ (Flag 0); jede andere Erweiterung → abgelehnt.
+        if (r.left() >= 16 && r.peek(11) == 0x2b7) {
+            r.read(11);
+            if (r.read(5) != 5 || r.read(1) != 0) throw new DashException("codec_mismatch");
+        }
+        while (r.left() > 0) if (r.read(1) != 0) throw new DashException("codec_mismatch");   // nur Füllbits 0
+    }
+
+    static final class Bits {
+        final byte[] b;
+        int pos;
+        Bits(byte[] b) { this.b = b; }
+        int left() { return b.length * 8 - pos; }
+        int peek(int n) throws DashException { int p0 = pos; int v = read(n); pos = p0; return v; }
+        int read(int n) throws DashException {
+            if (n > left()) throw new DashException("codec_mismatch");
+            int v = 0;
+            for (int i = 0; i < n; i++, pos++) v = (v << 1) | ((b[pos >> 3] >> (7 - (pos & 7))) & 1);
+            return v;
         }
     }
 
@@ -223,6 +308,68 @@ public final class Fmp4Inspect {
             if ((f.readUnsignedByte() & 0x80) == 0) return;
         }
         throw new DashException("mp4_structure");
+    }
+
+    /**
+     * Summe der Probendauern eines bereits mit {@link #segment} geprüften Medienstücks im Zeitmaßstab der Init
+     * (ISO/IEC 14496-12 8.8.7/8.8.8: Dauer je Probe aus trun, sonst tfhd-Standard, sonst trex-Standard). Ohne Quelle für
+     * die Dauer → "segment_timing".
+     */
+    public static long duration(File file, Info init) throws IOException, DashException {
+        int[] budget = {MAX_BOXES};
+        long ticks = 0;
+        try (RandomAccessFile f = new RandomAccessFile(file, "r")) {
+            for (Box b : boxes(f, 0, f.length(), budget)) {
+                if (!b.type.equals("moof")) continue;
+                for (Box t : boxes(f, b.body(), b.end(), budget)) {
+                    if (!t.type.equals("traf")) continue;
+                    List<Box> tk = boxes(f, t.body(), t.end(), budget);
+                    Box tfhd = one(tk, "tfhd");
+                    if (tfhd.size - tfhd.header < 8) throw new DashException("mp4_structure");
+                    f.seek(tfhd.body());
+                    int flags = f.readInt() & 0xffffff;
+                    long need = 8 + ((flags & 0x01) != 0 ? 8 : 0) + ((flags & 0x02) != 0 ? 4 : 0) + ((flags & 0x08) != 0 ? 4 : 0);
+                    if (tfhd.size - tfhd.header < need) throw new DashException("mp4_structure");
+                    f.skipBytes(4);                                              // track_ID
+                    if ((flags & 0x01) != 0) f.skipBytes(8);                     // base_data_offset
+                    if ((flags & 0x02) != 0) f.skipBytes(4);                     // sample_description_index
+                    long def = (flags & 0x08) != 0 ? f.readInt() & 0xffffffffL : init.defaultDuration;
+                    for (Box run : tk) if (run.type.equals("trun")) ticks = add(ticks, trun(f, run, def));
+                }
+            }
+        }
+        return ticks;
+    }
+
+    private static long trun(RandomAccessFile f, Box run, long def) throws IOException, DashException {
+        if (run.size - run.header < 8) throw new DashException("mp4_structure");
+        f.seek(run.body());
+        int flags = f.readInt() & 0xffffff;
+        long count = f.readInt() & 0xffffffffL;
+        long p = run.body() + 8 + ((flags & 0x01) != 0 ? 4 : 0) + ((flags & 0x04) != 0 ? 4 : 0);
+        int rec = 4 * (((flags & 0x100) != 0 ? 1 : 0) + ((flags & 0x200) != 0 ? 1 : 0) + ((flags & 0x400) != 0 ? 1 : 0) + ((flags & 0x800) != 0 ? 1 : 0));
+        if (p > run.end() || (run.end() - p) < count * rec) throw new DashException("mp4_structure");
+        if ((flags & 0x100) == 0) {
+            if (count > 0 && def == 0) throw new DashException("segment_timing");
+            try { return Math.multiplyExact(count, def); } catch (ArithmeticException e) { throw new DashException("mp4_structure"); }
+        }
+        long sum = 0;
+        byte[] buf = new byte[rec * 4096];
+        f.seek(p);
+        for (long done = 0; done < count; ) {
+            int k = (int) Math.min(4096, count - done);
+            f.readFully(buf, 0, k * rec);
+            for (int i = 0; i < k; i++) {
+                int o = i * rec;
+                sum = add(sum, ((buf[o] & 0xffL) << 24) | ((buf[o + 1] & 0xffL) << 16) | ((buf[o + 2] & 0xffL) << 8) | (buf[o + 3] & 0xffL));
+            }
+            done += k;
+        }
+        return sum;
+    }
+
+    private static long add(long a, long b) throws DashException {
+        try { return Math.addExact(a, b); } catch (ArithmeticException e) { throw new DashException("mp4_structure"); }
     }
 
     /** Medien-Segment prüfen (Struktur, keine Verschlüsselungshinweise). */

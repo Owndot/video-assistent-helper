@@ -1,6 +1,8 @@
 package de.evp.helfer.dashdl;
 
 import java.io.File;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,6 +28,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import de.evp.helfer.ControlCommands;
 import de.evp.helfer.dash.DashException;
 import de.evp.helfer.dash.DashFingerprint;
+import de.evp.helfer.dash.DashLimits;
 import de.evp.helfer.dash.DashManifest;
 import de.evp.helfer.dash.DashPlan;
 import de.evp.helfer.dl.DirectDownloads;
@@ -71,6 +74,14 @@ public final class DashEngine implements ControlCommands.DashControl {
     public static final int MAX_PLANS_PER_PEER = 4;
     public static final int MAX_PLANS = 16;
     public static final int FETCH_PER_JOB = 2;
+    /** Einziger Ton-Codec von S3b (AAC-LC). */
+    static final String AAC_LC = "mp4a.40.2";
+    /**
+     * Zulässige Abweichung der tatsächlichen Mediendauer (Summe der Probendauern aller Stücke einer Spur) von der
+     * Plandauer und der Ausgabe von den Stücken – dieselbe Sekunde, die S3a zwischen MPD-Dauer und Stückfolge zulässt
+     * ({@link DashLimits#COVERAGE_TOLERANCE_SECONDS}).
+     */
+    static final double DURATION_TOLERANCE_SECONDS = DashLimits.COVERAGE_TOLERANCE_SECONDS;
     public static final long SPACE_RESERVE_BYTES = 256L << 20;
     public static final long INTERRUPTED_KEEP_MS = 7L * 24 * 3600_000L;
     static final int JOURNAL_KEEP = 64;
@@ -207,8 +218,13 @@ public final class DashEngine implements ControlCommands.DashControl {
         if (p.audio.isEmpty()) throw new Stop(HlsJournal.State.FAILED, "dash_no_audio");
         List<Option> out = new ArrayList<>();
         byte[] salt = randomBytes(16);
+        boolean onlyHeAac = true;
         for (DashPlan.Option o : p.options) {
             if (o.audio == null) continue;
+            // S3b speichert nur AAC-LC: HE-AAC/HE-AACv2 (mp4a.40.5/.29) lässt sich ohne Decoder nicht sicher gegen das
+            // MPD prüfen (implizites SBR) → fail-closed nicht angeboten (Fmp4Inspect prüft die AudioSpecificConfig)
+            if (!AAC_LC.equals(o.audio.rep.codecs.trim())) continue;
+            onlyHeAac = false;
             // Journalgrenze des HLS-Bausteins: Video + Ton zusammen höchstens MAX_PLAN_SEGMENTS + 2 Ressourcen
             int res = (o.video.count() + 1) + (o.audio.count() + 1);
             if (res > HlsPlan.MAX_PLAN_SEGMENTS + 2 || o.estimatedBytes > HlsPlan.MAX_MEDIA_BYTES) continue;
@@ -224,6 +240,7 @@ public final class DashEngine implements ControlCommands.DashControl {
             d.append(",\"played\":").append(pl).append('}');
             out.add(new Option(id, vi, ai, d.toString()));
         }
+        if (out.isEmpty() && onlyHeAac) throw new Stop(HlsJournal.State.FAILED, "audio_codec");
         return out;
     }
 
@@ -548,8 +565,8 @@ public final class DashEngine implements ControlCommands.DashControl {
             job.done.set(0);
             fetchAll(job, inits, c.estimate);
             checkStop(job);
-            inspectInit(job, 'v', "video", c.video.rep.codecs);
-            inspectInit(job, 'a', "audio", c.audio.rep.codecs);
+            Fmp4Inspect.Info vInfo = inspectInit(job, 'v', "video", c.video.rep.codecs);
+            Fmp4Inspect.Info aInfo = inspectInit(job, 'a', "audio", c.audio.rep.codecs);
             // 2. alle Stücke (jedes vor der Aufnahme ins Journal geprüft)
             List<Object[]> segs = new ArrayList<>();
             for (int i = 1; i < vRes.size(); i++) segs.add(new Object[] {'v', i, vRes.get(i)});
@@ -559,6 +576,11 @@ public final class DashEngine implements ControlCommands.DashControl {
 
             phase(job, Phase.MUX);
             List<File> vFiles = files(job, 'v', vRes.size()), aFiles = files(job, 'a', aRes.size());
+            // 3. Vollständigkeit: tatsächliche Dauer je Spur aus den Stücken gegen den Plan (vor dem Zusammenbau)
+            double vActual = mediaSeconds(vFiles, vInfo), aActual = mediaSeconds(aFiles, aInfo);
+            double slack = Math.max(outsidePeriod(c.video), outsidePeriod(c.audio));
+            checkDuration(job, 'v', vActual, c.video);
+            checkDuration(job, 'a', aActual, c.audio);
             long media = 0;
             for (File f : vFiles) media += f.length();
             for (File f : aFiles) media += f.length();
@@ -573,9 +595,9 @@ public final class DashEngine implements ControlCommands.DashControl {
                     r = remux.remux(new HlsRemux.Input(vFiles, aFiles, true, maxSamples), out, () -> stopWanted(job));
                     checkStop(job);
                     phase(job, Phase.VERIFY);
-                    double vs = c.video.seconds().doubleValue(), as = c.audio.seconds().doubleValue();
-                    double seg = Math.max(maxSegmentSeconds(c.video), maxSegmentSeconds(c.audio));
-                    remux.verify(out, r, vs, as, Math.max(1.0, seg), () -> stopWanted(job));
+                    // Ausgabe ≈ tatsächliche Stückdauer (± 1 s); Spielraum nur für Medien, die das MPD ausdrücklich vor
+                    // bzw. hinter die Periode legt (angeschnittene erste/letzte Stücke), nie die volle Stückdauer
+                    remux.verify(out, r, vActual, aActual, DURATION_TOLERANCE_SECONDS + slack, () -> stopWanted(job));
                 } catch (IOException e) {
                     job.cause = e.toString();
                     checkStop(job);
@@ -656,8 +678,37 @@ public final class DashEngine implements ControlCommands.DashControl {
         return new Outcome(state, reason, saved);
     }
 
-    private static double maxSegmentSeconds(DashPlan.Track t) {
-        return (double) t.rep.maxSegmentTicks / t.timescale();
+    /** Summe der Probendauern aller Medienstücke (ohne Init, Index 0) in Sekunden. */
+    private static double mediaSeconds(List<File> files, Fmp4Inspect.Info info) throws Stop {
+        long ticks = 0;
+        try {
+            for (int i = 1; i < files.size(); i++) ticks = Math.addExact(ticks, Fmp4Inspect.duration(files.get(i), info));
+        } catch (DashException e) {
+            throw new Stop(HlsJournal.State.FAILED, e.reason);
+        } catch (ArithmeticException | IOException e) {
+            throw new Stop(HlsJournal.State.FAILED, "media_duration");
+        }
+        return (double) ticks / info.timescale;
+    }
+
+    /** Vom Plan erfasste Stückdauer außerhalb der Periode (Summe der vollen Stückdauern − abgedeckte Dauer), Sekunden. */
+    private static double outsidePeriod(DashPlan.Track t) {
+        BigDecimal raw = BigDecimal.ZERO;
+        for (int i = 0; i < t.count(); i++) raw = raw.add(BigDecimal.valueOf(t.segment(i).duration));
+        double out = raw.divide(BigDecimal.valueOf(t.timescale()), 9, RoundingMode.HALF_EVEN).subtract(t.seconds()).doubleValue();
+        return Math.max(0, out);
+    }
+
+    /**
+     * Die Stücke einer Spur müssen die Periode abdecken: tatsächliche Dauer ≥ Plandauer − 1 s und ≤ Summe der vollen
+     * Stückdauern + 1 s. Zu kurze (oder zu lange) Fragmente bei formal gültigem MPD → failed media_duration.
+     */
+    private void checkDuration(Job job, char track, double actual, DashPlan.Track t) throws Stop {
+        double planned = t.seconds().doubleValue();
+        if (actual < planned - DURATION_TOLERANCE_SECONDS || actual > planned + outsidePeriod(t) + DURATION_TOLERANCE_SECONDS) {
+            synchronized (job) { job.failAt = track == 'v' ? "video_segment" : "audio_segment"; job.failIndex = -1; }
+            throw new Stop(HlsJournal.State.FAILED, "media_duration");
+        }
     }
 
     /** Wie beim HLS-Koordinator: Netzwerk- und Quellprobleme sind wiederaufnehmbar, alles andere nicht. */
@@ -700,9 +751,9 @@ public final class DashEngine implements ControlCommands.DashControl {
         return l;
     }
 
-    private void inspectInit(Job job, char track, String kind, String codecs) throws Exception {
+    private Fmp4Inspect.Info inspectInit(Job job, char track, String kind, String codecs) throws Exception {
         File f = new File(job.dir, track + "0.seg");
-        try { Fmp4Inspect.init(f, kind, codecs); }
+        try { return Fmp4Inspect.init(f, kind, codecs); }
         catch (DashException e) { throw new Stop(HlsJournal.State.FAILED, e.reason); }
     }
 
