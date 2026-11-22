@@ -32,6 +32,7 @@ import poc.Core;
  *   Phase C3 (direkte MP4-Downloads, echte Engine {@link HarnessDownloads}):
  *   downloads <port> (an; Testserver auf 127.0.0.1:port; bleibt über einen Neustart des Prozesses an) |
  *   storage-permission on|off | dl-files | dl-parts | dl-journal | hls on (P4b: echte HlsEngine, Remux nachgebildet)
+ *   | dash on (S3c: echte DashEngine, Remux nachgebildet)
  * Ohne "downloads" lehnt der Kanal dl-Befehle ab (Phase-2-Zustand).
  * "open" gibt "CODE <8 Ziffern>" aus – der Code geht nur an den steuernden Test.
  * Aufruf: java -Djava.library.path=LIB -cp CLASSES de.evp.helfer.ChannelHarness STATE_DIR
@@ -43,11 +44,12 @@ public final class ChannelHarness implements ChannelServer.Host {
         float bright = 0.5f, systemBright = 0.5f;
         boolean overriding;
         volatile boolean hls;   // P4b: Fähigkeit wie HelferService (nur mit HLS-Engine)
+        volatile boolean dash;  // S3c: Fähigkeit "dashdl" wie HelferService (nur mit DASH-Engine)
         @Override public synchronized void bright(float level) { brights++; beats++; overriding = true; bright = Math.max(0.01f, Math.min(1f, level)); }
         @Override public synchronized void vol(float level) { vols++; step = Math.round(Math.max(0f, Math.min(1f, level)) * max); }
         @Override public synchronized void beat() { beats++; }
         @Override public synchronized void end() { ends++; overriding = false; bright = systemBright; }
-        @Override public synchronized String status() { return ControlCommands.statusJson("harness", true, false, step, max, bright, hls ? Boolean.FALSE : null); }
+        @Override public synchronized String status() { return ControlCommands.statusJson("harness", true, false, step, max, bright, hls ? Boolean.FALSE : null, dash); }
         synchronized String describe() {
             return String.format(Locale.ROOT, "DEVICE bright=%.4f overriding=%b volStep=%d beats=%d ends=%d brights=%d vols=%d", bright, overriding, step, beats, ends, brights, vols);
         }
@@ -91,7 +93,9 @@ public final class ChannelHarness implements ChannelServer.Host {
 
     private ChannelServer newServer() {
         device.hls = downloads != null && downloads.hls != null;
-        return new ChannelServer(this, device, downloads == null ? null : downloads.engine, downloads == null ? null : downloads.hls);
+        device.dash = downloads != null && downloads.dash != null;
+        return new ChannelServer(this, device, downloads == null ? null : downloads.engine, downloads == null ? null : downloads.hls,
+            downloads == null ? null : downloads.dash);
     }
 
     /** Download-Modus an (bleibt über einen Neustart des Prozesses an: Port in STATE_DIR/downloads.port). */
@@ -209,6 +213,12 @@ public final class ChannelHarness implements ChannelServer.Host {
                 String r = startGenuine();
                 return r.startsWith("READY") ? "HLS on" : r;
             }
+            case "dash on": {   // S3c: DASH an (bleibt über einen Neustart an); Server neu, damit der Kanal es kennt
+                downloads.enableDash(stateDir, Integer.parseInt(new String(Files.readAllBytes(new File(stateDir, "downloads.port").toPath()), StandardCharsets.US_ASCII).trim()));
+                Files.write(new File(stateDir, "dash.on").toPath(), new byte[0]);
+                String r = startGenuine();
+                return r.startsWith("READY") ? "DASH on" : r;
+            }
             default: return "UNKNOWN";
         }
     }
@@ -310,6 +320,7 @@ public final class ChannelHarness implements ChannelServer.Host {
         if (portFile.isFile()) {   // Neustart des Prozesses: Downloads (mit Journal) wieder an
             h.downloads = new HarnessDownloads(dir, Integer.parseInt(new String(Files.readAllBytes(portFile.toPath()), StandardCharsets.US_ASCII).trim()));
             if (new File(dir, "hls.on").isFile()) h.downloads.enableHls(dir, Integer.parseInt(new String(Files.readAllBytes(portFile.toPath()), StandardCharsets.US_ASCII).trim()));
+            if (new File(dir, "dash.on").isFile()) h.downloads.enableDash(dir, Integer.parseInt(new String(Files.readAllBytes(portFile.toPath()), StandardCharsets.US_ASCII).trim()));
         }
         out(h.startGenuine());
         BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
@@ -318,7 +329,7 @@ public final class ChannelHarness implements ChannelServer.Host {
             try {
                 if (cmd.startsWith("revoke ")) reply = h.revoke(unhex(cmd.substring(7).trim()));
                 else if (cmd.startsWith("downloads ")) reply = h.enableDownloads(Integer.parseInt(cmd.substring(10).trim()));
-                else if (cmd.startsWith("storage-permission ") || cmd.startsWith("dl-") || cmd.equals("hls on")) reply = h.downloadCommand(cmd);
+                else if (cmd.startsWith("storage-permission ") || cmd.startsWith("dl-") || cmd.equals("hls on") || cmd.equals("dash on")) reply = h.downloadCommand(cmd);
                 else switch (cmd) {
                     case "open": reply = h.open(); break;
                     case "list": reply = h.list(); break;

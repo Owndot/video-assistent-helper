@@ -57,6 +57,22 @@ final class HarnessDownloads implements DownloadStore, DirectDownloads.Listener 
         hls.setRetry(retry);
     }
 
+    /** S3c: echte DASH-Engine der App (null: aus – der Kanal lehnt dashplan/dashstart ab wie bei einem alten Helfer). */
+    de.evp.helfer.dashdl.DashEngine dash;
+
+    /**
+     * DASH an (S3c, für Kadris Ende-zu-Ende-Tests): echte {@link de.evp.helfer.dashdl.DashEngine} (MPD-Abruf über
+     * SafeHttpClient mit den Testregeln, Fingerabdruck kadri-dash-fp/1, S3-Profil, Plan, Sitzungsbindung, Fmp4Inspect,
+     * Journal, Dauerprüfung). Wie bei HLS ist NUR der Remux nachgebildet (Verkettung); das echte Umpacken prüfen
+     * tests/java/dashdl (Media3 auf dem JVM) und die Emulatortests.
+     */
+    void enableDash(File stateDir, int mediaPort) throws Exception {
+        if (dash != null) return;
+        dash = new de.evp.helfer.dashdl.DashEngine(LocalTestClients.loopback(mediaPort), this, this, new File(stateDir, "dash-jobs"), new ConcatRemux(),
+            slots, 1_000_000);
+        dash.setRetry(retry);
+    }
+
     /** Nur Testgerüst: verkettet die Ressourcen (kein MP4) – nie in der App. */
     static final class ConcatRemux implements de.evp.helfer.hls.HlsRemux {
         @Override public Result remux(Input in, File out, java.util.function.BooleanSupplier cancelled) throws IOException, de.evp.helfer.hls.HlsException {
