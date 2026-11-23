@@ -4,7 +4,7 @@ name: DASH core (S3a) and downloads (S3b) – JVM, mutations, Media3 remux
 # Keine Engine, kein Download, kein Netz, keine Abhängigkeit außer dem JDK. Nichts wird veröffentlicht.
 on:
   push:
-    branches: [dash-s3a, dash-s3b, 'test/s3d-*']
+    branches: [dash-s3a, dash-s3b, 'test/s3d-*', 'test/s4b5-*']
     paths: ['app/src/main/java/de/evp/helfer/dash/**', 'app/src/main/java/de/evp/helfer/dashdl/**', 'app/src/main/java/de/evp/helfer/hls/**',
             'app/src/main/java/de/evp/helfer/hlsmux/**', 'app/src/main/java/de/evp/helfer/net/**', 'app/src/main/java/de/evp/helfer/dl/**',
             'app/src/main/java/de/evp/helfer/ControlCommands.java', 'tests/java/dash/**', 'tests/java/dashdl/**', 'tests/java/hlsmux/shim/**',

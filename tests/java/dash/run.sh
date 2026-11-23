@@ -13,3 +13,5 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 javac -Xlint:all,-serial -Werror -d "$WORK/c" "$SRC"/hls/HlsUri.java "$SRC"/hls/HlsException.java "$SRC"/dash/*.java "$HERE"/de/evp/helfer/dash/*.java
 cd "$ROOT"
 java -Xmx64m -Ddash.src="$SRC/dash" -cp "$WORK/c" de.evp.helfer.dash.TestDash "$HERE/fixtures" "$@"
+# S4b-5: gemeinsame Golden-Vektoren der Vorprüfung (dash-gate/1, byte-gleich in Kadri tests/web/dash/gate)
+if [ $# -eq 0 ]; then java -Xmx64m -cp "$WORK/c" de.evp.helfer.dash.TestDashGate "$HERE/fixtures"; fi

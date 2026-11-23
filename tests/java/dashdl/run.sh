@@ -25,4 +25,4 @@ SRC="${APP_SRC:-$ROOT/app/src/main/java}/de/evp/helfer"   # mutation.py setzt ei
 javac -Xlint:all,-serial,-options -Werror -d "$WORK/c" -cp "$CP" $(ls "$SRC"/net/*.java | grep -v '/SafeHttp\.java$') "$SRC"/hls/*.java \
   "$SRC"/dl/*.java "$SRC"/ControlCommands.java "$SRC"/dash/*.java "$SRC"/dashdl/*.java \
   "$ROOT/tests/java/dl/de/evp/helfer/net/LocalTestClients.java" "$HERE"/de/evp/helfer/dashdl/*.java
-java -Xmx96m -cp "$WORK/c:$CP" de.evp.helfer.dashdl.TestDashEngine "$FX" "$WORK/run"
+java -Xmx96m -Ddash.gate="$ROOT/tests/java/dash/fixtures/gate" -cp "$WORK/c:$CP" de.evp.helfer.dashdl.TestDashEngine "$FX" "$WORK/run"

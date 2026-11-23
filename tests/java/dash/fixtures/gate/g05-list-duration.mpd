@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT20S" profiles="urn:mpeg:dash:profile:isoff-live:2011" minBufferTime="PT2S">
+  <Period id="0">
+    <AdaptationSet id="0" contentType="video">
+      
+      <Representation id="v0" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90000" width="320" height="180"><SegmentList timescale="12800" duration="51200"><Initialization sourceURL="v/v0/init.mp4"/><SegmentURL media="v/v0/seg-00001.m4s"/><SegmentURL media="v/v0/seg-00002.m4s"/><SegmentURL media="v/v0/seg-00003.m4s"/><SegmentURL media="v/v0/seg-00004.m4s"/><SegmentURL media="v/v0/seg-00005.m4s"/></SegmentList></Representation>
+      <Representation id="v1" mimeType="video/mp4" codecs="avc1.4d401e" bandwidth="320000" width="640" height="360"><SegmentList timescale="12800" duration="51200"><Initialization sourceURL="v/v1/init.mp4"/><SegmentURL media="v/v1/seg-00001.m4s"/><SegmentURL media="v/v1/seg-00002.m4s"/><SegmentURL media="v/v1/seg-00003.m4s"/><SegmentURL media="v/v1/seg-00004.m4s"/><SegmentURL media="v/v1/seg-00005.m4s"/></SegmentList></Representation>
+    </AdaptationSet>
+    <AdaptationSet id="1" contentType="audio" lang="de">
+      
+      <Representation id="a0" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48000" audioSamplingRate="48000"><SegmentList timescale="48000" duration="192000"><Initialization sourceURL="a/a0/init.mp4"/><SegmentURL media="a/a0/seg-00001.m4s"/><SegmentURL media="a/a0/seg-00002.m4s"/><SegmentURL media="a/a0/seg-00003.m4s"/><SegmentURL media="a/a0/seg-00004.m4s"/><SegmentURL media="a/a0/seg-00005.m4s"/></SegmentList></Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT20S" profiles="urn:mpeg:dash:profile:isoff-live:2011" minBufferTime="PT2S">
+  <Period id="0">
+    <AdaptationSet id="0" contentType="video">
+      <SegmentTemplate timescale="12800" initialization="v/$RepresentationID$/init.mp4" media="v/$RepresentationID$/$Number%05d$.m4s" startNumber="1"><SegmentTimeline><S t="0" d="51200" r="4"/></SegmentTimeline></SegmentTemplate>
+      <Representation id="v0" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90000" width="320" height="180"></Representation>
+      <Representation id="v1" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90001" width="320" height="180"></Representation>
+      <Representation id="v2" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90002" width="320" height="180"></Representation>
+      <Representation id="v3" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90003" width="320" height="180"></Representation>
+      <Representation id="v4" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90004" width="320" height="180"></Representation>
+      <Representation id="v5" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90005" width="320" height="180"></Representation>
+      <Representation id="v6" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90006" width="320" height="180"></Representation>
+      <Representation id="v7" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90007" width="320" height="180"></Representation>
+      <Representation id="v8" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90008" width="320" height="180"></Representation>
+      <Representation id="v9" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90009" width="320" height="180"></Representation>
+      <Representation id="v10" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90010" width="320" height="180"></Representation>
+      <Representation id="v11" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90011" width="320" height="180"></Representation>
+      <Representation id="v12" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90012" width="320" height="180"></Representation>
+      <Representation id="v13" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90013" width="320" height="180"></Representation>
+      <Representation id="v14" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90014" width="320" height="180"></Representation>
+      <Representation id="v15" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90015" width="320" height="180"></Representation>
+      <Representation id="v16" mimeType="video/mp4" codecs="avc1.4d400c" bandwidth="90016" width="320" height="180"></Representation>
+    </AdaptationSet>
+    <AdaptationSet id="1" contentType="audio" lang="de">
+      <SegmentTemplate timescale="48000" initialization="a/$RepresentationID$/init.mp4" media="a/$RepresentationID$/$Number%05d$.m4s" startNumber="1"><SegmentTimeline><S t="0" d="192000" r="4"/></SegmentTimeline></SegmentTemplate>
+      <Representation id="a0" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48000" audioSamplingRate="48000"></Representation>
+      <Representation id="a1" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48001" audioSamplingRate="48000"></Representation>
+      <Representation id="a2" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48002" audioSamplingRate="48000"></Representation>
+      <Representation id="a3" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48003" audioSamplingRate="48000"></Representation>
+      <Representation id="a4" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48004" audioSamplingRate="48000"></Representation>
+      <Representation id="a5" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48005" audioSamplingRate="48000"></Representation>
+      <Representation id="a6" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48006" audioSamplingRate="48000"></Representation>
+      <Representation id="a7" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48007" audioSamplingRate="48000"></Representation>
+      <Representation id="a8" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48008" audioSamplingRate="48000"></Representation>
+      <Representation id="a9" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48009" audioSamplingRate="48000"></Representation>
+      <Representation id="a10" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48010" audioSamplingRate="48000"></Representation>
+      <Representation id="a11" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48011" audioSamplingRate="48000"></Representation>
+      <Representation id="a12" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48012" audioSamplingRate="48000"></Representation>
+      <Representation id="a13" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48013" audioSamplingRate="48000"></Representation>
+      <Representation id="a14" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48014" audioSamplingRate="48000"></Representation>
+      <Representation id="a15" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="48015" audioSamplingRate="48000"></Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

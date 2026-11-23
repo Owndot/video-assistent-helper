@@ -458,6 +458,7 @@ public final class TestDashEngine {
         Server s = new Server();
         try {
             planning(s);
+            gateVectors(s);
             binding(s);
             happy(s);
             negatives(s);
@@ -470,6 +471,36 @@ public final class TestDashEngine {
         }
         System.out.println("RESULT passed=" + passed + " failed=" + failed);
         System.exit(failed == 0 ? 0 : 1);
+    }
+
+    /**
+     * S4b-5: gemeinsame Golden-Vektoren dash-gate/1 (tests/java/dash/fixtures/gate, byte-gleich in Kadri tests/web/dash/gate)
+     * gegen den ECHTEN dashplan: lokaler Server liefert die Fixture als MPD, Fingerabdruck wie Kadri ihn schickt (fehlt, wenn das
+     * MPD nicht lesbar ist). Erwartet: genau der Grund der Vektortabelle (Erwartungen von Hand) bzw. ein Plan mit Optionen.
+     */
+    static void gateVectors(Server s) throws Exception {
+        s.reset();
+        Rig r = new Rig("gate", s);
+        File g = new File(System.getProperty("dash.gate", "tests/java/dash/fixtures/gate"));
+        int n = 0;
+        for (String l : Files.readAllLines(new File(g, "gate-v1-vectors.tsv").toPath(), StandardCharsets.UTF_8)) {
+            if (l.isEmpty() || l.startsWith("#") || l.startsWith("datei\t")) continue;
+            String[] c = l.split("\t", -1);
+            String text = new String(Files.readAllBytes(new File(g, c[0]).toPath()), StandardCharsets.UTF_8), want = c[3];
+            s.mpdText = text;
+            String fp;
+            try { fp = fpOf(text, s.mpdUrl()); } catch (DashException e) { fp = repeat('0', 64); }
+            String res = r.engine.plan(PEER, BIND, s.mpdUrl(), fp, null, RequestContext.NONE);
+            String got = "true".equals(field(res, "ok")) ? "ok" : field(res, "reason");
+            boolean ok = got.equals(want);
+            if (want.equals("ok")) ok &= !optionIds(res).isEmpty();
+            // g08: angeboten werden nur die AAC-LC-Paare (HE-AAC speichert der Helfer nicht)
+            if (c[0].startsWith("g08")) ok &= optionIds(res).size() == 2 && !res.contains("mp4a.40.5");
+            check("dashplan dash-gate/1 " + c[0] + " → " + want, ok, res);
+            n++;
+        }
+        check("dashplan dash-gate/1: alle 41 Vektoren geprüft", n == 41, n);
+        s.mpdText = null;
     }
 
     static void inspect() throws Exception {
