@@ -512,7 +512,7 @@ public final class TestDashEngine {
             check("dashplan dash-gate/1 " + file + (alt == null ? "" : " [alt " + alt + "]") + " → " + want, ok, res);
             n++;
         }
-        check("dashplan dash-gate/1: alle 67 Vektoren geprüft", n == 67, n);
+        check("dashplan dash-gate/1: alle 69 Vektoren geprüft", n == 69, n);
         s.mpdText = null;
     }
 

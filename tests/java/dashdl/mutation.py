@@ -65,7 +65,7 @@ M = [
     (C, '                fp = p.hex(64);', '                fp = p.printable(80);'),
     (C, '                for (int k = 0; k < i; k++) if (out[k] == out[i]) throw new IllegalArgumentException("indices");', ''),
     (C, 'if (!"dlstart".equals(op) && !"hlsplan".equals(op) && !"dashplan".equals(op)) throw new IllegalArgumentException("context field");', 'if (!"dlstart".equals(op) && !"hlsplan".equals(op) && !op.startsWith("dash")) throw new IllegalArgumentException("context field");'),
-    (C, 'if ((fp != null || played != null) && !"dashplan".equals(op)) throw new IllegalArgumentException("dash field");', ''),
+    (C, 'if ((fp != null || played != null || alt != null) && !"dashplan".equals(op)) throw new IllegalArgumentException("dash field");', ''),
     (C, '            if (dash == null || downloads == null || peer == null) return REJECTED;', '            if (downloads == null || peer == null) return REJECTED;'),
     (C, ' || (hls != null && hls.knows(r.id)))\n', ')\n'),
     (C, '            if (dash != null && dash.knows(r.id)) return "{\\"ok\\":false,\\"id\\":\\"" + r.id + "\\",\\"state\\":\\"rejected\\",\\"reason\\":\\"id_in_use\\"}";\n', ''),

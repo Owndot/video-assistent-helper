@@ -42,7 +42,7 @@ public final class TestDashGate {
         for (File f : g.listFiles()) if (f.getName().endsWith(".mpd")) files.add(f.getName());
         Set<String> named = new TreeSet<>();
         for (Map<String, String> r : rows) named.add(r.get("datei"));
-        check("dash-gate/1: " + rows.size() + " Vektoren über " + files.size() + " Fixtures, jede Fixture mindestens einmal", rows.size() == 67 && files.size() == 56 && named.equals(files), files);
+        check("dash-gate/1: " + rows.size() + " Vektoren über " + files.size() + " Fixtures, jede Fixture mindestens einmal", rows.size() == 69 && files.size() == 56 && named.equals(files), files);
         for (Map<String, String> r : rows) {
             byte[] body = Files.readAllBytes(new File(g, r.get("datei")).toPath());
             String sha = hex(MessageDigest.getInstance("SHA-256").digest(body));
@@ -58,6 +58,10 @@ public final class TestDashGate {
             catch (DashException e) {
                 got.put("code", "mpd_" + wire(e.reason));
                 check(name + " → " + want + " (Lesen)", got.get("code").equals(want), got);
+                continue;
+            }
+            catch (RuntimeException e) {   // ein Laufzeitfehler beim Lesen ist nie ein erwartetes Ergebnis
+                check(name + " → " + want + " (Lesen ohne Laufzeitfehler)", false, e);
                 continue;
             }
             DashProfile.Verdict v = DashProfile.check(m);

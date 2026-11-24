@@ -30,7 +30,6 @@ M = [
     (D + 'DashTemplate.java', 'if (at < resolved.indexOf("://") + 3 || at < DashUrl.origin(resolved).length()) throw new DashException("template");', ''),
     (D + 'DashTemplate.java', 'Pattern.compile("[A-Za-z0-9._~=,;!*()+&:@-]{1,256}")', 'Pattern.compile("[A-Za-z0-9._~=,;!*()+&:@/-]{1,256}")'),
     # Vererbung und Adressierung
-    (D + 'DashManifest.java', 'if (b.size() > 1) throw new DashException("baseurl-multiple");', ''),
     (D + 'DashManifest.java', 'if (kinds.size() > 1) throw new DashException("addressing-mixed");', ''),
     (D + 'DashManifest.java', 'if (n > 1) throw new DashException("addressing-multiple");', ''),
     (D + 'DashManifest.java', 'if (tl != null && r.duration != null) throw new DashException("addressing-ambiguous");', ''),
