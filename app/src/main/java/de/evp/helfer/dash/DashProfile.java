@@ -84,8 +84,9 @@ public final class DashProfile {
 
     private static String why(DashManifest m, DashManifest.AdaptationSet a, DashManifest.Representation r, String kind) {
         if (kind.equals("conflict")) return "set-kind";
-        if (!a.essential.isEmpty()) return "set-essential";
-        if (!r.essential.isEmpty()) return "rep-essential";
+        // S4b-8: ein (bereits geprüfter, unterstützter) Annex-I-Descriptor ist verstanden – kein unbekanntes EssentialProperty
+        if (unknown(a.essential)) return "set-essential";
+        if (unknown(r.essential)) return "rep-essential";
         if (r.subRepresentations > 0 || a.contentComponents > 0) return "subrepresentation";
         if (r.excluded != null) return r.excluded;
         String mime = r.mimeType == null ? "" : r.mimeType.trim().toLowerCase(Locale.ROOT);
@@ -114,5 +115,10 @@ public final class DashProfile {
         for (String w : whys) if (w.equals("codec") || w.equals("container") || w.equals("muxed")) return "dash-codec";
         for (String w : whys) if (ADDRESSING.contains(w)) return "dash-addressing";
         return "dash-unsupported";
+    }
+
+    private static boolean unknown(java.util.List<DashManifest.Prop> ps) {
+        for (DashManifest.Prop p : ps) if (!DashUrlParam.SCHEME.equals(p.scheme)) return true;
+        return false;
     }
 }

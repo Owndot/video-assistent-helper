@@ -48,6 +48,8 @@ final class DashXml {
     static final String NS_MPD = "urn:mpeg:dash:schema:mpd:2011";
     static final String NS_XLINK = "http://www.w3.org/1999/xlink";
     static final String NS_XINCLUDE = "http://www.w3.org/2001/XInclude";
+    /** S4b-8: Namensraum der Annex-I-Elemente (UrlQueryInfo, ExtUrlQueryInfo, ExtHttpHeaderInfo). */
+    static final String NS_URLPARAM = "urn:mpeg:dash:schema:urlparam:2014";
     /** Absent-Markierung für S@t. */
     static final long NO_T = Long.MIN_VALUE;
 
@@ -74,6 +76,8 @@ final class DashXml {
         List<String> listMedia, listRange;
         /** Weitere Attribute an S/SegmentURL (nicht unterstützt → wird beim Auswerten abgelehnt). */
         boolean entryExtra;
+        /** S4b-8: mindestens ein Kind in einem fremden Namensraum (nicht im Baum). */
+        boolean foreignKids;
 
         El(String name, Map<String, String> attrs) { this.name = name; this.attrs = attrs; }
 
@@ -221,10 +225,19 @@ final class DashXml {
             }
             if (!dash) {
                 if (DASH_NAMES.contains(local)) throw fail("namespace");
+                // S4b-8: Annex I – Elemente im urlparam-Namensraum als Kind eines Descriptors (UrlQueryInfo …) bleiben erhalten,
+                // als "{Namensraum}lokal"; ausgewertet (und meist abgelehnt) wird in DashUrlParam
+                if (NS_URLPARAM.equals(uri) && parent != null && ("EssentialProperty".equals(parent.name) || "SupplementalProperty".equals(parent.name))) {
+                    El e = new El("{" + uri + "}" + local, attrs);
+                    parent.kids.add(e);
+                    stack.add(e);
+                    return;
+                }
+                if (parent != null) parent.foreignKids = true;
                 stack.add(null);
                 return;
             }
-            if (parent == null) throw fail("namespace");   // DASH-Element innerhalb eines fremden Elements
+            if (parent == null || parent.name.startsWith("{")) throw fail("namespace");   // DASH-Element innerhalb eines fremden Elements
             if ("S".equals(local)) {
                 if (!"SegmentTimeline".equals(parent.name)) throw fail("structure");
                 if (++timeline > DashLimits.MAX_TIMELINE_ENTRIES) throw fail("limits");

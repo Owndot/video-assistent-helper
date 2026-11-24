@@ -189,8 +189,9 @@ public final class ControlCommands {
     public static String statusJson(String appVersion, boolean overlay, boolean write, int volStep, int volMax, float bright, Boolean hlsOpus, boolean dash) {
         String s = statusJson(appVersion, overlay, write, volStep, volMax, bright, hlsOpus);
         if (!dash) return s;
-        // S4b-6: "alt":1 – dashplan v2 mit Auswahl unter mehreren BaseURL (ältere Kadri-Versionen ignorieren das Feld)
-        return s.substring(0, s.length() - 1) + ",\"dashdl\":{\"v\":1,\"profiles\":[\"fmp4-avc-aac\"],\"fp\":\"kadri-dash-fp/1\",\"ctx\":1,\"alt\":1}}";
+        // S4b-6: "alt":1 – dashplan v2 mit Auswahl unter mehreren BaseURL (ältere Kadri-Versionen ignorieren das Feld);
+        // S4b-8: "urlq":1 – Annex-I-Adressparameter (UrlQueryInfo, Minimalform) werden selbst gebildet und geprüft
+        return s.substring(0, s.length() - 1) + ",\"dashdl\":{\"v\":1,\"profiles\":[\"fmp4-avc-aac\"],\"fp\":\"kadri-dash-fp/1\",\"ctx\":1,\"alt\":1,\"urlq\":1}}";
     }
 
     private static String statusJsonBase(String appVersion, boolean overlay, boolean write, int volStep, int volMax, float bright) {

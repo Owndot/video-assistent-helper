@@ -89,6 +89,8 @@ public final class DashManifest {
         public List<String> baseAlts;   // S4b-6
         /** S4b-6: Zahl der verschiedenen aufgelösten Basen über alle Alternativen der Kette (1 ohne Alternativen). */
         public int baseAlternatives = 1;
+        /** S4b-8: an jede Init-/Stückadresse angehängte Query (Annex I); null = kein Descriptor wirkt. */
+        public String urlQuery;
         /** Adressierung nach Vererbung; excluded != null: nicht als Stückfolge nutzbar (fester Grund). */
         public Addressing addressing = Addressing.NONE;
         public String excluded;
@@ -190,6 +192,8 @@ public final class DashManifest {
     public static DashManifest parse(byte[] body, String documentUrl, BaseSelection sel) throws DashException {
         String doc = DashUrl.canonical(stripFragment(documentUrl));
         DashXml.El root = DashXml.parse(body);
+        // S4b-8: Annex I (UrlQueryInfo) – vor allem anderen geprüft; nicht unterstützte Formen sind fatal
+        DashUrlParam up = DashUrlParam.evaluate(root, doc);
         Ctx ctx = new Ctx();
         String typeRaw = root.attr("type");
         BigDecimal mpdDur = DashNum.optDuration(root, "mediaPresentationDuration");
@@ -233,6 +237,7 @@ public final class DashManifest {
                     List<String> rRaw = rawBases(re);
                     Representation r = new Representation(reps.size(), a.index, p.index, id, bw, mime, codecs, re, a.base == null ? null : baseOf(re, a.base, rRaw, "r" + reps.size(), sel), rcp,
                         props(re, "EssentialProperty"), props(re, "SupplementalProperty"), props(re, "AudioChannelConfiguration"));
+                    r.urlQuery = up.queryFor(root, pe, ae, re);
                     if (a.base == null && rRaw.size() > 1 && sel != null && !sel.isFirst()) sel.choose("r" + reps.size(), rRaw.size());   // (Index prüfen)
                     r.baseAlts = rRaw.size() > 1 ? rRaw : null;
                     if (sel != null && (mpdRaw.size() > 1 || pRaw.size() > 1 || aRaw.size() > 1 || rRaw.size() > 1))
@@ -396,10 +401,10 @@ public final class DashManifest {
         if (kind.equals("SegmentBase")) { r.addressing = Addressing.SEGMENT_BASE; r.excluded = "byte-range"; return; }
         if (kind.equals("SegmentTemplate")) {
             String media = inherit(segs, "media");
-            if (initTpl != null) r.initUrl = DashTemplate.init(initTpl, r.id, r.bandwidth, r.base);
-            else if (initSrc != null) r.initUrl = DashUrl.resolve(r.base, initSrc);
+            if (initTpl != null) r.initUrl = DashUrlParam.append(DashTemplate.init(initTpl, r.id, r.bandwidth, r.base), r.urlQuery);
+            else if (initSrc != null) r.initUrl = DashUrlParam.append(DashUrl.resolve(r.base, initSrc), r.urlQuery);
             if (media == null) { r.excluded = "addressing-media"; return; }
-            r.media = DashTemplate.media(media, r.id, r.bandwidth, r.base);
+            r.media = DashTemplate.media(media, r.id, r.bandwidth, r.base).withQuery(r.urlQuery);
             r.mediaCanon = r.media.canon();
             if (r.media.kind == DashTemplate.Kind.TIME) {
                 r.addressing = Addressing.TIME_TIMELINE;
@@ -415,12 +420,12 @@ public final class DashManifest {
                 if (holder != null) throw new DashException("addressing-ambiguous");
                 holder = s;
             }
-            if (initSrc != null) r.initUrl = DashUrl.resolve(r.base, initSrc);
+            if (initSrc != null) r.initUrl = DashUrlParam.append(DashUrl.resolve(r.base, initSrc), r.urlQuery);
             else if (initTpl != null) throw new DashException("addressing-attr");   // @initialization gibt es nur an SegmentTemplate
             if (holder == null) { r.addressing = Addressing.SINGLE; r.excluded = "addressing-single"; return; }
             // Eine geerbte Liste wird je (Element, Basis) nur einmal aufgelöst und dann von allen Darstellungen geteilt
             // (unveränderlich); neu Aufzulösendes ist über das ganze MPD begrenzt (S3a-Fix P0).
-            String lk = ctx.id(holder) + "|" + r.base;
+            String lk = ctx.id(holder) + "|" + r.base + "|" + r.urlQuery;
             Object[] cached = ctx.lists.get(lk);
             if (cached == null) {
                 ctx.listResolved += holder.listMedia.size();
@@ -430,8 +435,8 @@ public final class DashManifest {
                 boolean dup = false, ranges = false;
                 for (int i = 0; i < holder.listMedia.size(); i++) {
                     String m = holder.listMedia.get(i);
-                    if (holder.listRange.get(i) != null || m == null) { ranges = true; list.add(m == null ? r.base : DashUrl.resolve(r.base, m)); continue; }
-                    String u = DashUrl.resolve(r.base, m);
+                    if (holder.listRange.get(i) != null || m == null) { ranges = true; list.add(DashUrlParam.append(m == null ? r.base : DashUrl.resolve(r.base, m), r.urlQuery)); continue; }
+                    String u = DashUrlParam.append(DashUrl.resolve(r.base, m), r.urlQuery);
                     if (!seen.add(u)) dup = true;
                     list.add(u);
                 }
@@ -451,6 +456,12 @@ public final class DashManifest {
         }
         if (r.initRange != null) { r.excluded = "byte-range"; return; }
         if (!extra.isEmpty()) { r.excluded = "addressing-attr"; return; }
+        // S4b-8: mit angehängter Query zu lange Init-/Listenadressen (Stückvorlagen prüft expand)
+        if (r.urlQuery != null && !r.urlQuery.isEmpty()) {
+            boolean longer = r.initUrl != null && r.initUrl.length() > de.evp.helfer.hls.HlsUri.MAX_URI_CHARS;
+            if (r.list != null) for (String u : r.list) longer |= u.length() > de.evp.helfer.hls.HlsUri.MAX_URI_CHARS;
+            if (longer) r.excluded = "uri-length";
+        }
     }
 
     private static Long numOrNull(String v) throws DashException { return v == null ? null : DashNum.parseU(v); }

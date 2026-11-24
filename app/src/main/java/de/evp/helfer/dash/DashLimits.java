@@ -44,6 +44,12 @@ public final class DashLimits {
     public static final int MAX_BASEURLS_PER_ELEMENT = 8;
     /** S4b-6: Kombinationen der Alternativen über die Kette je Darstellung (vor dem Zusammenfassen gleicher Adressen). */
     public static final int MAX_BASE_COMBINATIONS = 16;
+    /** S4b-8: Annex-I-Descriptoren (urlparam) im ganzen MPD. */
+    public static final int MAX_URLPARAM_DESCRIPTORS = 16;
+    /** S4b-8: Länge der übernommenen MPD-Query (Zeichen, ohne "?"). */
+    public static final int MAX_URLPARAM_QUERY_CHARS = 2048;
+    /** S4b-8: Parameter (durch "&" getrennt) der übernommenen MPD-Query. */
+    public static final int MAX_URLPARAM_PARAMS = 64;
     /** Breite in %0[width]d. */
     public static final int MAX_FORMAT_WIDTH = 20;
     /** Auswahlmöglichkeiten (Video × Audio) eines Plans. */

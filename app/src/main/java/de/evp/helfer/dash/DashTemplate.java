@@ -37,6 +37,12 @@ final class DashTemplate {
             return sb.append(v).append(suffix).toString();
         }
 
+        /** S4b-8: mit angehängter Query (Annex I) – „?“ bzw. „&“, wenn die Adresse schon eine Query hat. */
+        Media withQuery(String q) {
+            if (q == null || q.isEmpty()) return this;
+            return new Media(kind, width, prefix, suffix + ((prefix + suffix).indexOf('?') >= 0 ? "&" : "?") + q);
+        }
+
         /** Für den Fingerabdruck: Platzhalter als {Number} / {Number:05} / {Time} (geschweifte Klammern sind in Adressen abgelehnt). */
         String canon() {
             return prefix + "{" + (kind == Kind.NUMBER ? "Number" : "Time") + (width > 0 ? ":" + pad(width) : "") + "}" + suffix;

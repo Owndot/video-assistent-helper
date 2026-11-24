@@ -47,7 +47,7 @@ M = [
     # Profil
     (D + 'DashProfile.java', 'if (m.contentProtectionCount > 0) return new Verdict("dash-protected", video, audio, ex);', ''),
     (D + 'DashProfile.java', 'if (anyAudio && audio.isEmpty()) return new Verdict(category(audioWhy), video, audio, ex);', ''),
-    (D + 'DashProfile.java', 'if (!a.essential.isEmpty()) return "set-essential";', ''),
+    (D + 'DashProfile.java', 'if (unknown(a.essential)) return "set-essential";', ''),
     (D + 'DashProfile.java', 'if (m.periods.size() != 1) return new Verdict("dash-multiperiod", video, audio, ex);', ''),
     (D + 'DashManifest.java', '        for (DashXml.El k : e.kids) n += countAll(k, name);', ''),
     # Plan
@@ -82,6 +82,30 @@ M = [
     (D + 'DashManifest.java', 'if (sel == null) throw new DashException("baseurl-multiple");', 'if (sel == null) sel = BaseSelection.FIRST;'),
     (D + 'DashFingerprint.java', 'for (String a : alts) line(sb, level + ".baseAlt", a);', ''),
     (D + 'DashProfile.java', 'if (!whys.isEmpty() && whys.stream().allMatch("baseurl-undetermined"::equals)) return "dash-baseurl-undetermined";', ''),
+    # S4b-8: Annex I (UrlQueryInfo) – jede Prüfung, das Anhängen, der Namensraum, die Profil-Ausnahme
+    (D + 'DashUrlParam.java', 'if (total > DashLimits.MAX_URLPARAM_DESCRIPTORS) throw new DashException("urlparam-limits");', ''),
+    (D + 'DashUrlParam.java', 'if (d.name.equals("EssentialProperty")) throw new DashException("urlparam-unsupported");', ''),
+    (D + 'DashUrlParam.java', 'if (placed.size() != total) throw new DashException("urlparam-unsupported");', ''),
+    (D + 'DashUrlParam.java', 'if (!SCHEME.equals(d.attr("schemeIdUri"))) throw new DashException("urlparam-unsupported");', ''),
+    (D + 'DashUrlParam.java', 'for (String k : d.attrs.keySet()) if (!k.equals("schemeIdUri") && !k.equals("id")) throw new DashException("urlparam-unsupported");', ''),
+    (D + 'DashUrlParam.java', 'if (d.foreignKids || d.kids.size() != 1 || !QUERY_INFO.equals(d.kids.get(0).name)) throw new DashException("urlparam-unsupported");', 'if (d.kids.isEmpty()) throw new DashException("urlparam-unsupported");'),
+    (D + 'DashUrlParam.java', 'for (String k : q.attrs.keySet()) if (!k.equals("queryTemplate") && !k.equals("useMPDUrlQuery")) throw new DashException("urlparam-unsupported");', ''),
+    (D + 'DashUrlParam.java', 'if (!"true".equals(use) && !"1".equals(use)) throw new DashException("urlparam-unsupported");', ''),
+    (D + 'DashUrlParam.java', 'if (!QUERYPART.equals(q.attr("queryTemplate"))) throw new DashException("urlparam-template");', ''),
+    (D + 'DashUrlParam.java', 'if (m > 1) throw new DashException("urlparam-conflict");', ''),
+    (D + 'DashUrlParam.java', 'if (a > 1 || m + p + a > 1 && a > 0) throw new DashException("urlparam-conflict");', ''),
+    (D + 'DashUrlParam.java', 'if (q.length() > DashLimits.MAX_URLPARAM_QUERY_CHARS) throw new DashException("urlparam-limits");', ''),
+    (D + 'DashUrlParam.java', 'if (!q.isEmpty() && q.split("&", -1).length > DashLimits.MAX_URLPARAM_PARAMS) throw new DashException("urlparam-limits");', ''),
+    (D + 'DashUrlParam.java', "if (c == '%' && (i + 2 >= q.length() || hex(q.charAt(i + 1)) < 0 || hex(q.charAt(i + 2)) < 0)) throw new DashException(\"urlparam-query\");", ''),
+    (D + 'DashUrlParam.java', 'return at.containsKey(mpd) || at.containsKey(period) || at.containsKey(set) || at.containsKey(rep) ? query : null;', 'return query;'),
+    (D + 'DashUrlParam.java', "return url + (url.indexOf('?') >= 0 ? '&' : '?') + q;", "return url + '?' + q;"),
+    (D + 'DashTemplate.java', 'return new Media(kind, width, prefix, suffix + ((prefix + suffix).indexOf(\'?\') >= 0 ? "&" : "?") + q);', 'return this;'),
+    (D + 'DashManifest.java', '                    r.urlQuery = up.queryFor(root, pe, ae, re);\n', ''),
+    (D + 'DashManifest.java', 'String lk = ctx.id(holder) + "|" + r.base + "|" + r.urlQuery;', 'String lk = ctx.id(holder) + "|" + r.base;'),
+    (D + 'DashManifest.java', '            if (longer) r.excluded = "uri-length";\n', ''),
+    (D + 'DashProfile.java', 'for (DashManifest.Prop p : ps) if (!DashUrlParam.SCHEME.equals(p.scheme)) return true;', 'for (DashManifest.Prop p : ps) return true;'),
+    (D + 'DashXml.java', 'if (NS_URLPARAM.equals(uri) && parent != null && ("EssentialProperty".equals(parent.name) || "SupplementalProperty".equals(parent.name))) {', 'if (false) {'),
+    (D + 'DashXml.java', '                if (parent != null) parent.foreignKids = true;\n', ''),
 ]
 sys.path.insert(0, os.path.join(here, '..'))
 import mutation_verdict as mv  # noqa: E402

@@ -36,24 +36,25 @@ public final class TestDashGate {
         File g = new File(args[0], "gate");
         // S4b-6: Querprüfung des Strukturfingerabdrucks über alle Alternativen (BaseSelection.FIRST) mit Kadri – Werte vom
         // Helfer berechnet (gate-v1-fp.tsv); --write-fp schreibt sie neu (nur bewusst, nach Formatänderung)
-        fpTable(g, args.length > 1 && args[1].equals("--write-fp"));
         List<Map<String, String>> rows = rows(new File(g, "gate-v1-vectors.tsv"));
+        fpTable(g, rows, args.length > 1 && args[1].equals("--write-fp"));
         Set<String> files = new TreeSet<>();
         for (File f : g.listFiles()) if (f.getName().endsWith(".mpd")) files.add(f.getName());
         Set<String> named = new TreeSet<>();
         for (Map<String, String> r : rows) named.add(r.get("datei"));
-        check("dash-gate/1: " + rows.size() + " Vektoren über " + files.size() + " Fixtures, jede Fixture mindestens einmal", rows.size() == 69 && files.size() == 56 && named.equals(files), files);
+        check("dash-gate/1: " + rows.size() + " Vektoren über " + files.size() + " Fixtures, jede Fixture mindestens einmal", rows.size() == 109 && files.size() == 94 && named.equals(files), files);
         for (Map<String, String> r : rows) {
             byte[] body = Files.readAllBytes(new File(g, r.get("datei")).toPath());
             String sha = hex(MessageDigest.getInstance("SHA-256").digest(body));
             Map<String, String> got = new LinkedHashMap<>();
             if (!sha.equals(r.get("sha256"))) { check(r.get("datei") + ": Fixture unverändert (SHA-256)", false, sha); continue; }
-            String want = r.get("code"), alt = r.get("auswahl"), name = r.get("datei") + (alt.equals("-") ? "" : " [" + alt + "]");
+            String want = r.get("code"), alt = r.get("auswahl"), name = r.get("datei") + (alt.equals("-") ? "" : " [" + alt + "]") + (r.get("dok").equals("-") ? "" : " " + shortDok(r.get("dok")));
+            String doc = docOf(r);   // S4b-8: Query der endgültigen MPD-Adresse
             DashManifest m;
             // wie dashplan: v1 ohne Auswahl; v2 erst das ganze MPD (Abdruck, alle Alternativen), dann die gewählte Projektion
             try {
-                if (alt.equals("-")) m = DashManifest.parse(body, DOC);
-                else { DashManifest.parse(body, DOC, BaseSelection.FIRST); m = DashManifest.parse(body, DOC, BaseSelection.parse(alt)); }
+                if (alt.equals("-")) m = DashManifest.parse(body, doc);
+                else { DashManifest.parse(body, doc, BaseSelection.FIRST); m = DashManifest.parse(body, doc, BaseSelection.parse(alt)); }
             }
             catch (DashException e) {
                 got.put("code", "mpd_" + wire(e.reason));
@@ -115,6 +116,16 @@ public final class TestDashGate {
                 got.put("adressierung", ad);
                 ok &= ad.equals(r.get("adressierung"));
             }
+            // S4b-8: Init- und erste Stückadresse der ersten Video-Darstellung (mit Annex-I-Query)
+            if (!r.get("stuecke").equals("-")) {
+                String s = "?";
+                for (DashManifest.Representation rep : m.reps) if (DashProfile.kindOf(m.sets.get(rep.set), rep.mimeType).equals("video")) {
+                    s = rep.excluded != null ? "EXCLUDED:" + rep.excluded : rep.initUrl + " " + rep.segment(0).url;
+                    break;
+                }
+                got.put("stuecke", s);
+                ok &= s.equals(r.get("stuecke"));
+            }
             check(name + " → " + want + (engine ? " (Plan gelingt, Ablehnung bei den Optionen)" : "") + (r.get("detail").equals("-") ? "" : " (" + r.get("spur") + ": " + r.get("detail") + ")"), ok, got + " erwartet " + r);
         }
         bigAlternatives();
@@ -122,14 +133,19 @@ public final class TestDashGate {
         System.exit(failed == 0 ? 0 : 1);
     }
 
-    static void fpTable(File g, boolean write) throws Exception {
+    static String docOf(Map<String, String> r) { return DOC + (r.get("dok").equals("-") ? "" : r.get("dok")); }
+    static String shortDok(String d) { return d.length() < 40 ? d : d.substring(0, 36) + "…"; }
+
+    /** S4b-8: je Datei und Dokumentadresse der Vektoren – Schlüssel „Datei“ bzw. „Datei?Query“. */
+    static void fpTable(File g, List<Map<String, String>> rows, boolean write) throws Exception {
         StringBuilder out = new StringBuilder("# dash-gate/1: Strukturfingerabdruck kadri-dash-fp/1 je Fixture über das ganze MPD (alle BaseURL-Alternativen)\n"
-            + "# Werte vom Helfer berechnet (DashFingerprint.hex(DashManifest.parse(…, BaseSelection.FIRST))); Kadri muss sie exakt treffen.\n");
+            + "# Werte vom Helfer berechnet (DashFingerprint.hex(DashManifest.parse(…, BaseSelection.FIRST))); Kadri muss sie exakt treffen.\n"
+            + "# S4b-8: Schlüssel „Datei?Query“ = mit dieser Query an der MPD-Adresse (Spalte dok der Vektoren).\n");
         TreeSet<String> names = new TreeSet<>();
-        for (File f : g.listFiles()) if (f.getName().endsWith(".mpd")) names.add(f.getName());
+        for (Map<String, String> r : rows) names.add(r.get("datei") + (r.get("dok").equals("-") ? "" : r.get("dok")));
         for (String n : names) {
-            String v;
-            try { v = DashFingerprint.hex(DashManifest.parse(Files.readAllBytes(new File(g, n).toPath()), DOC, BaseSelection.FIRST)); }
+            String v, f = n.contains("?") ? n.substring(0, n.indexOf('?')) : n, q = n.contains("?") ? n.substring(n.indexOf('?')) : "";
+            try { v = DashFingerprint.hex(DashManifest.parse(Files.readAllBytes(new File(g, f).toPath()), DOC + q, BaseSelection.FIRST)); }
             catch (DashException e) { v = "ERROR:" + e.reason; }
             out.append(n).append('\t').append(v).append('\n');
         }

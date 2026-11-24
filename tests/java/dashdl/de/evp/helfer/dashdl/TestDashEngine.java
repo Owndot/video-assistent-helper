@@ -72,6 +72,11 @@ public final class TestDashEngine {
         final Map<String, AtomicInteger> fullGets = new ConcurrentHashMap<>(), rangeGets = new ConcurrentHashMap<>();
         final List<String> leaks = new CopyOnWriteArrayList<>(), referers = new CopyOnWriteArrayList<>();
         final List<String> hosts = new CopyOnWriteArrayList<>();   // S4b-6: Host-Kopf je Init-/Stückabruf
+        // S4b-8: Annex I – geforderte Query an Init/Stücken (sonst 403), beobachtete Host+Query, Weiterleitungen des MPD
+        volatile String needQuery, rdQuery;
+        volatile boolean redirectForeignSeg;
+        final AtomicInteger rot = new AtomicInteger();
+        final List<String> segQueries = new CopyOnWriteArrayList<>();
 
         Server() throws IOException {
             srv = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -86,6 +91,7 @@ public final class TestDashEngine {
         void reset() {
             mpdText = null; gzipMpd = null; failPath = null; failStatus = 0; fail503.set(0); override.clear(); redirectPrivate = false; weakEtag = false;
             fullGets.clear(); rangeGets.clear(); leaks.clear(); referers.clear(); hosts.clear();
+            needQuery = null; rdQuery = null; redirectForeignSeg = false; rot.set(0); segQueries.clear();
         }
 
         int full(String suffix) { int n = 0; for (Map.Entry<String, AtomicInteger> e : fullGets.entrySet()) if (e.getKey().endsWith(suffix)) n += e.getValue().get(); return n; }
@@ -97,12 +103,26 @@ public final class TestDashEngine {
                 for (String h : new String[] {"Cookie", "Authorization", "Origin"}) if (x.getRequestHeaders().containsKey(h)) leaks.add(h);
                 String ref = x.getRequestHeaders().getFirst("Referer");
                 if (ref != null) referers.add(ref);
-                String path = x.getRequestURI().getRawPath();
+                String path = x.getRequestURI().getRawPath(), query = x.getRequestURI().getRawQuery();
+                // S4b-8: /rd/… leitet das MPD (302) auf /f/avc/manifest.mpd?<rdQuery> um; /rot/… jedes Mal mit neuem Token
+                if (path.startsWith("/rd/")) { x.getResponseHeaders().set("Location", "http://127.0.0.1:" + port + "/f/avc/manifest.mpd?" + rdQuery); x.sendResponseHeaders(302, -1); return; }
+                if (path.startsWith("/rot/")) { x.getResponseHeaders().set("Location", "http://127.0.0.1:" + port + "/f/avc/manifest.mpd?tok=r" + rot.incrementAndGet()); x.sendResponseHeaders(302, -1); return; }
+                // S4b-8: /g/… = dieselben Dateien (Ziel einer Stück-Weiterleitung auf einen im MPD NICHT genannten Host)
+                boolean viaG = path.startsWith("/g/");
+                if (viaG) path = "/f/" + path.substring(3);
                 // S4b-6: /r/… leitet (302) auf dieselbe Datei unter /f/ auf 127.0.0.1 um (Weiterleitung einer CDN-Alternative)
                 if (path.startsWith("/r/")) { x.getResponseHeaders().set("Location", "http://127.0.0.1:" + port + "/f/" + path.substring(3)); x.sendResponseHeaders(302, -1); return; }
                 if (!path.startsWith("/f/")) { x.sendResponseHeaders(404, -1); return; }
                 if (path.contains("chunk-") || path.contains("init-")) hosts.add(x.getRequestHeaders().getFirst("Host"));
                 String rel = path.substring(3), name = rel.substring(rel.lastIndexOf('/') + 1);
+                if (name.startsWith("chunk-") || name.startsWith("init-")) {
+                    segQueries.add(x.getRequestHeaders().getFirst("Host") + "?" + (query == null ? "" : query));
+                    if (redirectForeignSeg && !viaG && name.startsWith("chunk-")) {
+                        x.getResponseHeaders().set("Location", "http://cdn-x.test:" + port + "/g/" + rel);   // ohne Query
+                        x.sendResponseHeaders(302, -1); return;
+                    }
+                    if (needQuery != null && !viaG && !needQuery.equals(query)) { x.sendResponseHeaders(403, -1); return; }
+                }
                 if (redirectPrivate && name.startsWith("chunk-")) {
                     x.getResponseHeaders().set("Location", "http://10.0.0.1/" + name);
                     x.sendResponseHeaders(302, -1); return;
@@ -464,6 +484,7 @@ public final class TestDashEngine {
             planning(s);
             gateVectors(s);
             multiBase(s);
+            urlParams(s);
             binding(s);
             happy(s);
             negatives(s);
@@ -499,20 +520,22 @@ public final class TestDashEngine {
             String text = new String(Files.readAllBytes(new File(g, file).toPath()), StandardCharsets.UTF_8);
             String want = v.get("netz").equals("-") ? v.get("code") : v.get("netz");   // S4b-6: Netzregeln des Helfers
             s.mpdText = text;
+            // S4b-8: Spalte dok – Query der (endgültigen) MPD-Adresse; ohne: wie bisher (mit ?t=SECRETTOKEN)
+            String url = v.get("dok").equals("-") ? s.mpdUrl() : "http://127.0.0.1:" + s.port + "/f/avc/manifest.mpd" + v.get("dok");
             String fp;
             // Abdruck wie Kadri: über das ganze MPD (mit Auswahl: alle Alternativen); MPD nicht lesbar → beliebig
-            try { fp = alt == null ? fpOf(text, s.mpdUrl()) : fpAll(text, s.mpdUrl()); } catch (DashException e) { fp = repeat('0', 64); }
-            String res = alt == null ? r.engine.plan(PEER, BIND, s.mpdUrl(), fp, null, RequestContext.NONE) : r.engine.plan(PEER, BIND, s.mpdUrl(), fp, null, RequestContext.NONE, alt);
+            try { fp = alt == null ? fpOf(text, url) : fpAll(text, url); } catch (DashException e) { fp = repeat('0', 64); }
+            String res = alt == null ? r.engine.plan(PEER, BIND, url, fp, null, RequestContext.NONE) : r.engine.plan(PEER, BIND, url, fp, null, RequestContext.NONE, alt);
             String got = "true".equals(field(res, "ok")) ? "ok" : field(res, "reason");
             boolean ok = got.equals(want);
             if (want.equals("ok")) ok &= !optionIds(res).isEmpty();
             // g08: angeboten werden nur die AAC-LC-Paare (HE-AAC speichert der Helfer nicht); b04 ohne v1-Auswahl: nur v0 × a0
             if (file.startsWith("g08")) ok &= optionIds(res).size() == 2 && !res.contains("mp4a.40.5");
             if (file.startsWith("b04") && "r2:0".equals(alt)) ok &= optionIds(res).size() == 1 && res.contains("\"height\":180");
-            check("dashplan dash-gate/1 " + file + (alt == null ? "" : " [alt " + alt + "]") + " → " + want, ok, res);
+            check("dashplan dash-gate/1 " + file + (alt == null ? "" : " [alt " + alt + "]") + (v.get("dok").equals("-") ? "" : " " + (v.get("dok").length() < 40 ? v.get("dok") : v.get("dok").substring(0, 36) + "…")) + " → " + want, ok, res);
             n++;
         }
-        check("dashplan dash-gate/1: alle 69 Vektoren geprüft", n == 69, n);
+        check("dashplan dash-gate/1: alle 109 Vektoren geprüft", n == 109, n);
         s.mpdText = null;
     }
 
@@ -581,6 +604,100 @@ public final class TestDashEngine {
         check("mehrere BaseURL: Stück der Alternative leitet auf Privatnetz (10.0.0.1) weiter → kein done, blockiert", !"done".equals(field(fin4, "state")) && field(fin4, "reason").startsWith("blocked"), fin4);
         s.reset();
     }
+
+    /**
+     * S4b-8: Annex I (UrlQueryInfo) end-to-end über den echten dashplan/dashstart: der Server verlangt an jedem Init-/Stückabruf
+     * genau die Query der endgültigen MPD-Adresse (sonst 403); der Helfer bildet sie selbst aus dem neu geladenen MPD.
+     */
+    static void urlParams(Server s) throws Exception {
+        s.reset();
+        Rig r = new Rig("urlq", s);
+        String m = mpd();
+        String uq = "<EssentialProperty schemeIdUri=\"urn:mpeg:dash:urlparam:2014\"><up:UrlQueryInfo xmlns:up=\"urn:mpeg:dash:schema:urlparam:2014\" queryTemplate=\"$querypart$\" useMPDUrlQuery=\"true\"/></EssentialProperty>";
+        String text = beforePeriod(m, uq);
+        String base = "http://127.0.0.1:" + s.port + "/f/avc/manifest.mpd", url = base + "?tok=abc123";
+        s.mpdText = text;
+        s.needQuery = "tok=abc123";
+        // ohne Descriptor (bisheriges Verhalten): Query der MPD-Adresse nicht übernommen → der Server lehnt die Stücke ab
+        s.mpdText = m;
+        String pOld = r.engine.plan(PEER, BIND, url, fpOf(m, url), null, RequestContext.NONE);
+        String idOld = newId();
+        r.engine.start(PEER, BIND, idOld, field(pOld, "planId"), optionIds(pOld).get(0), "ohne");
+        String finOld = await(r, idOld);
+        check("UrlQueryInfo: ohne Descriptor keine automatische Übernahme der MPD-Query (Stücke ohne Token, Server 403)",
+            !"done".equals(field(finOld, "state")) && !s.segQueries.isEmpty() && s.segQueries.stream().noneMatch(q -> q.contains("tok=")), finOld + " " + s.segQueries);
+        s.segQueries.clear();
+        s.mpdText = text;
+        String p = r.engine.plan(PEER, BIND, url, fpOf(text, url), null, RequestContext.NONE);
+        check("UrlQueryInfo: dashplan mit Descriptor (MPD-Ebene, $querypart$, useMPDUrlQuery) → Plan", "true".equals(field(p, "ok")) && optionIds(p).size() == 2, p);
+        String id = newId();
+        r.engine.start(PEER, BIND, id, field(p, "planId"), optionIds(p).get(1), "Mit Token");
+        String fin = await(r, id);
+        check("UrlQueryInfo: vollständiger Download, jeder Init-/Stückabruf genau mit ?tok=abc123 (Init und Medien)",
+            "done".equals(field(fin, "state")) && "13".equals(field(fin, "of")) && s.segQueries.size() >= 13 && s.segQueries.stream().allMatch(q -> q.endsWith("?tok=abc123"))
+                && s.segQueries.stream().anyMatch(q -> q.contains("127.0.0.1")), fin + " " + s.segQueries);
+        check("UrlQueryInfo: keine Cookies/Authorization/Origin", s.leaks.isEmpty(), s.leaks);
+        // manipulierter Planparameter: andere Query als die von Kadri gebundene (Abdruck) → manifest_mismatch, kein Abruf
+        s.segQueries.clear();
+        String evil = r.engine.plan(PEER, BIND, base + "?tok=EVIL", fpOf(text, url), null, RequestContext.NONE);
+        check("UrlQueryInfo: Planadresse mit fremdem Token (Abdruck von tok=abc123) → manifest_mismatch, kein Stückabruf",
+            "manifest_mismatch".equals(field(evil, "reason")) && s.segQueries.isEmpty(), evil);
+        // MPD-Weiterleitung (302): Query der ENDGÜLTIGEN Adresse (tok=B), nie die der Anfrage (tok=A)
+        s.reset();
+        s.mpdText = text;
+        s.rdQuery = "tok=B";
+        s.needQuery = "tok=B";
+        String pr = r.engine.plan(PEER, BIND, "http://127.0.0.1:" + s.port + "/rd/x.mpd?tok=A", fpOf(text, base + "?tok=B"), null, RequestContext.NONE);
+        String idr = newId();
+        r.engine.start(PEER, BIND, idr, field(pr, "planId"), optionIds(pr).get(0), "Weiterleitung");
+        String finr = await(r, idr);
+        check("UrlQueryInfo: MPD 302 von ?tok=A auf ?tok=B → alle Abrufe mit tok=B, keiner mit tok=A",
+            "done".equals(field(finr, "state")) && s.segQueries.stream().allMatch(q -> q.endsWith("?tok=B")), finr + " " + s.segQueries);
+        // Token ändert sich zwischen Planung und Download (Weiterleitung mit neuem Token je Abruf) → plan_changed, nichts geladen
+        s.reset();
+        s.mpdText = text;
+        String rotUrl = "http://127.0.0.1:" + s.port + "/rot/x.mpd";
+        String pt = r.engine.plan(PEER, BIND, rotUrl, fpOf(text, base + "?tok=r1"), null, RequestContext.NONE);
+        String idt = newId();
+        r.engine.start(PEER, BIND, idt, field(pt, "planId"), optionIds(pt).get(0), "Rotation");
+        String fint = await(r, idt);
+        check("UrlQueryInfo: Token der MPD-Adresse ändert sich zwischen dashplan und dashstart → plan_changed, kein Stück geladen",
+            "true".equals(field(pt, "ok")) && "failed".equals(field(fint, "state")) && "plan_changed".equals(field(fint, "reason")) && s.fullChunks() == 0, pt + " " + fint);
+        // Stück leitet auf einen im MPD nicht genannten Host weiter: das Ziel bekommt den Token NICHT (Location unverändert)
+        s.reset();
+        s.mpdText = text;
+        s.redirectForeignSeg = true;
+        String pf = r.engine.plan(PEER, BIND, url, fpOf(text, url), null, RequestContext.NONE);
+        String idf = newId();
+        r.engine.start(PEER, BIND, idf, field(pf, "planId"), optionIds(pf).get(0), "Fremdhost");
+        String finf = await(r, idf);
+        java.util.List<String> foreign = new java.util.ArrayList<>(), tokenTo = new java.util.ArrayList<>();
+        for (String q : s.segQueries) { if (q.startsWith("cdn-x.test")) foreign.add(q); if (q.contains("tok=")) tokenTo.add(q.substring(0, q.indexOf('?'))); }
+        check("UrlQueryInfo: Weiterleitung eines Stücks auf nicht genannten Host → dort ohne Token; Token nur an den im MPD genannten Host",
+            "done".equals(field(finf, "state")) && !foreign.isEmpty() && foreign.stream().allMatch(q -> q.endsWith("?")) && tokenTo.stream().allMatch(h -> h.equals("127.0.0.1:" + s.port)),
+            finf + " " + s.segQueries);
+        // mehrere BaseURL + UrlQueryInfo: Auswahl m:1 (cdn-b.test), Query an die gewählte, im MPD erklärte Alternative
+        s.reset();
+        String two = beforePeriod(text, "<BaseURL>http://127.0.0.1:" + s.port + "/x/void/</BaseURL><BaseURL>http://cdn-b.test:" + s.port + "/f/avc/</BaseURL>");
+        s.mpdText = two;
+        s.needQuery = "tok=abc123";
+        String pm = r.engine.plan(PEER, BIND, url, fpAll(two, url), null, RequestContext.NONE, "m:1");
+        String idm = newId();
+        r.engine.start(PEER, BIND, idm, field(pm, "planId"), optionIds(pm).get(0), "CDN mit Token");
+        String finm = await(r, idm);
+        check("UrlQueryInfo + mehrere BaseURL: vollständig über cdn-b.test, jeder Abruf mit ?tok=abc123",
+            "done".equals(field(finm, "state")) && !s.segQueries.isEmpty() && s.segQueries.stream().allMatch(q -> q.equals("cdn-b.test:" + s.port + "?tok=abc123")), finm + " " + s.segQueries);
+        // nicht unterstützte Form über den echten dashplan (dash-gate/1 deckt alle Gründe ab): ExtUrlQueryInfo 2016
+        s.reset();
+        String ext = beforePeriod(m, uq.replace("urlparam:2014\"", "urlparam:2016\"").replace("UrlQueryInfo", "ExtUrlQueryInfo"));
+        s.mpdText = ext;
+        String pe = r.engine.plan(PEER, BIND, url, repeat('0', 64), null, RequestContext.NONE);
+        check("UrlQueryInfo: ExtUrlQueryInfo (2016) → mpd_urlparam_unsupported (nicht still gedeutet)", "mpd_urlparam_unsupported".equals(field(pe, "reason")), pe);
+        s.reset();
+    }
+
+    /** Fügt Text vor dem ersten „<Period“ ein (ohne Regex – Ersatztexte enthalten „$“). */
+    static String beforePeriod(String mpd, String ins) { int i = mpd.indexOf("<Period"); return mpd.substring(0, i) + ins + mpd.substring(i); }
 
     static String fpAll(String mpd, String url) throws DashException {
         return DashFingerprint.hex(DashManifest.parse(mpd.getBytes(StandardCharsets.UTF_8), url, de.evp.helfer.dash.BaseSelection.FIRST));
@@ -800,8 +917,8 @@ public final class TestDashEngine {
         check("Kanal: eine Kennung gehört genau einer Art (HLS-Kennung startet kein DASH und umgekehrt) → id_in_use",
             inUse.contains("id_in_use") && fresh.calls.isEmpty() && inUse2.contains("id_in_use"), inUse + " " + inUse2);
         String status = ControlCommands.statusJson("1.0", true, true, 3, 15, 0.5f, Boolean.FALSE, true);
-        check("Status: Fähigkeit dashdl {v:1, fmp4-avc-aac, kadri-dash-fp/1, ctx, alt (S4b-6)}; ohne DASH unverändert",
-            status.contains("\"dashdl\":{\"v\":1,\"profiles\":[\"fmp4-avc-aac\"],\"fp\":\"kadri-dash-fp/1\",\"ctx\":1,\"alt\":1}") && status.contains("\"hls\":{")
+        check("Status: Fähigkeit dashdl {v:1, fmp4-avc-aac, kadri-dash-fp/1, ctx, alt (S4b-6), urlq (S4b-8)}; ohne DASH unverändert",
+            status.contains("\"dashdl\":{\"v\":1,\"profiles\":[\"fmp4-avc-aac\"],\"fp\":\"kadri-dash-fp/1\",\"ctx\":1,\"alt\":1,\"urlq\":1}") && status.contains("\"hls\":{")
                 && ControlCommands.statusJson("1.0", true, true, 3, 15, 0.5f, Boolean.FALSE, false).equals(ControlCommands.statusJson("1.0", true, true, 3, 15, 0.5f, Boolean.FALSE)), status);
     }
 

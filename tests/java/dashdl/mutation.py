@@ -77,6 +77,8 @@ M = [
     (E, 'if (p.alt != null) { try { sel = BaseSelection.parse(p.alt); } catch (DashException e) { throw new Stop(HlsJournal.State.FAILED, "plan_changed"); } }', ''),
     (C, ' || (v2 != (alt != null))) throw new IllegalArgumentException("dash fields");', ') throw new IllegalArgumentException("dash fields");'),
     (C, 'if (!alt.matches("[mpsr0-9:;]+")) throw new IllegalArgumentException("alt");', ''),
+    # S4b-8: Fähigkeit urlq
+    (C, '\\"alt\\":1,\\"urlq\\":1}}";', '\\"alt\\":1}}";'),
 ]
 sys.path.insert(0, os.path.join(here, '..'))
 import mutation_verdict as mv  # noqa: E402
