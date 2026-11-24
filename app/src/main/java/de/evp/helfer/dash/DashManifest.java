@@ -37,6 +37,8 @@ public final class DashManifest {
     /** Davon außerhalb der direkten Kinder von MPD, AdaptationSet und Representation (nicht standardkonform oder geschachtelt). */
     public final int contentProtectionNested;
     final DashXml.El root;
+    /** S4b-6: Roh-Texte mehrerer BaseURL auf MPD-Ebene (null: höchstens eine) – für den Fingerabdruck. */
+    public List<String> baseAlts;
 
     public static final class Prop {
         public final String scheme, value, extra;
@@ -51,6 +53,7 @@ public final class DashManifest {
         public BigDecimal effectiveDuration;
         public BigDecimal effectiveStart;
         public final String base;
+        public List<String> baseAlts;   // S4b-6: mehrere BaseURL (Roh-Texte), sonst null
         final DashXml.El el;
         Period(int index, String id, BigDecimal start, BigDecimal duration, String base, DashXml.El el) {
             this.index = index; this.id = id; this.start = start; this.duration = duration; this.base = base; this.el = el;
@@ -62,6 +65,7 @@ public final class DashManifest {
         public final String id, group, contentType, mimeType, codecs, lang, label, base;
         public final List<Prop> contentProtection, essential, supplemental, roles, accessibility, audioChannels;
         public final int contentComponents;
+        public List<String> baseAlts;   // S4b-6
         final DashXml.El el;
         AdaptationSet(int index, int period, DashXml.El el, String label, String base, List<Prop> cp, List<Prop> ess, List<Prop> sup,
                       List<Prop> roles, List<Prop> acc, List<Prop> ach) {
@@ -82,6 +86,9 @@ public final class DashManifest {
         public final long bandwidth;
         public final List<Prop> contentProtection, essential, supplemental, audioChannels;
         public final int subRepresentations;
+        public List<String> baseAlts;   // S4b-6
+        /** S4b-6: Zahl der verschiedenen aufgelösten Basen über alle Alternativen der Kette (1 ohne Alternativen). */
+        public int baseAlternatives = 1;
         /** Adressierung nach Vererbung; excluded != null: nicht als Stückfolge nutzbar (fester Grund). */
         public Addressing addressing = Addressing.NONE;
         public String excluded;
@@ -169,20 +176,37 @@ public final class DashManifest {
      * Liest ein MPD. documentUrl: die finale Adresse der Antwort (nach Weiterleitungen) – Basis aller relativen
      * Adressen. Wirft bei jeder fatalen Abweichung.
      */
-    public static DashManifest parse(byte[] body, String documentUrl) throws DashException {
+    public static DashManifest parse(byte[] body, String documentUrl) throws DashException { return parse(body, documentUrl, null); }
+
+    /**
+     * S4b-6: wie oben mit Auswahl unter mehreren BaseURL (BaseSelection). {@code sel} null: mehrere BaseURL auf einer Ebene sind
+     * fatal ("baseurl-multiple", wie bisher). Sonst: je Element höchstens {@link DashLimits#MAX_BASEURLS_PER_ELEMENT}, je
+     * Darstellung höchstens {@link DashLimits#MAX_BASE_COMBINATIONS} Kombinationen über die Kette MPD → Periode → Set →
+     * Darstellung (vor dem Zusammenfassen gleicher Adressen; darüber "baseurl-limits"), jede Kombination muss sich auflösen.
+     * Die gewählte Alternative jeder Ebene bestimmt die Basis (Projektion auf ein MPD mit je einer BaseURL). Nicht gewählt:
+     * auf MPD-/Periodenebene fatal ("baseurl-undetermined"), auf Set-/Darstellungsebene ist die Darstellung ausgeschlossen
+     * ("baseurl-undetermined"). Ein Eintrag der Auswahl ohne passendes Element oder mit zu großem Index: "alt-invalid".
+     */
+    public static DashManifest parse(byte[] body, String documentUrl, BaseSelection sel) throws DashException {
         String doc = DashUrl.canonical(stripFragment(documentUrl));
         DashXml.El root = DashXml.parse(body);
         Ctx ctx = new Ctx();
         String typeRaw = root.attr("type");
         BigDecimal mpdDur = DashNum.optDuration(root, "mediaPresentationDuration");
-        String mpdBase = baseOf(root, doc);
+        List<String> mpdRaw = rawBases(root);
+        String mpdBase = baseOf(root, doc, mpdRaw, "m", sel);
+        if (mpdBase == null) throw new DashException("baseurl-undetermined");
         List<DashXml.El> pEls = root.all("Period");
         if (pEls.size() > DashLimits.MAX_PERIODS) throw new DashException("limits");
         List<Period> periods = new ArrayList<>();
         List<AdaptationSet> sets = new ArrayList<>();
         List<Representation> reps = new ArrayList<>();
         for (DashXml.El pe : pEls) {
-            Period p = new Period(periods.size(), pe.attr("id"), DashNum.optDuration(pe, "start"), DashNum.optDuration(pe, "duration"), baseOf(pe, mpdBase), pe);
+            List<String> pRaw = rawBases(pe);
+            String pBase = baseOf(pe, mpdBase, pRaw, "p" + periods.size(), sel);
+            if (pBase == null) throw new DashException("baseurl-undetermined");
+            Period p = new Period(periods.size(), pe.attr("id"), DashNum.optDuration(pe, "start"), DashNum.optDuration(pe, "duration"), pBase, pe);
+            p.baseAlts = pRaw.size() > 1 ? pRaw : null;
             periods.add(p);
             segKinds(pe);
             for (DashXml.El ae : pe.all("AdaptationSet")) {
@@ -191,8 +215,10 @@ public final class DashManifest {
                 String label = null;
                 List<DashXml.El> labels = ae.all("Label");
                 if (!labels.isEmpty()) label = labels.get(0).trimmedText();
-                AdaptationSet a = new AdaptationSet(sets.size(), p.index, ae, label, baseOf(ae, p.base), acp, props(ae, "EssentialProperty"),
+                List<String> aRaw = rawBases(ae);
+                AdaptationSet a = new AdaptationSet(sets.size(), p.index, ae, label, baseOf(ae, p.base, aRaw, "s" + sets.size(), sel), acp, props(ae, "EssentialProperty"),
                     props(ae, "SupplementalProperty"), props(ae, "Role"), props(ae, "Accessibility"), props(ae, "AudioChannelConfiguration"));
+                a.baseAlts = aRaw.size() > 1 ? aRaw : null;
                 sets.add(a);
                 segKinds(ae);
                 for (DashXml.El re : ae.all("Representation")) {
@@ -204,15 +230,23 @@ public final class DashManifest {
                     if (bw > DashLimits.MAX_BANDWIDTH) throw new DashException("number-range");
                     String mime = re.attr("mimeType") != null ? re.attr("mimeType") : a.mimeType;
                     String codecs = re.attr("codecs") != null ? re.attr("codecs") : a.codecs;
-                    Representation r = new Representation(reps.size(), a.index, p.index, id, bw, mime, codecs, re, baseOf(re, a.base), rcp,
+                    List<String> rRaw = rawBases(re);
+                    Representation r = new Representation(reps.size(), a.index, p.index, id, bw, mime, codecs, re, a.base == null ? null : baseOf(re, a.base, rRaw, "r" + reps.size(), sel), rcp,
                         props(re, "EssentialProperty"), props(re, "SupplementalProperty"), props(re, "AudioChannelConfiguration"));
+                    if (a.base == null && rRaw.size() > 1 && sel != null && !sel.isFirst()) sel.choose("r" + reps.size(), rRaw.size());   // (Index prüfen)
+                    r.baseAlts = rRaw.size() > 1 ? rRaw : null;
+                    if (sel != null && (mpdRaw.size() > 1 || pRaw.size() > 1 || aRaw.size() > 1 || rRaw.size() > 1))
+                        r.baseAlternatives = combinations(doc, Arrays.asList(mpdRaw, pRaw, aRaw, rRaw));
                     reps.add(r);
                     segKinds(re);
+                    if (r.base == null) { r.excluded = "baseurl-undetermined"; continue; }
                     addressing(r, new DashXml.El[] {re, ae, pe}, ctx);
                 }
             }
         }
+        if (sel != null) sel.checkAllUsed();
         DashManifest m = new DashManifest(root, doc, mpdBase, typeRaw, mpdDur, periods, sets, reps);
+        m.baseAlts = mpdRaw.size() > 1 ? mpdRaw : null;
         periodTiming(m);
         for (Representation r : reps) if (r.excluded == null) expand(m, r, ctx);
         return m;
@@ -250,15 +284,48 @@ public final class DashManifest {
         return out;
     }
 
-    /** BaseURL einer Ebene (höchstens eine; Text nicht leer; nur bekannte Attribute) aufgelöst gegen die äußere Basis. */
-    private static String baseOf(DashXml.El e, String outer) throws DashException {
+    /** Roh-Texte aller BaseURL einer Ebene (jeder nicht leer, nur bekannte Attribute; höchstens MAX_BASEURLS_PER_ELEMENT). */
+    private static List<String> rawBases(DashXml.El e) throws DashException {
         List<DashXml.El> b = e.all("BaseURL");
-        if (b.isEmpty()) return outer;
-        if (b.size() > 1) throw new DashException("baseurl-multiple");
-        for (String k : b.get(0).attrs.keySet()) if (!k.startsWith("{") && !BASEURL_ATTRS.contains(k)) throw new DashException("baseurl-attr");
-        String t = b.get(0).trimmedText();
-        if (t.isEmpty()) throw new DashException("baseurl-empty");
-        return DashUrl.resolve(outer, t);
+        if (b.size() > DashLimits.MAX_BASEURLS_PER_ELEMENT) throw new DashException("baseurl-limits");
+        List<String> out = new ArrayList<>(b.size());
+        for (DashXml.El x : b) {
+            for (String k : x.attrs.keySet()) if (!k.startsWith("{") && !BASEURL_ATTRS.contains(k)) throw new DashException("baseurl-attr");
+            String t = x.trimmedText();
+            if (t.isEmpty()) throw new DashException("baseurl-empty");
+            out.add(t);
+        }
+        return out;
+    }
+
+    /**
+     * Basis einer Ebene gegen die äußere Basis: keine BaseURL → äußere; eine → aufgelöst; mehrere → ohne Auswahl fatal
+     * ("baseurl-multiple"), sonst die gewählte (null = nicht bestimmt bzw. äußere Basis unbestimmt).
+     */
+    private static String baseOf(DashXml.El e, String outer, List<String> raw, String key, BaseSelection sel) throws DashException {
+        if (raw.isEmpty()) return outer;
+        if (raw.size() == 1) return outer == null ? null : DashUrl.resolve(outer, raw.get(0));
+        if (sel == null) throw new DashException("baseurl-multiple");
+        int i = sel.choose(key, raw.size());
+        if (i < 0 || outer == null) return null;
+        return DashUrl.resolve(outer, raw.get(i));
+    }
+
+    /**
+     * Alle Kombinationen der Kette (MPD, Periode, Set, Darstellung) auflösen – begrenzt VOR dem Zusammenfassen (keine
+     * unbeschränkte kartesische Erweiterung): höchstens MAX_BASE_COMBINATIONS, jede muss gültig sein. Ergebnis: Zahl der
+     * verschiedenen kanonischen Basen.
+     */
+    static int combinations(String doc, List<List<String>> chain) throws DashException {
+        List<String> cur = new ArrayList<>(Collections.singletonList(doc));
+        for (List<String> raw : chain) {
+            if (raw.isEmpty()) continue;
+            if ((long) cur.size() * raw.size() > DashLimits.MAX_BASE_COMBINATIONS) throw new DashException("baseurl-limits");
+            List<String> next = new ArrayList<>(cur.size() * raw.size());
+            for (String b : cur) for (String t : raw) next.add(DashUrl.resolve(b, t));
+            cur = next;
+        }
+        return new java.util.LinkedHashSet<>(cur).size();
     }
 
     /** Je Ebene höchstens EIN Adressierungs-Element (SegmentBase, SegmentList, SegmentTemplate). */

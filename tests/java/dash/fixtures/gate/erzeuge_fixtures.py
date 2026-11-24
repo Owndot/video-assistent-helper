@@ -83,6 +83,32 @@ F['n28-journal-limit'] = mpd(period(vset(vtpl(timeline=tl(['t="0" d="1" r="19999
 F['n29-duration-unknown'] = mpd(period(B), dur=None)
 F['n30-type-unknown'] = mpd(period(B), typ='vod')
 F['n31-essential-unknown'] = mpd(period(vset(extra='      <EssentialProperty schemeIdUri="urn:example:unbekannt" value="1"/>\n') + aset()))
+# ---------- S4b-6: mehrere BaseURL (CDN-Alternativen) ----------
+def bu(*xs, ind='  '): return ''.join('%s<BaseURL>%s</BaseURL>\n' % (ind, x) for x in xs)
+def per_b(sets, bases): return '  <Period id="0">\n' + bu(*bases, ind='    ') + sets + '  </Period>\n'
+def vset_b(bases, tpl=None, reps=None):
+    reps = reps if reps is not None else vrep('v0', 'avc1.4d400c', 90000, 320, 180) + vrep('v1', 'avc1.4d401e', 320000, 640, 360)
+    return '    <AdaptationSet id="0" contentType="video">\n' + bu(*bases, ind='      ') + '      %s\n%s    </AdaptationSet>\n' % (tpl if tpl is not None else vtpl(), reps)
+def aset_b(bases, sid='1'):
+    return '    <AdaptationSet id="%s" contentType="audio" lang="de">\n' % sid + bu(*bases, ind='      ') + '      %s\n%s    </AdaptationSet>\n' % (atpl(), arep('a0'))
+CA, CB = 'https://cdn-a.example/v/', 'https://cdn-b.example/v/'
+F['b01-mpd-two-cdn'] = mpd(period(B), extra=bu(CA, CB))
+F['b02-period-two'] = mpd(per_b(B, ['a/', 'b/']))
+F['b03-set-two'] = mpd(period(vset_b([CA + 'video/', CB + 'video/']) + aset_b([CA + 'audio/', CB + 'audio/'])))
+F['b04-rep-two'] = mpd(period(vset(reps=vrep('v0', 'avc1.4d400c', 90000, 320, 180) + vrep('v1', 'avc1.4d401e', 320000, 640, 360, '<BaseURL>%s</BaseURL><BaseURL>%s</BaseURL>' % (CA + 'hd/', CB + 'hd/')))
+    + aset(reps=arep('a0', inner='<BaseURL>%s</BaseURL><BaseURL>%s</BaseURL>' % (CA + 'au/', CB + 'au/')))))
+F['b05-nested'] = mpd(per_b(B, ['p1/', 'p2/']), extra=bu(CA, CB))
+F['b06-absolute-override'] = mpd(period(vset(reps=vrep('v0', 'avc1.4d400c', 90000, 320, 180, '<BaseURL>https://fix.example/v0/</BaseURL>')
+    + vrep('v1', 'avc1.4d401e', 320000, 640, 360, '<BaseURL>https://fix.example/v1/</BaseURL>')) + aset()), extra=bu(CA, CB))
+F['b07-duplicate'] = mpd(period(B), extra=bu(CA, CA))
+F['b08-too-many-per-element'] = mpd(period(B), extra=bu(*['https://cdn-%d.example/v/' % i for i in range(9)]))
+F['b09-too-many-combinations'] = mpd(per_b(B, ['p%d/' % i for i in range(5)]), extra=bu(*['https://cdn-%d.example/v/' % i for i in range(4)]))
+F['b10-invalid-alternative'] = mpd(period(B), extra=bu(CA, 'https://cdn-b.example/v/^bad/'))
+F['b11-empty-alternative'] = mpd(period(B), extra=bu(CA, ' '))
+F['b12-different-paths'] = mpd(period(B), extra=bu(CA, 'https://cdn-b.example/ganz/anderer/pfad/'))
+F['b13-relative-and-absolute'] = mpd(period(B), extra=bu('alt/', CB))
+F['b14-private-target'] = mpd(period(B), extra=bu(CA, 'https://10.0.0.1/v/'))
+F['b15-local-name'] = mpd(period(B), extra=bu(CA, 'https://intranet/v/'))
 os.makedirs(OUT, exist_ok=True)
 for k, v in F.items():
     with open(os.path.join(OUT, k + '.mpd'), 'w', encoding='utf-8', newline='\n') as f: f.write(v)

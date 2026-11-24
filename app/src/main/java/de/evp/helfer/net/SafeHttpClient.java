@@ -123,6 +123,24 @@ public final class SafeHttpClient {
         return new SafeHttpClient(rules, client.newBuilder().connectionPool(new ConnectionPool(0, 1, TimeUnit.SECONDS)).build());
     }
 
+    /**
+     * S4b-6: würde ein Abruf dieser Adresse schon VOR dem Verbindungsaufbau an denselben Regeln scheitern wie in
+     * {@link #dns}/{@link NetRules#checkEndpoint}? (Schema, Port, IP-Literal gegen die Adressregeln, gesperrte Namen.) Ohne DNS –
+     * aufgelöste Namen und Weiterleitungen prüft weiterhin jeder einzelne Abruf. Für eine frühe, verständliche Ablehnung beim
+     * Plan; ersetzt keine Prüfung beim Abruf.
+     */
+    public boolean blockedStatically(String url) {
+        HttpUrl u = url == null ? null : HttpUrl.parse(url);
+        if (u == null || !(u.scheme().equals("http") || u.scheme().equals("https"))) return true;
+        String host = u.host();
+        if (!rules.portAllowed(u.port())) return true;
+        if (NetRules.isIpLiteral(host)) {
+            try { rules.checkEndpoint(InetAddress.getByName(host), u.port(), false); } catch (NetBlockedException.Connect | UnknownHostException e) { return true; }
+            return false;
+        }
+        return NetRules.endsInNumber(host) || NetRules.hostNameBlocked(host);
+    }
+
     /** Produktiver Client: strenge Regeln, Systemresolver, System-Vertrauen. */
     static SafeHttpClient strict(NetRules.Nat64Source nat64) { return new SafeHttpClient(NetRules.strict(nat64), SYSTEM_RESOLVER, null); }
 

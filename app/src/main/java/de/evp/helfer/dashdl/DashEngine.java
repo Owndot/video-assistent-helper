@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import de.evp.helfer.ControlCommands;
+import de.evp.helfer.dash.BaseSelection;
 import de.evp.helfer.dash.DashException;
 import de.evp.helfer.dash.DashFingerprint;
 import de.evp.helfer.dash.DashLimits;
@@ -150,9 +151,10 @@ public final class DashEngine implements ControlCommands.DashControl {
         final List<Option> options;
         final double duration;
         final RequestContext context;
-        PlanEntry(String planId, byte[] peer, String bind, long expires, String sourceUrl, String fp, List<Option> options, double duration, RequestContext context) {
+        final String alt;   // S4b-6: Auswahl unter mehreren BaseURL (null: höchstens eine je Ebene)
+        PlanEntry(String planId, byte[] peer, String bind, long expires, String sourceUrl, String fp, List<Option> options, double duration, RequestContext context, String alt) {
             this.planId = planId; this.peer = peer; this.bind = bind; this.expires = expires; this.sourceUrl = sourceUrl; this.fp = fp;
-            this.options = options; this.duration = duration; this.context = context == null ? RequestContext.NONE : context;
+            this.options = options; this.duration = duration; this.context = context == null ? RequestContext.NONE : context; this.alt = alt;
         }
     }
 
@@ -176,22 +178,45 @@ public final class DashEngine implements ControlCommands.DashControl {
 
     @Override
     public String plan(byte[] peer, String bind, String url, String fp, int[] played, RequestContext context) {
+        return plan(peer, bind, url, fp, played, context, null);
+    }
+
+    /**
+     * S4b-6: mit {@code alt} (dashplan v2) wählt Kadri unter mehreren im MPD erklärten BaseURL die Alternative, deren
+     * Stückfolge es an das Video gebunden hat. Der Helfer prüft die Auswahl selbst am neu geladenen MPD (BaseSelection: nur
+     * erklärte Elemente und Indizes), berechnet den Abdruck über das ganze MPD (alle Alternativen) und plant die Projektion.
+     */
+    @Override
+    public String plan(byte[] peer, String bind, String url, String fp, int[] played, RequestContext context, String alt) {
         RequestContext ctx = context == null ? RequestContext.NONE : context;
         SafeHttpClient.Cancellation cancel = new SafeHttpClient.Cancellation();
         Phase0 phase = new Phase0();
         try {
             if (stoppedNow()) return planFail("stopped", null);
             if (fp == null || !fp.matches("[0-9a-f]{64}")) return planFail("fingerprint_missing", null);
+            BaseSelection sel = null;
+            if (alt != null) {
+                try { sel = BaseSelection.parse(alt); } catch (DashException e) { return planFail("alt_invalid", null); }
+            }
             long deadline = clock.nowMs() + PLAN_DEADLINE_MS;
-            Source src = loadSource(url, cancel, deadline, ctx, phase);
+            Source src = loadSource(url, cancel, deadline, ctx, phase, sel, fp, "manifest_mismatch");
             phase.at = "fingerprint";
             if (!src.fp.equals(fp)) return planFail("manifest_mismatch", phase);
             phase.at = "options";
             List<Option> options = options(src.plan, played);
             if (options.isEmpty()) return planFail("segments_limit", phase);
+            // S4b-6: Adressen der geplanten Spuren (Init und erstes Stück) dürfen nicht schon an den Netzregeln scheitern –
+            // frühe Ablehnung statt eines Auftrags, der beim ersten Abruf blockiert (jeder Abruf prüft weiterhin selbst)
+            phase.at = "network";
+            for (DashPlan.Option po : src.plan.options) {
+                for (DashPlan.Track t : new DashPlan.Track[] {po.video, po.audio}) {
+                    if (t == null) continue;
+                    if (http.blockedStatically(t.initUrl()) || http.blockedStatically(t.segment(0).url)) return planFail("blocked_host", phase);
+                }
+            }
             String planId = hex(randomBytes(16));
             double dur = src.plan.seconds.doubleValue();
-            PlanEntry e = new PlanEntry(planId, peer.clone(), bind, clock.nowMs() + PLAN_TTL_MS, url, src.fp, options, dur, ctx);
+            PlanEntry e = new PlanEntry(planId, peer.clone(), bind, clock.nowMs() + PLAN_TTL_MS, url, src.fp, options, dur, ctx, alt);
             synchronized (this) { putPlan(e); }
             StringBuilder b = new StringBuilder("{\"ok\":true,\"planId\":\"").append(planId).append("\",\"expiresSec\":").append(PLAN_TTL_MS / 1000)
                 .append(",\"duration\":").append(String.format(Locale.ROOT, "%.3f", dur)).append(",\"fp\":\"").append(DashFingerprint.VERSION).append("\",\"options\":[");
@@ -266,15 +291,23 @@ public final class DashEngine implements ControlCommands.DashControl {
         return "{\"ok\":false,\"reason\":\"" + code(reason) + "\"" + (phase == null ? "" : ",\"diag\":{\"v\":1,\"phase\":\"" + code(phase.at) + "\"}") + "}";
     }
 
-    /** MPD laden, lesen, Fingerabdruck, S3-Profil und vollständiger Plan. */
-    private Source loadSource(String url, SafeHttpClient.Cancellation cancel, long deadline, RequestContext ctx, Phase0 phase) throws IOException, DashException, Stop {
+    /**
+     * MPD laden, lesen, Fingerabdruck, S3-Profil und vollständiger Plan. S4b-6: mit Auswahl {@code sel} wird der Abdruck
+     * über das ganze MPD (alle Alternativen, BaseSelection.FIRST) und der Plan über die gewählte Projektion berechnet.
+     */
+    private Source loadSource(String url, SafeHttpClient.Cancellation cancel, long deadline, RequestContext ctx, Phase0 phase, BaseSelection sel,
+                              String expectFp, String mismatch) throws IOException, DashException, Stop {
         if (phase != null) phase.at = "mpd_fetch";
         DashFetch.Text t = manifest(url, cancel, deadline, ctx);
         if (phase != null) phase.at = "mpd_parse";
-        DashManifest m;
-        try { m = DashManifest.parse(t.body, t.finalUrl); }
+        DashManifest m, all;
+        try { all = DashManifest.parse(t.body, t.finalUrl, sel == null ? null : BaseSelection.FIRST); }
         catch (DashException e) { throw new Stop(HlsJournal.State.FAILED, "mpd_" + e.reason); }
-        String fp = DashFingerprint.hex(m);
+        String fp = DashFingerprint.hex(all);
+        // S4b-6: ein anderes MPD (auch: Alternative weggefallen oder hinzugekommen) wird VOR der Auswahl erkannt
+        if (sel != null && expectFp != null && !fp.equals(expectFp)) { if (phase != null) phase.at = "fingerprint"; throw new Stop(HlsJournal.State.FAILED, mismatch); }
+        try { m = sel == null ? all : DashManifest.parse(t.body, t.finalUrl, sel); }
+        catch (DashException e) { throw new Stop(HlsJournal.State.FAILED, "mpd_" + e.reason); }
         if (phase != null) phase.at = "profile";
         DashPlan p;
         try { p = DashPlan.build(m); }
@@ -728,7 +761,9 @@ public final class DashEngine implements ControlCommands.DashControl {
         if (o == null) throw new Stop(HlsJournal.State.FAILED, "plan_changed");
         Source src;
         try {
-            src = loadSource(p.sourceUrl, job.cancel, deadline, p.context, null);
+            BaseSelection sel = null;
+            if (p.alt != null) { try { sel = BaseSelection.parse(p.alt); } catch (DashException e) { throw new Stop(HlsJournal.State.FAILED, "plan_changed"); } }
+            src = loadSource(p.sourceUrl, job.cancel, deadline, p.context, null, sel, p.fp, "plan_changed");
         } catch (DashException e) {
             if (e.reason.startsWith("http_")) synchronized (job) { if (job.failAt == null) { job.failAt = "mpd"; job.failIndex = -1; } }
             throw e;

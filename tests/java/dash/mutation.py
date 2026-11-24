@@ -74,6 +74,15 @@ M = [
     (D + 'DashFingerprint.java', '                props(sb, "s.contentProtection", a.contentProtection);\n', ''),
     (D + 'DashFingerprint.java', '                    line(sb, "r.segmentElements", r.segLevels);\n', ''),
     (D + 'DashFingerprint.java', 'if (c == \'|\') sb.append("\\\\|");', 'if (false) sb.append("\\\\|");'),
+    # S4b-6: mehrere BaseURL (BaseSelection, Grenzen, Projektion, Abdruck)
+    (D + 'BaseSelection.java', 'if (i >= count) throw new DashException("alt-invalid");', ''),
+    (D + 'BaseSelection.java', 'if (!first && !used.containsAll(pick.keySet())) throw new DashException("alt-invalid");', ''),
+    (D + 'DashManifest.java', 'if (b.size() > DashLimits.MAX_BASEURLS_PER_ELEMENT) throw new DashException("baseurl-limits");', ''),
+    (D + 'DashManifest.java', 'if ((long) cur.size() * raw.size() > DashLimits.MAX_BASE_COMBINATIONS) throw new DashException("baseurl-limits");', ''),
+    (D + 'DashManifest.java', 'if (i < 0 || outer == null) return null;', 'if (outer == null) return null; if (i < 0) i = 0;'),
+    (D + 'DashManifest.java', 'if (sel == null) throw new DashException("baseurl-multiple");', 'if (sel == null) sel = BaseSelection.FIRST;'),
+    (D + 'DashFingerprint.java', 'for (String a : alts) line(sb, level + ".baseAlt", a);', ''),
+    (D + 'DashProfile.java', 'if (!whys.isEmpty() && whys.stream().allMatch("baseurl-undetermined"::equals)) return "dash-baseurl-undetermined";', ''),
 ]
 sys.path.insert(0, os.path.join(here, '..'))
 import mutation_verdict as mv  # noqa: E402

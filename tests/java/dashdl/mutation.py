@@ -70,6 +70,13 @@ M = [
     (C, ' || (hls != null && hls.knows(r.id)))\n', ')\n'),
     (C, '            if (dash != null && dash.knows(r.id)) return "{\\"ok\\":false,\\"id\\":\\"" + r.id + "\\",\\"state\\":\\"rejected\\",\\"reason\\":\\"id_in_use\\"}";\n', ''),
     (C, 'boolean isDash = !isHls && dash != null && dash.knows(r.id);', 'boolean isDash = false;'),
+    # S4b-6: dashplan v2 (Auswahl unter mehreren BaseURL), frühe Netzprüfung, Abdruck vor der Auswahl
+    (E, 'try { sel = BaseSelection.parse(alt); } catch (DashException e) { return planFail("alt_invalid", null); }', 'sel = null;'),
+    (E, 'if (sel != null && expectFp != null && !fp.equals(expectFp)) { if (phase != null) phase.at = "fingerprint"; throw new Stop(HlsJournal.State.FAILED, mismatch); }', ''),
+    (E, 'if (http.blockedStatically(t.initUrl()) || http.blockedStatically(t.segment(0).url)) return planFail("blocked_host", phase);', ''),
+    (E, 'if (p.alt != null) { try { sel = BaseSelection.parse(p.alt); } catch (DashException e) { throw new Stop(HlsJournal.State.FAILED, "plan_changed"); } }', ''),
+    (C, ' || (v2 != (alt != null))) throw new IllegalArgumentException("dash fields");', ') throw new IllegalArgumentException("dash fields");'),
+    (C, 'if (!alt.matches("[mpsr0-9:;]+")) throw new IllegalArgumentException("alt");', ''),
 ]
 sys.path.insert(0, os.path.join(here, '..'))
 import mutation_verdict as mv  # noqa: E402

@@ -15,3 +15,4 @@ cd "$ROOT"
 java -Xmx64m -Ddash.src="$SRC/dash" -cp "$WORK/c" de.evp.helfer.dash.TestDash "$HERE/fixtures" "$@"
 # S4b-5: gemeinsame Golden-Vektoren der Vorprüfung (dash-gate/1, byte-gleich in Kadri tests/web/dash/gate)
 if [ $# -eq 0 ]; then java -Xmx64m -cp "$WORK/c" de.evp.helfer.dash.TestDashGate "$HERE/fixtures"; fi
+if [ "${1:-}" = "--write-gate-fp" ]; then java -Xmx64m -cp "$WORK/c" de.evp.helfer.dash.TestDashGate "$HERE/fixtures" --write-fp; fi

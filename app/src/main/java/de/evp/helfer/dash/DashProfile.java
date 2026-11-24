@@ -108,8 +108,9 @@ public final class DashProfile {
         "list-duplicate", "list-timeline", "timeline-gap", "timeline-overlap", "timeline-repeat", "timeline-empty", "zero-duration",
         "coverage-mismatch", "segments", "segment-duration", "duration-unknown", "number-range", "uri-length", "init-missing"));
 
-    /** Zusammengefasster Grund: Codec/Container vor Adressierung vor sonstigem. */
+    /** Zusammengefasster Grund: Codec/Container vor Adressierung vor sonstigem; S4b-6: alle nur „Alternative nicht bestimmt“. */
     private static String category(List<String> whys) {
+        if (!whys.isEmpty() && whys.stream().allMatch("baseurl-undetermined"::equals)) return "dash-baseurl-undetermined";
         for (String w : whys) if (w.equals("codec") || w.equals("container") || w.equals("muxed")) return "dash-codec";
         for (String w : whys) if (ADDRESSING.contains(w)) return "dash-addressing";
         return "dash-unsupported";

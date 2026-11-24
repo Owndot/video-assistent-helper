@@ -51,11 +51,23 @@ public final class DashFingerprint {
         return text.toString();
     }
 
+    /**
+     * S4b-6: mehrere BaseURL einer Ebene – Zahl und Roh-Texte in Dokumentreihenfolge (die *.base-Zeile nennt die erste
+     * Alternative). Nur wenn vorhanden: Abdrücke von MPDs mit höchstens einer BaseURL je Ebene bleiben unverändert. Fällt eine
+     * Alternative weg oder kommt eine hinzu, ändert sich der Abdruck (dashplan: manifest_mismatch, dashstart: plan_changed).
+     */
+    private static void alts(Out sb, String level, java.util.List<String> alts) {
+        if (alts == null) return;
+        line(sb, level + ".baseAlternatives", Integer.toString(alts.size()));
+        for (String a : alts) line(sb, level + ".baseAlt", a);
+    }
+
     private static void write(DashManifest m, Out sb) {
         line(sb, "fp", VERSION);
         line(sb, "mpd.type", m.typeRaw);
         line(sb, "mpd.mediaPresentationDuration", dur(m.mediaPresentationDuration));
         line(sb, "mpd.base", m.base);
+        alts(sb, "mpd", m.baseAlts);
         line(sb, "mpd.contentProtection", Integer.toString(m.root.all("ContentProtection").size()));
         // S3a-Fix: ContentProtection außerhalb von MPD/AdaptationSet/Representation (Period, ContentComponent,
         // SubRepresentation, Vorlagen …) – nur wenn vorhanden, damit bestehende Abdrücke gleich bleiben
@@ -66,6 +78,7 @@ public final class DashFingerprint {
             line(sb, "p.start", dur(p.start));
             line(sb, "p.duration", dur(p.duration));
             line(sb, "p.base", p.base);
+            alts(sb, "p", p.baseAlts);
             for (DashManifest.AdaptationSet a : m.sets) {
                 if (a.period != p.index) continue;
                 line(sb, "set", Integer.toString(a.index));
@@ -77,6 +90,7 @@ public final class DashFingerprint {
                 line(sb, "s.lang", a.lang);
                 line(sb, "s.label", a.label);
                 line(sb, "s.base", a.base);
+                alts(sb, "s", a.baseAlts);
                 props(sb, "s.contentProtection", a.contentProtection);
                 line(sb, "s.contentComponents", Integer.toString(a.contentComponents));
                 props(sb, "s.essential", a.essential);
@@ -96,6 +110,7 @@ public final class DashFingerprint {
                     line(sb, "r.frameRate", r.frameRate);
                     line(sb, "r.audioSamplingRate", r.audioSamplingRate);
                     line(sb, "r.base", r.base);
+                    alts(sb, "r", r.baseAlts);
                     props(sb, "r.contentProtection", r.contentProtection);
                     props(sb, "r.essential", r.essential);
                     props(sb, "r.supplemental", r.supplemental);

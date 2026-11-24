@@ -71,6 +71,7 @@ public final class TestDashEngine {
         volatile boolean weakEtag;
         final Map<String, AtomicInteger> fullGets = new ConcurrentHashMap<>(), rangeGets = new ConcurrentHashMap<>();
         final List<String> leaks = new CopyOnWriteArrayList<>(), referers = new CopyOnWriteArrayList<>();
+        final List<String> hosts = new CopyOnWriteArrayList<>();   // S4b-6: Host-Kopf je Init-/Stückabruf
 
         Server() throws IOException {
             srv = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -84,7 +85,7 @@ public final class TestDashEngine {
 
         void reset() {
             mpdText = null; gzipMpd = null; failPath = null; failStatus = 0; fail503.set(0); override.clear(); redirectPrivate = false; weakEtag = false;
-            fullGets.clear(); rangeGets.clear(); leaks.clear(); referers.clear();
+            fullGets.clear(); rangeGets.clear(); leaks.clear(); referers.clear(); hosts.clear();
         }
 
         int full(String suffix) { int n = 0; for (Map.Entry<String, AtomicInteger> e : fullGets.entrySet()) if (e.getKey().endsWith(suffix)) n += e.getValue().get(); return n; }
@@ -97,7 +98,10 @@ public final class TestDashEngine {
                 String ref = x.getRequestHeaders().getFirst("Referer");
                 if (ref != null) referers.add(ref);
                 String path = x.getRequestURI().getRawPath();
+                // S4b-6: /r/… leitet (302) auf dieselbe Datei unter /f/ auf 127.0.0.1 um (Weiterleitung einer CDN-Alternative)
+                if (path.startsWith("/r/")) { x.getResponseHeaders().set("Location", "http://127.0.0.1:" + port + "/f/" + path.substring(3)); x.sendResponseHeaders(302, -1); return; }
                 if (!path.startsWith("/f/")) { x.sendResponseHeaders(404, -1); return; }
+                if (path.contains("chunk-") || path.contains("init-")) hosts.add(x.getRequestHeaders().getFirst("Host"));
                 String rel = path.substring(3), name = rel.substring(rel.lastIndexOf('/') + 1);
                 if (redirectPrivate && name.startsWith("chunk-")) {
                     x.getResponseHeaders().set("Location", "http://10.0.0.1/" + name);
@@ -459,6 +463,7 @@ public final class TestDashEngine {
         try {
             planning(s);
             gateVectors(s);
+            multiBase(s);
             binding(s);
             happy(s);
             negatives(s);
@@ -483,24 +488,102 @@ public final class TestDashEngine {
         Rig r = new Rig("gate", s);
         File g = new File(System.getProperty("dash.gate", "tests/java/dash/fixtures/gate"));
         int n = 0;
+        String[] head = null;
         for (String l : Files.readAllLines(new File(g, "gate-v1-vectors.tsv").toPath(), StandardCharsets.UTF_8)) {
-            if (l.isEmpty() || l.startsWith("#") || l.startsWith("datei\t")) continue;
+            if (l.isEmpty() || l.startsWith("#")) continue;
             String[] c = l.split("\t", -1);
-            String text = new String(Files.readAllBytes(new File(g, c[0]).toPath()), StandardCharsets.UTF_8), want = c[3];
+            if (head == null) { head = c; continue; }
+            Map<String, String> v = new java.util.HashMap<>();
+            for (int i = 0; i < head.length; i++) v.put(head[i], c[i]);
+            String file = v.get("datei"), alt = v.get("auswahl").equals("-") ? null : v.get("auswahl");
+            String text = new String(Files.readAllBytes(new File(g, file).toPath()), StandardCharsets.UTF_8);
+            String want = v.get("netz").equals("-") ? v.get("code") : v.get("netz");   // S4b-6: Netzregeln des Helfers
             s.mpdText = text;
             String fp;
-            try { fp = fpOf(text, s.mpdUrl()); } catch (DashException e) { fp = repeat('0', 64); }
-            String res = r.engine.plan(PEER, BIND, s.mpdUrl(), fp, null, RequestContext.NONE);
+            // Abdruck wie Kadri: über das ganze MPD (mit Auswahl: alle Alternativen); MPD nicht lesbar → beliebig
+            try { fp = alt == null ? fpOf(text, s.mpdUrl()) : fpAll(text, s.mpdUrl()); } catch (DashException e) { fp = repeat('0', 64); }
+            String res = alt == null ? r.engine.plan(PEER, BIND, s.mpdUrl(), fp, null, RequestContext.NONE) : r.engine.plan(PEER, BIND, s.mpdUrl(), fp, null, RequestContext.NONE, alt);
             String got = "true".equals(field(res, "ok")) ? "ok" : field(res, "reason");
             boolean ok = got.equals(want);
             if (want.equals("ok")) ok &= !optionIds(res).isEmpty();
-            // g08: angeboten werden nur die AAC-LC-Paare (HE-AAC speichert der Helfer nicht)
-            if (c[0].startsWith("g08")) ok &= optionIds(res).size() == 2 && !res.contains("mp4a.40.5");
-            check("dashplan dash-gate/1 " + c[0] + " → " + want, ok, res);
+            // g08: angeboten werden nur die AAC-LC-Paare (HE-AAC speichert der Helfer nicht); b04 ohne v1-Auswahl: nur v0 × a0
+            if (file.startsWith("g08")) ok &= optionIds(res).size() == 2 && !res.contains("mp4a.40.5");
+            if (file.startsWith("b04") && "r2:0".equals(alt)) ok &= optionIds(res).size() == 1 && res.contains("\"height\":180");
+            check("dashplan dash-gate/1 " + file + (alt == null ? "" : " [alt " + alt + "]") + " → " + want, ok, res);
             n++;
         }
-        check("dashplan dash-gate/1: alle 41 Vektoren geprüft", n == 41, n);
+        check("dashplan dash-gate/1: alle 67 Vektoren geprüft", n == 67, n);
         s.mpdText = null;
+    }
+
+    /**
+     * S4b-6: mehrere BaseURL (CDN-Alternativen). Das MPD nennt auf MPD-Ebene zwei Alternativen: zuerst ein Pfad, den der
+     * Server nicht kennt, dann einen zweiten Host (cdn-b.test, löst im Testclient nur zu 127.0.0.1 auf). Kadri schickt die
+     * beobachtete Alternative (alt "m:1"); der Helfer prüft sie am neu geladenen MPD und lädt vollständig über die zweite.
+     */
+    static void multiBase(Server s) throws Exception {
+        s.reset();
+        Rig r = new Rig("alt", s);
+        String m = mpd();
+        String two = m.replaceFirst("<Period", "<BaseURL>http://127.0.0.1:" + s.port + "/x/void/</BaseURL><BaseURL>http://cdn-b.test:" + s.port + "/f/avc/</BaseURL><Period");
+        String fp = fpAll(two, s.mpdUrl());
+        s.mpdText = two;
+        String v1 = r.engine.plan(PEER, BIND, s.mpdUrl(), fp, null, RequestContext.NONE);
+        check("mehrere BaseURL: dashplan v1 (ohne Auswahl) weiterhin kontrolliert abgelehnt → mpd_baseurl_multiple", "mpd_baseurl_multiple".equals(field(v1, "reason")), v1);
+        String p = r.engine.plan(PEER, BIND, s.mpdUrl(), fp, new int[] {0, 2}, RequestContext.NONE, "m:1");
+        check("mehrere BaseURL: dashplan v2 alt m:1 → Plan mit 2 Optionen (Abdruck über alle Alternativen)", "true".equals(field(p, "ok")) && optionIds(p).size() == 2 && clean(p, s), p);
+        String id = newId();
+        r.engine.start(PEER, BIND, id, field(p, "planId"), optionIds(p).get(1), "Zweite BaseURL");
+        String fin = await(r, id);
+        java.util.Set<String> hs = new java.util.HashSet<>(s.hosts);
+        check("mehrere BaseURL: vollständiger Download über die ZWEITE BaseURL (alle Init-/Stückabrufe an cdn-b.test, keiner an die erste)",
+            "done".equals(field(fin, "state")) && "13".equals(field(fin, "of")) && hs.equals(java.util.Collections.singleton("cdn-b.test:" + s.port)) && s.full("chunk-1-00005.m4s") == 1, fin + " " + hs);
+        check("mehrere BaseURL: keine Cookies/Authorization/Origin", s.leaks.isEmpty(), s.leaks);
+        String[][] badAlt = {{"m:5", "mpd_alt_invalid"}, {"m:1;p0:1", "mpd_alt_invalid"}, {"m:1;s0:0", "mpd_alt_invalid"}, {"m:1;m:1", "alt_invalid"}, {"m:1;r2:0", "mpd_alt_invalid"},
+            {"s1:0", "mpd_baseurl_undetermined"}, {"p0:1", "mpd_baseurl_undetermined"}};
+        for (String[] b : badAlt) {
+            String res = r.engine.plan(PEER, BIND, s.mpdUrl(), fp, null, RequestContext.NONE, b[0]);
+            check("mehrere BaseURL: Auswahl „" + b[0] + "“ (nicht im MPD erklärt bzw. ungültig) → " + b[1], b[1].equals(field(res, "reason")), res);
+        }
+        String fpOne = fpOf(m, s.mpdUrl());
+        String mism = r.engine.plan(PEER, BIND, s.mpdUrl(), fpOne, null, RequestContext.NONE, "m:1");
+        check("mehrere BaseURL: Abdruck eines anderen MPD (ohne Alternativen) → manifest_mismatch", "manifest_mismatch".equals(field(mism, "reason")), mism);
+        // Alternative verschwindet nach der Planung: erneutes Laden beim Start → anderer Abdruck → plan_changed
+        String p2 = r.engine.plan(PEER, BIND, s.mpdUrl(), fp, null, RequestContext.NONE, "m:1");
+        s.mpdText = m.replaceFirst("<Period", "<BaseURL>http://cdn-b.test:" + s.port + "/f/avc/</BaseURL><Period");
+        String id2 = newId();
+        r.engine.start(PEER, BIND, id2, field(p2, "planId"), optionIds(p2).get(0), "x");
+        String fin2 = await(r, id2);
+        check("mehrere BaseURL: Alternative nach der Planung entfernt → dashstart scheitert mit plan_changed", "failed".equals(field(fin2, "state")) && "plan_changed".equals(field(fin2, "reason")), fin2);
+        // Verbotene Netzziele als Alternative: Privatnetz-Literal, lokaler Name → schon beim Plan abgelehnt
+        for (String host : new String[] {"10.0.0.1", "localhost:" + s.port, "169.254.169.254", "intranet:" + s.port}) {
+            String t = m.replaceFirst("<Period", "<BaseURL>http://cdn-b.test:" + s.port + "/f/avc/</BaseURL><BaseURL>http://" + host + "/f/avc/</BaseURL><Period");
+            s.mpdText = t;
+            String res = r.engine.plan(PEER, BIND, s.mpdUrl(), fpAll(t, s.mpdUrl()), null, RequestContext.NONE, "m:1");
+            check("mehrere BaseURL: Alternative auf verbotenes Ziel " + host + " → blocked_host (beim Plan, vor jedem Abruf)", "blocked_host".equals(field(res, "reason")), res);
+        }
+        // Weiterleitung einer Alternative (302 auf erlaubtes Ziel) → vollständig; auf Privatnetz → blockiert beim Abruf
+        s.reset();
+        String red = m.replaceFirst("<Period", "<BaseURL>http://127.0.0.1:" + s.port + "/f/avc/</BaseURL><BaseURL>http://cdn-b.test:" + s.port + "/r/avc/</BaseURL><Period");
+        s.mpdText = red;
+        String p3 = r.engine.plan(PEER, BIND, s.mpdUrl(), fpAll(red, s.mpdUrl()), null, RequestContext.NONE, "m:1");
+        String id3 = newId();
+        r.engine.start(PEER, BIND, id3, field(p3, "planId"), optionIds(p3).get(0), "y");
+        String fin3 = await(r, id3);
+        check("mehrere BaseURL: zweite Alternative leitet (302) auf erlaubtes Ziel weiter → done", "done".equals(field(fin3, "state")), fin3);
+        s.reset();
+        s.mpdText = two;
+        s.redirectPrivate = true;
+        String p4 = r.engine.plan(PEER, BIND, s.mpdUrl(), fp, null, RequestContext.NONE, "m:1");
+        String id4 = newId();
+        r.engine.start(PEER, BIND, id4, field(p4, "planId"), optionIds(p4).get(0), "z");
+        String fin4 = await(r, id4);
+        check("mehrere BaseURL: Stück der Alternative leitet auf Privatnetz (10.0.0.1) weiter → kein done, blockiert", !"done".equals(field(fin4, "state")) && field(fin4, "reason").startsWith("blocked"), fin4);
+        s.reset();
+    }
+
+    static String fpAll(String mpd, String url) throws DashException {
+        return DashFingerprint.hex(DashManifest.parse(mpd.getBytes(StandardCharsets.UTF_8), url, de.evp.helfer.dash.BaseSelection.FIRST));
     }
 
     static void inspect() throws Exception {
@@ -621,6 +704,10 @@ public final class TestDashEngine {
             calls.add("plan " + bind + " " + fp + " " + Arrays.toString(played) + " " + (c.referer != null));
             return "{\"ok\":true,\"planId\":\"p\"}";
         }
+        @Override public String plan(byte[] peer, String bind, String url, String fp, int[] played, RequestContext c, String alt) {
+            calls.add("plan2 " + bind + " " + fp + " " + alt);
+            return "{\"ok\":true,\"planId\":\"p\"}";
+        }
         @Override public String start(byte[] peer, String bind, String id, String planId, String option, String name) { calls.add("start " + id); return "{\"ok\":true,\"id\":\"" + id + "\",\"kind\":\"dash\"}"; }
         @Override public boolean knows(String id) { return id.equals(known); }
         @Override public String status(String id) { calls.add("status " + id); return "{\"ok\":true,\"id\":\"" + id + "\",\"kind\":\"dash\",\"state\":\"running\"}"; }
@@ -667,6 +754,21 @@ public final class TestDashEngine {
             "{\"op\":\"dashstart\",\"v\":1,\"id\":\"" + id + "\",\"planId\":\"" + plan + "\",\"option\":\"" + opt + "\",\"fp\":\"" + fp + "\"," + bind + "}",
             "{\"op\":\"dashstart\",\"v\":1,\"id\":\"" + id + "\",\"planId\":\"" + plan + "\",\"option\":\"" + opt + "\"," + bind + ",\"ref\":\"https://site.example/\"}",
         };
+        // S4b-6: dashplan v2 = v1 + "alt" (Auswahl unter mehreren BaseURL)
+        d.calls.clear();
+        String ok2 = cmd("{\"op\":\"dashplan\",\"v\":2,\"url\":\"https://cdn.example/m.mpd\",\"fp\":\"" + fp + "\"," + bind + ",\"alt\":\"m:1;s3:0\"}", d);
+        check("Kanal: dashplan v2 mit alt wird angenommen und mit der Auswahl weitergereicht", ok2.contains("\"planId\"") && d.calls.size() == 1 && d.calls.get(0).equals("plan2 p1|3|7 " + fp + " m:1;s3:0"), d.calls);
+        String[] bad2 = {
+            "{\"op\":\"dashplan\",\"v\":1,\"url\":\"https://x/m.mpd\",\"fp\":\"" + fp + "\"," + bind + ",\"alt\":\"m:1\"}",        // alt nur mit v2
+            "{\"op\":\"dashplan\",\"v\":2,\"url\":\"https://x/m.mpd\",\"fp\":\"" + fp + "\"," + bind + ",\"alt\":\"m:1 x\"}",      // fremde Zeichen
+            "{\"op\":\"dashplan\",\"v\":2,\"url\":\"https://x/m.mpd\",\"fp\":\"" + fp + "\"," + bind + ",\"alt\":\"https://evil.example/\"}",   // Host statt Auswahl
+            "{\"op\":\"dashplan\",\"v\":2,\"url\":\"https://x/m.mpd\",\"fp\":\"" + fp + "\"," + bind + ",\"alt\":\"m:1\",\"alt\":\"m:0\"}",
+            "{\"op\":\"dashstart\",\"v\":1,\"id\":\"" + id + "\",\"planId\":\"" + plan + "\",\"option\":\"" + opt + "\"," + bind + ",\"alt\":\"m:1\"}",
+            "{\"op\":\"hlsplan\",\"v\":1,\"url\":\"https://x/m.m3u8\"," + bind + ",\"alt\":\"m:1\"}",
+        };
+        int rej2 = 0;
+        for (String b : bad2) if (cmd(b, d).equals(ControlCommands.REJECTED)) rej2++; else System.out.println("     angenommen: " + b);
+        check("Kanal: " + bad2.length + " ungültige alt-Anfragen abgelehnt (nur dashplan v2, nur Auswahl-Zeichen, kein Host, einmal)", rej2 == bad2.length, rej2);
         int rejected = 0;
         for (String b : bad) if (cmd(b, d).equals(ControlCommands.REJECTED)) rejected++; else System.out.println("     angenommen: " + b);
         check("Kanal: " + bad.length + " ungültige DASH-Anfragen abgelehnt (fp-Form, Version, Bindung, played-Form, fremde Felder, Kontext nur bei dashplan)", rejected == bad.length, rejected);
@@ -698,8 +800,8 @@ public final class TestDashEngine {
         check("Kanal: eine Kennung gehört genau einer Art (HLS-Kennung startet kein DASH und umgekehrt) → id_in_use",
             inUse.contains("id_in_use") && fresh.calls.isEmpty() && inUse2.contains("id_in_use"), inUse + " " + inUse2);
         String status = ControlCommands.statusJson("1.0", true, true, 3, 15, 0.5f, Boolean.FALSE, true);
-        check("Status: Fähigkeit dashdl {v:1, fmp4-avc-aac, kadri-dash-fp/1, ctx}; ohne DASH unverändert",
-            status.contains("\"dashdl\":{\"v\":1,\"profiles\":[\"fmp4-avc-aac\"],\"fp\":\"kadri-dash-fp/1\",\"ctx\":1}") && status.contains("\"hls\":{")
+        check("Status: Fähigkeit dashdl {v:1, fmp4-avc-aac, kadri-dash-fp/1, ctx, alt (S4b-6)}; ohne DASH unverändert",
+            status.contains("\"dashdl\":{\"v\":1,\"profiles\":[\"fmp4-avc-aac\"],\"fp\":\"kadri-dash-fp/1\",\"ctx\":1,\"alt\":1}") && status.contains("\"hls\":{")
                 && ControlCommands.statusJson("1.0", true, true, 3, 15, 0.5f, Boolean.FALSE, false).equals(ControlCommands.statusJson("1.0", true, true, 3, 15, 0.5f, Boolean.FALSE)), status);
     }
 

@@ -22,6 +22,7 @@ import de.evp.helfer.net.RequestContext;
  *
  * DASH (S3b, nur mit {@link DashControl}; ohne lehnt der Helfer ab wie ein alter Helfer):
  *   {"op":"dashplan","v":1,"url":"…","fp":"<64 hex>","bind":{…}[,"played":"0,3"][,"ref":"…"][,"ua":"…"]}
+ *   {"op":"dashplan","v":2,…wie v1…,"alt":"m:1;s3:0"}   S4b-6: Auswahl unter mehreren BaseURL (de.evp.helfer.dash.BaseSelection)
  *   {"op":"dashstart","v":1,"id":"<32 hex>","planId":"<32 hex>","option":"<24 hex>","bind":{…}[,"name":"…"]}
  * v:1 heißt Strukturfingerabdruck {@code kadri-dash-fp/1}; "played" (Hinweis, keine Evidenz): bis zu 8 Indizes der
  * Darstellungen mit beobachteten Stücken, durch Komma getrennt.
@@ -80,6 +81,10 @@ public final class ControlCommands {
      */
     public interface DashControl {
         String plan(byte[] peer, String bind, String url, String fp, int[] played, RequestContext context);
+        /** S4b-6: dashplan v2 mit Auswahl unter mehreren BaseURL; ohne Unterstützung abgelehnt (alt_unsupported). */
+        default String plan(byte[] peer, String bind, String url, String fp, int[] played, RequestContext context, String alt) {
+            return alt == null ? plan(peer, bind, url, fp, played, context) : "{\"ok\":false,\"reason\":\"alt_unsupported\"}";
+        }
         String start(byte[] peer, String bind, String id, String planId, String option, String name);
         boolean knows(String id);
         String status(String id);
@@ -90,6 +95,8 @@ public final class ControlCommands {
     public static final int MAX_DOWNLOAD_REQUEST = 4096;
     public static final int MAX_URL = 2048;
     public static final int MAX_NAME = 120;
+    /** S4b-6: Länge der Auswahl unter mehreren BaseURL in dashplan v2 ("alt"). */
+    public static final int MAX_ALT = 512;
     public static final String REJECTED = "{\"ok\":false}";
 
     private ControlCommands() {}
@@ -119,7 +126,8 @@ public final class ControlCommands {
         catch (IllegalArgumentException invalid) { return REJECTED; }
         if (r.op.startsWith("dash")) {
             if (dash == null || downloads == null || peer == null) return REJECTED;
-            if (r.op.equals("dashplan")) return dash.plan(peer, r.bind, r.url, r.fp, r.played, r.context);
+            if (r.op.equals("dashplan")) return r.alt == null ? dash.plan(peer, r.bind, r.url, r.fp, r.played, r.context)
+                : dash.plan(peer, r.bind, r.url, r.fp, r.played, r.context, r.alt);
             if (dash.knows(r.id)) return dash.start(peer, r.bind, r.id, r.planId, r.option, r.name);
             if (!downloads.status(r.id).contains("\"state\":\"unknown\"") || (hls != null && hls.knows(r.id)))
                 return "{\"ok\":false,\"id\":\"" + r.id + "\",\"state\":\"rejected\",\"reason\":\"id_in_use\"}";
@@ -181,7 +189,8 @@ public final class ControlCommands {
     public static String statusJson(String appVersion, boolean overlay, boolean write, int volStep, int volMax, float bright, Boolean hlsOpus, boolean dash) {
         String s = statusJson(appVersion, overlay, write, volStep, volMax, bright, hlsOpus);
         if (!dash) return s;
-        return s.substring(0, s.length() - 1) + ",\"dashdl\":{\"v\":1,\"profiles\":[\"fmp4-avc-aac\"],\"fp\":\"kadri-dash-fp/1\",\"ctx\":1}}";
+        // S4b-6: "alt":1 – dashplan v2 mit Auswahl unter mehreren BaseURL (ältere Kadri-Versionen ignorieren das Feld)
+        return s.substring(0, s.length() - 1) + ",\"dashdl\":{\"v\":1,\"profiles\":[\"fmp4-avc-aac\"],\"fp\":\"kadri-dash-fp/1\",\"ctx\":1,\"alt\":1}}";
     }
 
     private static String statusJsonBase(String appVersion, boolean overlay, boolean write, int volStep, int volMax, float bright) {
@@ -200,6 +209,7 @@ public final class ControlCommands {
         String planId, option, bind;  // nur HLS/DASH
         String fp;                    // nur dashplan
         int[] played;                 // nur dashplan (Hinweis)
+        String alt;                   // nur dashplan v2 (S4b-6, BaseSelection-Form)
         RequestContext context = RequestContext.NONE;   // nur dlstart/hlsplan
         Request(String op, boolean hasValue, double value) { this(op, hasValue, value, null, null, null); }
         Request(String op, boolean hasValue, double value, String id, String url, String name) {
@@ -217,7 +227,7 @@ public final class ControlCommands {
         } catch (CharacterCodingException e) { throw new IllegalArgumentException("utf-8"); }
         Parser p = new Parser(s);
         String op = null; boolean hasValue = false; double value = 0;
-        String id = null, url = null, name = null, planId = null, option = null, bind = null, ref = null, ua = null, fp = null;
+        String id = null, url = null, name = null, planId = null, option = null, bind = null, ref = null, ua = null, fp = null, alt = null;
         int[] played = null;
         p.expect('{');
         boolean first = true;
@@ -257,6 +267,10 @@ public final class ControlCommands {
             } else if ("fp".equals(key)) {
                 if (fp != null) throw new IllegalArgumentException("duplicate fp");
                 fp = p.hex(64);
+            } else if ("alt".equals(key)) {
+                if (alt != null) throw new IllegalArgumentException("duplicate alt");
+                alt = p.printable(MAX_ALT);   // (= de.evp.helfer.dash.BaseSelection.MAX_CHARS; Inhalt prüft BaseSelection)
+                if (!alt.matches("[mpsr0-9:;]+")) throw new IllegalArgumentException("alt");
             } else if ("played".equals(key)) {
                 if (played != null) throw new IllegalArgumentException("duplicate played");
                 played = p.indices(8);
@@ -275,18 +289,21 @@ public final class ControlCommands {
             if (!"dlstart".equals(op) && !"hlsplan".equals(op) && !"dashplan".equals(op)) throw new IllegalArgumentException("context field");
             context = RequestContext.of(ref, ua);
         }
-        if ((fp != null || played != null) && !"dashplan".equals(op)) throw new IllegalArgumentException("dash field");
+        if ((fp != null || played != null || alt != null) && !"dashplan".equals(op)) throw new IllegalArgumentException("dash field");
         if (op.equals("dashplan") || op.equals("dashstart")) {
             // Versioniert: genau v:1 (Fingerabdruck kadri-dash-fp/1). dashplan {op,v,url,fp,bind[,played][,ref][,ua]};
             // dashstart {op,v,id,planId,option,bind[,name]}
-            if (!hasValue || value != 1.0 || bind == null) throw new IllegalArgumentException("dash fields");
+            // S4b-6: dashplan v2 = v1 + "alt" (Pflicht); dashstart bleibt v1, die Auswahl gehört zum Plan
+            boolean v2 = hasValue && value == 2.0 && op.equals("dashplan");
+            if (!hasValue || (value != 1.0 && !v2) || bind == null || (v2 != (alt != null))) throw new IllegalArgumentException("dash fields");
             Request r;
             if (op.equals("dashplan")) {
                 if (url == null || fp == null || id != null || name != null || planId != null || option != null) throw new IllegalArgumentException("dash fields");
-                r = new Request(op, true, 1, null, url, null);
+                r = new Request(op, true, v2 ? 2 : 1, null, url, null);
                 r.context = context;
                 r.fp = fp;
                 r.played = played;
+                r.alt = alt;
             } else {
                 if (url != null || id == null || planId == null || option == null) throw new IllegalArgumentException("dash fields");
                 if (raw.length > 1024) throw new IllegalArgumentException("size");
